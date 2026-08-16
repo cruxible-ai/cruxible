@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,8 +17,11 @@ from cruxible_core.playbill.captures import (
     build_direct_claim_capture,
     capture_contract_digest,
     capture_contract_path,
+    parse_capture_envelope,
     render_capture_contract,
+    render_capture_envelope,
 )
+from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_core.playbill.claims import (
     ClaimArtifact,
@@ -202,6 +206,51 @@ def test_claim_identity_sharding_and_three_digest_layers(tmp_path: Path) -> None
     )
     assert claim_statement_digest(stronger_backing.statement) == statement_digest
     assert claim_artifact_digest(stronger_backing) != claim_artifact_digest(claim)
+
+
+def test_direct_capture_contract_envelope_and_claim_match_frozen_golden(
+    tmp_path: Path,
+) -> None:
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "goldens" / "playbill" / "capture-claim-v1.json").read_bytes()
+    )
+    store = ContentAddressedBodyStore(tmp_path)
+    coordinate = AcceptedCoordinate(
+        git_oid="1" * 40,
+        semantic_root="sha256:" + "22" * 32,
+        generation_root="sha256:" + "33" * 32,
+        compiler_digest="sha256:" + "44" * 32,
+    )
+    capture = build_direct_claim_capture(
+        store=store,
+        actor_id="owner",
+        claim_id="CLM-0123456789abcdef0123456789abcdef",
+        value="ready",
+        rationale="The work item is ready for review.",
+        observed_at=OBSERVED_AT,
+        accepted_coordinate=coordinate,
+    )
+    assert (
+        render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).decode()
+        == fixture["capture_contract_wire"]
+    )
+    assert (
+        capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+        == fixture["capture_contract_digest"]
+    )
+    assert render_capture_envelope(capture.envelope).decode() == fixture["capture_envelope_wire"]
+    assert parse_capture_envelope(fixture["capture_envelope_wire"].encode()) == capture.envelope
+    assert capture.capture_digest == fixture["capture_digest"]
+    assert capture.envelope.commitment.byte_length is not None
+    claim = _claim(
+        claim_id="CLM-0123456789abcdef0123456789abcdef",
+        capture_digest=capture.capture_digest,
+        source_digest=capture.source_body_digest,
+        source_length=capture.envelope.commitment.byte_length,
+    )
+    assert render_claim(claim).decode() == fixture["claim_wire"]
+    assert claim_statement_digest(claim.statement).tagged == fixture["statement_digest"]
+    assert claim_artifact_digest(claim).tagged == fixture["artifact_digest"]
 
 
 def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate(

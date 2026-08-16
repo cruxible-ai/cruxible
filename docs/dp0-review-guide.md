@@ -226,6 +226,7 @@ tests/goldens/kev/reference_build_state.json
 tests/goldens/kev/relationship_state_visibility.json
 tests/goldens/playbill/attestation-v1.json
 tests/goldens/playbill/candidate-v1.json
+tests/goldens/playbill/capture-claim-v1.json
 tests/goldens/playbill/claim-type-v1.json
 tests/goldens/playbill/oracles-v1.json
 tests/goldens/playbill/projection-v1.json
@@ -239,6 +240,10 @@ tests/goldens/state_cross_section/car_parts_state_diff.json
 
 `tests/goldens/playbill/claim-type-v1.json` preserves the canonical policy-bearing
 ClaimType v1 wire and digest contract.
+
+`tests/goldens/playbill/capture-claim-v1.json` preserves the bounded direct
+CaptureContract/CaptureEnvelope wire and all three first-class Claim digest
+layers.
 
 `tests/goldens/playbill/source-reference-v1.json` preserves locator-free external
 source identity and remote-state refusal behavior.

@@ -37,6 +37,7 @@ VerifiedAttestationGrade = Literal[
 
 _PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
 _EVIDENCE_KIND_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_CLAIM_ID_RE = re.compile(r"^CLM-[0-9a-f]{32}$")
 
 
 class _StrictPolicyModel(BaseModel):
@@ -795,7 +796,8 @@ class ResolutionContenderV1(_StrictPolicyModel):
     @field_validator("claim_identity")
     @classmethod
     def _claim_identity(cls, value: str) -> str:
-        governance_identifier(value, label="Claim identity")
+        if not _CLAIM_ID_RE.fullmatch(value):
+            raise ValueError("Claim identity must be CLM- plus 128-bit lowercase hex")
         return value
 
     @field_validator("object_value")

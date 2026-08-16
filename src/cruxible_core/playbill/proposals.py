@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, Protocol, TypeVar
 
@@ -77,7 +79,11 @@ from cruxible_core.playbill.claim_types import (
 from cruxible_core.playbill.claims import (
     AcceptedClaim,
     ClaimFormatError,
+    ExactContentClaimObject,
+    LiteralClaimObject,
+    SubjectClaimObject,
     claim_artifact_digest,
+    claim_statement_address,
     claim_statement_digest,
     evaluate_claim_law,
     parse_claim,
@@ -89,6 +95,7 @@ from cruxible_core.playbill.closure import (
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
 from cruxible_core.playbill.discovery import (
     DiscoveryHintsV1,
+    DistinctRelationMemberV1,
     ProposedSemanticInterfaceV1,
     ReuseDispositionV1,
     SemanticReuseInterfaceV1,
@@ -115,6 +122,12 @@ from cruxible_core.playbill.governance import (
     PermissionTier,
 )
 from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS
+from cruxible_core.playbill.policies import (
+    AdmissionActorV1,
+    ClaimAdmissionCandidateContextV1,
+    ClaimAdmissionPolicyV1,
+    evaluate_claim_admission_candidate,
+)
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.principals import principal_registry_from_tree
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -785,11 +798,46 @@ def _canonical_model_digest(domain: str, model: BaseModel) -> str:
 
 
 def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterfaceV1, ...]:
+    descriptor_terms: dict[bytes, dict[str, set[str]]] = {}
+
+    def terms_for(address: SemanticAddress) -> dict[str, set[str]]:
+        key = canonical_bytes(address.model_dump(mode="json"))
+        return descriptor_terms.setdefault(
+            key,
+            {"aliases": set(), "tags": set(), "relations": set()},
+        )
+
+    for descriptor_path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not _CLAIM_PATH_RE.fullmatch(descriptor_path):
+            continue
+        descriptor = parse_claim(tree[descriptor_path], path=descriptor_path)
+        if descriptor.lifecycle.state != "live":
+            continue
+        predicate = descriptor.statement.predicate
+        if predicate in {"semantic.alias", "semantic.tag"} and isinstance(
+            descriptor.statement.object, LiteralClaimObject
+        ):
+            value = descriptor.statement.object.value
+            if not isinstance(value, str):
+                continue
+            field = "aliases" if predicate == "semantic.alias" else "tags"
+            terms_for(descriptor.statement.subject)[field].add(value)
+        elif predicate in {"semantic.related_to", "semantic.distinct_from"} and isinstance(
+            descriptor.statement.object, SubjectClaimObject
+        ):
+            relation_label = descriptor.statement.object.address.artifact_path
+            terms_for(descriptor.statement.subject)["relations"].add(relation_label)
+            terms_for(descriptor.statement.object.address)["relations"].add(
+                descriptor.statement.subject.artifact_path
+            )
+
     interfaces: list[SemanticReuseInterfaceV1] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         content = tree[path]
         if _CLAIM_TYPE_PATH_RE.fullmatch(path):
             claim_type = parse_claim_type(content, path=path)
+            if claim_type.lifecycle.state != "live":
+                continue
             signature = typed_digest(
                 Sha256Value,
                 "playbill-claim-type-structural-signature-v1",
@@ -804,6 +852,7 @@ def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterface
                     key=lambda item: item.encode("utf-8"),
                 )
             )
+            descriptors = terms_for(SemanticAddress.whole_artifact(path))
             interfaces.append(
                 SemanticReuseInterfaceV1(
                     address=SemanticAddress.whole_artifact(path),
@@ -812,10 +861,19 @@ def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterface
                     label=claim_type.predicate,
                     canonical_tokens=tokens,
                     structural_signature_digest=signature,
+                    aliases=tuple(
+                        sorted(descriptors["aliases"], key=lambda item: item.encode("utf-8"))
+                    ),
+                    tags=tuple(sorted(descriptors["tags"], key=lambda item: item.encode("utf-8"))),
+                    relation_labels=tuple(
+                        sorted(descriptors["relations"], key=lambda item: item.encode("utf-8"))
+                    ),
                 )
             )
         elif _SUBJECT_PATH_RE.fullmatch(path):
             subject = parse_subject(content, path=path)
+            if subject.lifecycle.state != "live":
+                continue
             # Subject-kind similarity is not evidence that two instances are
             # duplicates. Include the stable identity in the signature.
             signature = typed_digest(
@@ -823,6 +881,7 @@ def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterface
                 "playbill-subject-reuse-signature-v1",
                 {"identity": subject.identity.qualified},
             ).tagged
+            descriptors = terms_for(SemanticAddress.whole_artifact(path))
             interfaces.append(
                 SemanticReuseInterfaceV1(
                     address=SemanticAddress.whole_artifact(path),
@@ -831,6 +890,13 @@ def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterface
                     label=subject.identity.qualified,
                     canonical_tokens=(subject.subject_id,),
                     structural_signature_digest=signature,
+                    aliases=tuple(
+                        sorted(descriptors["aliases"], key=lambda item: item.encode("utf-8"))
+                    ),
+                    tags=tuple(sorted(descriptors["tags"], key=lambda item: item.encode("utf-8"))),
+                    relation_labels=tuple(
+                        sorted(descriptors["relations"], key=lambda item: item.encode("utf-8"))
+                    ),
                 )
             )
     return tuple(interfaces)
@@ -841,6 +907,7 @@ def _claim_type_reuse_evidence(
     claim_type: ClaimType,
     path: str,
     lookup_tree: Mapping[str, bytes],
+    candidate_scope: tuple[str, ...],
     current: AcceptedProjectionCoordinate,
 ) -> dict[str, object]:
     structure = claim_type.structure
@@ -863,6 +930,23 @@ def _claim_type_reuse_evidence(
         ),
         structural_signature_digest=signature,
     )
+    relations: list[DistinctRelationMemberV1] = []
+    for relation_path in candidate_scope:
+        if not _CLAIM_PATH_RE.fullmatch(relation_path):
+            continue
+        relation = parse_claim(lookup_tree[relation_path], path=relation_path)
+        if relation.statement.predicate != "semantic.distinct_from" or not isinstance(
+            relation.statement.object, SubjectClaimObject
+        ):
+            continue
+        relations.append(
+            DistinctRelationMemberV1(
+                claim_address=claim_statement_address(relation_path),
+                claim_artifact_digest=claim_artifact_digest(relation).tagged,
+                subject=relation.statement.subject,
+                object=relation.statement.object.address,
+            )
+        )
     evidence = evaluate_vocabulary_reuse(
         VocabularyReuseRequestV1(
             proposal=proposal,
@@ -874,6 +958,23 @@ def _claim_type_reuse_evidence(
         ),
         coordinate=AcceptedCoordinate.from_internal(current),
         implementation_digest=current.compiler.rule_digest,
+        distinct_relation_members=tuple(
+            sorted(
+                relations,
+                key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+            )
+        ),
+        descriptor_claims_available=any(
+            parse_claim(lookup_tree[item], path=item).statement.predicate
+            in {
+                "semantic.alias",
+                "semantic.distinct_from",
+                "semantic.related_to",
+                "semantic.tag",
+            }
+            for item in lookup_tree
+            if _CLAIM_PATH_RE.fullmatch(item)
+        ),
     )
     return evidence.model_dump(mode="json")
 
@@ -908,6 +1009,232 @@ def _aggregate_activation(values: list[ActivationPolicy]) -> ActivationPolicy:
         "abort": 3,
     }
     return max(values, key=order.__getitem__)
+
+
+def _claim_policy_value(
+    value: LiteralClaimObject | SubjectClaimObject | ExactContentClaimObject,
+) -> object:
+    if isinstance(value, LiteralClaimObject):
+        return value.value
+    return value.model_dump(mode="json")
+
+
+def _effective_claim_values(
+    tree: Mapping[str, bytes],
+    *,
+    evaluation_time: str,
+) -> dict[str, dict[str, tuple[object, ...]]]:
+    """Project live Claim objects by exact Subject and predicate for policy law."""
+
+    at = datetime.strptime(evaluation_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+    collected: dict[str, dict[str, dict[bytes, object]]] = {}
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not _CLAIM_PATH_RE.fullmatch(path):
+            continue
+        claim = parse_claim(tree[path], path=path)
+        if claim.lifecycle.state != "live":
+            continue
+        statement = claim.statement
+        if statement.effective_from is not None and statement.effective_from > at:
+            continue
+        if statement.effective_until is not None and statement.effective_until <= at:
+            continue
+        value = _claim_policy_value(statement.object)
+        predicate_values = collected.setdefault(statement.subject.artifact_path, {}).setdefault(
+            statement.predicate,
+            {},
+        )
+        predicate_values[canonical_bytes(value)] = value
+    return {
+        subject_path: {
+            predicate: tuple(values[key] for key in sorted(values))
+            for predicate, values in sorted(
+                predicates.items(),
+                key=lambda item: item[0].encode("utf-8"),
+            )
+        }
+        for subject_path, predicates in sorted(
+            collected.items(),
+            key=lambda item: item[0].encode("utf-8"),
+        )
+    }
+
+
+def _policy_has_requirements(policy: ClaimAdmissionPolicyV1) -> bool:
+    return any(
+        (
+            policy.transition_requirements,
+            policy.actor_requirements,
+            policy.evidence_requirements,
+            policy.freeze_requirements,
+        )
+    )
+
+
+def _lineage_creation_actor(
+    current_tree: Mapping[str, bytes],
+    *,
+    subject_path: str,
+    claim_paths: tuple[str, ...],
+    candidate_creates_lineage: bool,
+    actor_id: str,
+) -> str | None:
+    """Recover immutable creation attribution from accepted change-set history."""
+
+    targets = {subject_path, *claim_paths}
+    for path in sorted(current_tree, key=lambda item: item.encode("utf-8")):
+        if not re.fullmatch(r"changesets/cs-[0-9]{20}\.json", path):
+            continue
+        try:
+            payload = json.loads(current_tree[path])
+            members = payload["members"]
+            recorded_actor = payload["actor_binding"]["actor_id"]
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ProposalIntegrityError(
+                f"accepted change-set creation attribution is invalid: {path}"
+            ) from exc
+        if not isinstance(members, list) or not isinstance(recorded_actor, str):
+            raise ProposalIntegrityError(
+                f"accepted change-set creation attribution is invalid: {path}"
+            )
+        if any(isinstance(member, dict) and member.get("path") in targets for member in members):
+            return recorded_actor
+    return actor_id if candidate_creates_lineage else None
+
+
+def _claim_admission_evaluations(
+    *,
+    current_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    scope: tuple[str, ...],
+    timestamp: str,
+    actor_id: str,
+    actor_roles: tuple[str, ...],
+    subjects: Mapping[str, AcceptedSubject],
+    claim_types: Mapping[str, AcceptedClaimType],
+) -> tuple[
+    dict[str, tuple[dict[str, object], ...]],
+    dict[str, tuple[str, ...]],
+    tuple[CompilerDiagnostic, ...],
+]:
+    """Evaluate every policy governing each Subject changed by Claim members."""
+
+    changed_by_subject: dict[str, list[str]] = {}
+    for path in scope:
+        if not _CLAIM_PATH_RE.fullmatch(path) or path not in candidate_tree:
+            continue
+        claim = parse_claim(candidate_tree[path], path=path)
+        changed_by_subject.setdefault(claim.statement.subject.artifact_path, []).append(path)
+    if not changed_by_subject:
+        return {}, {}, ()
+
+    parent_values = _effective_claim_values(current_tree, evaluation_time=timestamp)
+    candidate_values = _effective_claim_values(candidate_tree, evaluation_time=timestamp)
+    accepted_claim_paths: dict[str, list[str]] = {}
+    for path in sorted(current_tree, key=lambda item: item.encode("utf-8")):
+        if not _CLAIM_PATH_RE.fullmatch(path):
+            continue
+        claim = parse_claim(current_tree[path], path=path)
+        accepted_claim_paths.setdefault(claim.statement.subject.artifact_path, []).append(path)
+
+    entries_by_path: dict[str, tuple[dict[str, object], ...]] = {}
+    digests_by_path: dict[str, tuple[str, ...]] = {}
+    diagnostics: list[CompilerDiagnostic] = []
+    for subject_path, changed_paths in sorted(
+        changed_by_subject.items(),
+        key=lambda item: item[0].encode("utf-8"),
+    ):
+        subject = subjects.get(subject_path)
+        if subject is None:
+            continue  # Claim law emits the exact unresolved-subject diagnostic.
+        applicable = tuple(
+            sorted(
+                (
+                    item
+                    for item in claim_types.values()
+                    if subject.shell.subject_kind in item.claim_type.allowed_subject_kinds
+                    and _policy_has_requirements(item.claim_type.admission_policy)
+                ),
+                key=lambda item: item.claim_type.identity.qualified.encode("utf-8"),
+            )
+        )
+        if not applicable:
+            continue
+        declared_predicates = tuple(
+            sorted(
+                {
+                    item.claim_type.predicate
+                    for item in claim_types.values()
+                    if subject.shell.subject_kind in item.claim_type.allowed_subject_kinds
+                },
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+        lineage_actor = _lineage_creation_actor(
+            current_tree,
+            subject_path=subject_path,
+            claim_paths=tuple(accepted_claim_paths.get(subject_path, ())),
+            candidate_creates_lineage=(
+                subject_path not in current_tree and subject_path in candidate_tree
+            )
+            or not accepted_claim_paths.get(subject_path),
+            actor_id=actor_id,
+        )
+        context = ClaimAdmissionCandidateContextV1(
+            evaluation_time=timestamp,
+            declared_predicates=declared_predicates,
+            parent_values=parent_values.get(subject_path, {}),
+            candidate_values=candidate_values.get(subject_path, {}),
+            admission_actor=AdmissionActorV1(
+                actor_id=actor_id,
+                roles=actor_roles,
+            ),
+            lineage_creation_actor_id=lineage_actor,
+            # QueryDefinition execution is introduced in PC-F. Until then an
+            # evidence-gated transition refuses as missing rather than trusting
+            # caller-authored query output.
+            query_results=(),
+        )
+        entries: list[dict[str, object]] = []
+        policy_digests: set[str] = set()
+        for accepted_type in applicable:
+            policy = accepted_type.claim_type.admission_policy
+            policy_digest = _canonical_model_digest(
+                "playbill-claim-admission-policy-v1",
+                policy,
+            )
+            evaluated = evaluate_claim_admission_candidate(policy, context)
+            entries.append(
+                {
+                    "claim_type_digest": accepted_type.artifact_digest,
+                    "claim_type_identity": accepted_type.claim_type.identity.qualified,
+                    "policy_digest": policy_digest,
+                    "candidate_result": evaluated.model_dump(mode="json"),
+                }
+            )
+            policy_digests.add(policy_digest)
+            for code in evaluated.refusal_codes:
+                for changed_path in changed_paths:
+                    diagnostics.append(
+                        _diagnostic(
+                            code,
+                            "The Subject-level Claim admission policy refused "
+                            "this closed change set.",
+                            changed_path,
+                        )
+                    )
+        ordered_entries = tuple(sorted(entries, key=lambda item: canonical_bytes(item)))
+        ordered_digests = tuple(sorted(policy_digests))
+        for changed_path in changed_paths:
+            entries_by_path[changed_path] = ordered_entries
+            digests_by_path[changed_path] = ordered_digests
+    ordered_diagnostics = tuple(
+        sorted(
+            diagnostics,
+            key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+        )
+    )
+    return entries_by_path, digests_by_path, ordered_diagnostics
 
 
 def _evaluate_v2_proposal_tree(
@@ -1029,6 +1356,34 @@ def _evaluate_v2_proposal_tree(
                     artifact_digest=state.artifact_digest,
                 )
             )
+    actor_roles: tuple[str, ...] = ()
+    if actor_id is not None:
+        try:
+            actor_roles = tuple(
+                str(role)
+                for role in principals.require_active(actor_id).authority_roles
+                if role != "daemon"
+            )
+        except Exception:
+            actor_roles = ()
+    claim_admission_by_path: dict[str, tuple[dict[str, object], ...]] = {}
+    claim_admission_digests_by_path: dict[str, tuple[str, ...]] = {}
+    claim_admission_diagnostics: tuple[CompilerDiagnostic, ...] = ()
+    if actor_id is not None:
+        (
+            claim_admission_by_path,
+            claim_admission_digests_by_path,
+            claim_admission_diagnostics,
+        ) = _claim_admission_evaluations(
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
+            timestamp=timestamp,
+            actor_id=actor_id,
+            actor_roles=actor_roles,
+            subjects=resolved_subjects,
+            claim_types=resolved_claim_types,
+        )
     member_inputs: list[
         tuple[
             str,
@@ -1045,7 +1400,7 @@ def _evaluate_v2_proposal_tree(
             bool,
         ]
     ] = []
-    diagnostics: list[CompilerDiagnostic] = []
+    diagnostics: list[CompilerDiagnostic] = list(claim_admission_diagnostics)
     used_expansions: set[str] = set()
     for path in scope:
         proposed_bytes = candidate_tree.get(path)
@@ -1079,16 +1434,6 @@ def _evaluate_v2_proposal_tree(
                     contract=previous_contract,
                     artifact_digest=capture_contract_digest(previous_contract).tagged,
                 )
-            actor_roles: tuple[str, ...] = ()
-            if actor_id is not None:
-                try:
-                    actor_roles = tuple(
-                        str(role)
-                        for role in principals.require_active(actor_id).authority_roles
-                        if role != "daemon"
-                    )
-                except Exception:
-                    actor_roles = ()
             capture_contract_law = evaluate_capture_contract_law(
                 capture_contract,
                 path=path,
@@ -1164,6 +1509,27 @@ def _evaluate_v2_proposal_tree(
                 continue
             if claim_law.artifact_digest is None or claim_law.required_tier is None:
                 raise ProposalIntegrityError("accepted Claim law result is incomplete")
+            governing_policy_digests = {
+                *claim_admission_digests_by_path.get(path, ()),
+                _canonical_model_digest(
+                    "playbill-claim-admission-policy-v1",
+                    resolved_claim_types[
+                        claim.statement.claim_type.qualified
+                    ].claim_type.admission_policy,
+                ),
+                _canonical_model_digest(
+                    "playbill-claim-evidence-admission-policy-v1",
+                    resolved_claim_types[
+                        claim.statement.claim_type.qualified
+                    ].claim_type.evidence_admission_policy,
+                ),
+                _canonical_model_digest(
+                    "playbill-claim-resolution-policy-v1",
+                    resolved_claim_types[
+                        claim.statement.claim_type.qualified
+                    ].claim_type.resolution_policy,
+                ),
+            }
             member_inputs.append(
                 (
                     path,
@@ -1182,10 +1548,11 @@ def _evaluate_v2_proposal_tree(
                             if claim_law.evidence is None
                             else claim_law.evidence.model_dump(mode="json")
                         ),
+                        "claim_admission": list(claim_admission_by_path.get(path, ())),
                         "statement_digest": claim_law.statement_digest,
                         "verdict": "accepted",
                     },
-                    (),
+                    tuple(sorted(governing_policy_digests)),
                     claim.lifecycle.state == "retired",
                 )
             )
@@ -1225,6 +1592,7 @@ def _evaluate_v2_proposal_tree(
                     claim_type=claim_type,
                     path=path,
                     lookup_tree=candidate_tree,
+                    candidate_scope=scope,
                     current=current,
                 )
                 if reuse["verdict"] == "refused":

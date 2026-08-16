@@ -196,6 +196,31 @@ class ReuseDispositionV1(_StrictDiscoveryModel):
         return self
 
 
+class DistinctRelationMemberV1(_StrictDiscoveryModel):
+    """One exact governed distinction persisted in the same candidate closure."""
+
+    claim_address: SemanticAddress
+    claim_artifact_digest: str
+    subject: SemanticAddress
+    object: SemanticAddress
+
+    @field_validator("claim_artifact_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _address_kinds(self) -> "DistinctRelationMemberV1":
+        if self.claim_address.selector.scheme != "claim-statement-v1":
+            raise ValueError("distinct relation member must identify one exact Claim statement")
+        if self.subject.selector.scheme != "artifact-v1" or (
+            self.object.selector.scheme != "artifact-v1"
+        ):
+            raise ValueError("distinct relation endpoints must use stable artifact identities")
+        return self
+
+
 class VocabularyReuseRequestV1(_StrictDiscoveryModel):
     """Caller input intentionally has no result digest or selectable search profile."""
 
@@ -215,6 +240,7 @@ class VocabularyReuseLawEvidenceV1(_StrictDiscoveryModel):
     result_digest: str
     candidates: tuple[ReuseCandidateV1, ...]
     disposition: ReuseDispositionV1
+    distinct_relation_members: tuple[DistinctRelationMemberV1, ...] = ()
     verdict: Literal["satisfied", "refused"]
     refusal_code: str | None = None
 
@@ -222,6 +248,17 @@ class VocabularyReuseLawEvidenceV1(_StrictDiscoveryModel):
     @classmethod
     def _digest(cls, value: str) -> str:
         Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("distinct_relation_members")
+    @classmethod
+    def _relation_members(
+        cls,
+        value: tuple[DistinctRelationMemberV1, ...],
+    ) -> tuple[DistinctRelationMemberV1, ...]:
+        encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
+        if encoded != tuple(sorted(set(encoded))):
+            raise ValueError("distinct relation members must be canonically sorted and unique")
         return value
 
     @model_validator(mode="after")
@@ -301,6 +338,8 @@ def evaluate_vocabulary_reuse(
     accepted_interfaces: tuple[SemanticReuseInterfaceV1, ...],
     coordinate: AcceptedCoordinate,
     implementation_digest: str,
+    distinct_relation_members: tuple[DistinctRelationMemberV1, ...] = (),
+    descriptor_claims_available: bool = False,
 ) -> VocabularyReuseLawEvidenceV1:
     """Run the mandatory parent-coordinate reuse lookup; hints can only add terms."""
 
@@ -331,6 +370,9 @@ def evaluate_vocabulary_reuse(
             "implementation_digest": implementation_digest,
             "proposal": request.proposal.model_dump(mode="json"),
             "candidates": [item.model_dump(mode="json") for item in candidates],
+            "distinct_relation_members": [
+                item.model_dump(mode="json") for item in distinct_relation_members
+            ],
         },
     ).tagged
     exact = [
@@ -347,6 +389,16 @@ def evaluate_vocabulary_reuse(
     candidate_addresses = {
         canonical_bytes(item.address.model_dump(mode="json")) for item in candidates
     }
+    ordered_relations = tuple(
+        sorted(
+            distinct_relation_members,
+            key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+        )
+    )
+    if ordered_relations != distinct_relation_members or len(
+        {canonical_bytes(item.model_dump(mode="json")) for item in distinct_relation_members}
+    ) != len(distinct_relation_members):
+        raise ValueError("distinct relation members must be canonically sorted and unique")
     refusal: str | None = None
     if exact:
         refusal = "playbill.reuse.exact_collision"
@@ -355,11 +407,18 @@ def evaluate_vocabulary_reuse(
     elif request.disposition.kind == "reuse_existing":
         refusal = "playbill.reuse.existing_target_required"
     elif request.disposition.kind == "extend_existing_vocabulary":
-        refusal = "playbill.reuse.descriptor_claim_unavailable"
+        if not descriptor_claims_available:
+            refusal = "playbill.reuse.descriptor_claim_unavailable"
     elif blocking:
-        # PC-A2 has no Claim member kind. Law evidence alone cannot persist the
-        # reviewed distinction; PC-B enables this only with exact relation members.
-        refusal = "playbill.reuse.distinction_claim_unavailable"
+        proposal_address = canonical_bytes(request.proposal.address.model_dump(mode="json"))
+        required = {canonical_bytes(item.address.model_dump(mode="json")) for item in blocking}
+        persisted = {
+            canonical_bytes(item.object.model_dump(mode="json"))
+            for item in distinct_relation_members
+            if canonical_bytes(item.subject.model_dump(mode="json")) == proposal_address
+        }
+        if not required.issubset(persisted):
+            refusal = "playbill.reuse.distinction_claim_missing"
     return VocabularyReuseLawEvidenceV1(
         coordinate=coordinate,
         implementation_digest=implementation_digest,
@@ -367,6 +426,7 @@ def evaluate_vocabulary_reuse(
         result_digest=result_digest,
         candidates=candidates,
         disposition=request.disposition,
+        distinct_relation_members=distinct_relation_members,
         verdict="refused" if refusal is not None else "satisfied",
         refusal_code=refusal,
     )
@@ -670,6 +730,7 @@ __all__ = [
     "DiscoveryMatchBasisV1",
     "DiscoveryPageV1",
     "DiscoveryRequestV1",
+    "DistinctRelationMemberV1",
     "ExpandRequestV1",
     "ExpansionBudgetV1",
     "ProposedSemanticInterfaceV1",

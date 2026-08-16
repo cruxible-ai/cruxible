@@ -6,8 +6,9 @@ import json
 import re
 import secrets
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -32,7 +33,12 @@ from cruxible_core.playbill.captures import (
 )
 from cruxible_core.playbill.claim_type_structure import ClaimRole
 from cruxible_core.playbill.claim_types import AcceptedClaimType, ClaimType
+from cruxible_core.playbill.descriptor_claim_types import DescriptorPredicate
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
+from cruxible_core.playbill.discovery import (
+    DescriptorAuthorityContextV1,
+    evaluate_descriptor_authority,
+)
 from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.governance import PermissionTier
 from cruxible_core.playbill.policies import (
@@ -41,6 +47,7 @@ from cruxible_core.playbill.policies import (
 )
 from cruxible_core.playbill.principals import PrincipalRegistrySnapshot
 from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_core.playbill.source_references import EvidenceCommitmentV1
 from cruxible_core.playbill.subjects import AcceptedSubject
 
 _CLAIM_ID_RE = re.compile(r"^CLM-[0-9a-f]{32}$")
@@ -448,13 +455,43 @@ def _validate_literal_schema(value: object, schema: Mapping[str, object]) -> boo
     return True
 
 
-def _resolved_subject(
+@dataclass(frozen=True)
+class _ResolvedReferent:
+    identity: ArtifactIdentity
+    artifact_digest: str
+    semantic_kind: str
+    authority: ArtifactAuthority
+
+
+def _resolved_referent(
     address: SemanticAddress,
     subjects: Mapping[str, AcceptedSubject],
-) -> AcceptedSubject | None:
+    claim_types: Mapping[str, AcceptedClaimType],
+    *,
+    descriptor: bool,
+) -> _ResolvedReferent | None:
     if address.selector.scheme != "artifact-v1":
         return None
-    return subjects.get(address.artifact_path)
+    subject = subjects.get(address.artifact_path)
+    if subject is not None:
+        return _ResolvedReferent(
+            identity=subject.shell.identity,
+            artifact_digest=subject.artifact_digest,
+            semantic_kind=("semantic.subject" if descriptor else subject.shell.subject_kind),
+            authority=subject.shell.authority,
+        )
+    claim_type = next(
+        (item for item in claim_types.values() if item.path == address.artifact_path),
+        None,
+    )
+    if descriptor and claim_type is not None:
+        return _ResolvedReferent(
+            identity=claim_type.claim_type.identity,
+            artifact_digest=claim_type.artifact_digest,
+            semantic_kind="semantic.claim_type",
+            authority=claim_type.claim_type.authority,
+        )
+    return None
 
 
 def _required_pin(
@@ -498,6 +535,12 @@ def evaluate_claim_law(
             path=path,
         )
     contract: ClaimType = claim_type.claim_type
+    descriptor = statement.predicate in {
+        "semantic.alias",
+        "semantic.distinct_from",
+        "semantic.related_to",
+        "semantic.tag",
+    }
     if not _required_pin(
         claim,
         role="claim-type",
@@ -509,14 +552,19 @@ def evaluate_claim_law(
             "The Claim does not pin its exact ClaimType artifact.",
             path=path,
         )
-    subject = _resolved_subject(statement.subject, subjects)
+    subject = _resolved_referent(
+        statement.subject,
+        subjects,
+        claim_types,
+        descriptor=descriptor,
+    )
     if subject is None:
         return _diagnostic(
             "playbill.claim.subject_unresolved",
             "The Claim subject does not resolve to an exact Subject shell.",
             path=path,
         )
-    if subject.shell.subject_kind not in contract.allowed_subject_kinds:
+    if subject.semantic_kind not in contract.allowed_subject_kinds:
         return _diagnostic(
             "playbill.claim.subject_kind_forbidden",
             "The Claim subject kind is not admitted by its ClaimType.",
@@ -531,7 +579,7 @@ def evaluate_claim_law(
     if not _required_pin(
         claim,
         role="subject",
-        identity=subject.shell.identity,
+        identity=subject.identity,
         digest=subject.artifact_digest,
     ):
         return _diagnostic(
@@ -540,7 +588,7 @@ def evaluate_claim_law(
             path=path,
         )
 
-    object_subject: AcceptedSubject | None = None
+    object_subject: _ResolvedReferent | None = None
     if statement.object.kind != contract.object_kind:
         return _diagnostic(
             "playbill.claim.object_kind_mismatch",
@@ -562,14 +610,19 @@ def evaluate_claim_law(
                 path=path,
             )
     elif isinstance(statement.object, SubjectClaimObject):
-        object_subject = _resolved_subject(statement.object.address, subjects)
+        object_subject = _resolved_referent(
+            statement.object.address,
+            subjects,
+            claim_types,
+            descriptor=descriptor,
+        )
         if object_subject is None:
             return _diagnostic(
                 "playbill.claim.object_subject_unresolved",
                 "The Claim object Subject does not resolve.",
                 path=path,
             )
-        if object_subject.shell.subject_kind not in contract.allowed_object_subject_kinds:
+        if object_subject.semantic_kind not in contract.allowed_object_subject_kinds:
             return _diagnostic(
                 "playbill.claim.object_subject_kind_forbidden",
                 "The object Subject kind is not admitted by its ClaimType.",
@@ -584,7 +637,7 @@ def evaluate_claim_law(
         if not _required_pin(
             claim,
             role="object-subject",
-            identity=object_subject.shell.identity,
+            identity=object_subject.identity,
             digest=object_subject.artifact_digest,
         ):
             return _diagnostic(
@@ -641,7 +694,26 @@ def evaluate_claim_law(
             "Claim authority must be derived byte-exactly from its accepted ClaimType.",
             path=path,
         )
-    if not roles.intersection(claim.authority.propose_roles):
+    if descriptor:
+        descriptor_authority = evaluate_descriptor_authority(
+            cast(DescriptorPredicate, statement.predicate),
+            DescriptorAuthorityContextV1(
+                actor_roles=tuple(sorted(roles, key=lambda item: item.encode("utf-8"))),
+                target_namespace_roles=subject.authority.propose_roles,
+                recall_descriptor_roles=contract.authority.propose_roles,
+                new_item_namespace_roles=subject.authority.propose_roles,
+                blocking_cross_namespace_roles=(
+                    () if object_subject is None else object_subject.authority.propose_roles
+                ),
+            ),
+        )
+        if descriptor_authority.verdict == "refused":
+            return _diagnostic(
+                descriptor_authority.refusal_code or "playbill.descriptor.authority_refused",
+                "The authenticated actor does not satisfy the descriptor authority floor.",
+                path=path,
+            )
+    if not descriptor and not roles.intersection(claim.authority.propose_roles):
         return _diagnostic(
             "playbill.claim.actor_unauthorized",
             "The authenticated actor lacks ClaimType-derived proposal authority.",
@@ -706,6 +778,7 @@ def evaluate_claim_law(
             path=path,
         )
     evidence_basis: set[Literal["origin_only", "direct", "derivational"]] = set()
+    verified_commitments: dict[str, EvidenceCommitmentV1] = {}
     capture_contract_pin_digests = {
         pin.artifact_digest for pin in claim.pins if pin.role == "capture-contract"
     }
@@ -736,6 +809,7 @@ def evaluate_claim_law(
                 "A backing CaptureContract is not pinned by the Claim.",
                 path=path,
             )
+        verified_commitments[envelope.commitment.digest] = envelope.commitment
         relevant_spans = tuple(
             span
             for mapping in claim.backing.source_mappings
@@ -743,8 +817,10 @@ def evaluate_claim_law(
             if span.content_digest == envelope.commitment.digest
         )
         source_bound = bool(relevant_spans) or (
-            getattr(envelope.source, "selector_type", None) == "direct-claim-source-v1"
-            and getattr(envelope.source, "selector", None) == {"claim_id": claim.identity.name}
+            getattr(envelope.source, "selector_type", None)
+            in {"direct-claim-source-v1", "direct-claim-external-selector-v1"}
+            and isinstance(getattr(envelope.source, "selector", None), dict)
+            and getattr(envelope.source, "selector", {}).get("claim_id") == claim.identity.name
         )
         for kind in resolved_contract.contract.evidence_kinds:
             admission = evaluate_claim_evidence_admission(
@@ -760,6 +836,48 @@ def evaluate_claim_law(
             )
             if admission.verdict == "eligible" and admission.admission is not None:
                 evidence_basis.add(admission.admission)
+    for mapping in claim.backing.source_mappings:
+        for span in mapping.spans:
+            commitment = verified_commitments.get(span.content_digest)
+            if (
+                commitment is None
+                or getattr(commitment, "digest_kind", None) != "exact_bytes"
+                or getattr(commitment, "byte_length", None) is None
+                or span.end_byte > getattr(commitment, "byte_length")
+            ):
+                return _diagnostic(
+                    "playbill.claim.source_mapping_unverified",
+                    "A source span is not bounded by an exact verified Capture commitment.",
+                    path=path,
+                )
+    if isinstance(statement.object, ExactContentClaimObject):
+        exact_commitment = verified_commitments.get(statement.object.content_digest)
+        if exact_commitment is None:
+            return _diagnostic(
+                "playbill.claim.exact_content_unverified",
+                "The exact-content object has no verified backing Capture commitment.",
+                path=path,
+            )
+        if statement.object.span is not None:
+            mapped_spans = {
+                canonical_bytes(span.model_dump(mode="json"))
+                for mapping in claim.backing.source_mappings
+                for span in mapping.spans
+            }
+            if canonical_bytes(statement.object.span.model_dump(mode="json")) not in mapped_spans:
+                return _diagnostic(
+                    "playbill.claim.exact_content_span_unmapped",
+                    "The exact-content object span is not mapped to the Claim statement.",
+                    path=path,
+                )
+    if statement.role == "environment_binding" and not isinstance(
+        statement.object, ExactContentClaimObject
+    ):
+        return _diagnostic(
+            "playbill.claim.environment_binding_not_exact",
+            "An environment-binding Claim must identify exact content bytes.",
+            path=path,
+        )
     if not claim.backing.capture_digests:
         return _diagnostic(
             "playbill.claim.origin_capture_missing",

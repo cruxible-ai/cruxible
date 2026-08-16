@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Annotated, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -31,7 +31,7 @@ from cruxible_core.playbill.cas import (
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
 from cruxible_core.playbill.errors import PlaybillCasError, PlaybillFormatError
 from cruxible_core.playbill.governance import PermissionTier, governance_identifier
-from cruxible_core.playbill.semantic import SemanticAddress
+from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
 from cruxible_core.playbill.source_references import (
     CasSourceReferenceV1,
     EvidenceCommitmentV1,
@@ -48,6 +48,22 @@ _RUN_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,255}$")
 
 DIRECT_SELF_ASSERTED_CONTRACT_ID = "playbill.direct-self-asserted-v1"
 DIRECT_SOURCE_IDENTITY = "playbill.direct-authoring"
+DIRECT_EXTERNAL_COORDINATE_TYPE = "direct-claim-external-coordinate-v1"
+DIRECT_EXTERNAL_SELECTOR_TYPE = "direct-claim-external-selector-v1"
+DIRECT_EXTERNAL_COORDINATE_TYPES = (
+    "api-revision-v1",
+    "cdc-position-v1",
+    "database-snapshot-v1",
+    "object-version-v1",
+    "postgres-lsn-v1",
+    "transaction-id-v1",
+)
+DIRECT_EXTERNAL_SELECTOR_TYPES = (
+    "cdc-change-v1",
+    "query-result-v1",
+    "relation-primary-key-v1",
+    "resource-key-v1",
+)
 
 
 class CaptureFormatError(PlaybillFormatError):
@@ -231,8 +247,10 @@ DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContractV1(
     logical_source_identities=(DIRECT_SOURCE_IDENTITY,),
     coordinate_schema_pins=(
         _built_in_pin("coordinate-schema", "playbill.authenticated-request-coordinate-v1"),
+        _built_in_pin("coordinate-schema", f"playbill.{DIRECT_EXTERNAL_COORDINATE_TYPE}"),
     ),
     selector_schema_pins=(
+        _built_in_pin("selector-schema", f"playbill.{DIRECT_EXTERNAL_SELECTOR_TYPE}"),
         _built_in_pin("selector-schema", "playbill.direct-claim-source-selector-v1"),
     ),
     commitment_canonicalizer=_built_in_pin(
@@ -568,6 +586,64 @@ class DirectClaimSourceV1(_StrictCaptureModel):
         return value
 
 
+class DirectByteSpanSelectionV1(_StrictCaptureModel):
+    """An exact span over already-retained CAS bytes; no Document is required."""
+
+    tag: Literal["playbill-direct-byte-span-selection-v1"] = (
+        "playbill-direct-byte-span-selection-v1"
+    )
+    span: ContentSpan
+    media_type: str | None = None
+
+    @field_validator("media_type")
+    @classmethod
+    def _media_type(cls, value: str | None) -> str | None:
+        if value is not None and ("/" not in value or any(char.isspace() for char in value)):
+            raise ValueError("direct span media_type must use canonical type/subtype spelling")
+        return value
+
+
+class DirectExternalSelectionV1(_StrictCaptureModel):
+    """Typed author-asserted external selection; PC-C adds adapter verification."""
+
+    tag: Literal["playbill-direct-external-selection-v1"] = "playbill-direct-external-selection-v1"
+    logical_source_identity: str
+    coordinate_type: str
+    coordinate: object
+    selector_type: str
+    selector: object
+    commitment: EvidenceCommitmentV1
+
+    @model_validator(mode="after")
+    def _registered_shape(self) -> "DirectExternalSelectionV1":
+        if self.coordinate_type not in DIRECT_EXTERNAL_COORDINATE_TYPES:
+            raise ValueError("direct external selection uses an unregistered coordinate type")
+        if self.selector_type not in DIRECT_EXTERNAL_SELECTOR_TYPES:
+            raise ValueError("direct external selection uses an unregistered selector type")
+        if self.commitment.materialization != "none":
+            raise ValueError("PC-B direct external selections are attested-only metadata")
+        if self.commitment.digest_kind == "exact_bytes":
+            raise ValueError("an unmaterialized direct external selection cannot claim bytes")
+        # Reuse the source-reference validators for logical identity, canonical values,
+        # and secret/locator exclusion without accepting caller-authored bindings.
+        ExternalSourceReferenceV1(
+            source_identity=self.logical_source_identity,
+            producer_binding_digest="sha256:" + "00" * 32,
+            coordinate_type=self.coordinate_type,
+            coordinate=self.coordinate,
+            selector_type=self.selector_type,
+            selector=self.selector,
+            replayability="attested_only",
+        )
+        return self
+
+
+DirectClaimSelectionV1 = Annotated[
+    DirectByteSpanSelectionV1 | DirectExternalSelectionV1,
+    Field(discriminator="tag"),
+]
+
+
 @runtime_checkable
 class CaptureObjectStoreProtocol(Protocol):
     def store(self, content: bytes) -> CasObjectMetadata: ...
@@ -596,6 +672,43 @@ def _canonical_datetime(value: datetime) -> str:
     return value.isoformat()
 
 
+def _direct_binding_digest(
+    *,
+    actor_id: str,
+    accepted_coordinate: AcceptedCoordinate,
+) -> str:
+    return typed_digest(
+        Sha256Value,
+        "playbill-direct-producer-binding-v1",
+        {
+            "actor_id": actor_id,
+            "accepted_coordinate": accepted_coordinate.model_dump(mode="json"),
+        },
+    ).tagged
+
+
+def _store_capture_envelope(
+    *,
+    store: CaptureObjectStoreProtocol,
+    envelope: CaptureEnvelopeV1,
+    source_body_digest: str,
+    source_body_materialized: bool,
+) -> DirectCaptureBuildResult:
+    envelope_bytes = render_capture_envelope(envelope)
+    stored_envelope = store.store(envelope_bytes)
+    expected_capture_digest = capture_digest(envelope).tagged
+    if stored_envelope.digest != expected_capture_digest:
+        raise PlaybillCasError("Capture envelope CAS digest did not reproduce")
+    return DirectCaptureBuildResult(
+        contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+        contract_digest=envelope.capture_contract_digest,
+        envelope=envelope,
+        capture_digest=expected_capture_digest,
+        source_body_digest=source_body_digest,
+        source_body_materialized=source_body_materialized,
+    )
+
+
 def build_direct_claim_capture(
     *,
     store: CaptureObjectStoreProtocol,
@@ -620,14 +733,10 @@ def build_direct_claim_capture(
         raise CaptureFormatError("direct Claim source exceeds its accepted byte budget")
     source_digest = CasDigest(hashlib.sha256(source_bytes).hexdigest()).tagged
     contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
-    binding_digest = typed_digest(
-        Sha256Value,
-        "playbill-direct-producer-binding-v1",
-        {
-            "actor_id": actor_id,
-            "accepted_coordinate": accepted_coordinate.model_dump(mode="json"),
-        },
-    ).tagged
+    binding_digest = _direct_binding_digest(
+        actor_id=actor_id,
+        accepted_coordinate=accepted_coordinate,
+    )
     receipt_digest = typed_digest(
         Sha256Value,
         "playbill-direct-capture-receipt-v1",
@@ -685,18 +794,104 @@ def build_direct_claim_capture(
         producer_binding_digest=binding_digest,
         observed_at=observed_at,
     )
-    envelope_bytes = render_capture_envelope(envelope)
-    stored_envelope = store.store(envelope_bytes)
-    expected_capture_digest = capture_digest(envelope).tagged
-    if stored_envelope.digest != expected_capture_digest:
-        raise PlaybillCasError("Capture envelope CAS digest did not reproduce")
-    return DirectCaptureBuildResult(
-        contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-        contract_digest=contract_digest,
+    return _store_capture_envelope(
+        store=store,
         envelope=envelope,
-        capture_digest=expected_capture_digest,
         source_body_digest=source_digest,
         source_body_materialized=materialize_source,
+    )
+
+
+def build_direct_claim_selection_capture(
+    *,
+    store: CaptureObjectStoreProtocol,
+    actor_id: str,
+    claim_id: str,
+    rationale: str,
+    observed_at: datetime,
+    accepted_coordinate: AcceptedCoordinate,
+    selection: DirectClaimSelectionV1,
+) -> DirectCaptureBuildResult:
+    """Bind one exact span or typed external selector as self-asserted evidence."""
+
+    binding_digest = _direct_binding_digest(
+        actor_id=actor_id,
+        accepted_coordinate=accepted_coordinate,
+    )
+    contract_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+    if isinstance(selection, DirectByteSpanSelectionV1):
+        if not store.verify(selection.span.content_digest):
+            raise CaptureFormatError("selected span content is unavailable in CAS")
+        source_bytes = store.read(
+            selection.span.content_digest,
+            access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
+        )
+        if selection.span.end_byte > len(source_bytes):
+            raise CaptureFormatError("selected span exceeds its exact CAS body")
+        source_reference: CasSourceReferenceV1 | ExternalSourceReferenceV1 = CasSourceReferenceV1(
+            content_digest=selection.span.content_digest
+        )
+        commitment = EvidenceCommitmentV1(
+            digest_kind="exact_bytes",
+            digest=selection.span.content_digest,
+            byte_length=len(source_bytes),
+            materialization="cas",
+        )
+        source_digest = selection.span.content_digest
+        materialized = True
+    else:
+        source_reference = ExternalSourceReferenceV1(
+            source_identity=DIRECT_SOURCE_IDENTITY,
+            producer_binding_digest=binding_digest,
+            coordinate_type=DIRECT_EXTERNAL_COORDINATE_TYPE,
+            coordinate={
+                "logical_source_identity": selection.logical_source_identity,
+                "source_coordinate": selection.coordinate,
+                "source_coordinate_type": selection.coordinate_type,
+            },
+            selector_type=DIRECT_EXTERNAL_SELECTOR_TYPE,
+            selector={
+                "claim_id": claim_id,
+                "source_selector": selection.selector,
+                "source_selector_type": selection.selector_type,
+            },
+            replayability="attested_only",
+        )
+        commitment = selection.commitment
+        source_digest = selection.commitment.digest
+        materialized = False
+    receipt_digest = typed_digest(
+        Sha256Value,
+        "playbill-direct-selection-capture-receipt-v1",
+        {
+            "actor_id": actor_id,
+            "claim_id": claim_id,
+            "observed_at": _canonical_datetime(observed_at),
+            "rationale": rationale,
+            "selection": selection.model_dump(mode="json"),
+        },
+    ).tagged
+    envelope = CaptureEnvelopeV1(
+        capture_contract_digest=contract_digest,
+        source=source_reference,
+        commitment=commitment,
+        run_coordinate=CaptureRunCoordinateV1(
+            run_kind="provider",
+            run_id=f"direct-selection:{claim_id.casefold()}",
+            bound_generation=accepted_coordinate.generation_root,
+            executable_identity=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
+            executable_digest=contract_digest,
+        ),
+        run_receipt_digest=receipt_digest,
+        producer=ArtifactIdentity(kind="Principal", name=actor_id),
+        producer_binding_digest=binding_digest,
+        observed_at=observed_at,
+    )
+    return _store_capture_envelope(
+        store=store,
+        envelope=envelope,
+        source_body_digest=source_digest,
+        source_body_materialized=materialized,
     )
 
 
@@ -731,10 +926,29 @@ def verify_capture(
         if envelope.source.source_identity not in contract.logical_source_identities:
             raise CaptureFormatError("Capture logical source is not declared by its contract")
         if contract == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT:
-            if envelope.source.coordinate_type != "authenticated-request-v1" or (
-                envelope.source.selector_type != "direct-claim-source-v1"
-            ):
+            schemas = (
+                envelope.source.coordinate_type,
+                envelope.source.selector_type,
+            )
+            if schemas not in {
+                ("authenticated-request-v1", "direct-claim-source-v1"),
+                (DIRECT_EXTERNAL_COORDINATE_TYPE, DIRECT_EXTERNAL_SELECTOR_TYPE),
+            }:
                 raise CaptureFormatError("direct Capture source schemas are not registered")
+            if schemas == (DIRECT_EXTERNAL_COORDINATE_TYPE, DIRECT_EXTERNAL_SELECTOR_TYPE):
+                coordinate = envelope.source.coordinate
+                selector = envelope.source.selector
+                if not isinstance(coordinate, dict) or not isinstance(selector, dict):
+                    raise CaptureFormatError("direct external selection metadata is malformed")
+                if (
+                    coordinate.get("source_coordinate_type")
+                    not in (DIRECT_EXTERNAL_COORDINATE_TYPES)
+                    or selector.get("source_selector_type") not in DIRECT_EXTERNAL_SELECTOR_TYPES
+                ):
+                    raise CaptureFormatError("direct external selection schema is not registered")
+                claim_id = selector.get("claim_id")
+                if not isinstance(claim_id, str) or not claim_id.startswith("CLM-"):
+                    raise CaptureFormatError("direct external selection has no Claim identity")
     if isinstance(envelope.source, CasSourceReferenceV1):
         if envelope.source.content_digest != envelope.commitment.digest:
             raise CaptureFormatError("Capture CAS source differs from its commitment")
@@ -767,10 +981,16 @@ __all__ = [
     "CaptureSelectionBudgetV1",
     "DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT",
     "DIRECT_SELF_ASSERTED_CONTRACT_ID",
+    "DIRECT_EXTERNAL_COORDINATE_TYPES",
+    "DIRECT_EXTERNAL_SELECTOR_TYPES",
     "DirectCaptureBuildResult",
+    "DirectByteSpanSelectionV1",
+    "DirectClaimSelectionV1",
     "DirectClaimSourceV1",
+    "DirectExternalSelectionV1",
     "SourceEffectiveTimeV1",
     "build_direct_claim_capture",
+    "build_direct_claim_selection_capture",
     "capture_contract_digest",
     "capture_contract_path",
     "capture_digest",

@@ -10,6 +10,7 @@ from cruxible_core.playbill.discovery import (
     DESCRIPTOR_CLAIM_TYPE_SEEDS,
     DescriptorAuthorityContextV1,
     DiscoveryHintsV1,
+    DistinctRelationMemberV1,
     ProposedSemanticInterfaceV1,
     ReuseDispositionV1,
     SemanticReuseInterfaceV1,
@@ -94,7 +95,7 @@ def test_hints_only_broaden_server_candidates_and_cannot_author_results_or_profi
         {item.identity for item in broadened.candidates}
     )
     assert broadened.candidates[0].blocking
-    assert broadened.refusal_code == "playbill.reuse.distinction_claim_unavailable"
+    assert broadened.refusal_code == "playbill.reuse.distinction_claim_missing"
 
     payload = request().model_dump(mode="json")
     payload["result_digest"] = "sha256:" + "ff" * 32
@@ -122,7 +123,7 @@ def test_exact_collision_and_unexplained_blocking_near_match_refuse() -> None:
         coordinate=coordinate(),
         implementation_digest=IMPLEMENTATION,
     )
-    assert near.refusal_code == "playbill.reuse.distinction_claim_unavailable"
+    assert near.refusal_code == "playbill.reuse.distinction_claim_missing"
     assert near.candidates[0].blocking
 
 
@@ -135,6 +136,41 @@ def test_new_distinct_succeeds_only_when_no_blocking_candidate_exists_in_pc_a2()
     )
     assert evidence.verdict == "satisfied"
     assert evidence.candidates == ()
+
+
+def test_new_distinct_requires_the_exact_persisted_relation_for_each_blocker() -> None:
+    blocker = existing(structure=STRUCTURE)
+    relation = DistinctRelationMemberV1(
+        claim_address=SemanticAddress.claim_statement("claims/aa/CLM-" + "aa" * 16 + ".yaml"),
+        claim_artifact_digest="sha256:" + "ab" * 32,
+        subject=proposal().address,
+        object=blocker.address,
+    )
+    accepted = evaluate_vocabulary_reuse(
+        request(),
+        accepted_interfaces=(blocker,),
+        coordinate=coordinate(),
+        implementation_digest=IMPLEMENTATION,
+        distinct_relation_members=(relation,),
+        descriptor_claims_available=True,
+    )
+    assert accepted.verdict == "satisfied"
+    assert accepted.distinct_relation_members == (relation,)
+
+    wrong_target = relation.model_copy(
+        update={
+            "object": SemanticAddress.whole_artifact("claim-types/project.work_item/priority.yaml")
+        }
+    )
+    refused = evaluate_vocabulary_reuse(
+        request(),
+        accepted_interfaces=(blocker,),
+        coordinate=coordinate(),
+        implementation_digest=IMPLEMENTATION,
+        distinct_relation_members=(wrong_target,),
+        descriptor_claims_available=True,
+    )
+    assert refused.refusal_code == "playbill.reuse.distinction_claim_missing"
 
 
 def test_discovery_hints_are_bounded_untrusted_data() -> None:

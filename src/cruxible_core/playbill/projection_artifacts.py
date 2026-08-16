@@ -936,6 +936,16 @@ def parse_projection_tree(
                 f"registered artifact failed strict validation: {path}"
             ) from exc
 
+    pin_dependencies: dict[tuple[str, str], PinRow] = {}
+    for pin in pins:
+        key = (pin.source_identity, pin.target_identity)
+        previous_pin = pin_dependencies.get(key)
+        if previous_pin is not None and previous_pin.target_digest != pin.target_digest:
+            raise ProjectionFormatError(
+                "one artifact pins the same dependency identity at conflicting digests"
+            )
+        pin_dependencies[key] = pin
+
     validated_semantic = registry.validate(semantic_facts, classification="semantic")
     validated_presentation = registry.validate(
         presentation_facts,
@@ -945,7 +955,7 @@ def parse_projection_tree(
         envelopes=tuple(sorted(envelopes, key=lambda item: item.identity.encode("utf-8"))),
         pins=tuple(
             sorted(
-                pins,
+                pin_dependencies.values(),
                 key=lambda item: (
                     item.source_identity.encode("utf-8"),
                     item.target_identity.encode("utf-8"),

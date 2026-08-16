@@ -49,6 +49,10 @@ class SubjectNotFoundError(PlaybillError):
     """A requested accepted Subject identity is absent at the coordinate."""
 
 
+class ClaimNotFoundError(PlaybillError):
+    """A requested accepted Claim identity is absent at the coordinate."""
+
+
 class ProposalAdmissionError(PlaybillError):
     """An unauthenticated, mis-scoped, oversized, or malformed proposal was refused."""
 
@@ -92,6 +96,7 @@ class ProjectionIntegrityError(ProjectionError):
 __all__ = [
     "CanonicalEncodingError",
     "ApprovalIntegrityError",
+    "ClaimNotFoundError",
     "DocumentFormatError",
     "DocumentNotFoundError",
     "PlaybillBootstrapError",

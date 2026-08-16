@@ -235,8 +235,8 @@ def test_candidate_tree_reuse_lookup_blocks_two_simultaneous_adjacent_types(
 
     assert evaluation.candidate is None
     assert [item.code for item in evaluation.diagnostics] == [
-        "playbill.reuse.distinction_claim_unavailable",
-        "playbill.reuse.distinction_claim_unavailable",
+        "playbill.reuse.distinction_claim_missing",
+        "playbill.reuse.distinction_claim_missing",
     ]
 
 

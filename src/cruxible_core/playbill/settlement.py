@@ -55,6 +55,11 @@ from cruxible_core.playbill.governance import (
     governance_identifier,
 )
 from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS, AcceptanceLawRegistry
+from cruxible_core.playbill.policies import (
+    ClaimAdmissionCandidateResultV1,
+    VerifiedPolicySignerV1,
+    evaluate_claim_admission_settlement,
+)
 from cruxible_core.playbill.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
@@ -433,6 +438,48 @@ class VerifiedGenerationBundle:
         )
 
 
+def _verify_claim_admission_constraints(
+    candidate: CandidateRecord | CandidateRecordV2,
+    approvals: tuple[VerifiedApproval, ...],
+) -> None:
+    """Recheck candidate-emitted Claim signer law against verified approvals."""
+
+    if not isinstance(candidate, CandidateRecordV2):
+        return
+    policy_signers = tuple(
+        VerifiedPolicySignerV1(
+            signer_id=approval.signer_id,
+            roles=tuple(str(role) for role in approval.signer_roles),
+        )
+        for approval in approvals
+    )
+    for evidence in candidate.law_evidence:
+        raw_evaluations = evidence.result.get("claim_admission", [])
+        if not isinstance(raw_evaluations, list):
+            raise SettlementIntegrityError("Claim admission law evidence is malformed")
+        for raw in raw_evaluations:
+            if not isinstance(raw, dict) or "candidate_result" not in raw:
+                raise SettlementIntegrityError("Claim admission law evidence is malformed")
+            try:
+                candidate_result = ClaimAdmissionCandidateResultV1.model_validate(
+                    raw["candidate_result"]
+                )
+            except ValidationError as exc:
+                raise SettlementIntegrityError(
+                    "Claim admission candidate result is malformed"
+                ) from exc
+            result = evaluate_claim_admission_settlement(
+                candidate_result,
+                policy_signers,
+                lineage_creation_actor_id=candidate_result.lineage_creation_actor_id,
+            )
+            if result.verdict == "refused":
+                codes = ",".join(result.refusal_codes)
+                raise SettlementIntegrityError(
+                    f"Claim admission signer constraints are unsatisfied: {codes}"
+                )
+
+
 def prepare_generation(
     ledger: GitLedger,
     *,
@@ -485,6 +532,7 @@ def prepare_generation(
         principals=principals,
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
+    _verify_claim_admission_constraints(candidate, verified_approvals)
     if principal_lifecycle and actor_binding.actor_id not in {
         approval.signer_id for approval in verified_approvals
     }:

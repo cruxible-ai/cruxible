@@ -235,19 +235,22 @@ def test_resolution_preserves_conflict_and_requires_exact_authority_proof() -> N
         selector="only_contender",
     )
     first = ResolutionContenderV1(
-        claim_identity="claim-a",
+        claim_identity="CLM-" + "0a" * 16,
         object_value="open",
         verdict="supported",
     )
     second = ResolutionContenderV1(
-        claim_identity="claim-b",
+        claim_identity="CLM-" + "0b" * 16,
         object_value="closed",
         verdict="supported",
     )
     assert resolve_claim_contenders(policy, (first,)).status == "resolved"
     conflict = resolve_claim_contenders(policy, (first, second))
     assert conflict.status == "unresolved"
-    assert set(conflict.contender_claim_identities) == {"claim-a", "claim-b"}
+    assert set(conflict.contender_claim_identities) == {
+        "CLM-" + "0a" * 16,
+        "CLM-" + "0b" * 16,
+    }
 
 
 def test_unknown_policy_requirement_tag_refuses_fail_closed() -> None:
