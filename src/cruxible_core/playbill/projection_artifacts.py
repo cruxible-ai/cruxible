@@ -76,7 +76,10 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
         ArtifactPathKind(
             "capture-contract",
             re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-            implemented=False,
+        ),
+        ArtifactPathKind(
+            "claim",
+            re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$"),
         ),
         ArtifactPathKind(
             "line",
@@ -100,11 +103,20 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
 
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
-        ArtifactFormatTag(tag)
+        ArtifactFormatTag(
+            tag,
+            implemented=tag
+            in {
+                "playbill-capture-contract-v1",
+                "playbill-capture-envelope-v1",
+                "playbill-claim-v1",
+            },
+        )
         for tag in (
             "playbill-accepted-state-run-input-v1",
             "playbill-capture-contract-v1",
             "playbill-capture-envelope-v1",
+            "playbill-claim-v1",
             "playbill-exhaust-run-input-v1",
             "playbill-landed-capture-run-input-v1",
             "playbill-line-slot-binding-v1",
@@ -117,6 +129,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
 RegisteredPathKind = Literal[
     "capture-contract",
     "changeset",
+    "claim",
     "claim-type",
     "document",
     "fixture",
@@ -323,6 +336,18 @@ def parse_projection_tree(
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
 
+    from cruxible_core.playbill.captures import (
+        CaptureFormatError,
+        capture_contract_digest,
+        parse_capture_contract,
+    )
+    from cruxible_core.playbill.claims import (
+        ClaimFormatError,
+        claim_artifact_digest,
+        claim_statement_address,
+        claim_statement_digest,
+        parse_claim,
+    )
     from cruxible_core.playbill.settlement import (
         parse_change_set_record,
     )
@@ -687,6 +712,176 @@ def parse_projection_tree(
                             predecessor_digest=claim_type.lifecycle.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
+                        )
+                    )
+                continue
+            if kind == "capture-contract":
+                try:
+                    capture_contract = parse_capture_contract(content, path=path)
+                except CaptureFormatError as exc:
+                    raise ProjectionFormatError(
+                        f"registered CaptureContract failed strict validation: {path}"
+                    ) from exc
+                identity = capture_contract.identity.qualified
+                previous = identities.get(identity)
+                if previous is not None:
+                    raise ProjectionFormatError(
+                        f"duplicate semantic identity {identity!r}: {previous} and {path}"
+                    )
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = capture_contract_digest(capture_contract).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="capture-contract",
+                        format_tag=capture_contract.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=capture_contract.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                if capture_contract.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in capture_contract.pins
+                )
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.capture_contract.contract",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="evidence_contract",
+                            value={
+                                "address": SemanticAddress.whole_artifact(path).model_dump(
+                                    mode="json"
+                                ),
+                                "artifact_digest": {"$digest": artifact_digest},
+                                "contract": capture_contract.model_dump(mode="json"),
+                                "input_digest": {"$digest": input_digest},
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.capture_contract.references",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="declared",
+                            value={
+                                "pins": [
+                                    pin.model_dump(mode="json") for pin in capture_contract.pins
+                                ]
+                            },
+                        ),
+                    )
+                )
+                continue
+            if kind == "claim":
+                try:
+                    claim = parse_claim(content, path=path)
+                except ClaimFormatError as exc:
+                    raise ProjectionFormatError(
+                        f"registered Claim failed strict validation: {path}"
+                    ) from exc
+                identity = claim.identity.qualified
+                previous = identities.get(identity)
+                if previous is not None:
+                    raise ProjectionFormatError(
+                        f"duplicate semantic identity {identity!r}: {previous} and {path}"
+                    )
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = claim_artifact_digest(claim).tagged
+                statement_digest = claim_statement_digest(claim.statement).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="claim",
+                        format_tag=claim.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=claim.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                if claim.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in claim.pins
+                )
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.claim.identity",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="lineage",
+                            value={
+                                "artifact_digest": {"$digest": artifact_digest},
+                                "identity": claim.identity.model_dump(mode="json"),
+                                "input_digest": {"$digest": input_digest},
+                                "statement_address": claim_statement_address(path).model_dump(
+                                    mode="json"
+                                ),
+                                "statement_digest": {"$digest": statement_digest},
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.claim.statement",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="proposition",
+                            value=claim.statement.model_dump(mode="json"),
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.claim.backing",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="evidence",
+                            value=claim.backing.model_dump(mode="json"),
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.claim.lifecycle",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="accepted_revision",
+                            value={
+                                "authority": claim.authority.model_dump(mode="json"),
+                                "lifecycle": claim.lifecycle.model_dump(mode="json"),
+                                "pins": [pin.model_dump(mode="json") for pin in claim.pins],
+                            },
+                        ),
+                    )
+                )
+                for index, source_mapping in enumerate(claim.backing.source_mappings):
+                    semantic_facts.append(
+                        ProjectionFact(
+                            schema_id="playbill.claim.source_mapping",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key=f"source_{index:04d}",
+                            value=source_mapping.model_dump(mode="json"),
                         )
                     )
                 continue

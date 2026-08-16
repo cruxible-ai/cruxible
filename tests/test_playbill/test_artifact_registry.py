@@ -1,4 +1,4 @@
-"""PC-A2 artifact-path activation and future wire-tag reservations."""
+"""PC-B artifact-path activation and future wire-tag reservations."""
 
 from __future__ import annotations
 
@@ -13,21 +13,23 @@ from cruxible_core.playbill.projection_artifacts import (
 )
 
 
-def test_claim_type_path_is_activated_while_capture_and_line_paths_refuse() -> None:
+def test_claim_capture_and_contract_paths_are_activated_while_lines_refuse() -> None:
     assert registered_path_kind("claim-types/project.work_item/status.yaml") == "claim-type"
-    assert {"capture-contract", "line"}.issubset(PLAYBILL_ARTIFACT_KINDS.reserved_kinds())
-    with pytest.raises(ProjectionFormatError, match="reserved but unimplemented"):
-        registered_path_kind("capture-contracts/erp-release.yaml")
+    assert registered_path_kind("capture-contracts/erp-release.yaml") == "capture-contract"
+    assert registered_path_kind("claims/12/CLM-12" + "ab" * 15 + ".yaml") == "claim"
+    assert PLAYBILL_ARTIFACT_KINDS.reserved_kinds() == ("line",)
     with pytest.raises(ProjectionFormatError, match="reserved but unimplemented"):
         registered_path_kind("lines/product-lot-release.yaml")
 
 
-def test_future_pc_a2_format_tags_are_exact_reservations_without_implementation() -> None:
-    assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == ()
-    assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == (
-        "playbill-accepted-state-run-input-v1",
+def test_pc_b_activates_claim_capture_tags_and_keeps_future_tags_reserved() -> None:
+    assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == (
         "playbill-capture-contract-v1",
         "playbill-capture-envelope-v1",
+        "playbill-claim-v1",
+    )
+    assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == (
+        "playbill-accepted-state-run-input-v1",
         "playbill-exhaust-run-input-v1",
         "playbill-landed-capture-run-input-v1",
         "playbill-line-slot-binding-v1",

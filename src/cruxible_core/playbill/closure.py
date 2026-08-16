@@ -20,10 +20,20 @@ from cruxible_core.playbill.canonical import (
     normalize_manifest_paths,
     typed_digest,
 )
+from cruxible_core.playbill.captures import (
+    CaptureFormatError,
+    capture_contract_digest,
+    parse_capture_contract,
+)
 from cruxible_core.playbill.claim_types import (
     ClaimTypeFormatError,
     claim_type_digest,
     parse_claim_type,
+)
+from cruxible_core.playbill.claims import (
+    ClaimFormatError,
+    claim_artifact_digest,
+    parse_claim,
 )
 from cruxible_core.playbill.documents import (
     DocumentArtifactAdapter,
@@ -44,7 +54,7 @@ class _StrictClosureModel(BaseModel):
 
 class ArtifactDependencyStateV1(_StrictClosureModel):
     path: str
-    artifact_kind: Literal["document", "subject", "claim-type"]
+    artifact_kind: Literal["document", "subject", "claim-type", "capture-contract", "claim"]
     artifact_tag: str
     identity: ArtifactIdentity
     artifact_digest: str
@@ -107,7 +117,35 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
                 pins=claim_type.pins,
                 lifecycle=claim_type.lifecycle,
             )
-    except (DocumentFormatError, SubjectFormatError, ClaimTypeFormatError):
+        if path.startswith("capture-contracts/"):
+            contract = parse_capture_contract(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="capture-contract",
+                artifact_tag=contract.artifact_format,
+                identity=contract.identity,
+                artifact_digest=capture_contract_digest(contract).tagged,
+                pins=contract.pins,
+                lifecycle=contract.lifecycle,
+            )
+        if path.startswith("claims/"):
+            claim = parse_claim(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="claim",
+                artifact_tag=claim.artifact_format,
+                identity=claim.identity,
+                artifact_digest=claim_artifact_digest(claim).tagged,
+                pins=claim.pins,
+                lifecycle=claim.lifecycle,
+            )
+    except (
+        CaptureFormatError,
+        ClaimFormatError,
+        DocumentFormatError,
+        SubjectFormatError,
+        ClaimTypeFormatError,
+    ):
         raise
     return None
 

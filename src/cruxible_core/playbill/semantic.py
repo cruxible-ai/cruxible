@@ -21,8 +21,15 @@ def _validate_whole_artifact(value: str) -> str:
     return value
 
 
+def _validate_claim_statement(value: str) -> str:
+    if value != "":
+        raise ValueError("claim-statement-v1 selector value must be empty")
+    return value
+
+
 _SELECTOR_SCHEMES: dict[str, Callable[[str], str]] = {
     "artifact-v1": _validate_whole_artifact,
+    "claim-statement-v1": _validate_claim_statement,
 }
 
 
@@ -73,6 +80,13 @@ class SemanticAddress(_StrictSemanticModel):
         return cls(
             artifact_path=artifact_path,
             selector=SemanticSelector(scheme="artifact-v1", value=""),
+        )
+
+    @classmethod
+    def claim_statement(cls, artifact_path: str) -> "SemanticAddress":
+        return cls(
+            artifact_path=artifact_path,
+            selector=SemanticSelector(scheme="claim-statement-v1", value=""),
         )
 
 

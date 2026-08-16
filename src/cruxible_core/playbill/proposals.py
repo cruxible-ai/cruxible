@@ -58,6 +58,14 @@ from cruxible_core.playbill.canonical import (
     semantic_projection,
     typed_digest,
 )
+from cruxible_core.playbill.captures import (
+    AcceptedCaptureContract,
+    CaptureFormatError,
+    CaptureObjectStoreProtocol,
+    capture_contract_digest,
+    evaluate_capture_contract_law,
+    parse_capture_contract,
+)
 from cruxible_core.playbill.claim_types import (
     AcceptedClaimType,
     ClaimType,
@@ -65,6 +73,14 @@ from cruxible_core.playbill.claim_types import (
     claim_type_digest,
     evaluate_claim_type_law,
     parse_claim_type,
+)
+from cruxible_core.playbill.claims import (
+    AcceptedClaim,
+    ClaimFormatError,
+    claim_artifact_digest,
+    claim_statement_digest,
+    evaluate_claim_law,
+    parse_claim,
 )
 from cruxible_core.playbill.closure import (
     dependency_artifacts,
@@ -125,6 +141,8 @@ _CLAIM_TYPE_PATH_RE = re.compile(
     r"^claim-types/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
     r"[a-z][a-z0-9_]{0,63}\.yaml$"
 )
+_CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.yaml$")
+_CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$")
 _LFS_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
 
@@ -592,6 +610,8 @@ def validate_proposal_tree(
             or _PRINCIPAL_PATH_RE.fullmatch(path)
             or _SUBJECT_PATH_RE.fullmatch(path)
             or _CLAIM_TYPE_PATH_RE.fullmatch(path)
+            or _CAPTURE_CONTRACT_PATH_RE.fullmatch(path)
+            or _CLAIM_PATH_RE.fullmatch(path)
         )
         if not authorable and base.get(path) != content:
             raise ProposalAdmissionError(
@@ -611,6 +631,8 @@ def validate_proposal_tree(
             or _PRINCIPAL_PATH_RE.fullmatch(path)
             or _SUBJECT_PATH_RE.fullmatch(path)
             or _CLAIM_TYPE_PATH_RE.fullmatch(path)
+            or _CAPTURE_CONTRACT_PATH_RE.fullmatch(path)
+            or _CLAIM_PATH_RE.fullmatch(path)
         )
         if not authorable and path not in result:
             raise ProposalAdmissionError(
@@ -908,10 +930,22 @@ def _evaluate_v2_proposal_tree(
         try:
             if any(
                 pattern.fullmatch(path)
-                for pattern in (_DOCUMENT_PATH_RE, _SUBJECT_PATH_RE, _CLAIM_TYPE_PATH_RE)
+                for pattern in (
+                    _DOCUMENT_PATH_RE,
+                    _SUBJECT_PATH_RE,
+                    _CLAIM_TYPE_PATH_RE,
+                    _CAPTURE_CONTRACT_PATH_RE,
+                    _CLAIM_PATH_RE,
+                )
             ):
                 dependency_artifacts({path: proposed_bytes})
-        except (DocumentFormatError, SubjectFormatError, ClaimTypeFormatError) as exc:
+        except (
+            CaptureFormatError,
+            ClaimFormatError,
+            DocumentFormatError,
+            SubjectFormatError,
+            ClaimTypeFormatError,
+        ) as exc:
             return CandidateEvaluation(
                 candidate_tree,
                 None,
@@ -967,6 +1001,34 @@ def _evaluate_v2_proposal_tree(
         item.identity.qualified: (item.identity, item.artifact_digest)
         for item in candidate_states.values()
     }
+    resolved_subjects: dict[str, AcceptedSubject] = {}
+    resolved_claim_types: dict[str, AcceptedClaimType] = {}
+    resolved_capture_contracts: dict[str, AcceptedCaptureContract] = {}
+    for state in candidate_states.values():
+        content = candidate_tree[state.path]
+        if state.artifact_kind == "subject":
+            shell = parse_subject(content, path=state.path)
+            resolved_subjects[state.path] = AcceptedSubject(
+                path=state.path,
+                shell=shell,
+                artifact_digest=state.artifact_digest,
+            )
+        elif state.artifact_kind == "claim-type":
+            claim_type_artifact = parse_claim_type(content, path=state.path)
+            resolved_claim_types[claim_type_artifact.identity.qualified] = AcceptedClaimType(
+                path=state.path,
+                claim_type=claim_type_artifact,
+                artifact_digest=state.artifact_digest,
+            )
+        elif state.artifact_kind == "capture-contract":
+            capture_contract = parse_capture_contract(content, path=state.path)
+            resolved_capture_contracts[capture_contract.identity.qualified] = (
+                AcceptedCaptureContract(
+                    path=state.path,
+                    contract=capture_contract,
+                    artifact_digest=state.artifact_digest,
+                )
+            )
     member_inputs: list[
         tuple[
             str,
@@ -1004,6 +1066,127 @@ def _evaluate_v2_proposal_tree(
                     "playbill.proposal.unregistered_semantic_kind",
                     "No PC-A2 acceptance law is registered for this changed path.",
                     path,
+                )
+            )
+            continue
+        if _CAPTURE_CONTRACT_PATH_RE.fullmatch(path):
+            capture_contract = parse_capture_contract(proposed_bytes, path=path)
+            predecessor_contract: AcceptedCaptureContract | None = None
+            if parent_state is not None:
+                previous_contract = parse_capture_contract(current_tree[path], path=path)
+                predecessor_contract = AcceptedCaptureContract(
+                    path=path,
+                    contract=previous_contract,
+                    artifact_digest=capture_contract_digest(previous_contract).tagged,
+                )
+            actor_roles: tuple[str, ...] = ()
+            if actor_id is not None:
+                try:
+                    actor_roles = tuple(
+                        str(role)
+                        for role in principals.require_active(actor_id).authority_roles
+                        if role != "daemon"
+                    )
+                except Exception:
+                    actor_roles = ()
+            capture_contract_law = evaluate_capture_contract_law(
+                capture_contract,
+                path=path,
+                actor_roles=actor_roles,
+                predecessor=predecessor_contract,
+            )
+            if capture_contract_law.verdict == "refused":
+                diagnostics.extend(capture_contract_law.diagnostics)
+                continue
+            if (
+                capture_contract_law.artifact_digest is None
+                or capture_contract_law.required_tier is None
+            ):
+                raise ProposalIntegrityError("accepted CaptureContract law result is incomplete")
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+                artifact_tag=capture_contract.artifact_format
+            )
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    None if predecessor_contract is None else predecessor_contract.artifact_digest,
+                    capture_contract_law.artifact_digest,
+                    capture_contract_law.required_tier,
+                    capture_contract_law.approval_scope,
+                    "snapshot",
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": capture_contract_law.artifact_digest,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    capture_contract.lifecycle.state == "retired",
+                )
+            )
+            continue
+        if _CLAIM_PATH_RE.fullmatch(path):
+            claim = parse_claim(proposed_bytes, path=path)
+            predecessor_claim: AcceptedClaim | None = None
+            if parent_state is not None:
+                previous_claim = parse_claim(current_tree[path], path=path)
+                predecessor_claim = AcceptedClaim(
+                    path=path,
+                    claim=previous_claim,
+                    statement_digest=claim_statement_digest(previous_claim.statement).tagged,
+                    artifact_digest=claim_artifact_digest(previous_claim).tagged,
+                )
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag=claim.artifact_format)
+            if not isinstance(bodies, CaptureObjectStoreProtocol):
+                diagnostics.append(
+                    _diagnostic(
+                        "playbill.claim.capture_store_unavailable",
+                        "Claim evaluation requires the managed evidence CAS.",
+                        path,
+                    )
+                )
+                continue
+            claim_law = evaluate_claim_law(
+                claim,
+                path=path,
+                principals=principals,
+                actor_id=actor_id,
+                predecessor=predecessor_claim,
+                subjects=resolved_subjects,
+                claim_types=resolved_claim_types,
+                capture_contracts=resolved_capture_contracts,
+                capture_store=bodies,
+                law_digest=installed.coordinate.digest,
+            )
+            if claim_law.verdict == "refused":
+                diagnostics.extend(claim_law.diagnostics)
+                continue
+            if claim_law.artifact_digest is None or claim_law.required_tier is None:
+                raise ProposalIntegrityError("accepted Claim law result is incomplete")
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    None if predecessor_claim is None else predecessor_claim.artifact_digest,
+                    claim_law.artifact_digest,
+                    claim_law.required_tier,
+                    claim_law.approval_scope,
+                    "snapshot",
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": claim_law.artifact_digest,
+                        "claim_evidence": (
+                            None
+                            if claim_law.evidence is None
+                            else claim_law.evidence.model_dump(mode="json")
+                        ),
+                        "statement_digest": claim_law.statement_digest,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    claim.lifecycle.state == "retired",
                 )
             )
             continue
@@ -1352,7 +1535,15 @@ def evaluate_proposal_tree(
     if rebased:
         _original_diff, original_scope = semantic_diff(base_tree, proposed_tree)
         v2_rebase = len(original_scope) > 1 or any(
-            _CLAIM_TYPE_PATH_RE.fullmatch(path) for path in original_scope
+            any(
+                pattern.fullmatch(path)
+                for pattern in (
+                    _CLAIM_TYPE_PATH_RE,
+                    _CAPTURE_CONTRACT_PATH_RE,
+                    _CLAIM_PATH_RE,
+                )
+            )
+            for path in original_scope
         )
         if v2_rebase:
             rebased_result = deterministic_rebase_v2(
@@ -1389,7 +1580,13 @@ def evaluate_proposal_tree(
                 return CandidateEvaluation(candidate_tree, None, diagnostics, True)
 
     diff_digest, scope = semantic_diff(current_tree, candidate_tree)
-    if len(scope) > 1 or any(_CLAIM_TYPE_PATH_RE.fullmatch(path) for path in scope):
+    if len(scope) > 1 or any(
+        any(
+            pattern.fullmatch(path)
+            for pattern in (_CLAIM_TYPE_PATH_RE, _CAPTURE_CONTRACT_PATH_RE, _CLAIM_PATH_RE)
+        )
+        for path in scope
+    ):
         return _evaluate_v2_proposal_tree(
             current_tree=current_tree,
             candidate_tree=candidate_tree,

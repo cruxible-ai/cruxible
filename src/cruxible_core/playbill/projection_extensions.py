@@ -435,6 +435,32 @@ def playbill_claim_type_extension_registry() -> ProjectionExtensionRegistry:
     )
 
 
+def playbill_claim_extension_registry() -> ProjectionExtensionRegistry:
+    """Return PC-B's additive CaptureContract and Claim projection schemas."""
+
+    prior = playbill_claim_type_extension_registry()
+    claim = tuple(
+        ProjectionFactDeclaration(
+            schema_id=schema_id,
+            schema_version=1,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        )
+        for schema_id in (
+            "playbill.capture_contract.contract",
+            "playbill.capture_contract.references",
+            "playbill.claim.backing",
+            "playbill.claim.identity",
+            "playbill.claim.lifecycle",
+            "playbill.claim.source_mapping",
+            "playbill.claim.statement",
+        )
+    )
+    return ProjectionExtensionRegistry(
+        (*prior.declarations("semantic"), *claim, *prior.declarations("presentation"))
+    )
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -442,6 +468,7 @@ __all__ = [
     "ProjectionFactDeclaration",
     "fixture_extension_registry",
     "normalize_projection_value",
+    "playbill_claim_extension_registry",
     "playbill_claim_type_extension_registry",
     "playbill_extension_registry",
     "playbill_governance_extension_registry",
