@@ -63,9 +63,10 @@ UOW_EXEMPT_STORES: dict[Path, str] = {}
 
 def _store_modules() -> list[Path]:
     modules = sorted(SRC_ROOT.glob("*/store.py"))
-    # Non-vacuity floor: discovery finding fewer modules than the known set
-    # means the glob root is wrong, not that stores disappeared.
-    assert len(modules) >= 6, f"store discovery found only {len(modules)} modules under {SRC_ROOT}"
+    # Non-vacuity floor: PC-C deliberately retired the legacy attestation and
+    # source-artifact stores, leaving four registered stores. Discovering fewer
+    # than that known set means the glob root or store inventory drifted.
+    assert len(modules) >= 4, f"store discovery found only {len(modules)} modules under {SRC_ROOT}"
     return modules
 
 
