@@ -601,9 +601,7 @@ def parse_projection_tree(
                 ),
             )
         ),
-        retired_identities=tuple(
-            sorted(retired_identities, key=lambda item: item.encode("utf-8"))
-        ),
+        retired_identities=tuple(sorted(retired_identities, key=lambda item: item.encode("utf-8"))),
         semantic_facts=validated_semantic,
         presentation_facts=validated_presentation,
     )
