@@ -10,6 +10,13 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from cruxible_core.playbill.artifacts import (
+    ArtifactAuthority,
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactPin,
+    parse_artifact_identity,
+)
 from cruxible_core.playbill.canonical import (
     ArtifactDigest,
     CasDigest,
@@ -207,6 +214,48 @@ class DocumentShell(_StrictDocumentModel):
     @property
     def document_id(self) -> str:
         return self.identity.partition(":")[2]
+
+
+class DocumentArtifactAdapter:
+    """Expose a frozen Document v1 through the shared artifact protocol.
+
+    This is intentionally an adapter rather than a base class: none of these
+    properties participate in the already-frozen Document wire or digest.
+    """
+
+    def __init__(self, shell: DocumentShell) -> None:
+        self.shell = shell
+
+    @property
+    def artifact_format(self) -> str:
+        return self.shell.tag
+
+    @property
+    def identity(self) -> ArtifactIdentity:
+        return parse_artifact_identity(self.shell.identity)
+
+    @property
+    def authority(self) -> ArtifactAuthority:
+        roles = tuple(str(role) for role in self.shell.authority.approval_roles)
+        return ArtifactAuthority(propose_roles=roles, approve_roles=roles)
+
+    @property
+    def pins(self) -> tuple[ArtifactPin, ...]:
+        return tuple(
+            ArtifactPin(
+                role=pin.role,
+                target=parse_artifact_identity(pin.target_identity),
+                artifact_digest=pin.target_digest,
+            )
+            for pin in self.shell.pins
+        )
+
+    @property
+    def lifecycle(self) -> ArtifactLifecycle:
+        return ArtifactLifecycle(
+            state="live",
+            predecessor_digest=self.shell.predecessor_digest,
+        )
 
 
 def document_path(document_id: str) -> str:
@@ -428,6 +477,7 @@ __all__ = [
     "DocumentActivationPolicy",
     "DocumentApprovalRole",
     "DocumentAuthority",
+    "DocumentArtifactAdapter",
     "DocumentLawResult",
     "DocumentLifecycle",
     "DocumentLink",
