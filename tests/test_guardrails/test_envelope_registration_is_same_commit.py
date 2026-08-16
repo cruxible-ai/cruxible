@@ -62,7 +62,13 @@ def test_the_frozen_v1_digest_function_body_has_not_changed() -> None:
     assert isinstance(function, ast.FunctionDef)
     # Docstrings are prose about the freeze, not part of it.
     body = [node for node in function.body if not _is_docstring(node)]
-    normalized = "\n".join(ast.dump(node) for node in body)
+    # Python 3.13 stopped rendering empty AST fields by default. Preserve the
+    # 3.11/3.12 representation used for the frozen hash so this guard checks
+    # the function body rather than the interpreter running the test.
+    dump_options = (
+        {"show_empty": True} if "show_empty" in inspect.signature(ast.dump).parameters else {}
+    )
+    normalized = "\n".join(ast.dump(node, **dump_options) for node in body)
     actual = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     assert actual == FROZEN_V1_DIGEST_SOURCE_SHA256, (
         "the format-v1 digest function changed. Every stored definition_digest "
