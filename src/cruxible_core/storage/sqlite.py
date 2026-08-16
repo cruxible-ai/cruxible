@@ -12,30 +12,23 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
 
-from cruxible_core.attestation.store import AttestationStore
-from cruxible_core.errors import MutationError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import dump_legacy_identity_map
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import StateSnapshot
-from cruxible_core.playbill.actor_context import dump_actor_context, load_actor_context
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.reading_store import ProcedureReadingStore
 from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.resolution_contracts.store import ResolutionContractStore
-from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
-from cruxible_core.source_artifacts.types import (
-    SourceArtifactChunk,
-    SourceArtifactRecord,
-)
 from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.storage.protocols import (
     GraphRepositoryProtocol,
     SnapshotRepositoryProtocol,
     UnitOfWorkProtocol,
 )
+from cruxible_core.storage.resolution_evidence import LegacyResolutionEvidenceReader
 from cruxible_core.temporal import format_datetime, utc_now
 
 StorageIntegrityError = sqlite3.IntegrityError
@@ -124,78 +117,6 @@ CREATE TABLE IF NOT EXISTS snapshot_artifacts (
 );
 """
 
-# Source artifacts are insert-only revisions of a logical id. The partial
-# unique index is what makes "one current manifest per logical id" a database
-# guarantee rather than a service-layer convention: two concurrent
-# registrations cannot both leave a non-superseded row behind, so the duplicate
-# check and the insert cannot drift apart across connections.
-_SOURCE_ARTIFACT_SCHEMA = """\
-CREATE TABLE IF NOT EXISTS source_artifacts (
-    artifact_revision_id TEXT PRIMARY KEY,
-    source_artifact_id TEXT NOT NULL,
-    revision INTEGER NOT NULL DEFAULT 1,
-    source_kind TEXT NOT NULL,
-    source_retention TEXT NOT NULL,
-    original_uri TEXT,
-    label TEXT,
-    parser_version TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    byte_count INTEGER NOT NULL,
-    local_path TEXT,
-    archived INTEGER NOT NULL DEFAULT 0,
-    archive_content_hash TEXT,
-    created_at TEXT NOT NULL,
-    registered_actor_context TEXT,
-    superseded_by TEXT,
-    superseded_at TEXT,
-    drift_observed_hash TEXT,
-    drift_observed_at TEXT,
-    -- STICKY: set once, on the first drift ever observed for this revision, and
-    -- never cleared. The pair above is CURRENT state and is legitimately
-    -- cleared when the file matches the manifest again; without this pair,
-    -- restoring the original bytes also erased every trace that the evidence
-    -- base had been tampered with in between.
-    first_drift_observed_hash TEXT,
-    first_drift_observed_at TEXT,
-    UNIQUE (source_artifact_id, revision)
-);
-CREATE INDEX IF NOT EXISTS idx_source_artifacts_kind
-    ON source_artifacts(source_kind);
-CREATE INDEX IF NOT EXISTS idx_source_artifacts_content_hash
-    ON source_artifacts(content_hash);
-CREATE INDEX IF NOT EXISTS idx_source_artifacts_logical_id
-    ON source_artifacts(source_artifact_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_source_artifacts_current_revision
-    ON source_artifacts(source_artifact_id) WHERE superseded_by IS NULL;
-
-CREATE TABLE IF NOT EXISTS source_artifact_chunks (
-    artifact_revision_id TEXT NOT NULL,
-    chunk_id TEXT NOT NULL,
-    heading_path_json TEXT NOT NULL,
-    block_selector TEXT NOT NULL,
-    block_type TEXT NOT NULL,
-    content_hash TEXT NOT NULL,
-    line_start INTEGER NOT NULL,
-    line_end INTEGER NOT NULL,
-    preview TEXT,
-    label TEXT,
-    PRIMARY KEY (artifact_revision_id, chunk_id),
-    FOREIGN KEY (artifact_revision_id)
-        REFERENCES source_artifacts(artifact_revision_id)
-        ON DELETE CASCADE
-);
-CREATE INDEX IF NOT EXISTS idx_source_artifact_chunks_locator
-    ON source_artifact_chunks(artifact_revision_id, block_selector);
-
-CREATE TABLE IF NOT EXISTS source_artifact_archives (
-    content_hash TEXT PRIMARY KEY,
-    media_type TEXT NOT NULL,
-    content BLOB NOT NULL,
-    byte_count INTEGER NOT NULL,
-    created_at TEXT NOT NULL
-);
-"""
-
 _UNIFIED_STATE_MIGRATION = "0001_unified_sqlite_state"
 SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
 READ_REVISION_MIGRATION = "0003_read_revision"
@@ -263,26 +184,12 @@ Adding a table here is a real claim: that writing it cannot change what any read
 of the instance's state returns. Verify that against the READ consumers, not
 just the write path, before extending the set.
 
-DO NOT add the attestation or resolution-contract tables. It is tempting --
-attestations and dispositions cannot touch a claim's trust, review, or lifecycle
-status, so they look like a pure audit lane. They are not, because they change
-what ordinary reads RETURN:
-
-* corroboration summaries are computed from ``attestations`` and attached to
-  edge payloads on ordinary reads (``attach_corroboration_summaries``, called
-  from the edge-list, neighborhood, and single-relationship read paths), so
-  recording a contradiction changes the content of a plain edge read;
-* the attestation and contract queues derive their listings from these tables
-  and stamp ``read_revision`` on the envelope;
-* continuation tokens validate on ``read_revision`` ALONE
-  (``query/continuation.validate_continuation_token``), so an exemption would
-  let page 1 be read at revision N, a contradiction be recorded, and page 2's
-  token still validate -- a paginated read spanning two different states with
-  nothing to detect it;
-* continuation freshness keys off the same counter and would go stale.
-
-Attesting advancing the revision is CORRECT and remains pinned by the donor
-storage tests until this backend retires.
+DO NOT add resolution-contract tables. Their state participates in ordinary
+reads and queues, so changing it must advance ``read_revision``. Continuation
+tokens validate on that counter; exempting these writes could otherwise let a
+paginated read span two states without detecting the change. Historical
+relationship-attestation tables are read only through the PC-C compatibility
+reader and have no live mutation path.
 
 ``procedure_runs`` was here and is NOT any more, for the same reason. It was a
 defensible classification only while the run ledger was write-only history read
@@ -675,418 +582,11 @@ class SQLiteSnapshotRepository:
         return int(value) if isinstance(value, int) else 0
 
 
-class SQLiteSourceArtifactStore(SourceArtifactStoreProtocol):
-    """Stores source artifact manifests, parsed chunks, and optional source copies."""
-
-    def __init__(
-        self,
-        db_path: str | Path = ":memory:",
-        *,
-        connection: sqlite3.Connection | None = None,
-        initialize_schema: bool = True,
-    ) -> None:
-        self._db_path = str(db_path)
-        self._conn = connection if connection is not None else sqlite3.connect(self._db_path)
-        self._owns_connection = connection is None
-        self._conn.row_factory = sqlite3.Row
-        if initialize_schema:
-            self._conn.execute("PRAGMA foreign_keys = ON")
-            # Migration runs first: the revisioned schema script declares
-            # indexes over columns a pre-revision table does not have.
-            self._migrate_to_revisioned_artifacts()
-            execute_schema_script(self._conn, _SOURCE_ARTIFACT_SCHEMA)
-            self._ensure_actor_context_columns()
-            self._ensure_first_drift_columns()
-
-    def _artifact_columns(self) -> set[str]:
-        return {
-            row["name"]
-            for row in self._conn.execute("PRAGMA table_info(source_artifacts)").fetchall()
-        }
-
-    def _ensure_actor_context_columns(self) -> None:
-        if "registered_actor_context" not in self._artifact_columns():
-            self._conn.execute(
-                "ALTER TABLE source_artifacts ADD COLUMN registered_actor_context TEXT"
-            )
-
-    def _ensure_first_drift_columns(self) -> None:
-        """Additive: the sticky first-drift pair on a DB that predates it."""
-        columns = self._artifact_columns()
-        if not columns:
-            return
-        for column in ("first_drift_observed_hash", "first_drift_observed_at"):
-            if column not in columns:
-                self._conn.execute(f"ALTER TABLE source_artifacts ADD COLUMN {column} TEXT")
-
-    def _migrate_to_revisioned_artifacts(self) -> None:
-        """Rebuild a pre-revision state DB onto the insert-only schema.
-
-        ``CREATE TABLE IF NOT EXISTS`` leaves an existing single-row-per-id
-        table untouched, so without this an upgraded instance would keep
-        writing overwrite-shaped rows against code that assumes revisions.
-        Every existing manifest becomes revision 1 and the current head.
-        """
-        columns = self._artifact_columns()
-        if not columns or "artifact_revision_id" in columns:
-            return
-        # The oldest state DBs predate the actor column too; add it so the
-        # copy below can read a uniform legacy shape.
-        self._ensure_actor_context_columns()
-        execute_schema_script(
-            self._conn,
-            """
-            ALTER TABLE source_artifacts RENAME TO source_artifacts_pre_revision;
-            ALTER TABLE source_artifact_chunks RENAME TO source_artifact_chunks_pre_revision;
-            """,
-        )
-        execute_schema_script(self._conn, _SOURCE_ARTIFACT_SCHEMA)
-        self._conn.execute(
-            "INSERT INTO source_artifacts "
-            "(artifact_revision_id, source_artifact_id, revision, source_kind, "
-            "source_retention, original_uri, label, parser_version, content_hash, "
-            "byte_count, local_path, archived, archive_content_hash, created_at, "
-            "registered_actor_context) "
-            "SELECT source_artifact_id || '@1', source_artifact_id, 1, source_kind, "
-            "source_retention, original_uri, label, parser_version, content_hash, "
-            "byte_count, local_path, archived, archive_content_hash, created_at, "
-            "registered_actor_context FROM source_artifacts_pre_revision"
-        )
-        self._conn.execute(
-            "INSERT INTO source_artifact_chunks "
-            "(artifact_revision_id, chunk_id, heading_path_json, block_selector, "
-            "block_type, content_hash, line_start, line_end, preview, label) "
-            "SELECT source_artifact_id || '@1', chunk_id, heading_path_json, block_selector, "
-            "block_type, content_hash, line_start, line_end, preview, label "
-            "FROM source_artifact_chunks_pre_revision"
-        )
-        execute_schema_script(
-            self._conn,
-            """
-            DROP TABLE source_artifact_chunks_pre_revision;
-            DROP TABLE source_artifacts_pre_revision;
-            """,
-        )
-
-    def save_artifact(
-        self,
-        record: SourceArtifactRecord,
-        chunks: list[SourceArtifactChunk],
-        *,
-        archive_content: bytes | None = None,
-        archive_media_type: str = "text/markdown",
-    ) -> str:
-        """Insert one immutable artifact revision and its chunks. Does NOT commit.
-
-        The previous current revision (if any) is marked superseded by this one
-        instead of being overwritten, so the manifest that existing evidence
-        refs pinned their content hash against stays readable. Chunks are
-        inserted against the new revision id; nothing is deleted, so a pinned
-        chunk of an older revision keeps its line ranges and content hash.
-        """
-        superseded_at = format_datetime(utc_now())
-        head = self._current_revision_id(record.source_artifact_id)
-        if head is not None:
-            if head == record.artifact_revision_id:
-                raise MutationError(
-                    f"Source artifact revision '{record.artifact_revision_id}' already exists; "
-                    "source artifact revisions are insert-only and are never replaced"
-                )
-            # Clear the old head before inserting the new one: the partial
-            # unique index permits exactly one non-superseded row per logical id.
-            self._conn.execute(
-                "UPDATE source_artifacts SET superseded_by = ?, superseded_at = ? "
-                "WHERE artifact_revision_id = ? AND superseded_by IS NULL",
-                (record.artifact_revision_id, superseded_at, head),
-            )
-        try:
-            self._conn.execute(
-                "INSERT INTO source_artifacts "
-                "(artifact_revision_id, source_artifact_id, revision, source_kind, "
-                "source_retention, original_uri, label, parser_version, content_hash, "
-                "byte_count, local_path, archived, archive_content_hash, created_at, "
-                "registered_actor_context, superseded_by, superseded_at, "
-                "drift_observed_hash, drift_observed_at, "
-                "first_drift_observed_hash, first_drift_observed_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    record.artifact_revision_id,
-                    record.source_artifact_id,
-                    record.revision,
-                    record.source_kind,
-                    record.source_retention,
-                    record.original_uri,
-                    record.label,
-                    record.parser_version,
-                    record.content_hash,
-                    record.byte_count,
-                    record.local_path,
-                    int(record.archived),
-                    record.archive_content_hash,
-                    record.created_at,
-                    json.dumps(dump_actor_context(record.registered_actor_context)),
-                    record.superseded_by,
-                    record.superseded_at,
-                    record.drift_observed_hash,
-                    record.drift_observed_at,
-                    record.first_drift_observed_hash,
-                    record.first_drift_observed_at,
-                ),
-            )
-        except sqlite3.IntegrityError as exc:
-            raise MutationError(
-                f"Source artifact revision '{record.artifact_revision_id}' conflicts with an "
-                "existing revision; source artifact revisions are insert-only"
-            ) from exc
-        for chunk in chunks:
-            self._conn.execute(
-                "INSERT INTO source_artifact_chunks "
-                "(artifact_revision_id, chunk_id, heading_path_json, block_selector, "
-                "block_type, content_hash, line_start, line_end, preview, label) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    record.artifact_revision_id,
-                    chunk.chunk_id,
-                    json.dumps(chunk.heading_path),
-                    chunk.block_selector,
-                    chunk.block_type,
-                    chunk.content_hash,
-                    chunk.line_start,
-                    chunk.line_end,
-                    chunk.preview,
-                    chunk.label,
-                ),
-            )
-        if archive_content is not None:
-            if record.archive_content_hash is None:
-                raise ValueError("archive_content requires archive_content_hash")
-            self._conn.execute(
-                "INSERT OR REPLACE INTO source_artifact_archives "
-                "(content_hash, media_type, content, byte_count, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    record.archive_content_hash,
-                    archive_media_type,
-                    sqlite3.Binary(archive_content),
-                    len(archive_content),
-                    record.created_at,
-                ),
-            )
-        return record.artifact_revision_id
-
-    def _current_revision_id(self, source_artifact_id: str) -> str | None:
-        row = self._conn.execute(
-            "SELECT artifact_revision_id FROM source_artifacts "
-            "WHERE source_artifact_id = ? AND superseded_by IS NULL",
-            (source_artifact_id,),
-        ).fetchone()
-        return str(row["artifact_revision_id"]) if row is not None else None
-
-    def get_artifact(self, source_artifact_id: str) -> SourceArtifactRecord | None:
-        """Return the current revision of a logical artifact."""
-        row = self._conn.execute(
-            "SELECT * FROM source_artifacts WHERE source_artifact_id = ? AND superseded_by IS NULL",
-            (source_artifact_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_artifact(row)
-
-    def get_artifact_revision(self, artifact_revision_id: str) -> SourceArtifactRecord | None:
-        """Return one revision by physical id, superseded or not."""
-        row = self._conn.execute(
-            "SELECT * FROM source_artifacts WHERE artifact_revision_id = ?",
-            (artifact_revision_id,),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_artifact(row)
-
-    def list_artifact_revisions(self, source_artifact_id: str) -> list[SourceArtifactRecord]:
-        """Return the full revision history of a logical artifact, oldest first."""
-        rows = self._conn.execute(
-            "SELECT * FROM source_artifacts WHERE source_artifact_id = ? ORDER BY revision",
-            (source_artifact_id,),
-        ).fetchall()
-        return [self._row_to_artifact(row) for row in rows]
-
-    def record_content_drift(
-        self,
-        artifact_revision_id: str,
-        *,
-        observed_hash: str | None,
-        observed_at: str | None,
-    ) -> bool:
-        """Record (or clear) the last observed local-content drift for a revision.
-
-        Two pairs, deliberately. ``drift_observed_*`` is CURRENT state and is
-        cleared when the file matches its manifest again — leaving a stale marker
-        on a restored file would misreport the evidence base. ``first_drift_*``
-        is STICKY: written once, on the first drift ever seen for this revision,
-        and never cleared. Clearing both meant that restoring the original bytes
-        also erased every trace that the source had been altered, so the one
-        reader who most needs to know — someone auditing whether the evidence
-        behind a decision was tampered with — saw a pristine record.
-
-        Idempotent by design: the UPDATE is a no-op once the stored observation
-        already matches, so a read path that keeps seeing the same drifted file
-        writes exactly once rather than once per read. Returns whether a row
-        actually changed.
-        """
-        cursor = self._conn.execute(
-            "UPDATE source_artifacts SET drift_observed_hash = ?, drift_observed_at = ?, "
-            # COALESCE keeps the FIRST value: only a NULL is filled in, and only
-            # when this call is reporting a drift rather than clearing one.
-            "first_drift_observed_hash = COALESCE(first_drift_observed_hash, ?), "
-            "first_drift_observed_at = COALESCE(first_drift_observed_at, ?) "
-            "WHERE artifact_revision_id = ? AND ("
-            "drift_observed_hash IS NOT ? "
-            "OR (? IS NOT NULL AND first_drift_observed_hash IS NULL))",
-            (
-                observed_hash,
-                observed_at,
-                observed_hash,
-                observed_at,
-                artifact_revision_id,
-                observed_hash,
-                observed_hash,
-            ),
-        )
-        changed = cursor.rowcount > 0
-        if changed and self._owns_connection:
-            # A store opened outside a caller's unit of work owns its
-            # transaction, so the observation would be lost on close.
-            self._conn.commit()
-        return changed
-
-    def list_artifacts(self) -> list[SourceArtifactRecord]:
-        """List the current revision of every logical artifact."""
-        rows = self._conn.execute(
-            "SELECT * FROM source_artifacts WHERE superseded_by IS NULL "
-            "ORDER BY created_at DESC, source_artifact_id DESC",
-        ).fetchall()
-        return [self._row_to_artifact(row) for row in rows]
-
-    def list_chunks(self, source_artifact_id: str) -> list[SourceArtifactChunk]:
-        rows = self._conn.execute(
-            "SELECT c.* FROM source_artifact_chunks c "
-            "JOIN source_artifacts a ON a.artifact_revision_id = c.artifact_revision_id "
-            "WHERE a.source_artifact_id = ? AND a.superseded_by IS NULL "
-            "ORDER BY c.line_start, c.block_selector, c.chunk_id",
-            (source_artifact_id,),
-        ).fetchall()
-        return [self._row_to_chunk(row) for row in rows]
-
-    def list_revision_chunks(self, artifact_revision_id: str) -> list[SourceArtifactChunk]:
-        rows = self._conn.execute(
-            "SELECT * FROM source_artifact_chunks WHERE artifact_revision_id = ? "
-            "ORDER BY line_start, block_selector, chunk_id",
-            (artifact_revision_id,),
-        ).fetchall()
-        return [self._row_to_chunk(row) for row in rows]
-
-    def get_chunk(
-        self,
-        source_artifact_id: str,
-        chunk_id: str,
-    ) -> SourceArtifactChunk | None:
-        row = self._conn.execute(
-            "SELECT c.* FROM source_artifact_chunks c "
-            "JOIN source_artifacts a ON a.artifact_revision_id = c.artifact_revision_id "
-            "WHERE a.source_artifact_id = ? AND a.superseded_by IS NULL AND c.chunk_id = ?",
-            (source_artifact_id, chunk_id),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._row_to_chunk(row)
-
-    def find_chunks(
-        self,
-        source_artifact_id: str,
-        *,
-        heading_path: list[str],
-        block_selector: str,
-    ) -> list[SourceArtifactChunk]:
-        rows = self._conn.execute(
-            "SELECT c.* FROM source_artifact_chunks c "
-            "JOIN source_artifacts a ON a.artifact_revision_id = c.artifact_revision_id "
-            "WHERE a.source_artifact_id = ? AND a.superseded_by IS NULL "
-            "AND c.heading_path_json = ? AND c.block_selector = ? "
-            "ORDER BY c.line_start, c.chunk_id",
-            (
-                source_artifact_id,
-                json.dumps(heading_path),
-                block_selector,
-            ),
-        ).fetchall()
-        return [self._row_to_chunk(row) for row in rows]
-
-    def get_archive_content(self, content_hash: str) -> bytes | None:
-        row = self._conn.execute(
-            "SELECT content FROM source_artifact_archives WHERE content_hash = ?",
-            (content_hash,),
-        ).fetchone()
-        if row is None:
-            return None
-        return bytes(row["content"])
-
-    def close(self) -> None:
-        if self._owns_connection:
-            self._conn.close()
-
-    @staticmethod
-    def _row_to_artifact(row: sqlite3.Row) -> SourceArtifactRecord:
-        return SourceArtifactRecord(
-            source_artifact_id=row["source_artifact_id"],
-            artifact_revision_id=row["artifact_revision_id"],
-            revision=int(row["revision"]),
-            superseded_by=row["superseded_by"],
-            superseded_at=row["superseded_at"],
-            drift_observed_hash=row["drift_observed_hash"],
-            drift_observed_at=row["drift_observed_at"],
-            first_drift_observed_hash=row["first_drift_observed_hash"],
-            first_drift_observed_at=row["first_drift_observed_at"],
-            source_kind=row["source_kind"],
-            source_retention=row["source_retention"],
-            original_uri=row["original_uri"],
-            label=row["label"],
-            parser_version=row["parser_version"],
-            content_hash=row["content_hash"],
-            byte_count=int(row["byte_count"]),
-            local_path=row["local_path"],
-            archived=bool(row["archived"]),
-            archive_content_hash=row["archive_content_hash"],
-            created_at=row["created_at"],
-            registered_actor_context=load_actor_context(
-                json.loads(row["registered_actor_context"])
-                if "registered_actor_context" in row.keys() and row["registered_actor_context"]
-                else None
-            ),
-        )
-
-    @staticmethod
-    def _row_to_chunk(row: sqlite3.Row) -> SourceArtifactChunk:
-        heading_path = json.loads(row["heading_path_json"])
-        if not isinstance(heading_path, list):
-            heading_path = []
-        return SourceArtifactChunk(
-            chunk_id=row["chunk_id"],
-            heading_path=[str(item) for item in heading_path],
-            block_selector=row["block_selector"],
-            block_type=row["block_type"],
-            content_hash=row["content_hash"],
-            line_start=int(row["line_start"]),
-            line_end=int(row["line_end"]),
-            preview=row["preview"],
-            label=row["label"],
-        )
-
-
 def _snapshot_artifact_media_type(artifact_name: str) -> str:
     if artifact_name.endswith(".json"):
         return "application/json"
     if artifact_name.endswith((".yaml", ".yml")):
-        return "text/yaml"
+        return "application/yaml"
     return "application/octet-stream"
 
 
@@ -1119,17 +619,8 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
-        self.attestations = AttestationStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
+        self.resolution_evidence = LegacyResolutionEvidenceReader(connection=self._conn)
         self.resolution_contracts = ResolutionContractStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
-        self.source_artifacts = SQLiteSourceArtifactStore(
             self.db_path,
             connection=self._conn,
             initialize_schema=False,
@@ -1387,9 +878,7 @@ class SQLiteStorageBackend:
         GroupStore(self.db_path, connection=conn)
         ProcedureStore(self.db_path, connection=conn)
         ProcedureReadingStore(self.db_path, connection=conn)
-        AttestationStore(self.db_path, connection=conn)
         ResolutionContractStore(self.db_path, connection=conn)
-        SQLiteSourceArtifactStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
             row = conn.execute(
                 "SELECT migration_id FROM storage_migrations WHERE migration_id = ?",

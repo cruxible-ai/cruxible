@@ -1265,11 +1265,6 @@ def _service_list_edges(
     relationships = sorted(relationships, key=relationship_sort_key)
     total = len(relationships)
     page = _paginate_items(relationships, limit=limit, offset=offset)
-    # Keep claim-read enrichment in the shared service path so local and
-    # daemon surfaces both perform exactly one batched attestation query.
-    from cruxible_core.service.attestations import attach_corroboration_summaries
-
-    attach_corroboration_summaries(instance, page)
     return ListResult(items=page, total=total)
 
 

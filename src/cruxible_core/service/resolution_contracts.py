@@ -14,7 +14,6 @@ from typing import Any, NoReturn, cast
 
 from pydantic import BaseModel
 
-from cruxible_core.attestation.types import compute_claim_content_digest
 from cruxible_core.config.schema import (
     CoreConfig,
     NamedQuerySchema,
@@ -44,6 +43,7 @@ from cruxible_core.procedure.types import (
 from cruxible_core.query.engine import effective_query_receipt_options
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.types import Receipt
+from cruxible_core.resolution_contracts.evidence import compute_claim_content_digest
 from cruxible_core.resolution_contracts.subjects import (
     classify_reserved_subject_for_open,
     resolve_contract_subject,
@@ -943,10 +943,10 @@ def _validate_attestation_measurement(
             dict(claim.properties),
         )
     )
-    dispositions = uow.attestations.get_latest_dispositions(list(resolving_attestation_ids))
+    dispositions = uow.resolution_evidence.get_latest_dispositions(list(resolving_attestation_ids))
     latest_observed: datetime | None = None
     for attestation_id in resolving_attestation_ids:
-        record = uow.attestations.get_attestation(attestation_id)
+        record = uow.resolution_evidence.get_attestation(attestation_id)
         if record is None:
             _refuse(builder, f"attestation '{attestation_id}' not found")
         if record.claim_key() != measurement.claim_key():

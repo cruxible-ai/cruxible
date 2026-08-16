@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -24,7 +23,6 @@ from cruxible_core.runtime.permissions import PermissionMode, request_permission
 from cruxible_core.service import (
     ResolveGroupResult,
     service_add_relationships,
-    service_attest,
     service_get_relationship_lineage,
     service_propose_group,
     service_resolve_group,
@@ -1758,61 +1756,6 @@ class TestServiceSeamGovernanceRail:
 
         assert result.action == "approve"
         assert result.edges_created == 1
-
-    def test_governed_write_cannot_attest_then_bless_own_claim(
-        self, instance: CruxibleInstance
-    ) -> None:
-        """The group-shaped twin of the feedback self-approval loop.
-
-        A GOVERNED_WRITE actor attests support on an absent claim (legitimate —
-        it stages a PENDING edge), proposes a group over that same tuple, then
-        blesses it with ``stamp_existing``. Steps one and two still work; the
-        blessing is refused, so the edge never leaves ``pending``.
-        """
-        actor = _actor()
-        attested = service_attest(
-            instance,
-            relationship_type="fits",
-            from_type="Part",
-            from_id="BP-1",
-            to_type="Vehicle",
-            to_id="V-1",
-            stance="support",
-            evidence_refs=[{"source": "test", "source_record_id": "self-bless"}],
-            observed_at=datetime(2026, 1, 1, tzinfo=UTC),
-            actor_context=actor,
-        )
-        assert attested.created_claim is True
-        staged = instance.load_graph().get_relationship("Part", "BP-1", "Vehicle", "V-1", "fits")
-        assert staged is not None
-        assert staged.metadata.assertion.review.status == "pending"
-
-        proposed = service_propose_group(
-            instance,
-            "fits",
-            [_member("BP-1", "V-1")],
-            thesis_text="self-bless",
-            thesis_facts={"style": "casual"},
-            actor_context=actor,
-        )
-
-        with request_permission_scope(PermissionMode.GOVERNED_WRITE):
-            with pytest.raises(PermissionDeniedError, match="GRAPH_WRITE") as exc:
-                service_resolve_group(
-                    instance,
-                    proposed.group_id,
-                    "approve",
-                    expected_pending_version=1,
-                    actor_context=actor,
-                    stamp_existing=True,
-                )
-        assert exc.value.mutation_receipt_id is not None
-
-        still_pending = instance.load_graph().get_relationship(
-            "Part", "BP-1", "Vehicle", "V-1", "fits"
-        )
-        assert still_pending is not None
-        assert still_pending.metadata.assertion.review.status == "pending"
 
 
 class TestTerminalStatusesAreNotResolvable:

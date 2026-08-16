@@ -22,11 +22,14 @@ def test_claim_capture_and_contract_paths_are_activated_while_lines_refuse() -> 
         registered_path_kind("lines/product-lot-release.yaml")
 
 
-def test_pc_b_activates_claim_capture_tags_and_keeps_future_tags_reserved() -> None:
+def test_pc_c_activates_evidence_artifact_tags_and_keeps_future_tags_reserved() -> None:
     assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == (
         "playbill-capture-contract-v1",
         "playbill-capture-envelope-v1",
         "playbill-claim-v1",
+        "playbill-provider-v1",
+        "playbill-source-acquisition-policy-v1",
+        "playbill-standing-mandate-v1",
     )
     assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == (
         "playbill-accepted-state-run-input-v1",

@@ -15,11 +15,6 @@ from cruxible_core.graph.evidence import (
 )
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.service.source_artifacts import (
-    resolve_citation_handle_refs,
-    resolve_source_evidence_refs,
-)
-from cruxible_core.source_artifacts.types import SourceEvidenceInput
 
 
 def _validation_errors(exc: ValidationError) -> list[str]:
@@ -35,11 +30,11 @@ def resolve_evidence_refs(
     instance: InstanceProtocol,
     *,
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = (),
-    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = (),
+    source_evidence: Sequence[Mapping[str, Any]] = (),
     citation_handles: Sequence[str] = (),
     actor_context: GovernedActorContext | None = None,
 ) -> list[EvidenceRef]:
-    """Resolve explicit and source-backed evidence into canonical refs."""
+    """Resolve explicit refs; legacy source locators fail closed after PC-C."""
     try:
         explicit_refs = [normalize_evidence_ref(ref) for ref in evidence_refs]
     except ValidationError as exc:
@@ -47,24 +42,8 @@ def resolve_evidence_refs(
             "Invalid evidence_ref",
             errors=_validation_errors(exc),
         ) from exc
-    try:
-        source_refs = resolve_source_evidence_refs(
-            instance,
-            source_evidence,
-            actor_context=actor_context,
-        )
-    except ValidationError as exc:
+    if source_evidence or citation_handles:
         raise DataValidationError(
-            "Invalid source_evidence",
-            errors=_validation_errors(exc),
-        ) from exc
-    handle_refs = resolve_citation_handle_refs(
-        instance,
-        citation_handles,
-        actor_context=actor_context,
-    )
-    return merge_evidence_ref_objects(
-        explicit_refs,
-        source_refs,
-        handle_refs,
-    )
+            "Legacy source_evidence and citation handles were removed; use a Playbill Capture"
+        )
+    return merge_evidence_ref_objects(explicit_refs)

@@ -94,7 +94,6 @@ def _apply_previews_from_receipt(receipt: Receipt) -> dict[str, Any]:
         if node.node_type == "plan_step"
         and node.detail.get("kind")
         in {
-            "register_source_artifacts",
             "apply_entities",
             "apply_relationships",
             "apply_all",

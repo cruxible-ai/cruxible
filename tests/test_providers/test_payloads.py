@@ -154,43 +154,6 @@ def test_evidence_ref_rejects_empty_identity() -> None:
         evidence_ref("", "row-1")
 
 
-def test_source_artifact_evidence_ref_blessed_locator_shape() -> None:
-    ref = payloads.source_artifact_evidence_ref(
-        "opinion_text_op_loper_bright",
-        "mdchunk_abc123",
-        quote="Chevron is overruled.",
-        char_start=100,
-        char_end=121,
-        content_hash="sha256:deadbeef",
-        label="Loper Bright opinion text",
-        opinion_id="op_loper_bright",
-    )
-
-    assert ref == {
-        "source": "source_artifact",
-        "source_record_id": "mdchunk_abc123",
-        "artifact_id": "opinion_text_op_loper_bright",
-        "label": "Loper Bright opinion text",
-        "metadata": {
-            "quote": "Chevron is overruled.",
-            "char_start": 100,
-            "char_end": 121,
-            "expected_content_hash": "sha256:deadbeef",
-            "opinion_id": "op_loper_bright",
-        },
-    }
-    assert EvidenceRef.model_validate(ref).artifact_id == "opinion_text_op_loper_bright"
-
-
-def test_source_artifact_evidence_ref_omits_absent_locator_keys() -> None:
-    ref = payloads.source_artifact_evidence_ref("artifact_x", "chunk_y")
-    assert ref == {
-        "source": "source_artifact",
-        "source_record_id": "chunk_y",
-        "artifact_id": "artifact_x",
-    }
-
-
 def test_load_artifact_json_prefers_context_artifact(tmp_path: Path) -> None:
     artifact_dir = tmp_path / "artifact"
     fallback_dir = tmp_path / "fallback"

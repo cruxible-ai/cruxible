@@ -9,7 +9,6 @@ from typing import Any, Protocol
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import (
-    AttestationStoreProtocol,
     GroupStoreProtocol,
     ProcedureReadingStoreProtocol,
     ProcedureStoreProtocol,
@@ -17,7 +16,7 @@ from cruxible_core.instance_protocol import (
     ResolutionContractStoreProtocol,
     StateSnapshot,
 )
-from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
+from cruxible_core.storage.resolution_evidence import LegacyResolutionEvidenceReader
 
 
 class GraphRepositoryProtocol(Protocol):
@@ -55,9 +54,8 @@ class UnitOfWorkProtocol(Protocol):
     groups: GroupStoreProtocol
     procedures: ProcedureStoreProtocol
     procedure_readings: ProcedureReadingStoreProtocol
-    attestations: AttestationStoreProtocol
+    resolution_evidence: LegacyResolutionEvidenceReader
     resolution_contracts: ResolutionContractStoreProtocol
-    source_artifacts: SourceArtifactStoreProtocol
 
     def register_after_commit(self, callback: Any) -> None: ...
     def register_after_rollback(self, callback: Any) -> None: ...

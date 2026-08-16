@@ -11,14 +11,6 @@ from cruxible_core.service.artifact_lifecycle import (
     service_supersede_claim,
     service_supersede_entity,
 )
-from cruxible_core.service.attestations import (
-    attach_corroboration_summaries,
-    service_attest,
-    service_attestation_queue,
-    service_corroboration_summaries,
-    service_list_attestations,
-    service_resolve_attestation,
-)
 from cruxible_core.service.execution import (
     apply_preview_reference_from_receipt,
     service_apply_workflow,
@@ -179,13 +171,6 @@ from cruxible_core.service.resolution_contracts import (
     service_resolve_outcome,
 )
 from cruxible_core.service.server import service_server_info
-from cruxible_core.service.source_artifacts import (
-    resolve_contained_source_path,
-    service_dereference_source_evidence,
-    service_get_source_artifact,
-    service_list_source_artifacts,
-    service_register_source_artifact,
-)
 from cruxible_core.service.types import (
     AddConstraintServiceResult,
     AddEntityResult,
@@ -390,9 +375,6 @@ __all__ = [
     "service_run",
     "service_test",
     "resolve_contained_source_path",
-    "service_dereference_source_evidence",
-    "service_get_source_artifact",
-    "service_list_source_artifacts",
     # Groups
     "derive_review_priority",
     "service_get_group",
@@ -425,13 +407,6 @@ __all__ = [
     "service_migrate_procedures",
     "service_scan_pending_procedure_lift",
     "validate_procedure_definition_against_config",
-    # Attestations
-    "attach_corroboration_summaries",
-    "service_attest",
-    "service_attestation_queue",
-    "service_corroboration_summaries",
-    "service_list_attestations",
-    "service_resolve_attestation",
     # Gates
     "service_evaluate_gate",
     # Mutations
@@ -467,7 +442,6 @@ __all__ = [
     "service_list_resolution_contracts",
     "service_open_resolution_contract",
     "service_outcome_queue",
-    "service_register_source_artifact",
     "service_reload_config",
     "service_resolve_outcome",
     "service_sample",

@@ -24,13 +24,6 @@ from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.temporal import utc_now
 
 if TYPE_CHECKING:
-    from cruxible_core.attestation.types import (
-        AttestationDisposition,
-        AttestationRecord,
-        AttestationStance,
-        ClaimKey,
-        CorroborationSummary,
-    )
     from cruxible_core.config.provenance import ConfigProvenanceMetadata
     from cruxible_core.config.schema import CoreConfig
     from cruxible_core.graph.entity_graph import EntityGraph
@@ -57,7 +50,6 @@ if TYPE_CHECKING:
         ResolutionContract,
         ResolutionDisposition,
     )
-    from cruxible_core.source_artifacts.store import SourceArtifactStoreProtocol
     from cruxible_core.storage.protocols import UnitOfWorkProtocol
 
 
@@ -531,64 +523,6 @@ class ProcedureReadingStoreProtocol(ABC):
     def close(self) -> None: ...
 
 
-class AttestationStoreProtocol(ABC):
-    """Interface for immutable claim observations and dispositions."""
-
-    @abstractmethod
-    def save_attestation(self, record: AttestationRecord) -> str: ...
-    @abstractmethod
-    def get_attestation(self, attestation_id: str) -> AttestationRecord | None: ...
-    @abstractmethod
-    def find_idempotent_attestation(
-        self,
-        *,
-        idempotency_key: str,
-        claim_key: ClaimKey,
-        actor_org_id: str,
-        actor_id: str,
-    ) -> AttestationRecord | None: ...
-    @abstractmethod
-    def list_attestations(
-        self,
-        *,
-        claim_key: ClaimKey | None = None,
-        stance: AttestationStance | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[AttestationRecord]: ...
-    @abstractmethod
-    def count_attestations(
-        self,
-        *,
-        claim_key: ClaimKey | None = None,
-        stance: AttestationStance | None = None,
-    ) -> int: ...
-    @abstractmethod
-    def save_disposition(self, disposition: AttestationDisposition) -> str: ...
-    @abstractmethod
-    def list_dispositions(
-        self,
-        *,
-        attestation_id: str | None = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[AttestationDisposition]: ...
-    @abstractmethod
-    def get_latest_dispositions(
-        self,
-        attestation_ids: Sequence[str],
-    ) -> dict[str, AttestationDisposition]: ...
-    @abstractmethod
-    def summaries_for_claims(
-        self,
-        claim_digests: dict[ClaimKey, str],
-    ) -> dict[ClaimKey, CorroborationSummary]: ...
-    @abstractmethod
-    def list_open_contradictions(self) -> list[AttestationRecord]: ...
-    @abstractmethod
-    def close(self) -> None: ...
-
-
 class ResolutionContractStoreProtocol(ABC):
     """Interface for resolution contracts, activations, and their answers."""
 
@@ -814,8 +748,4 @@ class InstanceProtocol(ABC):
     @abstractmethod
     def get_procedure_reading_store(self) -> ProcedureReadingStoreProtocol: ...
     @abstractmethod
-    def get_attestation_store(self) -> AttestationStoreProtocol: ...
-    @abstractmethod
     def get_resolution_contract_store(self) -> ResolutionContractStoreProtocol: ...
-    @abstractmethod
-    def get_source_artifact_store(self) -> SourceArtifactStoreProtocol: ...

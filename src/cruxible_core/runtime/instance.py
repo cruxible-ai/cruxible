@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_core import __version__
-from cruxible_core.attestation.store import AttestationStore
 from cruxible_core.config.loader import load_config, save_config
 from cruxible_core.config.provenance import (
     ConfigProvenanceMetadata,
@@ -52,7 +51,6 @@ from cruxible_core.procedure.types import ProcedureRecord
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.resolution_contracts.store import ResolutionContractStore
 from cruxible_core.storage.sqlite import (
-    SQLiteSourceArtifactStore,
     SQLiteStorageBackend,
     SQLiteUnitOfWork,
 )
@@ -775,13 +773,6 @@ class CruxibleInstance(InstanceProtocol):
         self._ensure_state_initialized()
         return ProcedureReadingStore(self._state_db_path())
 
-    def get_attestation_store(self) -> AttestationStore:
-        """Get or create the append-only attestation SQLite store."""
-        if self._active_uow is not None:
-            return self._active_uow.attestations
-        self._ensure_state_initialized()
-        return AttestationStore(self._state_db_path())
-
     def get_resolution_contract_store(self) -> ResolutionContractStore:
         """Get or create the append-only resolution contract SQLite store.
 
@@ -794,13 +785,6 @@ class CruxibleInstance(InstanceProtocol):
             return self._active_uow.resolution_contracts
         self._ensure_state_initialized()
         return ResolutionContractStore(self._state_db_path())
-
-    def get_source_artifact_store(self) -> SQLiteSourceArtifactStore:
-        """Get or create the source artifact SQLite store."""
-        if self._active_uow is not None:
-            return self._active_uow.source_artifacts
-        self._ensure_state_initialized()
-        return SQLiteSourceArtifactStore(self._state_db_path())
 
     @classmethod
     def _validate_instance_mode(cls, instance_mode: str) -> None:

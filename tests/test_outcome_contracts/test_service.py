@@ -12,13 +12,11 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError
 from cruxible_core.service import (
-    service_attest,
     service_dispose_resolution,
     service_list_resolution_contracts,
     service_open_resolution_contract,
     service_outcome_queue,
     service_query,
-    service_resolve_attestation,
     service_resolve_outcome,
 )
 from cruxible_core.service.mutation_guards import record_contract_activations
@@ -642,157 +640,6 @@ def _add_protection_claim(contract_instance) -> None:
         "outcome-fixture",
         actor_context=actor("claim-writer"),
     )
-
-
-def _support_attestation(contract_instance, observed_at: Any = None) -> str:
-    support = service_attest(
-        contract_instance,
-        relationship_type="protected_by",
-        from_type="Service",
-        from_id="svc-1",
-        to_type="Control",
-        to_id="ctl-1",
-        stance="support",
-        evidence_refs=[evidence("att")],
-        observed_at=observed_at or utc_now(),
-        actor_context=actor("observer"),
-    )
-    return support.attestation.attestation_id
-
-
-def test_attestation_measurement_validates_stance_and_content_digest(
-    contract_instance,
-) -> None:
-    _add_protection_claim(contract_instance)
-    add_decision(contract_instance)
-    contract = _open(contract_instance, measurement=attestation_measurement()).contract
-    _activate(contract_instance, contract.contract_id)
-
-    attestation_id = _support_attestation(contract_instance)
-
-    with pytest.raises(ConfigError, match="needs 'contradict'"):
-        service_resolve_outcome(
-            contract_instance,
-            contract.contract_id,
-            verdict="contradicted",
-            observed_at=utc_now(),
-            evidence_refs=[evidence("att")],
-            actor_context=actor("checker"),
-            note="mismatched stance",
-            resolving_attestation_ids=[attestation_id],
-        )
-
-    result = service_resolve_outcome(
-        contract_instance,
-        contract.contract_id,
-        verdict="satisfied",
-        observed_at=utc_now(),
-        evidence_refs=[evidence("att")],
-        actor_context=actor("checker"),
-        resolving_attestation_ids=[attestation_id],
-    )
-    assert result.resolution.resolving_attestation_ids == [attestation_id]
-
-
-def test_attestation_evidence_predating_the_contract_refuses(contract_instance) -> None:
-    """The attestation's OWN observed_at places it after the commitment."""
-    _add_protection_claim(contract_instance)
-    add_decision(contract_instance)
-    stale_id = _support_attestation(contract_instance, observed_at=utc_now() - timedelta(days=2))
-    contract = _open(contract_instance, measurement=attestation_measurement()).contract
-    _activate(contract_instance, contract.contract_id)
-
-    with pytest.raises(ConfigError, match="predates this contract's opening"):
-        service_resolve_outcome(
-            contract_instance,
-            contract.contract_id,
-            verdict="satisfied",
-            observed_at=utc_now(),
-            evidence_refs=[evidence("stale")],
-            actor_context=actor("checker"),
-            resolving_attestation_ids=[stale_id],
-        )
-
-
-def test_satisfied_needs_an_attestation_observed_at_or_after_check_at(
-    contract_instance,
-) -> None:
-    _add_protection_claim(contract_instance)
-    add_decision(contract_instance)
-    contract = _open(
-        contract_instance,
-        measurement=attestation_measurement(),
-        check_at=utc_now() + timedelta(days=3),
-        expires_at=utc_now() + timedelta(days=30),
-    ).contract
-    _activate(contract_instance, contract.contract_id)
-    attestation_id = _support_attestation(contract_instance)
-
-    with pytest.raises(ConfigError, match="at or after the declared check_at"):
-        service_resolve_outcome(
-            contract_instance,
-            contract.contract_id,
-            verdict="satisfied",
-            # Even a caller claiming a post-check_at observation cannot get past
-            # the cited attestation's own clock.
-            observed_at=utc_now(),
-            evidence_refs=[evidence("early")],
-            actor_context=actor("checker"),
-            resolving_attestation_ids=[attestation_id],
-        )
-
-
-def test_an_invalidated_attestation_cannot_resolve_a_contract(contract_instance) -> None:
-    """A reviewer already said not to rely on this observation."""
-    _add_protection_claim(contract_instance)
-    add_decision(contract_instance)
-    contract = _open(contract_instance, measurement=attestation_measurement()).contract
-    _activate(contract_instance, contract.contract_id)
-    attestation_id = _support_attestation(contract_instance)
-    service_resolve_attestation(
-        contract_instance,
-        attestation_id,
-        verdict="invalidated",
-        actor_context=actor("reviewer"),
-        note="the observer was looking at the wrong environment",
-    )
-
-    with pytest.raises(ConfigError, match="invalidated by a reviewer disposition"):
-        service_resolve_outcome(
-            contract_instance,
-            contract.contract_id,
-            verdict="satisfied",
-            observed_at=utc_now(),
-            evidence_refs=[evidence("invalid")],
-            actor_context=actor("checker"),
-            resolving_attestation_ids=[attestation_id],
-        )
-
-
-def test_an_upheld_attestation_still_resolves(contract_instance) -> None:
-    """Only 'invalidated' disqualifies; a reviewed-and-kept observation stands."""
-    _add_protection_claim(contract_instance)
-    add_decision(contract_instance)
-    contract = _open(contract_instance, measurement=attestation_measurement()).contract
-    _activate(contract_instance, contract.contract_id)
-    attestation_id = _support_attestation(contract_instance)
-    service_resolve_attestation(
-        contract_instance,
-        attestation_id,
-        verdict="upheld",
-        actor_context=actor("reviewer"),
-    )
-
-    result = service_resolve_outcome(
-        contract_instance,
-        contract.contract_id,
-        verdict="satisfied",
-        observed_at=utc_now(),
-        evidence_refs=[evidence("upheld")],
-        actor_context=actor("checker"),
-        resolving_attestation_ids=[attestation_id],
-    )
-    assert result.resolution.verdict == "satisfied"
 
 
 def test_second_resolution_refuses_until_a_reviewer_overturns(contract_instance) -> None:

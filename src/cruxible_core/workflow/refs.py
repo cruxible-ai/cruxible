@@ -86,13 +86,6 @@ _STEP_REFERENCE_TEMPLATE_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
         ("analysis_state", "*"),
         ("suggested_priority",),
     ),
-    "register_source_artifacts": (
-        ("items",),
-        ("artifact_id",),
-        ("content",),
-        ("label",),
-        ("original_uri",),
-    ),
 }
 """Per-step-field selectors naming exactly what :func:`resolve_value` walks.
 

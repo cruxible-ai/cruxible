@@ -39,7 +39,6 @@ NEVER_BRANCH_TARGETABLE: dict[str, str] = {
     "propose_relationship_group": "procedures use the single pending-group bridge instead",
     "make_entities": "configured-workflow mutation staging is outside procedures",
     "make_relationships": "configured-workflow mutation staging is outside procedures",
-    "register_source_artifacts": "source-artifact mutation is outside procedures",
     "apply_entities": "direct graph writes are outside procedure control flow",
     "apply_relationships": "direct graph writes are outside procedure control flow",
     "apply_all": "direct graph writes are outside procedure control flow",

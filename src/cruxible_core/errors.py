@@ -28,7 +28,6 @@ errors (runtime data), making it easy to catch by category.
     ├── InstanceNotFoundError (instance registry lookup)
     ├── GroupNotFoundError (group store lookup)
     ├── ProcedureNotFoundError (procedure store lookup)
-    ├── SourceArtifactNotFoundError (source artifact store lookup)
     ├── InstallNotFoundError (install ledger lookup)
     ├── InstallPhaseTransitionError (illegal install phase advance)
     ├── InstallPhaseRequirementError (install op attempted from the wrong phase)
@@ -448,14 +447,6 @@ class ProcedureNotFoundError(CoreError):
     def __init__(self, procedure_id: str):
         self.procedure_id = procedure_id
         super().__init__(f"Procedure '{procedure_id}' not found")
-
-
-class SourceArtifactNotFoundError(CoreError):
-    """Source artifact ID not found in store."""
-
-    def __init__(self, source_artifact_id: str):
-        self.source_artifact_id = source_artifact_id
-        super().__init__(f"Source artifact '{source_artifact_id}' not found")
 
 
 class InstallNotFoundError(CoreError):

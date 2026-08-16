@@ -27,10 +27,8 @@ from cruxible_core.runtime.permissions import (
 )
 from cruxible_core.service import (
     service_add_entities,
-    service_attest,
     service_get_receipt,
     service_list,
-    service_list_attestations,
     service_query_inline_surface,
     service_retire_entity,
     service_retract_claim,
@@ -442,50 +440,6 @@ def test_retired_entity_still_accepts_governed_writes(
         )
 
 
-def test_retract_claim_stays_resolvable_with_settled_state_and_receipt(
-    populated_instance: CruxibleInstance,
-) -> None:
-    claim_id, _ = _fits_claims(populated_instance)
-    claim = populated_instance.load_graph().find_relationship_by_claim_id(claim_id)
-    assert claim is not None
-    service_attest(
-        populated_instance,
-        relationship_type=claim.relationship_type,
-        from_type=claim.from_type,
-        from_id=claim.from_id,
-        to_type=claim.to_type,
-        to_id=claim.to_id,
-        claim_id=claim_id,
-        stance="support",
-        evidence_refs=[{"source": "catalog", "source_record_id": "retracted-summary"}],
-        observed_at=utc_now(),
-        actor_context=_actor("observer"),
-    )
-
-    result = service_retract_claim(
-        populated_instance,
-        claim_id,
-        reason="manufacturer withdrew fitment",
-        actor_context=_actor(),
-    )
-
-    retracted = populated_instance.load_graph().find_relationship_by_claim_id(claim_id)
-    assert retracted is not None
-    assert retracted.metadata.assertion.lifecycle.status == "retracted"
-    assert retracted.metadata.assertion.lifecycle.closed_at is not None
-    assert retracted.metadata.assertion.lifecycle.closed_by == "lifecycle-reviewer"
-    assert result.claim.claim_id == claim_id
-    summary = service_list_attestations(populated_instance).items[0]
-    assert summary.unresolved_target is False
-    assert summary.current_claim_state == "retracted"
-    _assert_receipt_has_adjudication(
-        populated_instance,
-        result.receipt_id,
-        operation_type="lifecycle_retract",
-        to_status="retracted",
-    )
-
-
 def test_lifecycle_status_reader_distinguishes_retracted_from_superseded(
     populated_instance: CruxibleInstance,
 ) -> None:
@@ -538,40 +492,6 @@ def test_lifecycle_status_reader_distinguishes_retracted_from_superseded(
     assert claim_id not in {
         cast(RelationshipInstance, item).claim_id for item in query_superseded.items
     }
-
-
-def test_superseded_attestation_summary_surfaces_successor_pointer(
-    populated_instance: CruxibleInstance,
-) -> None:
-    predecessor_id, successor_id = _fits_claims(populated_instance)
-    predecessor = populated_instance.load_graph().find_relationship_by_claim_id(predecessor_id)
-    assert predecessor is not None
-    service_attest(
-        populated_instance,
-        relationship_type=predecessor.relationship_type,
-        from_type=predecessor.from_type,
-        from_id=predecessor.from_id,
-        to_type=predecessor.to_type,
-        to_id=predecessor.to_id,
-        claim_id=predecessor_id,
-        stance="support",
-        evidence_refs=[{"source": "catalog", "source_record_id": "fitment-2026"}],
-        observed_at=utc_now(),
-        actor_context=_actor("observer"),
-    )
-    service_supersede_claim(
-        populated_instance,
-        predecessor_id,
-        successor_id,
-        reason="catalog claim replaced",
-        actor_context=_actor(),
-    )
-
-    result = service_list_attestations(populated_instance)
-    summary = next(item for item in result.items if item.attestation.claim_id == predecessor_id)
-    assert summary.current_claim_state == "superseded"
-    assert summary.successor_ref is not None
-    assert summary.successor_ref.model_dump(exclude_none=True) == {"claim_id": successor_id}
 
 
 def test_supersede_entity_writes_typed_pointers_without_migrating_edges(

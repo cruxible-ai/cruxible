@@ -48,19 +48,9 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
     ),
     DonorEntry("cruxible_core.receipt", "PC-E1", "exhaust receipt-tree donor"),
     DonorEntry(
-        "cruxible_core.attestation",
-        "PC-C",
-        "stance, disposition, and idempotency semantics donor",
-    ),
-    DonorEntry(
         "cruxible_core.resolution_contracts",
         "PC-E1",
         "resolution declaration, activation, and disposition donor",
-    ),
-    DonorEntry(
-        "cruxible_core.source_artifacts.markdown",
-        "PC-C",
-        "deterministic markdown span-extraction donor",
     ),
     DonorEntry(
         "cruxible_core.provider",

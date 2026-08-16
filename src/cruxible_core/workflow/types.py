@@ -24,7 +24,6 @@ from cruxible_core.config.schema import (
     MakeRelationshipsSpec,
     MapSignalsSpec,
     ProposeRelationshipGroupSpec,
-    RegisterSourceArtifactsSpec,
     ShapeItemsSpec,
     StepKind,
     WorkflowType,
@@ -143,7 +142,6 @@ class CompiledPlanStep(BaseModel):
     propose_relationship_group_spec: ProposeRelationshipGroupSpec | None = None
     make_entities_spec: MakeEntitiesSpec | None = None
     make_relationships_spec: MakeRelationshipsSpec | None = None
-    register_source_artifacts_spec: RegisterSourceArtifactsSpec | None = None
     apply_entities_spec: ApplyEntitiesSpec | None = None
     apply_relationships_spec: ApplyRelationshipsSpec | None = None
     apply_all_spec: ApplyAllSpec | None = None

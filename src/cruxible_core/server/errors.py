@@ -42,7 +42,6 @@ from cruxible_core.errors import (
     RuntimeCredentialNotFoundError,
     SlotAlreadyBoundError,
     SlotBindingRefusedError,
-    SourceArtifactNotFoundError,
     StaleContinuationError,
     TerminalLifecycleWriteRefusedError,
     TraceNotFoundError,
@@ -135,7 +134,6 @@ def _status_for_error(exc: CoreError) -> int:
             InstanceNotFoundError,
             GroupNotFoundError,
             ProcedureNotFoundError,
-            SourceArtifactNotFoundError,
             RuntimeCredentialNotFoundError,
             InstallNotFoundError,
             BindingNotFoundError,
@@ -240,8 +238,6 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["procedure_id"] = exc.procedure_id
         context["current_mode"] = exc.current_mode
         context["required_mode"] = exc.required_mode
-    if isinstance(exc, SourceArtifactNotFoundError):
-        context["source_artifact_id"] = exc.source_artifact_id
     if isinstance(exc, InstallNotFoundError):
         context["install_id"] = exc.install_id
     if isinstance(exc, InstallPhaseTransitionError):

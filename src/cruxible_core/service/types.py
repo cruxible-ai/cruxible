@@ -53,7 +53,6 @@ from cruxible_core.query.enums import (
 from cruxible_core.query.evaluate import EvaluationReport
 from cruxible_core.query.types import QueryRow
 from cruxible_core.receipt.types import Receipt
-from cruxible_core.source_artifacts.types import SourceEvidenceInput
 from cruxible_core.workflow.types import CompiledPlan
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
@@ -115,7 +114,7 @@ class RelationshipWriteInput:
     properties: dict[str, Any] = field(default_factory=dict)
     pending: bool = False
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
-    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(default_factory=list)
+    source_evidence: Sequence[Mapping[str, Any]] = field(default_factory=list)
     citation_handles: Sequence[str] = field(default_factory=list)
     evidence_rationale: str | None = None
     # Typed, review-SAFE lifecycle write. Sets ONLY ``assertion.lifecycle`` on the
@@ -127,7 +126,7 @@ class RelationshipWriteInput:
 @dataclass
 class SharedEvidenceInput:
     evidence_refs: Sequence[EvidenceRef | Mapping[str, Any]] = field(default_factory=list)
-    source_evidence: Sequence[SourceEvidenceInput | Mapping[str, Any]] = field(default_factory=list)
+    source_evidence: Sequence[Mapping[str, Any]] = field(default_factory=list)
     citation_handles: Sequence[str] = field(default_factory=list)
 
 
@@ -930,7 +929,7 @@ class GroupSignalInput:
     signal: Literal["support", "contradict", "unsure"]
     evidence: str = ""
     evidence_refs: list[dict[str, Any]] = field(default_factory=list)
-    source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(default_factory=list)
+    source_evidence: list[dict[str, Any]] = field(default_factory=list)
     citation_handles: list[str] = field(default_factory=list)
     basis: dict[str, Any] | None = None
 
@@ -946,7 +945,7 @@ class GroupMemberInput:
     properties: dict[str, Any] = field(default_factory=dict)
     source_query_evidence: list[QuerySourceEvidence | dict[str, Any]] = field(default_factory=list)
     evidence_refs: list[dict[str, Any]] = field(default_factory=list)
-    source_evidence: list[SourceEvidenceInput | dict[str, Any]] = field(default_factory=list)
+    source_evidence: list[dict[str, Any]] = field(default_factory=list)
     citation_handles: list[str] = field(default_factory=list)
     evidence_rationale: str | None = None
 
