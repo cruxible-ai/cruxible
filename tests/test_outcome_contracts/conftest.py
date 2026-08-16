@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.service import service_add_entities

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from cruxible_core.errors import ConfigError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.temporal import utc_now
 
 if TYPE_CHECKING:

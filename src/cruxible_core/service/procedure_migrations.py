@@ -13,7 +13,7 @@ from typing import Literal, Protocol, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_core.errors import ConfigError, CoreError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.procedure.digest import compute_node_digests
 from cruxible_core.procedure.migration import (

@@ -14,7 +14,7 @@ from cruxible_core.config.auth_managed import (
     LOCAL_OPERATOR_STATUS,
 )
 from cruxible_core.config.schema import EntityTypeSchema
-from cruxible_core.governance.actors import ActorType, GovernedActorContext
+from cruxible_core.playbill.actor_context import ActorType, GovernedActorContext
 from cruxible_core.graph.operations import apply_entity, validate_entity
 from cruxible_core.graph.types import EntityInstance, EntityMetadata
 from cruxible_core.instance_protocol import InstanceProtocol

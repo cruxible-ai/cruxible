@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from cruxible_core.governance.actors import dump_actor_context, load_actor_context
+from cruxible_core.playbill.actor_context import dump_actor_context, load_actor_context
 from cruxible_core.instance_protocol import ResolutionContractStoreProtocol
 from cruxible_core.resolution_contracts.types import (
     ContractActivation,

@@ -7,7 +7,7 @@ from typing import Any, NoReturn
 
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.errors import ConfigError, CoreError, EntityNotFoundError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleState,
     RelationshipLifecycleState,

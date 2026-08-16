@@ -23,7 +23,7 @@ from cruxible_core.config.compact import CompactExpansionError, expand_compact
 from cruxible_core.config.schema import CoreConfig, FrozenPropertyGuardCondition
 from cruxible_core.config.validator import validate_config
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import ValidatedEntity
 from cruxible_core.graph.types import EntityInstance

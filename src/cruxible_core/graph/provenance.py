@@ -13,7 +13,7 @@ from pydantic import (
     field_validator,
 )
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
 
 

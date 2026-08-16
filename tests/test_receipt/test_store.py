@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 
 from cruxible_core.errors import DataValidationError, MutationError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.receipt.mutation_payloads import retain_mutation_payload

@@ -22,7 +22,7 @@ from cruxible_core.errors import (
     PendingEdgeWriteRefusedError,
     TerminalLifecycleWriteRefusedError,
 )
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     TERMINAL_ENTITY_LIFECYCLE_STATUSES,
     TERMINAL_RELATIONSHIP_LIFECYCLE_STATUSES,

@@ -17,7 +17,7 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.governance.actors import (
+from cruxible_core.playbill.actor_context import (
     DerivedActorKind,
     GovernedActorContext,
     derived_actor_kind,

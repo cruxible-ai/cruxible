@@ -17,7 +17,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.primitives import canonical_json, new_id
 from cruxible_core.temporal import ensure_utc, utc_now

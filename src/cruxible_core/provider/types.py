@@ -7,7 +7,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import new_id
 from cruxible_core.provider.trace_payloads import TracePayloadMetadata
 

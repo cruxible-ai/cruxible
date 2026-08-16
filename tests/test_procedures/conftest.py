@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.procedure.types import ProcedureDefinition
 from cruxible_core.service import service_lock
 

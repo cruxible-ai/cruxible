@@ -9,7 +9,7 @@ import structlog
 
 from cruxible_core.config.schema import ProposalPolicySchema
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.group.governance import (
     apply_workflow_policies,

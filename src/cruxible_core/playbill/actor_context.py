@@ -1,4 +1,4 @@
-"""Normalized actor context for hosted governed runtime writes."""
+"""Request attribution and transport capabilities for Playbill operations."""
 
 from __future__ import annotations
 
@@ -18,19 +18,24 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.temporal import ensure_utc, format_datetime
 
 ActorType = Literal["human_user", "service_account", "system"]
-
 DerivedActorKind = Literal["human", "agent", "system", "unknown"]
-"""Coarse actor kind DERIVED from the runtime actor context.
+TransportCapability = Literal[
+    "read",
+    "propose",
+    "review",
+    "activate",
+    "operate",
+    "administer",
+]
 
-Cruxible used to carry a parallel, caller-declared ``human``/``agent`` axis on
-feedback, outcomes, group proposals/resolutions, and decision records. It was
-never reconciled with :attr:`GovernedActorContext.actor_type`, so a service
-account could declare itself ``human`` and skip the reason-code requirement that
-exists precisely to hold agents to account. The declared axis is retired; every
-surface that used to read it now derives the value here, from the credential-
-derived (or declared-local-operator) actor context. ``unknown`` is the honest
-answer when there is no actor context at all — it is never claimed to be human.
-"""
+TRANSPORT_CAPABILITIES: tuple[TransportCapability, ...] = (
+    "activate",
+    "administer",
+    "operate",
+    "propose",
+    "read",
+    "review",
+)
 
 _ACTOR_KIND_BY_TYPE: dict[str, DerivedActorKind] = {
     "human_user": "human",
@@ -40,7 +45,7 @@ _ACTOR_KIND_BY_TYPE: dict[str, DerivedActorKind] = {
 
 
 class GovernedActorContext(BaseModel):
-    """Product actor context supplied by Cloud/API for hosted governed writes."""
+    """Credential-derived request attribution, never accepted semantic authority."""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
@@ -72,14 +77,12 @@ class GovernedActorContext(BaseModel):
 
 
 def dump_actor_context(actor: GovernedActorContext | None) -> dict[str, Any] | None:
-    """Return the JSON-ready actor context shape."""
     if actor is None:
         return None
     return actor.model_dump(mode="json", exclude_none=True)
 
 
 def load_actor_context(value: Any) -> GovernedActorContext | None:
-    """Parse persisted actor context, returning None for absent values."""
     if value is None:
         return None
     if isinstance(value, GovernedActorContext):
@@ -95,19 +98,12 @@ def load_actor_context(value: Any) -> GovernedActorContext | None:
 
 
 def derived_actor_kind(actor: GovernedActorContext | None) -> DerivedActorKind:
-    """Return the coarse actor kind implied by *actor*, never a caller's claim.
-
-    ``None`` yields ``"unknown"`` rather than defaulting to ``"human"``: an
-    absent actor context is missing evidence, and treating it as a human is
-    exactly the unearned assumption the declared axis used to encode.
-    """
     if actor is None:
         return "unknown"
     return _ACTOR_KIND_BY_TYPE.get(actor.actor_type, "unknown")
 
 
 def require_hosted_actor_context(value: Any) -> GovernedActorContext:
-    """Return a validated hosted actor context or raise a safe config error."""
     if isinstance(value, GovernedActorContext):
         return value
     if hasattr(value, "model_dump"):
@@ -122,6 +118,8 @@ __all__ = [
     "ActorType",
     "DerivedActorKind",
     "GovernedActorContext",
+    "TRANSPORT_CAPABILITIES",
+    "TransportCapability",
     "derived_actor_kind",
     "dump_actor_context",
     "load_actor_context",

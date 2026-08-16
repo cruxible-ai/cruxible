@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import EntityLifecycleState, RelationshipAssertion
 from cruxible_core.graph.types import (
     EntityInstance,

@@ -17,7 +17,7 @@ from cruxible_core.errors import (
     PermissionDeniedError,
     TerminalLifecycleWriteRefusedError,
 )
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import RelationshipReviewState
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.runtime.permissions import (

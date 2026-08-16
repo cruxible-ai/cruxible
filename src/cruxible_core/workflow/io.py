@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 
 from cruxible_core.config.schema import AssertSpec, CoreConfig
 from cruxible_core.errors import ConfigError, CoreError, QueryExecutionError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.predicate import PredicateValueType, evaluate_typed_comparison

@@ -11,7 +11,7 @@ from typing import Any, Protocol
 import structlog
 
 from cruxible_core.errors import CoreError, MutationError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import InstanceProtocol

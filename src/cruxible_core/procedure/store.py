@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast, get_args
 
-from cruxible_core.governance.actors import (
+from cruxible_core.playbill.actor_context import (
     GovernedActorContext,
     dump_actor_context,
     load_actor_context,

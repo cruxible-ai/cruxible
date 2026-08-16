@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import new_id
 from cruxible_core.receipt.mutation_payloads import MutationPayloadMetadata
 from cruxible_core.temporal import utc_now

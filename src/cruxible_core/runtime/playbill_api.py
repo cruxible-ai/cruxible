@@ -18,7 +18,7 @@ from cruxible_core.playbill.attestations import ApprovalAttestation
 from cruxible_core.playbill.candidates import canonical_candidate_timestamp
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.documents import DocumentShell
-from cruxible_core.playbill.donors.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import (

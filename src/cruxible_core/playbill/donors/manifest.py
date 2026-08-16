@@ -97,12 +97,6 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
         "PC-F",
         "temporary donor-parity interface, snapshot-metadata, and integrity harness",
     ),
-    DonorEntry(
-        "cruxible_core.governance.actors",
-        "PC-A1",
-        "governed identity until the Playbill principal context lands",
-        "cruxible_core.playbill.donors.actors",
-    ),
 )
 
 

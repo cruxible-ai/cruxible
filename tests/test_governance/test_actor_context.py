@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.governance.actors import (
+from cruxible_core.playbill.actor_context import (
     GovernedActorContext,
     dump_actor_context,
     load_actor_context,

@@ -8,7 +8,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import SupersessionPointer
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.primitives import canonical_json, new_id

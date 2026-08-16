@@ -19,7 +19,7 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleState,
     EntityLifecycleStatus,

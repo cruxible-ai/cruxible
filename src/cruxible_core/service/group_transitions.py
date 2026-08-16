@@ -13,7 +13,7 @@ from cruxible_core.errors import (
     DataValidationError,
     GroupNotFoundError,
 )
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import RelationshipReviewState
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.evidence import (

@@ -22,7 +22,7 @@ from cruxible_core.attestation.types import (
     compute_claim_content_digest,
 )
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import (
     SupersessionPointer,
     relationship_assertion_from_metadata,

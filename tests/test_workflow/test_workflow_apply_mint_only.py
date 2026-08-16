@@ -26,7 +26,7 @@ from tests.support.workflow_helpers import write_lock_for_instance
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import DirectWriteRefusedError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.temporal import utc_now
 from cruxible_core.workflow.executor import execute_workflow
 

@@ -15,7 +15,7 @@ from cruxible_core.errors import (
     ConfigError,
     SourceArtifactNotFoundError,
 )
-from cruxible_core.governance.actors import (
+from cruxible_core.playbill.actor_context import (
     GovernedActorContext,
     dump_actor_context,
 )

@@ -20,7 +20,7 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.temporal import ensure_utc, format_datetime, is_effective
 
 RelationshipReviewStatus = Literal[

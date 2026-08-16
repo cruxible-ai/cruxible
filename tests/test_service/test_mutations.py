@@ -16,7 +16,7 @@ from cruxible_core.errors import (
     GovernedSourceSpoofRefusedError,
     GroupApprovedContentWriteRefusedError,
 )
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.assertion_state import GroupApprovalDrift
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.group.types import CandidateGroup, CandidateMember, CandidateSignal

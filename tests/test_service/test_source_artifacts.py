@@ -8,7 +8,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import CitationHandleResolutionError, ConfigError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.primitives import canonical_json
 from cruxible_core.service import (

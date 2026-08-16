@@ -29,7 +29,7 @@ from tests.support.workflow_helpers import write_lock_for_instance
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import QueryExecutionError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.service import (
     BatchDirectWriteInput,

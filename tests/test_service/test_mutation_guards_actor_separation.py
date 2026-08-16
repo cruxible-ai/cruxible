@@ -19,7 +19,7 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.config.compact import CompactExpansionError, expand_compact
 from cruxible_core.config.schema import ActorIdentityGuardCondition
 from cruxible_core.errors import DataValidationError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.service import (
     BatchDirectWriteInput,
     EntityWriteInput,

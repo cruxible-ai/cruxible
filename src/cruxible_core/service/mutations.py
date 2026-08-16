@@ -16,7 +16,7 @@ from cruxible_core.errors import (
     DataValidationError,
     GroupApprovedContentWriteRefusedError,
 )
-from cruxible_core.governance.actors import GovernedActorContext, dump_actor_context
+from cruxible_core.playbill.actor_context import GovernedActorContext, dump_actor_context
 from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.entity_identity import EntityIdentityWarning

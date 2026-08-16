@@ -16,7 +16,7 @@ from cruxible_core.attestation.types import (
     CorroborationSummary,
     StaleContentSummary,
 )
-from cruxible_core.governance.actors import dump_actor_context, load_actor_context
+from cruxible_core.playbill.actor_context import dump_actor_context, load_actor_context
 from cruxible_core.instance_protocol import AttestationStoreProtocol
 from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.temporal import format_datetime

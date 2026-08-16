@@ -28,7 +28,7 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import DataValidationError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.query.engine import execute_query
 from cruxible_core.query.types import dump_query_row
 from cruxible_core.service import (

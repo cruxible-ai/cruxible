@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from cruxible_core.errors import DataValidationError
-from cruxible_core.governance.actors import GovernedActorContext
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.graph.evidence import (
     EvidenceRef,
     merge_evidence_ref_objects,

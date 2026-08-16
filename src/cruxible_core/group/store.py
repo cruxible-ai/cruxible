@@ -11,7 +11,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Literal
 
-from cruxible_core.governance.actors import (
+from cruxible_core.playbill.actor_context import (
     derived_actor_kind,
     dump_actor_context,
     load_actor_context,
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS group_resolutions (
     confirmed INTEGER NOT NULL DEFAULT 0,
     -- Derived, never caller-declared: the coarse actor kind implied by
     -- resolved_actor_context. Retained as a column for cheap filtering/display;
-    -- the model exposes it through governance.actors.derived_actor_kind.
+    -- the model exposes it through playbill.actor_context.derived_actor_kind.
     resolved_by TEXT NOT NULL,
     resolution_source TEXT NOT NULL DEFAULT 'review',
     resolved_at TEXT NOT NULL,

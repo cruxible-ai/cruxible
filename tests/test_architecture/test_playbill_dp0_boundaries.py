@@ -47,7 +47,6 @@ RATIFIED_DONOR_REMOVAL_BATCHES = {
     "cruxible_core.runtime.instance": "PC-F",
     "cruxible_core.storage.sqlite": "PC-F",
     "cruxible_core.instance_protocol": "PC-F",
-    "cruxible_core.governance.actors": "PC-A1",
 }
 
 SERVED_ROOTS = (

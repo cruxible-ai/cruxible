@@ -1,6 +1,6 @@
 """Governance metadata helpers."""
 
-from cruxible_core.governance.actors import (
+from cruxible_core.playbill.actor_context import (
     ActorType,
     GovernedActorContext,
     dump_actor_context,
