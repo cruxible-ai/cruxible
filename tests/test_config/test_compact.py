@@ -28,9 +28,7 @@ from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import apply_entity, validate_entity
 
-KIT_DIR = (
-    Path(__file__).resolve().parents[1] / "data" / "config_donors" / "agent-operation"
-)
+KIT_DIR = Path(__file__).resolve().parents[1] / "data" / "config_donors" / "agent-operation"
 # config.yaml is the single source of truth (compact); the loader expands it on load,
 # so there is no committed expanded artifact. Tests run against this committed source.
 # (The docs/dev draft is a local-only commented reference; it expands identically.)

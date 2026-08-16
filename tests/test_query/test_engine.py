@@ -6049,6 +6049,7 @@ class TestRelationshipState:
             }
         ]
 
+
 class TestRelationshipResults:
     def test_outgoing_relationship_rows_include_metadata_and_endpoint_payloads(
         self,

@@ -504,6 +504,7 @@ def test_entity_get_returns_retired_entity_and_shows_status(
     assert entity.entity_id == "BP-1001"
     assert _entity_lifecycle_status(entity.metadata) == "retired"
 
+
 # ---------------------------------------------------------------------------
 # Retained service-level lifecycle and authorization parity
 # ---------------------------------------------------------------------------
@@ -617,7 +618,6 @@ def test_terminal_entity_lifecycle_is_refused_by_the_mapper(
     entity = service_get_entity(populated_instance, "Part", "BP-1001")
     assert entity is not None
     assert _entity_lifecycle_status(entity.metadata) == "live"
-
 
 
 # ---------------------------------------------------------------------------

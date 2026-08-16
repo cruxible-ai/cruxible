@@ -190,6 +190,7 @@ class TestRevisionIncrementsOncePerMutationCommit:
         )
         assert clone.get_read_revision() == before + 1
 
+
 # ---------------------------------------------------------------------------
 # (a) never on reads — even reads that persist audit records
 # ---------------------------------------------------------------------------

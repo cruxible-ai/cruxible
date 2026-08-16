@@ -290,8 +290,7 @@ def test_dp0c_deleted_products_are_absent() -> None:
     ):
         package_root = CORE / package
         assert not any(
-            path.is_file() and "__pycache__" not in path.parts
-            for path in package_root.rglob("*")
+            path.is_file() and "__pycache__" not in path.parts for path in package_root.rglob("*")
         )
 
     for service_module in (
@@ -321,8 +320,7 @@ def test_dp0c_deleted_products_are_absent() -> None:
     ):
         family_root = ROOT / "tests" / family
         assert not any(
-            path.is_file() and "__pycache__" not in path.parts
-            for path in family_root.rglob("*")
+            path.is_file() and "__pycache__" not in path.parts for path in family_root.rglob("*")
         )
     assert not (ROOT / "docs" / "blueprints.md").exists()
     assert not (ROOT / "docs" / "local-state-and-backups.md").exists()
@@ -335,8 +333,7 @@ def test_dp0c_deleted_products_are_absent() -> None:
     assert not (CORE / "server" / "telemetry.py").exists()
     assert not (ROOT / "tests" / "test_working_set_capture.py").exists()
     assert not any(
-        path.is_file() and "__pycache__" not in path.parts
-        for path in (ROOT / "kits").rglob("*")
+        path.is_file() and "__pycache__" not in path.parts for path in (ROOT / "kits").rglob("*")
     )
     for script in (
         "build_kit_bundles.py",
@@ -443,8 +440,7 @@ def test_unserved_donor_operations_retain_permissions_without_public_registratio
     assert set(DONOR_OPERATION_PERMISSIONS).isdisjoint(TOOL_PERMISSIONS)
     assert set(DONOR_OPERATION_PERMISSIONS).isdisjoint(RUNTIME_OPERATION_PERMISSIONS)
     assert all(
-        PERMISSION_REQUIREMENTS[name] == tier
-        for name, tier in DONOR_OPERATION_PERMISSIONS.items()
+        PERMISSION_REQUIREMENTS[name] == tier for name, tier in DONOR_OPERATION_PERMISSIONS.items()
     )
 
 

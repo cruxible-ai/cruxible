@@ -42,6 +42,7 @@ class SuppressedProposalMember:
     existing_signature: str | None = None
     source_workflow_name: str | None = None
 
+
 SignalValue = Literal["support", "contradict", "unsure"]
 """Tri-state signal value produced by a signal source about a candidate."""
 
