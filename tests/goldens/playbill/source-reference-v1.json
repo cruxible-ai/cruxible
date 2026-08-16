@@ -1,0 +1,83 @@
+{
+  "cas_reference": {
+    "content_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "kind": "cas",
+    "tag": "playbill-cas-source-reference-v1"
+  },
+  "external_reference": {
+    "coordinate": "0/16B6C50",
+    "coordinate_type": "postgres-lsn-v1",
+    "kind": "external",
+    "producer_binding_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "replayability": "exact",
+    "selector": {
+      "key": {
+        "order_id": "ord-482"
+      },
+      "relation": "orders"
+    },
+    "selector_type": "relation-primary-key-v1",
+    "source_identity": "commerce.production.orders",
+    "tag": "playbill-external-source-reference-v1"
+  },
+  "ledger_reference": {
+    "address": {
+      "artifact_path": "documents/design.yaml",
+      "selector": {
+        "scheme": "artifact-v1",
+        "value": ""
+      },
+      "tag": "playbill-semantic-address-v1"
+    },
+    "coordinate": {
+      "compiler_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "generation_root": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "git_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "semantic_root": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "tag": "playbill-accepted-coordinate-v1"
+    },
+    "kind": "ledger",
+    "tag": "playbill-ledger-source-reference-v1"
+  },
+  "source_handle": {
+    "access_class": "instance",
+    "at": {
+      "compiler_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "generation_root": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "git_oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "semantic_root": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "tag": "playbill-accepted-coordinate-v1"
+    },
+    "commitment": {
+      "byte_length": 10,
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "digest_kind": "exact_bytes",
+      "materialization": "cas",
+      "tag": "playbill-evidence-commitment-v1"
+    },
+    "exact_spans": [
+      {
+        "content_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "end_byte": 5,
+        "start_byte": 1,
+        "tag": "playbill-content-span-v1"
+      }
+    ],
+    "media_type": "text/plain",
+    "source": {
+      "content_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "kind": "cas",
+      "tag": "playbill-cas-source-reference-v1"
+    },
+    "subject": {
+      "artifact_path": "documents/design.yaml",
+      "selector": {
+        "scheme": "artifact-v1",
+        "value": ""
+      },
+      "tag": "playbill-semantic-address-v1"
+    },
+    "tag": "playbill-source-handle-v1"
+  },
+  "source_handle_digest": "sha256:89257f50be0242074745c5ea9ca9c31a8c4334902fed88b61166d12a167e5322"
+}

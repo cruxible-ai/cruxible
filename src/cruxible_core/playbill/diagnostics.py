@@ -12,7 +12,14 @@ from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes
 from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
 
 DiagnosticSeverity = Literal["info", "warning", "error"]
-GovernedOperation = Literal["check", "compile", "propose"]
+GovernedOperation = Literal[
+    "check",
+    "compile",
+    "discover",
+    "expand",
+    "open_source",
+    "propose",
+]
 
 _CODE_RE = re.compile(r"^playbill\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 _DRAFT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
