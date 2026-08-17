@@ -1,0 +1,211 @@
+"""Playbill-native Procedure artifact, graph-v3, and frozen-reader tests."""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from cruxible_core.playbill.artifacts import (
+    ArtifactAuthority,
+    ArtifactIdentity,
+    ArtifactPin,
+)
+from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
+from cruxible_core.playbill.captures import CanonicalDurationV1
+from cruxible_core.playbill.procedures.artifacts import (
+    ProcedureArtifactV1,
+    evaluate_procedure_law,
+    parse_procedure,
+    procedure_artifact_digest,
+    procedure_path,
+    render_procedure,
+)
+from cruxible_core.playbill.procedures.graph import (
+    ProcedureGraphFormatError,
+    compute_procedure_definition_digest_v3,
+    compute_procedure_node_digests_v3,
+)
+from cruxible_core.playbill.procedures.models import (
+    ProcedureBudgetV3,
+    ProcedureDefinitionV3,
+    ProcedureHardCapsV3,
+    ProcedurePinSlotRefV1,
+    ProcedurePinSlotV1,
+    ProjectNodeV3,
+    StateTapNodeV3,
+)
+from cruxible_core.procedure.digest import DIGEST_FUNCTIONS
+
+
+def _digest(label: str) -> str:
+    return typed_digest(ArtifactDigest, "playbill-test-v1", {"label": label}).tagged
+
+
+def _pin(role: str, kind: str, name: str) -> ArtifactPin:
+    return ArtifactPin(
+        role=role,
+        target=ArtifactIdentity(kind=kind, name=name),
+        artifact_digest=_digest(name),
+    )
+
+
+def _definition(
+    *,
+    query: ArtifactPin | ProcedurePinSlotRefV1 | None = None,
+    nodes: tuple[object, ...] | None = None,
+) -> ProcedureDefinitionV3:
+    contract_in = _pin("contract-in", "Contract", "empty-input")
+    contract_out = _pin("contract-out", "Contract", "claim-rows")
+    query = query or _pin("query", "QueryDefinition", "claims-by-status")
+    default_nodes = (
+        StateTapNodeV3(node_id="read", query=query, parameters={}, as_="rows"),
+        ProjectNodeV3(
+            node_id="shape",
+            fields={"rows": "$steps.rows"},
+            contract_out=contract_out,
+            as_="result",
+        ),
+    )
+    return ProcedureDefinitionV3(
+        name="triage",
+        description="Read accepted claims and shape a bounded result.",
+        contract_in=contract_in,
+        contract_out=contract_out,
+        nodes=default_nodes if nodes is None else nodes,  # type: ignore[arg-type]
+        returns="result",
+        pin_slots=(
+            (
+                ProcedurePinSlotV1(
+                    slot_name="query",
+                    pin_role="query",
+                    artifact_kind="QueryDefinition",
+                    interface_digest=_digest("query-interface"),
+                ),
+            )
+            if isinstance(query, ProcedurePinSlotRefV1)
+            else ()
+        ),
+        budget=ProcedureBudgetV3(
+            wall_clock=CanonicalDurationV1(microseconds=1_000_000),
+            max_provider_calls=0,
+            max_capture_bytes=0,
+            max_items=100,
+        ),
+        hard_caps=ProcedureHardCapsV3(
+            max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
+            max_provider_calls=0,
+            max_capture_bytes=0,
+            max_items=200,
+            max_repeat_attempts=1,
+        ),
+        terminal_capability=1,
+    )
+
+
+def _artifact(definition: ProcedureDefinitionV3) -> ProcedureArtifactV1:
+    pins = tuple(
+        sorted(
+            {
+                pin
+                for pin in (
+                    definition.contract_in,
+                    definition.contract_out,
+                    getattr(definition.nodes[0], "query", None),
+                )
+                if isinstance(pin, ArtifactPin)
+            },
+            key=lambda pin: (
+                pin.role.encode(),
+                pin.target.qualified.encode(),
+                pin.artifact_digest.encode(),
+            ),
+        )
+    )
+    return ProcedureArtifactV1(
+        identity=ArtifactIdentity(kind="Procedure", name="triage"),
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+        authority=ArtifactAuthority(
+            propose_roles=("procedure-author",),
+            approve_roles=("procedure-reviewer",),
+        ),
+        pins=pins,
+        activation_policy="drain",
+    )
+
+
+def test_procedure_v3_round_trip_digest_and_node_golden() -> None:
+    definition = _definition()
+    procedure = _artifact(definition)
+
+    assert definition.graph_format == 3
+    assert procedure.directly_runnable is True
+    assert procedure.definition_digest == (
+        "sha256:bac0134bbf5c5846e24b05b5fd471483ed24f97d521bd21be0bb220307c1fcdd"
+    )
+    nodes = compute_procedure_node_digests_v3(definition)
+    assert nodes["read"].subtree_digest == (
+        "sha256:a7c033a9af056822015078993714074fb569e074823d728c40e8fa84499a17d5"
+    )
+
+    content = render_procedure(procedure)
+    assert parse_procedure(content, path=procedure_path("triage")) == procedure
+    assert procedure_artifact_digest(procedure).tagged.startswith("sha256:")
+
+
+def test_open_slot_procedure_is_acceptable_but_not_directly_runnable() -> None:
+    definition = _definition(query=ProcedurePinSlotRefV1(slot_name="query"))
+    procedure = _artifact(definition)
+
+    assert procedure.directly_runnable is False
+    result = evaluate_procedure_law(
+        procedure,
+        path=procedure_path("triage"),
+        actor_roles=("procedure-author",),
+        predecessor=None,
+    )
+    assert result.verdict == "accepted"
+
+
+def test_procedure_rejects_exact_node_pin_missing_from_envelope() -> None:
+    definition = _definition()
+    with pytest.raises(ValidationError, match="exact pins absent"):
+        ProcedureArtifactV1(
+            identity=ArtifactIdentity(kind="Procedure", name="triage"),
+            definition=definition,
+            definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+            authority=ArtifactAuthority(
+                propose_roles=("procedure-author",),
+                approve_roles=("procedure-reviewer",),
+            ),
+            pins=(),
+            activation_policy="drain",
+        )
+
+
+def test_v3_graph_refuses_backward_edge() -> None:
+    contract_out = _pin("contract-out", "Contract", "claim-rows")
+    with pytest.raises(ProcedureGraphFormatError, match="R2"):
+        _definition(
+            nodes=(
+                ProjectNodeV3(
+                    node_id="first",
+                    fields={},
+                    contract_out=contract_out,
+                    as_="intermediate",
+                ),
+                ProjectNodeV3(
+                    node_id="second",
+                    fields={},
+                    contract_out=contract_out,
+                    as_="result",
+                    next="first",
+                ),
+            )
+        )
+
+
+def test_historical_reader_dispatch_remains_separate() -> None:
+    """A v3 import does not patch or reinterpret the frozen v1/v2 dispatcher."""
+
+    assert tuple(DIGEST_FUNCTIONS) == (1, 2)
