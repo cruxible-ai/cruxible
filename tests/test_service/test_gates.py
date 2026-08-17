@@ -7,11 +7,11 @@ from threading import Event, Thread
 
 import pytest
 
+import cruxible_core.service.gates as gates_service
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance
-from cruxible_core.service import gates as gates_service
-from cruxible_core.service import service_evaluate_gate
+from cruxible_core.service.gates import service_evaluate_gate
 
 GATE_CONFIG_YAML = """\
 version: "1.0"

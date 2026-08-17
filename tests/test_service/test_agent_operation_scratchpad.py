@@ -31,12 +31,11 @@ from cruxible_core.errors import DataValidationError
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.query.engine import execute_query
 from cruxible_core.query.types import dump_query_row
-from cruxible_core.service import (
+from cruxible_core.service.mutations import service_add_entity_inputs, service_batch_direct_write
+from cruxible_core.service.types import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
     EntityWriteInput,
-    service_add_entity_inputs,
-    service_batch_direct_write,
 )
 from cruxible_core.temporal import utc_now
 

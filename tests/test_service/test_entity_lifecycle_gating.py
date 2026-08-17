@@ -18,13 +18,12 @@ from cruxible_core.graph.assertion_state import EntityLifecycleState
 from cruxible_core.graph.types import EntityInstance, EntityMetadata
 from cruxible_core.query.enums import QueryVisibilityState
 from cruxible_core.query.types import QueryPathRow, QueryRelationshipRow
-from cruxible_core.service import service_list, service_query_surface
 from cruxible_core.service.mutations import (
     service_add_entities,
     service_add_entity_inputs,
     service_batch_direct_write,
 )
-from cruxible_core.service.queries import service_get_entity
+from cruxible_core.service.queries import service_get_entity, service_list, service_query_surface
 from cruxible_core.service.types import BatchDirectWriteInput, EntityWriteInput
 from tests.support.terminal_lifecycle import (
     seed_entity_lifecycle,
@@ -93,7 +92,7 @@ def _query_part_ids(
         "result_shape": "entity",
         "allow_relationship_state_override": True,
     }
-    from cruxible_core.service import service_query_inline_surface
+    from cruxible_core.service.queries import service_query_inline_surface
 
     res = service_query_inline_surface(
         instance,
@@ -145,7 +144,7 @@ def _inline_traversal_part_ids(
         "returns": "list[Part]",
         "allow_relationship_state_override": True,
     }
-    from cruxible_core.service import service_query_inline_surface
+    from cruxible_core.service.queries import service_query_inline_surface
 
     res = service_query_inline_surface(
         instance,
@@ -669,7 +668,7 @@ def _query_edge_ids(
     state: QueryVisibilityState | None,
 ) -> set[tuple[str, str]]:
     """Relationship-shaped collection query equivalent to `list edges`."""
-    from cruxible_core.service import service_query_inline_surface
+    from cruxible_core.service.queries import service_query_inline_surface
 
     res = service_query_inline_surface(
         instance,

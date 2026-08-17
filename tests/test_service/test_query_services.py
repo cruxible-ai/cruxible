@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import structlog
 
+import cruxible_core.service.queries as queries_module
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
     ConfigError,
@@ -27,12 +28,13 @@ from cruxible_core.graph.types import (
 )
 from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.service import (
-    BatchDirectWriteInput,
-    EntityWriteInput,
+from cruxible_core.service.mutations import (
     service_add_entities,
     service_add_entity_inputs,
     service_batch_direct_write,
+)
+from cruxible_core.service.queries import (
+    _warn_on_dropped_read,
     service_get_entity,
     service_get_entity_change_history,
     service_get_receipt,
@@ -47,9 +49,11 @@ from cruxible_core.service import (
     service_sample,
     service_stats,
 )
-from cruxible_core.service import queries as queries_module
-from cruxible_core.service.queries import _warn_on_dropped_read
-from cruxible_core.service.types import QueryServiceResult
+from cruxible_core.service.types import (
+    BatchDirectWriteInput,
+    EntityWriteInput,
+    QueryServiceResult,
+)
 
 STATUS_HISTORY_YAML = """\
 version: '1.0'

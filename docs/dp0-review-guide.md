@@ -159,6 +159,7 @@ service/config_mutations.py
 service/decisions.py
 service/feedback.py
 service/installs.py
+service/lifecycle.py
 service/snapshots.py
 service/state.py
 service/state_diff.py
@@ -203,8 +204,8 @@ adapter. Every row has an owning removal batch.
 | `cruxible_core.storage.sqlite` | PC-F | Temporary donor-parity storage harness | — |
 | `cruxible_core.instance_protocol` | PC-F | Temporary interface, metadata, and integrity harness | — |
 
-The remaining unserved lifecycle/feedback service code is behavior corpus, not
-a hidden product surface. Its operation names live in
+The remaining unserved artifact-lifecycle, mutation, query, and resolution
+service code is behavior corpus, not a hidden product surface. Its operation names live in
 `DONOR_OPERATION_PERMISSIONS`, disjoint from both public MCP tools and active
 HTTP/CLI runtime operations, so parity tests retain the original authority law
 without re-registering deleted endpoints. The group and Procedure/workflow

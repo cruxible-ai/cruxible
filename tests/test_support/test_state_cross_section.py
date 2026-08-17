@@ -14,7 +14,8 @@ from tests.test_cli.conftest import CAR_PARTS_YAML
 
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.runtime.instance import CruxibleInstance
-from cruxible_core.service import service_add_entities, service_add_relationships, service_query
+from cruxible_core.service.mutations import service_add_entities, service_add_relationships
+from cruxible_core.service.queries import service_query
 
 
 def _new_instance(tmp_path: Path) -> CruxibleInstance:

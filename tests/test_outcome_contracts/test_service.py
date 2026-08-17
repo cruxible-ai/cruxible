@@ -11,15 +11,15 @@ import pytest
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import ConfigError
-from cruxible_core.service import (
+from cruxible_core.service.mutation_guards import record_contract_activations
+from cruxible_core.service.queries import service_query
+from cruxible_core.service.resolution_contracts import (
     service_dispose_resolution,
     service_list_resolution_contracts,
     service_open_resolution_contract,
     service_outcome_queue,
-    service_query,
     service_resolve_outcome,
 )
-from cruxible_core.service.mutation_guards import record_contract_activations
 from cruxible_core.temporal import utc_now
 from tests.test_outcome_contracts.conftest import (
     CHECK_AT,
@@ -622,7 +622,7 @@ def test_query_definition_drift_allows_only_indeterminate(contract_instance) -> 
 def _add_protection_claim(contract_instance) -> None:
     """Write the claim tuple the attestation measurements observe."""
     from cruxible_core.graph.types import RelationshipInstance
-    from cruxible_core.service import service_add_relationships
+    from cruxible_core.service.mutations import service_add_relationships
 
     service_add_relationships(
         contract_instance,

@@ -27,14 +27,13 @@ from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.operations import ValidatedEntity
 from cruxible_core.graph.types import EntityInstance
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.service import (
+from cruxible_core.service.mutation_guards import mutation_guard_errors
+from cruxible_core.service.mutations import service_add_entity_inputs, service_batch_direct_write
+from cruxible_core.service.types import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
     EntityWriteInput,
-    service_add_entity_inputs,
-    service_batch_direct_write,
 )
-from cruxible_core.service.mutation_guards import mutation_guard_errors
 from cruxible_core.temporal import utc_now
 
 FREEZE_GUARD_YAML = """\

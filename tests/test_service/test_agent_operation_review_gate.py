@@ -39,14 +39,16 @@ from cruxible_core.graph.assertion_state import (
 )
 from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata, mint_claim_id
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.service import (
+from cruxible_core.service.mutations import (
+    service_add_entity_inputs,
+    service_add_relationship_inputs,
+    service_batch_direct_write,
+)
+from cruxible_core.service.types import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
     EntityWriteInput,
     RelationshipWriteInput,
-    service_add_entity_inputs,
-    service_add_relationship_inputs,
-    service_batch_direct_write,
 )
 from cruxible_core.temporal import utc_now
 

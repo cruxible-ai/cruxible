@@ -28,19 +28,6 @@ from cruxible_core.graph.property_diffs import (
     PropertyDeltaResult as PropertyDeltaResult,
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import (
-    CandidateGroup,
-    CandidateMember,
-    GroupResolution,
-    GroupStatus,
-    QuerySourceEvidence,
-    ResolutionAction,
-    ReviewPriority,
-    TrustStatus,
-)
-from cruxible_core.group.types import (
-    SuppressedProposalMember as SuppressedProposalMember,
-)
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.provider.types import ExecutionTrace
@@ -55,6 +42,19 @@ from cruxible_core.query.types import QueryRow
 from cruxible_core.receipt.types import Receipt
 from cruxible_core.workflow.types import CompiledPlan
 from cruxible_core.workflow_execution_types import WorkflowResultMode
+
+# The legacy group package retired in PC-D. These aliases keep donor-only
+# result dataclasses importable until the remaining service type catalog leaves
+# with its owning batches; no active Playbill surface consumes them.
+CandidateGroup: TypeAlias = Any
+CandidateMember: TypeAlias = Any
+GroupResolution: TypeAlias = Any
+GroupStatus: TypeAlias = str
+QuerySourceEvidence: TypeAlias = dict[str, Any]
+ResolutionAction: TypeAlias = str
+ReviewPriority: TypeAlias = str
+TrustStatus: TypeAlias = str
+SuppressedProposalMember: TypeAlias = Any
 
 
 @dataclass(frozen=True)

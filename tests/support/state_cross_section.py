@@ -791,12 +791,10 @@ def _query_sort_key(query: Mapping[str, Any]) -> tuple[str, str, str]:
 def _receipt_group_sort_keys(
     instance: InstanceProtocol,
 ) -> dict[str, tuple[str, str, str, str]]:
-    store = instance.get_group_store()
-    try:
-        groups = store.list_groups(limit=1000)
-    finally:
-        store.close()
-    return {group.group_id: _group_stable_sort_key(_model_dump(group)) for group in groups}
+    """Return no retired group-store enrichments for receipt ordering."""
+
+    del instance
+    return {}
 
 
 def _upstream_metadata(cross_section: Mapping[str, Any]) -> Mapping[str, Any]:

@@ -1117,7 +1117,6 @@ def service_list_resolution_contracts(
     _validate_page(limit=limit, offset=offset)
     graph = instance.load_graph()
     store = instance.get_resolution_contract_store()
-    procedure_store = instance.get_procedure_store()
     try:
         contracts = store.list_contracts(
             entity_type=entity_type,
@@ -1126,10 +1125,9 @@ def service_list_resolution_contracts(
             offset=offset,
         )
         total = store.count_contracts(entity_type=entity_type, entity_id=entity_id)
-        items = _build_list_items(store, graph, procedure_store, contracts)
+        items = _build_list_items(store, graph, None, contracts)
     finally:
         store.close()
-        procedure_store.close()
     if status is not None:
         items = [item for item in items if item.status == status]
     return ListResult(
@@ -1166,21 +1164,19 @@ def service_outcome_queue(
     graph = instance.load_graph()
     now = format_datetime(utc_now()) or ""
     store = instance.get_resolution_contract_store()
-    procedure_store = instance.get_procedure_store()
     try:
         if queue == "contradicted":
-            entries = _contradicted_entries(store, graph, procedure_store)
+            entries = _contradicted_entries(store, graph, None)
         else:
             entries = _clock_entries(
                 store,
                 graph,
-                procedure_store,
+                None,
                 now=now,
                 queue=queue,
             )
     finally:
         store.close()
-        procedure_store.close()
     total = len(entries)
     page = entries[offset : offset + limit]
     return ListResult(
@@ -1196,7 +1192,7 @@ def service_outcome_queue(
 def _clock_entries(
     store: ResolutionContractStoreProtocol,
     graph: EntityGraph,
-    procedure_store: ProcedureStoreProtocol,
+    procedure_store: ProcedureStoreProtocol | None,
     *,
     now: str,
     queue: ContractQueue,
@@ -1225,7 +1221,7 @@ def _clock_entries(
 def _contradicted_entries(
     store: ResolutionContractStoreProtocol,
     graph: EntityGraph,
-    procedure_store: ProcedureStoreProtocol,
+    procedure_store: ProcedureStoreProtocol | None,
 ) -> list[ContractQueueEntry]:
     entries: list[ContractQueueEntry] = []
     for contract, resolution in store.list_undisposed_contradictions():
@@ -1255,7 +1251,7 @@ def _contradicted_entries(
 def _build_list_items(
     store: ResolutionContractStoreProtocol,
     graph: EntityGraph,
-    procedure_store: ProcedureStoreProtocol,
+    procedure_store: ProcedureStoreProtocol | None,
     contracts: Sequence[ResolutionContract],
 ) -> list[ContractListItem]:
     contract_ids = [contract.contract_id for contract in contracts]
@@ -1305,7 +1301,7 @@ def _build_list_items(
 
 def _subject_is_live(
     graph: EntityGraph,
-    procedure_store: ProcedureStoreProtocol,
+    procedure_store: ProcedureStoreProtocol | None,
     contract: ResolutionContract,
 ) -> bool:
     return resolve_contract_subject(

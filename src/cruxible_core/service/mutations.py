@@ -2,29 +2,17 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
-from pydantic import ValidationError
-
 from cruxible_core.config.ownership import check_upstream_type_ownership
-from cruxible_core.config.schema import CoreConfig
-from cruxible_core.errors import (
-    DataValidationError,
-    GroupApprovedContentWriteRefusedError,
-)
+from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.assertion_state import RelationshipLifecycleState
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.entity_identity import EntityIdentityWarning
 from cruxible_core.graph.evidence import EvidenceRef, RelationshipEvidence
-from cruxible_core.graph.group_drift import (
-    GroupContentDrift,
-    content_change,
-    stamp_group_approval_drift,
-)
 from cruxible_core.graph.operations import (
     ValidatedEntity,
     ValidatedRelationship,
@@ -34,25 +22,16 @@ from cruxible_core.graph.operations import (
     validate_relationship,
 )
 from cruxible_core.graph.property_diffs import property_value_changes
-from cruxible_core.graph.provenance import SOURCE_REF_BATCH_DIRECT_WRITE, provenance_group_id
+from cruxible_core.graph.provenance import SOURCE_REF_BATCH_DIRECT_WRITE
 from cruxible_core.graph.types import (
     EntityInstance,
     EntityMetadata,
     RelationshipInstance,
     RelationshipMetadata,
 )
-from cruxible_core.group.types import CandidateGroup
-from cruxible_core.instance_protocol import (
-    GroupStoreProtocol,
-    InstanceProtocol,
-    ResolutionContractStoreProtocol,
-)
+from cruxible_core.instance_protocol import InstanceProtocol, ResolutionContractStoreProtocol
 from cruxible_core.playbill.actor_context import GovernedActorContext, dump_actor_context
-from cruxible_core.service.direct_write_policy import (
-    effective_relationship_write_policy,
-    is_governed_source,
-    refuse_governed_source_at_direct_write_entry,
-)
+from cruxible_core.service.direct_write_policy import refuse_governed_source_at_direct_write_entry
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
     ContractActivationIntent,
@@ -82,7 +61,6 @@ from cruxible_core.service.types import (
     RelationshipWriteInput,
     SharedEvidenceInput,
 )
-from cruxible_core.temporal import format_datetime, utc_now
 
 BATCH_MISSING_ENDPOINT_HINT = "create the entity first or include it in the same batch"
 """Recovery appended to a batch direct-write dangling-endpoint rejection.
@@ -97,25 +75,6 @@ ADD_RELATIONSHIP_MISSING_ENDPOINT_HINT = (
     "to write the entity and the relationship in one call"
 )
 """Recovery for a relationship-only write, which cannot carry the entity itself."""
-
-_DIRECT_WRITE_CONFLICTS_KEY = "direct_write_conflicts"
-_DIRECT_WRITE_CONFLICT_SUMMARY_KEY = "direct_write_conflict_summary"
-_DIRECT_WRITE_CONFLICT_REVIEW_HINT = "live_state_changed_since_proposal"
-
-# Per-tuple retention cap on the append-only conflict log.
-#
-# The log is append-only because the reviewer needs the HISTORY of how many
-# times live state moved under their proposal, not just the latest move —
-# replacing the record erased the earlier ``detected_at``/``receipt_id``. Append
-# without a bound, though, lets a hot tuple grow the group's analysis_state
-# without limit.
-#
-# The cap is PER TUPLE rather than per group on purpose: the summary counts
-# DISTINCT conflicted tuples, so a global cap could evict every record for a
-# tuple and silently drop its count. Bounding per tuple guarantees each
-# conflicted tuple keeps at least one record, which keeps the summary exact by
-# construction. Total growth is therefore bounded by member_count * this cap.
-_MAX_CONFLICT_RECORDS_PER_TUPLE = 20
 
 
 @dataclass
@@ -146,17 +105,10 @@ class _PreparedBatchDirectWrite:
 
 @dataclass
 class _DirectWriteGroupInteractions:
+    """Frozen empty compatibility fields after legacy group retirement."""
+
     pending_conflicts: list[DirectWriteGroupInteraction]
     updated_group_backed_edges: list[DirectWriteGroupInteraction]
-    # Identity -> drift, populated only for group-backed edges whose content the
-    # incoming write actually changes. Deliberately NOT surfaced on
-    # ``DirectWriteGroupInteraction``: the dataclass -> contract mapper lives in
-    # ``runtime/api.py``, and a contract field the mapper never fills would read
-    # as "no drift ever" over HTTP. The drift is recorded where the ruling
-    # requires it — on the edge and on the receipt.
-    content_drift: dict[tuple[str, str, str, str, str], GroupContentDrift] = field(
-        default_factory=dict
-    )
 
 
 def _entity_property_change_detail(
@@ -202,458 +154,12 @@ def _entity_property_change_detail(
     return detail
 
 
-def _group_interaction_payload(
-    interaction: DirectWriteGroupInteraction,
-) -> dict[str, Any]:
-    return {
-        "relationship_type": interaction.relationship_type,
-        "from_type": interaction.from_type,
-        "from_id": interaction.from_id,
-        "to_type": interaction.to_type,
-        "to_id": interaction.to_id,
-        "group_id": interaction.group_id,
-        "group_status": interaction.group_status,
-        "group_signature": interaction.group_signature,
-        "source_workflow_name": interaction.source_workflow_name,
-        "edge_key": interaction.edge_key,
-        "claim_id": interaction.claim_id,
-    }
-
-
-def _group_interaction_from_relationship(
-    relationship: RelationshipInstance,
-    *,
-    group_id: str,
-    group: CandidateGroup | None,
-    edge_key: int | None,
-    claim_id: str | None = None,
-) -> DirectWriteGroupInteraction:
-    """Describe one group interaction a direct write ran into.
-
-    ``edge_key`` and ``claim_id`` both name the EXISTING durable edge, never the
-    incoming write: an update names the edge it is about to change, while a
-    pending-group conflict names no edge at all (there is none yet), so both are
-    None there. The pair travels together -- ``claim_id`` was declared on this
-    shape and left unwritten, which is worse than absent: a consumer reading the
-    field would conclude the interaction had no stable identity.
-    """
-    return DirectWriteGroupInteraction(
-        relationship_type=relationship.relationship_type,
-        from_type=relationship.from_type,
-        from_id=relationship.from_id,
-        to_type=relationship.to_type,
-        to_id=relationship.to_id,
-        group_id=group_id,
-        group_status=group.status if group is not None else None,
-        group_signature=group.signature if group is not None else None,
-        source_workflow_name=group.source_workflow_name if group is not None else None,
-        edge_key=edge_key,
-        claim_id=claim_id,
-    )
-
-
-def _detect_direct_write_group_interactions(
-    instance: InstanceProtocol,
-    graph: EntityGraph,
-    relationships: Sequence[RelationshipInstance],
-    *,
-    config: CoreConfig,
-    source: str,
-    pending_flags: Sequence[bool],
-    group_store: GroupStoreProtocol | None = None,
-) -> _DirectWriteGroupInteractions:
-    if not relationships:
-        return _DirectWriteGroupInteractions(
-            pending_conflicts=[],
-            updated_group_backed_edges=[],
-        )
-
-    store = group_store if group_store is not None else instance.get_group_store()
-    close_store = group_store is None
-    try:
-        pending_conflicts: list[DirectWriteGroupInteraction] = []
-        tuples_by_type: dict[str, list[tuple[str, str, str, str, str]]] = defaultdict(list)
-        for relationship in relationships:
-            tuples_by_type[relationship.relationship_type].append(relationship.identity_tuple())
-
-        pending_by_type: dict[str, dict[tuple[str, str, str, str, str], list[CandidateGroup]]] = {}
-        for relationship_type, tuples in tuples_by_type.items():
-            pending_by_type[relationship_type] = store.find_pending_groups_for_tuples(
-                relationship_type,
-                tuples,
-                statuses=("pending_review", "applying"),
-            )
-
-        group_cache: dict[str, CandidateGroup | None] = {}
-        updated_group_backed_edges: list[DirectWriteGroupInteraction] = []
-        content_drift: dict[tuple[str, str, str, str, str], GroupContentDrift] = {}
-        for index, relationship in enumerate(relationships):
-            # One conflict record per LIVE group claiming this tuple, not just
-            # the newest. Every one of them is annotated and version-bumped
-            # downstream, so a reviewer on an older overlapping group still sees
-            # that live state moved under their proposal.
-            pending_groups = pending_by_type.get(relationship.relationship_type, {}).get(
-                relationship.identity_tuple()
-            )
-            for pending_group in pending_groups or []:
-                pending_conflicts.append(
-                    _group_interaction_from_relationship(
-                        relationship,
-                        group_id=pending_group.group_id,
-                        group=pending_group,
-                        edge_key=None,
-                    )
-                )
-
-            existing = graph.get_relationship(
-                relationship.from_type,
-                relationship.from_id,
-                relationship.to_type,
-                relationship.to_id,
-                relationship.relationship_type,
-            )
-            if existing is None or existing.metadata.provenance is None:
-                continue
-            group_id = provenance_group_id(existing.metadata.provenance)
-            if group_id is None:
-                continue
-            if group_id not in group_cache:
-                group_cache[group_id] = store.get_group(group_id)
-            updated_group_backed_edges.append(
-                _group_interaction_from_relationship(
-                    relationship,
-                    group_id=group_id,
-                    group=group_cache[group_id],
-                    edge_key=existing.edge_key,
-                    claim_id=existing.claim_id,
-                )
-            )
-
-            # CONTENT-BINDING RULING: a group approval accepted this edge's
-            # CONTENT, not just its existence. A write that changes nothing is
-            # not drift and must be left alone entirely.
-            changed = content_change(relationship, existing)
-            if not changed:
-                continue
-            policy = effective_relationship_write_policy(config, relationship.relationship_type)
-            if policy == "proposal_only":
-                pending = pending_flags[index] if index < len(pending_flags) else False
-                if is_governed_source(source) or pending:
-                    # Only refuse where the chokepoint in ``graph/operations.py``
-                    # would let the write through — it exempts governed sources
-                    # and pending stages. Everything else is already refused
-                    # there, and shadowing it would swap a settled error for a
-                    # new one on paths that have no gap.
-                    raise GroupApprovedContentWriteRefusedError(
-                        relationship.relationship_type,
-                        relationship.from_type,
-                        relationship.from_id,
-                        relationship.to_type,
-                        relationship.to_id,
-                        group_id=group_id,
-                        changed_properties=changed,
-                    )
-                continue
-            content_drift[relationship.identity_tuple()] = GroupContentDrift(
-                group_id=group_id,
-                changed_properties=changed,
-                approved_values={
-                    name: existing.properties[name]
-                    for name in changed
-                    if name in existing.properties
-                },
-            )
-    finally:
-        if close_store:
-            store.close()
+def _empty_direct_write_group_interactions() -> _DirectWriteGroupInteractions:
+    """Return the frozen empty result after candidate-group authority retired."""
 
     return _DirectWriteGroupInteractions(
-        pending_conflicts=pending_conflicts,
-        updated_group_backed_edges=updated_group_backed_edges,
-        content_drift=content_drift,
-    )
-
-
-def _record_group_interaction_validation(
-    builder: Any | None,
-    interactions: _DirectWriteGroupInteractions,
-) -> None:
-    if builder is None:
-        return
-    detail: dict[str, Any] = {}
-    if interactions.pending_conflicts:
-        detail["pending_conflicts"] = [
-            _group_interaction_payload(interaction)
-            for interaction in interactions.pending_conflicts
-        ]
-    if interactions.updated_group_backed_edges:
-        detail["updated_group_backed_edges"] = [
-            _group_interaction_payload(interaction)
-            for interaction in interactions.updated_group_backed_edges
-        ]
-    if detail:
-        builder.record_validation(passed=True, detail=detail)
-
-
-def _relationship_group_interaction_detail(
-    relationship: RelationshipInstance,
-    interactions: _DirectWriteGroupInteractions,
-) -> dict[str, Any]:
-    identity = relationship.identity_tuple()
-    detail: dict[str, Any] = {}
-    pending_conflicts = [
-        _group_interaction_payload(interaction)
-        for interaction in interactions.pending_conflicts
-        if (
-            interaction.from_type,
-            interaction.from_id,
-            interaction.to_type,
-            interaction.to_id,
-            interaction.relationship_type,
-        )
-        == identity
-    ]
-    if pending_conflicts:
-        detail["pending_conflicts"] = pending_conflicts
-    updated_group_backed_edges = [
-        _group_interaction_payload(interaction)
-        for interaction in interactions.updated_group_backed_edges
-        if (
-            interaction.from_type,
-            interaction.from_id,
-            interaction.to_type,
-            interaction.to_id,
-            interaction.relationship_type,
-        )
-        == identity
-    ]
-    if updated_group_backed_edges:
-        detail["updated_group_backed_edges"] = updated_group_backed_edges
-    drift = interactions.content_drift.get(identity)
-    if drift is not None:
-        # The act of overwriting group-approved content must be auditable on the
-        # receipt, not only discoverable by reading the edge afterwards.
-        detail["group_approval_drift"] = _content_drift_payload(drift)
-    return detail
-
-
-def _content_drift_payload(drift: GroupContentDrift) -> dict[str, Any]:
-    return {
-        "group_id": drift.group_id,
-        "changed_properties": list(drift.changed_properties),
-        "approved_values": dict(drift.approved_values),
-    }
-
-
-def _record_identity(record: Mapping[str, Any]) -> tuple[str, str, str, str, str] | None:
-    try:
-        return RelationshipInstance.model_validate(record).identity_tuple()
-    except ValidationError:
-        return None
-
-
-def _direct_write_conflict_record(
-    *,
-    graph: EntityGraph,
-    interaction: DirectWriteGroupInteraction,
-    receipt_id: str | None,
-    detected_at: str,
-    source: str,
-    source_ref: str,
-    actor_context: GovernedActorContext | None,
-) -> dict[str, Any]:
-    persisted = graph.get_relationship(
-        interaction.from_type,
-        interaction.from_id,
-        interaction.to_type,
-        interaction.to_id,
-        interaction.relationship_type,
-    )
-    record: dict[str, Any] = {
-        "relationship_type": interaction.relationship_type,
-        "from_type": interaction.from_type,
-        "from_id": interaction.from_id,
-        "to_type": interaction.to_type,
-        "to_id": interaction.to_id,
-        "receipt_id": receipt_id,
-        "edge_key": persisted.edge_key if persisted is not None else interaction.edge_key,
-        "claim_id": persisted.claim_id if persisted is not None else None,
-        "detected_at": detected_at,
-        "source": source,
-        "source_ref": source_ref,
-    }
-    dumped_actor = dump_actor_context(actor_context)
-    if dumped_actor is not None:
-        # Every other governed write record names its actor; the conflict record
-        # alone said WHAT moved under the reviewer's proposal but never WHO.
-        record["actor_context"] = dumped_actor
-    return record
-
-
-def _bounded_conflict_log(
-    records: Sequence[Mapping[str, Any]],
-) -> tuple[list[dict[str, Any]], int]:
-    """Apply the per-tuple retention cap, returning the log and the drop count.
-
-    Retention keeps the FIRST record for a tuple and the most recent
-    ``_MAX_CONFLICT_RECORDS_PER_TUPLE - 1``. Both ends carry distinct review
-    value: the first ``detected_at`` says when live state first moved under the
-    proposal, and the latest records say what it is doing now. Dropping is from
-    the middle, and never silent — the count lands in the summary.
-    """
-    positions_by_identity: dict[tuple[str, str, str, str, str], list[int]] = defaultdict(list)
-    for position, record in enumerate(records):
-        identity = _record_identity(record)
-        if identity is None:
-            continue
-        positions_by_identity[identity].append(position)
-
-    keep: set[int] = set()
-    dropped = 0
-    for positions in positions_by_identity.values():
-        if len(positions) <= _MAX_CONFLICT_RECORDS_PER_TUPLE:
-            keep.update(positions)
-            continue
-        retained = {positions[0], *positions[-(_MAX_CONFLICT_RECORDS_PER_TUPLE - 1) :]}
-        keep.update(retained)
-        dropped += len(positions) - len(retained)
-
-    # Rebuild in original append order so the log stays chronological across
-    # tuples, not grouped by tuple.
-    return [dict(records[position]) for position in sorted(keep)], dropped
-
-
-def _merge_direct_write_conflict_state(
-    *,
-    group: CandidateGroup,
-    members: Sequence[RelationshipInstance],
-    new_records: Sequence[dict[str, Any]],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    analysis_state = deepcopy(group.analysis_state)
-    existing_records = analysis_state.get(_DIRECT_WRITE_CONFLICTS_KEY, [])
-
-    # APPEND-ONLY: a second conflict on the same tuple is a second event, not a
-    # correction of the first. Keying by identity and overwriting destroyed the
-    # earlier detected_at/receipt_id, so the reviewer could not see that live
-    # state had moved under the proposal repeatedly.
-    log: list[Mapping[str, Any]] = []
-    if isinstance(existing_records, list):
-        log.extend(item for item in existing_records if isinstance(item, Mapping))
-    log.extend(new_records)
-
-    retained, dropped = _bounded_conflict_log(log)
-    # Cumulative: each merge only sees the records it drops NOW, but the count
-    # must stay a truthful total of what the reviewer can no longer read.
-    previous_summary = analysis_state.get(_DIRECT_WRITE_CONFLICT_SUMMARY_KEY)
-    if isinstance(previous_summary, Mapping):
-        previously_dropped = previous_summary.get("dropped_record_count")
-        if isinstance(previously_dropped, int):
-            dropped += previously_dropped
-
-    # DISTINCT tuples, not raw record count: the summary answers "how much of
-    # this proposal has live state moved under?", which append-only records
-    # would otherwise inflate on every repeat write to one member.
-    conflicted_identities = {
-        identity
-        for identity in (_record_identity(record) for record in retained)
-        if identity is not None
-    }
-    member_identities = {member.identity_tuple() for member in members}
-    conflicted_member_identities = member_identities.intersection(conflicted_identities)
-    member_count = len(member_identities) if member_identities else group.member_count
-    conflicted_member_count = len(conflicted_member_identities)
-    coverage = "full" if member_count > 0 and conflicted_member_count >= member_count else "partial"
-    last_receipt_id = new_records[-1].get("receipt_id") if new_records else None
-    summary = {
-        "conflicted_member_count": conflicted_member_count,
-        "member_count": member_count,
-        "coverage": coverage,
-        "last_receipt_id": last_receipt_id,
-        "review_hint": _DIRECT_WRITE_CONFLICT_REVIEW_HINT,
-        "record_count": len(retained),
-        "dropped_record_count": dropped,
-    }
-    analysis_state[_DIRECT_WRITE_CONFLICTS_KEY] = retained
-    analysis_state[_DIRECT_WRITE_CONFLICT_SUMMARY_KEY] = summary
-    return analysis_state, summary
-
-
-def _annotate_direct_write_conflict_groups(
-    *,
-    graph: EntityGraph,
-    group_store: GroupStoreProtocol,
-    interactions: _DirectWriteGroupInteractions,
-    receipt_id: str | None,
-    source: str,
-    source_ref: str,
-    actor_context: GovernedActorContext | None,
-    builder: Any | None,
-) -> list[dict[str, Any]]:
-    if not interactions.pending_conflicts:
-        return []
-
-    detected_at = format_datetime(utc_now())
-    assert detected_at is not None
-    conflicts_by_group: dict[str, list[DirectWriteGroupInteraction]] = defaultdict(list)
-    for interaction in interactions.pending_conflicts:
-        conflicts_by_group[interaction.group_id].append(interaction)
-
-    annotations: list[dict[str, Any]] = []
-    for group_id, group_interactions in conflicts_by_group.items():
-        group = group_store.get_group(group_id)
-        if group is None or group.status not in {"pending_review", "applying"}:
-            continue
-        members = group_store.get_members(group_id)
-        new_records = [
-            _direct_write_conflict_record(
-                graph=graph,
-                interaction=interaction,
-                receipt_id=receipt_id,
-                detected_at=detected_at,
-                source=source,
-                source_ref=source_ref,
-                actor_context=actor_context,
-            )
-            for interaction in group_interactions
-        ]
-        analysis_state, summary = _merge_direct_write_conflict_state(
-            group=group,
-            members=members,
-            new_records=new_records,
-        )
-        group_store.update_group_analysis_state(group_id, analysis_state)
-        annotations.append(
-            {
-                "group_id": group_id,
-                "coverage": summary["coverage"],
-                "conflicted_member_count": summary["conflicted_member_count"],
-                "member_count": summary["member_count"],
-            }
-        )
-
-    if annotations and builder is not None:
-        builder.record_validation(
-            passed=True,
-            detail={"direct_write_group_annotations": annotations},
-        )
-    return annotations
-
-
-def _stamp_group_approval_drift(
-    graph: EntityGraph,
-    relationship: RelationshipInstance,
-    interactions: _DirectWriteGroupInteractions,
-    *,
-    receipt_id: str | None,
-    actor_context: GovernedActorContext | None,
-) -> None:
-    """Recompute the drift marker for one relationship this write just changed."""
-    stamp_group_approval_drift(
-        graph,
-        relationship,
-        interactions.content_drift.get(relationship.identity_tuple()),
-        receipt_id=receipt_id,
-        actor_context=actor_context,
+        pending_conflicts=[],
+        updated_group_backed_edges=[],
     )
 
 
@@ -774,7 +280,6 @@ def _prepare_batch_direct_write(
     source_ref: str,
     actor_context: GovernedActorContext | None = None,
     builder: Any | None = None,
-    group_store: GroupStoreProtocol | None = None,
     resolution_contract_store: ResolutionContractStoreProtocol | None = None,
 ) -> _PreparedBatchDirectWrite:
     # Seam check, ahead of every validation and every write: a batch direct
@@ -987,18 +492,7 @@ def _prepare_batch_direct_write(
         record_guard_evaluation(builder, relationship_guard_evaluation)
     errors.extend(relationship_guard_evaluation.messages)
 
-    interactions = _detect_direct_write_group_interactions(
-        instance,
-        current_graph,
-        # The VALIDATED relationship, not the raw payload: content drift must be
-        # measured against what actually lands (see ``_content_change``).
-        [item.validated.relationship for item in validated_relationships],
-        config=config,
-        source=source,
-        pending_flags=[item.pending for item in validated_relationships],
-        group_store=group_store,
-    )
-    _record_group_interaction_validation(builder, interactions)
+    interactions = _empty_direct_write_group_interactions()
 
     if errors:
         raise DataValidationError(
@@ -1110,7 +604,6 @@ def service_batch_direct_write(
             source_ref=source_ref,
             actor_context=actor_context,
             builder=builder,
-            group_store=ctx.uow.groups if ctx.uow is not None else None,
             resolution_contract_store=(
                 ctx.uow.resolution_contracts if ctx.uow is not None else None
             ),
@@ -1155,13 +648,6 @@ def service_batch_direct_write(
                 pending=relationship_item.pending,
                 lifecycle=relationship_item.lifecycle,
             )
-            _stamp_group_approval_drift(
-                prepared.graph,
-                edge,
-                prepared.interactions,
-                receipt_id=builder.receipt_id if builder else None,
-                actor_context=actor_context,
-            )
             stamped_relationship = prepared.graph.get_relationship(
                 edge.from_type,
                 edge.from_id,
@@ -1183,9 +669,6 @@ def service_batch_direct_write(
                     }
                     if edge.metadata.evidence.rationale is not None:
                         evidence_detail["evidence_rationale"] = edge.metadata.evidence.rationale
-                evidence_detail.update(
-                    _relationship_group_interaction_detail(edge, prepared.interactions)
-                )
                 if relationship_item.pending:
                     evidence_detail["review_status"] = "pending"
                 builder.record_relationship_write(
@@ -1198,18 +681,6 @@ def service_batch_direct_write(
                     detail=evidence_detail,
                     claim_id=persisted_relationship.claim_id,
                 )
-
-        if ctx.uow is not None:
-            _annotate_direct_write_conflict_groups(
-                graph=prepared.graph,
-                group_store=ctx.uow.groups,
-                interactions=prepared.interactions,
-                receipt_id=builder.receipt_id if builder else None,
-                source=source,
-                source_ref=source_ref,
-                actor_context=actor_context,
-                builder=builder,
-            )
 
         save_graph_for_mutation(
             instance,
@@ -1622,24 +1093,7 @@ def service_add_relationships(
                 errors=guard_errors,
             )
 
-        interactions = _detect_direct_write_group_interactions(
-            instance,
-            graph,
-            # The VALIDATED relationship, not the raw edge: content drift must be
-            # measured against what actually lands (see ``_content_change``).
-            [
-                validated.relationship
-                for validated, _edge, _pending_flag, _lifecycle in prepared_relationships
-            ],
-            config=config,
-            source=source,
-            pending_flags=[
-                pending_flag
-                for _validated, _edge, pending_flag, _lifecycle in prepared_relationships
-            ],
-            group_store=ctx.uow.groups if ctx.uow is not None else None,
-        )
-        _record_group_interaction_validation(builder, interactions)
+        interactions = _empty_direct_write_group_interactions()
 
         # Run the refuse_direct_writes chokepoint here, in the prepare phase that
         # executes for BOTH dry-run and live, so a dry-run preview refuses a
@@ -1695,13 +1149,6 @@ def service_add_relationships(
                 pending=pending_flag,
                 lifecycle=lifecycle_state,
             )
-            _stamp_group_approval_drift(
-                graph,
-                edge,
-                interactions,
-                receipt_id=builder.receipt_id if builder else None,
-                actor_context=actor_context,
-            )
             stamped = graph.get_relationship(
                 edge.from_type,
                 edge.from_id,
@@ -1723,7 +1170,6 @@ def service_add_relationships(
                     }
                     if edge.metadata.evidence.rationale is not None:
                         evidence_detail["evidence_rationale"] = edge.metadata.evidence.rationale
-                evidence_detail.update(_relationship_group_interaction_detail(edge, interactions))
                 if pending_flag:
                     evidence_detail["review_status"] = "pending"
                 builder.record_relationship_write(
@@ -1740,18 +1186,6 @@ def service_add_relationships(
                 updated += 1
             else:
                 added += 1
-
-        if ctx.uow is not None:
-            _annotate_direct_write_conflict_groups(
-                graph=graph,
-                group_store=ctx.uow.groups,
-                interactions=interactions,
-                receipt_id=builder.receipt_id if builder else None,
-                source=source,
-                source_ref=source_ref,
-                actor_context=actor_context,
-                builder=builder,
-            )
 
         save_graph_for_mutation(
             instance,

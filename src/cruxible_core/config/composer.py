@@ -240,49 +240,14 @@ def resolve_overlay_kit_base_layer(
     content known to be the kit's own layer, never for already-composed configs
     that merely sit next to a copied kit manifest.
     """
-    from cruxible_core.kits import (
-        KIT_MANIFEST_FILE,
-        enforce_min_core_version,
-        load_kit_manifest,
-        resolve_kit_ref,
-    )
-
     kit_dir = config_path.parent if config_path is not None else config_dir
-    if kit_dir is None or not (kit_dir / KIT_MANIFEST_FILE).exists():
+    manifest_path = kit_dir / "cruxible-kit.yaml" if kit_dir is not None else None
+    if manifest_path is None or not manifest_path.exists():
         return None
-    manifest = load_kit_manifest(kit_dir)
-    if manifest.role != "overlay":
-        return None
-    # Both manifests are read straight off disk here; only the no-sibling
-    # fallback below reaches the resolver, so enforce the core floor directly.
-    enforce_min_core_version(manifest)
-    if (
-        config_path is not None
-        and (kit_dir / manifest.entry_config).resolve() != config_path.resolve()
-    ):
-        return None
-    target_state = manifest.target_state
-    assert target_state is not None
-
-    sibling_root = kit_dir.parent / target_state
-    if (sibling_root / KIT_MANIFEST_FILE).exists():
-        sibling_manifest = load_kit_manifest(sibling_root)
-        if sibling_manifest.kit_id != target_state:
-            raise ConfigError(
-                f"Kit directory {sibling_root} declares kit_id "
-                f"'{sibling_manifest.kit_id}', not '{target_state}'"
-            )
-        enforce_min_core_version(sibling_manifest)
-        base_path = (sibling_root / sibling_manifest.entry_config).resolve()
-    else:
-        bundle = resolve_kit_ref(target_state)
-        base_path = (bundle.root / bundle.manifest.entry_config).resolve()
-    if not base_path.exists():
-        raise ConfigError(
-            f"Overlay kit '{manifest.kit_id}' targets state '{target_state}', but its "
-            f"base config was not found at {base_path}"
-        )
-    return ResolvedConfigLayer(config=load_config(base_path), config_path=base_path)
+    raise ConfigError(
+        "legacy kit-based config composition was retired in Playbill PC-D; "
+        "use explicit extends paths for retained donor composition"
+    )
 
 
 def compose_config_sequence(

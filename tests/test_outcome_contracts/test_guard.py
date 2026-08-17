@@ -12,9 +12,11 @@ import pytest
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import DataValidationError
 from cruxible_core.graph.types import EntityInstance
-from cruxible_core.service import (
+from cruxible_core.service.mutations import (
     service_add_entities,
     service_batch_direct_write,
+)
+from cruxible_core.service.resolution_contracts import (
     service_list_resolution_contracts,
     service_open_resolution_contract,
 )

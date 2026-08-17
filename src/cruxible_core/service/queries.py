@@ -876,7 +876,7 @@ def service_get_relationship_lineage(
     to_id: str,
     edge_key: int | None = None,
 ) -> RelationshipLineageResult:
-    """Look up a relationship and follow group provenance when present."""
+    """Look up a relationship and report historical provenance when present."""
     relationship = service_get_relationship(
         instance,
         from_type=from_type,
@@ -911,34 +911,16 @@ def service_get_relationship_lineage(
             warnings=warnings,
         )
 
-    group_store = instance.get_group_store()
-    try:
-        group = group_store.get_group(group_id)
-        if group is None:
-            warnings.append("missing_group")
-            return RelationshipLineageResult(
-                found=True,
-                relationship=relationship,
-                provenance=dump_provenance(provenance),
-                warnings=warnings,
-            )
-        resolution = (
-            group_store.get_resolution(group.resolution_id)
-            if group.resolution_id is not None
-            else None
-        )
-        return RelationshipLineageResult(
-            found=True,
-            relationship=relationship,
-            provenance=dump_provenance(provenance),
-            group=group,
-            resolution=resolution,
-            source_workflow_receipt_id=group.source_workflow_receipt_id,
-            source_trace_ids=list(group.source_trace_ids),
-            warnings=warnings,
-        )
-    finally:
-        group_store.close()
+    # Candidate-group storage retired in PC-D. Historical edges can still name
+    # their original source coordinate, but the donor query surface must not
+    # recreate or consult the removed authority.
+    warnings.append("missing_group")
+    return RelationshipLineageResult(
+        found=True,
+        relationship=relationship,
+        provenance=dump_provenance(provenance),
+        warnings=warnings,
+    )
 
 
 def service_get_receipt(

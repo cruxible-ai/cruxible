@@ -27,15 +27,17 @@ from cruxible_core.receipt.mutation_payloads import (
     retain_mutation_payload,
 )
 from cruxible_core.receipt.types import Receipt, ReceiptNode
-from cruxible_core.service import (
-    BatchDirectWriteInput,
-    BatchRelationshipWriteInput,
-    EntityWriteInput,
-    RelationshipWriteInput,
+from cruxible_core.service.mutations import (
     service_add_entities,
     service_add_entity_inputs,
     service_add_relationship_inputs,
     service_batch_direct_write,
+)
+from cruxible_core.service.types import (
+    BatchDirectWriteInput,
+    BatchRelationshipWriteInput,
+    EntityWriteInput,
+    RelationshipWriteInput,
 )
 
 GUARD_CONFIG_YAML = """\

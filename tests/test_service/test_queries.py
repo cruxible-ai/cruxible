@@ -11,14 +11,12 @@ from cruxible_core.graph.assertion_state import (
     RelationshipReviewState,
 )
 from cruxible_core.graph.types import RelationshipInstance, RelationshipMetadata
-from cruxible_core.service import (
-    service_list,
-    service_query_inline_surface,
-    service_sample,
-)
 from cruxible_core.service.queries import (
     _compile_edge_list_where,
     _relationship_matches_list_where,
+    service_list,
+    service_query_inline_surface,
+    service_sample,
 )
 
 

@@ -490,10 +490,15 @@ def test_pc_d_retired_donor_packages_and_modules_are_absent() -> None:
         CORE / "service" / "group_read_models.py",
         CORE / "service" / "group_transitions.py",
         CORE / "service" / "groups.py",
+        CORE / "service" / "lifecycle.py",
         CORE / "service" / "procedure_migrations.py",
         CORE / "service" / "procedures.py",
     )
     assert not any(path.exists() for path in retired_modules)
+
+    mutation_source = (CORE / "service" / "mutations.py").read_text(encoding="utf-8")
+    assert "cruxible_core.group" not in mutation_source
+    assert "get_group_store" not in mutation_source
 
 
 def test_destructive_pass_oracles_are_exact_and_immutable() -> None:

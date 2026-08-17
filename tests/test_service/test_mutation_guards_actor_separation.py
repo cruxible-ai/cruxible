@@ -20,11 +20,10 @@ from cruxible_core.config.compact import CompactExpansionError, expand_compact
 from cruxible_core.config.schema import ActorIdentityGuardCondition
 from cruxible_core.errors import DataValidationError
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.service import (
+from cruxible_core.service.mutations import service_add_entity_inputs, service_batch_direct_write
+from cruxible_core.service.types import (
     BatchDirectWriteInput,
     EntityWriteInput,
-    service_add_entity_inputs,
-    service_batch_direct_write,
 )
 from cruxible_core.temporal import utc_now
 

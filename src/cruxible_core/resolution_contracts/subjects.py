@@ -63,9 +63,11 @@ def _authorize_procedure_open(internal_authority: bool) -> None:
 
 
 def _resolve_procedure_subject(
-    procedure_store: ProcedureStoreProtocol,
+    procedure_store: ProcedureStoreProtocol | None,
     entity_id: str,
 ) -> SubjectResolution:
+    if procedure_store is None:
+        return SubjectResolution(present=False, content_digest=None, live=False)
     procedure = procedure_store.get_procedure(entity_id)
     if procedure is None:
         return SubjectResolution(present=False, content_digest=None, live=False)
@@ -80,7 +82,7 @@ RESERVED_SUBJECT_OPENERS: Mapping[str, Callable[[bool], None]] = MappingProxyTyp
     {"Procedure": _authorize_procedure_open}
 )
 RESERVED_SUBJECT_RESOLVERS: Mapping[
-    str, Callable[[ProcedureStoreProtocol, str], SubjectResolution]
+    str, Callable[[ProcedureStoreProtocol | None, str], SubjectResolution]
 ] = MappingProxyType({"Procedure": _resolve_procedure_subject})
 
 
@@ -116,7 +118,7 @@ def classify_reserved_subject_for_open(
 
 def resolve_contract_subject(
     graph: EntityGraph,
-    procedure_store: ProcedureStoreProtocol,
+    procedure_store: ProcedureStoreProtocol | None,
     *,
     entity_type: str,
     entity_id: str,

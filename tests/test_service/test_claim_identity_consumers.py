@@ -13,7 +13,7 @@ import pytest
 
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.runtime.instance import CruxibleInstance
-from cruxible_core.service import service_add_entities, service_add_relationships
+from cruxible_core.service.mutations import service_add_entities, service_add_relationships
 from tests.test_cli.conftest import CAR_PARTS_YAML
 
 

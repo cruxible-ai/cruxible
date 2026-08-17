@@ -25,15 +25,17 @@ from cruxible_core.runtime.permissions import (
     init_permissions,
     reset_permissions,
 )
-from cruxible_core.service import (
-    service_add_entities,
-    service_get_receipt,
-    service_list,
-    service_query_inline_surface,
+from cruxible_core.service.artifact_lifecycle import (
     service_retire_entity,
     service_retract_claim,
     service_supersede_claim,
     service_supersede_entity,
+)
+from cruxible_core.service.mutations import service_add_entities
+from cruxible_core.service.queries import (
+    service_get_receipt,
+    service_list,
+    service_query_inline_surface,
 )
 from cruxible_core.temporal import utc_now
 

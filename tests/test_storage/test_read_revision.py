@@ -18,25 +18,21 @@ from tests.test_cli.conftest import CAR_PARTS_YAML
 
 from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.service import (
+from cruxible_core.service.mutations import (
     service_add_entities,
     service_add_relationships,
-    service_apply_workflow,
     service_batch_direct_write,
+)
+from cruxible_core.service.queries import (
     service_inspect_entity,
     service_list,
-    service_lock,
-    service_propose_group_inputs,
     service_query_surface,
-    service_resolve_group,
-    service_run,
     service_sample,
     service_stats,
 )
 from cruxible_core.service.types import (
     BatchDirectWriteInput,
     EntityWriteInput,
-    GroupMemberInput,
 )
 from cruxible_core.storage.sqlite import (
     READ_REVISION_MIGRATION,
@@ -116,41 +112,6 @@ class TestRevisionIncrementsOncePerMutationCommit:
             ),
         )
         assert instance.get_read_revision() == before + 1
-
-    def test_workflow_apply(self, canonical_workflow_instance: CruxibleInstance) -> None:
-        service_lock(canonical_workflow_instance)
-        preview = service_run(canonical_workflow_instance, "build_reference", {})
-        before = canonical_workflow_instance.get_read_revision()
-        service_apply_workflow(
-            canonical_workflow_instance,
-            "build_reference",
-            {},
-            expected_apply_digest=preview.apply_digest or "",
-            expected_head_snapshot_id=preview.head_snapshot_id,
-        )
-        assert canonical_workflow_instance.get_read_revision() == before + 1
-
-    def test_group_propose_and_resolve(self, instance: CruxibleInstance) -> None:
-        _seed_entities(instance)
-        before = instance.get_read_revision()
-        proposal = service_propose_group_inputs(
-            instance,
-            "fits",
-            [
-                GroupMemberInput(
-                    from_type="Part",
-                    from_id="BP-1",
-                    to_type="Vehicle",
-                    to_id="V-1",
-                    relationship_type="fits",
-                    properties={"verified": True},
-                )
-            ],
-            thesis_facts={"k": "v"},
-        )
-        assert instance.get_read_revision() == before + 1
-        service_resolve_group(instance, proposal.group_id, "approve", expected_pending_version=1)
-        assert instance.get_read_revision() == before + 2
 
     def test_internal_snapshot_commit(self, instance: CruxibleInstance) -> None:
         _seed_entities(instance)

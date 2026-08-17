@@ -24,13 +24,12 @@ from cruxible_core.graph.assertion_state import (
 )
 from cruxible_core.graph.types import RelationshipInstance
 from cruxible_core.query.enums import QueryVisibilityState
-from cruxible_core.service import service_list
 from cruxible_core.service.lifecycle_inputs import relationship_lifecycle_state
 from cruxible_core.service.mutations import (
     service_add_relationship_inputs,
     service_batch_direct_write,
 )
-from cruxible_core.service.queries import service_get_relationship
+from cruxible_core.service.queries import service_get_relationship, service_list
 from cruxible_core.service.types import (
     BatchDirectWriteInput,
     BatchRelationshipWriteInput,
