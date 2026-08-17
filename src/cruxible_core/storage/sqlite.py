@@ -869,6 +869,7 @@ class SQLiteStorageBackend:
         if not self.has_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION):
             self._migrate_claim_identity(conn)
             self.mark_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION)
+
     @staticmethod
     def _migrate_claim_identity(conn: sqlite3.Connection) -> None:
         """Rebuild ``graph_relationships`` around ``claim_id`` (migration 0004).

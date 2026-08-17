@@ -65,6 +65,7 @@ _PROCEDURE_OUTPUT_STEP_KINDS = frozenset(
     }
 )
 
+
 def compute_lock_config_digest(config: CoreConfig) -> str:
     """Compute a stable config digest for lock generation."""
     dumped = json.dumps(
