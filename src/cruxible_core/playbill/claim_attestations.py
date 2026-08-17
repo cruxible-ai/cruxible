@@ -241,6 +241,7 @@ class VerifiedClaimAttestationV1(_StrictClaimAttestationModel):
 def verify_claim_attestation(
     attestation: ClaimAttestation,
     *,
+    verification_time: datetime,
     expected_instance_id: str,
     expected_coordinate: AcceptedCoordinate,
     claim: AcceptedClaim,
@@ -252,11 +253,21 @@ def verify_claim_attestation(
     current_subject_content_digest: str | None = None,
     current_object_content_digest: str | None = None,
 ) -> VerifiedClaimAttestationV1:
-    """Verify exact statement/referent/key binding and report shell currency separately."""
+    """Verify exact statement/referent/key binding at one trusted explicit time.
+
+    Provider key intervals are evaluated at the signed historical observation
+    time so expired keys retain verifiable history. Revocation in accepted
+    Provider state is the compromise boundary; callers must not treat ordinary
+    expiry as retroactive revocation.
+    """
 
     from cruxible_core.playbill.claims import SubjectClaimObject, claim_statement_digest
 
+    if verification_time.tzinfo is None or verification_time.utcoffset() is None:
+        raise ClaimAttestationError("ClaimAttestation verification time must be timezone-aware")
     statement = attestation.statement
+    if statement.observed_at > verification_time:
+        raise ClaimAttestationError("ClaimAttestation observed_at is in the future")
     if statement.instance_id != expected_instance_id:
         raise ClaimAttestationError("ClaimAttestation belongs to a different instance")
     if statement.referent_coordinate != expected_coordinate:

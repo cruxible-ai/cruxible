@@ -173,6 +173,8 @@ def evidence_control_components(
 ) -> tuple[EvidenceControlComponentV1, ...]:
     """Collapse shared ultimate control/upstream provenance into independence groups."""
 
+    _require_unique_evidence_digests(captures, attestations)
+
     nodes: list[tuple[str, set[str]]] = []
     for capture in captures:
         nodes.append(
@@ -230,7 +232,22 @@ def evidence_control_components(
     return tuple(sorted(result, key=lambda item: item.evidence_digests))
 
 
+def _require_unique_evidence_digests(
+    captures: tuple[CaptureVerdictEvidenceV1, ...],
+    attestations: tuple[VerifiedClaimAttestationV1, ...],
+) -> None:
+    """Refuse one CAS object presented as more than one evidence node."""
+
+    digests = tuple(item.capture_digest for item in captures) + tuple(
+        item.attestation_digest for item in attestations
+    )
+    if len(digests) != len(set(digests)):
+        raise ValueError("Claim verdict evidence digests must be globally unique")
+
+
 class ClaimVerdictResultV1(_StrictVerdictModel):
+    """Verdict at one time; evidence digest tuples are lifetime stance inventory."""
+
     tag: Literal["playbill-claim-verdict-v1"] = "playbill-claim-verdict-v1"
     claim_statement_digest: str
     adjudication_rule_digest: str
@@ -292,24 +309,35 @@ def evaluate_claim_verdict(
     providers: Mapping[str, ProviderV1],
     claim_effective_from: datetime | None = None,
     claim_effective_until: datetime | None = None,
-    authority_basis: tuple[str, ...] = (),
+    referent_current: bool = True,
+    resolved_authority_basis: tuple[str, ...] = (),
 ) -> ClaimVerdictResultV1:
-    """Compute one replayable verdict; acceptance and authority remain separate inputs."""
+    """Compute one replayable verdict from current evidence and resolved authority.
+
+    ``resolved_authority_basis`` must already have been revalidated at
+    ``evaluation_time`` and the evaluated accepted coordinate. Historical
+    verdict output is never a valid input to this parameter.
+    """
 
     Sha256Value.from_tagged(claim_statement_digest)
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
         raise ValueError("Claim verdict evaluation time must be timezone-aware")
-    if authority_basis != tuple(sorted(set(authority_basis))):
+    _require_unique_evidence_digests(captures, attestations)
+    if resolved_authority_basis != tuple(sorted(set(resolved_authority_basis))):
         raise ValueError("Claim authority basis must be sorted and unique")
     rule_digest = claim_adjudication_rule_digest(rule)
-    outside_claim_interval = (
+    before_claim_interval = (
         claim_effective_from is not None and evaluation_time < claim_effective_from
-    ) or (claim_effective_until is not None and evaluation_time >= claim_effective_until)
+    )
+    after_claim_interval = (
+        claim_effective_until is not None and evaluation_time >= claim_effective_until
+    )
 
     current_captures = tuple(
         item
         for item in captures
         if _capture_current(item, rule=rule, evaluation_time=evaluation_time)
+        and (not rule.shell_sensitive or referent_current)
     )
     current_attestations = tuple(
         item
@@ -318,6 +346,21 @@ def evaluate_claim_verdict(
         and (item.statement.valid_until is None or evaluation_time < item.statement.valid_until)
         and (not rule.shell_sensitive or item.current)
     )
+    admitted_capture_digests = {
+        item.capture_digest
+        for item in current_captures
+        if item.admission in {"direct", "derivational"}
+    }
+    started_admitted_capture_digests = {
+        item.capture_digest
+        for item in captures
+        if item.admission in {"direct", "derivational"} and item.observed_at <= evaluation_time
+    }
+
+    def attestation_has_relevant_captures(item: VerifiedClaimAttestationV1) -> bool:
+        cited = set(item.statement.capture_digests)
+        return bool(cited) and cited.issubset(admitted_capture_digests)
+
     support_capture_digests = {
         item.capture_digest
         for item in current_captures
@@ -326,12 +369,12 @@ def evaluate_claim_verdict(
     support_attestations = {
         item.attestation_digest
         for item in current_attestations
-        if item.statement.stance == "support"
+        if item.statement.stance == "support" and attestation_has_relevant_captures(item)
     }
     contradicting = {
         item.attestation_digest
         for item in current_attestations
-        if item.statement.stance == "contradict"
+        if item.statement.stance == "contradict" and attestation_has_relevant_captures(item)
     }
     support = support_capture_digests | support_attestations
     all_support = {
@@ -356,31 +399,44 @@ def evaluate_claim_verdict(
     contradict_satisfies = (
         independent_count(contradicting) >= rule.minimum_contradicting_control_domains
     )
-    if outside_claim_interval:
-        verdict: EvidenceRelativeClaimVerdict = "stale"
+    if before_claim_interval:
+        verdict: EvidenceRelativeClaimVerdict = "uncovered"
+    elif after_claim_interval:
+        verdict = "stale"
     elif support_satisfies and contradict_satisfies:
         verdict = (
             "contradicted" if rule.conflict_behavior == "contradiction_precedence" else "unresolved"
         )
     elif contradict_satisfies:
         verdict = "contradicted"
-    elif support_satisfies or authority_basis:
+    elif support_satisfies or resolved_authority_basis:
         verdict = "supported"
     elif captures or attestations:
         any_potentially_supporting = any(
             item.admission != "origin_only" for item in captures
         ) or any(item.statement.stance != "unsure" for item in attestations)
+        any_started_potential = any(
+            item.observed_at <= evaluation_time and item.admission != "origin_only"
+            for item in captures
+        ) or any(
+            item.statement.observed_at <= evaluation_time
+            and item.statement.stance != "unsure"
+            and bool(item.statement.capture_digests)
+            and set(item.statement.capture_digests).issubset(started_admitted_capture_digests)
+            for item in attestations
+        )
         any_current_potential = bool(support or contradicting)
         verdict = (
-            "stale" if any_potentially_supporting and not any_current_potential else "uncovered"
+            "stale"
+            if any_potentially_supporting and any_started_potential and not any_current_potential
+            else "uncovered"
         )
     else:
         verdict = "uncovered"
-    current = verdict not in {"stale"}
     basis = {item.basis_kind for item in current_captures if item.capture_digest in support}
     if support_attestations or contradicting:
         basis.add("signature_verified")
-    if authority_basis:
+    if resolved_authority_basis:
         basis.add("authority_ruled")
     provenance = {
         item.provenance_grade for item in current_captures if item.capture_digest in support
@@ -393,9 +449,13 @@ def evaluate_claim_verdict(
         adjudication_rule_digest=rule_digest,
         evaluation_time=evaluation_time,
         verdict=verdict,
-        currency="current" if current else "stale",
+        currency=(
+            "not_applicable"
+            if before_claim_interval
+            else ("stale" if verdict == "stale" else "current")
+        ),
         basis_kinds=tuple(sorted(basis)),
-        authority_basis=authority_basis,
+        authority_basis=resolved_authority_basis,
         provenance_grades=tuple(sorted(provenance)),
         epistemic_grades=tuple(sorted(epistemic)),
         supporting_evidence_digests=tuple(sorted(all_support)),

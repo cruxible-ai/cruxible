@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -94,6 +95,7 @@ def test_client_held_principal_signs_exact_claim_and_cas_round_trips(tmp_path: P
     assert read_claim_attestation(digest, store=instance.body_store()) == attestation
     verified = verify_claim_attestation(
         attestation,
+        verification_time=NOW,
         expected_instance_id=instance.descriptor.instance_id,
         expected_coordinate=coordinate,
         claim=claim,
@@ -105,6 +107,23 @@ def test_client_held_principal_signs_exact_claim_and_cas_round_trips(tmp_path: P
     )
     assert verified.attestation_grade == "verified_principal"
     assert verified.coverage == "exact_subject"
+
+    future = signer.sign_claim_attestation(
+        statement.model_copy(update={"observed_at": NOW + timedelta(seconds=1)})
+    )
+    with pytest.raises(ClaimAttestationError, match="observed_at is in the future"):
+        verify_claim_attestation(
+            future,
+            verification_time=NOW,
+            expected_instance_id=instance.descriptor.instance_id,
+            expected_coordinate=coordinate,
+            claim=claim,
+            referent_subject_content_digest=subject_digest(_subject()).tagged,
+            referent_object_content_digest=None,
+            principals=_principals(instance, coordinate),
+            providers={},
+            store=instance.body_store(),
+        )
 
 
 def test_wrong_instance_tamper_and_missing_capture_fail_closed(tmp_path: Path) -> None:
@@ -131,6 +150,7 @@ def test_wrong_instance_tamper_and_missing_capture_fail_closed(tmp_path: Path) -
     )
     attestation = signer.sign_claim_attestation(statement)
     arguments = {
+        "verification_time": NOW,
         "expected_instance_id": "other-instance",
         "expected_coordinate": coordinate,
         "claim": claim,
@@ -180,6 +200,7 @@ def test_provider_key_rotation_and_shell_drift_are_evidence_not_authority(
     )
     verified = verify_claim_attestation(
         attestation,
+        verification_time=NOW,
         expected_instance_id=instance.descriptor.instance_id,
         expected_coordinate=coordinate,
         claim=claim,
@@ -202,6 +223,7 @@ def test_provider_key_rotation_and_shell_drift_are_evidence_not_authority(
     with pytest.raises(ClaimAttestationError, match="expired, or revoked"):
         verify_claim_attestation(
             attestation,
+            verification_time=NOW,
             expected_instance_id=instance.descriptor.instance_id,
             expected_coordinate=coordinate,
             claim=claim,

@@ -620,6 +620,7 @@ def evaluate_claim_law(
     except ClaimFormatError as exc:
         return _diagnostic("playbill.claim.path_mismatch", str(exc), path=path)
     statement = claim.statement
+    evaluated_at = evaluation_time or claim.backing.referent_context.observed_at
     claim_type = claim_types.get(statement.claim_type.qualified)
     if claim_type is None or claim_type.artifact_digest != statement.claim_type_digest:
         return _diagnostic(
@@ -797,6 +798,7 @@ def evaluate_claim_law(
                 verified_attestations.append(
                     verify_claim_attestation(
                         attestation,
+                        verification_time=evaluated_at,
                         expected_instance_id=instance_id,
                         expected_coordinate=referent_coordinate,
                         claim=candidate_claim,
@@ -1151,7 +1153,6 @@ def evaluate_claim_law(
     )
     adjudication_rule_digest = claim_adjudication_rule_digest(rule)
     basis = tuple(sorted(evidence_basis, key=lambda item: item.encode("utf-8")))
-    evaluated_at = evaluation_time or claim.backing.referent_context.observed_at
     verdict_result = evaluate_claim_verdict(
         claim_statement_digest=statement_digest,
         rule=rule,

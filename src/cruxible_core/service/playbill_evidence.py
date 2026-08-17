@@ -265,6 +265,7 @@ def service_propose_claim_attestation(
     providers = _providers(tree)
     verify_claim_attestation(
         attestation,
+        verification_time=datetime.fromisoformat(timestamp.replace("Z", "+00:00")),
         expected_instance_id=coordinate.instance_id,
         expected_coordinate=AcceptedCoordinate.from_internal(coordinate),
         claim=accepted,
@@ -466,6 +467,10 @@ def service_evaluate_playbill_claim_verdict(
         for item in evidence.verdict_captures
     )
     subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
+    referent_current = (
+        accepted.claim.backing.referent_context.subject_content_digest == subject_content_digest
+        and accepted.claim.backing.referent_context.object_content_digest == object_content_digest
+    )
     attestations: tuple[VerifiedClaimAttestationV1, ...] = tuple(
         item.model_copy(
             update={
@@ -490,9 +495,10 @@ def service_evaluate_playbill_claim_verdict(
         providers=_providers(tree),
         claim_effective_from=accepted.claim.statement.effective_from,
         claim_effective_until=accepted.claim.statement.effective_until,
-        authority_basis=(
-            () if evidence.verdict_result is None else evidence.verdict_result.authority_basis
-        ),
+        referent_current=referent_current,
+        # Authority is resolved from live mandate/resolution state by PC-E1's
+        # resolver. Acceptance-time verdict output is never carried forward.
+        resolved_authority_basis=(),
     )
     return PlaybillClaimVerdictQueryV1(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
