@@ -20,6 +20,7 @@ from cruxible_core.playbill.exhaust.interchange import (
 )
 from cruxible_core.playbill.exhaust.records import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+    JournalEventKindV1,
     JournalHeadManifestV1,
     JournalHeadSignerProtocol,
     JournalHeadStatementV1,
@@ -33,6 +34,8 @@ from cruxible_core.playbill.exhaust.records import (
     build_journal_head_manifest,
     journal_genesis_digest,
     journal_head_statement_bytes,
+    journal_payload_bytes,
+    parse_journal_payload,
     payload_digest,
     procedure_journal_record_digest,
     verify_journal_head_manifest,
@@ -40,6 +43,7 @@ from cruxible_core.playbill.exhaust.records import (
 )
 
 __all__ = [
+    "JournalEventKindV1",
     "JournalBackendProtocol",
     "JournalHeadManifestV1",
     "JournalHeadSignerProtocol",
@@ -65,7 +69,9 @@ __all__ = [
     "import_journal_export",
     "journal_genesis_digest",
     "journal_head_statement_bytes",
+    "journal_payload_bytes",
     "payload_digest",
+    "parse_journal_payload",
     "parse_journal_export",
     "procedure_journal_record_digest",
     "render_journal_export",

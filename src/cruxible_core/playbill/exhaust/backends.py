@@ -548,6 +548,15 @@ class LocalJournalBackend:
         self._records(stream, partition_id)
         return self.read_head(stream, partition_id)
 
+    def all_records(
+        self,
+        stream: JournalStreamIdentityV1,
+        partition_id: str,
+    ) -> tuple[StoredProcedureJournalRecordV1, ...]:
+        """Return the verified complete local prefix for index rebuilds and export planning."""
+
+        return self._records(stream, partition_id)
+
     def _record_log_path_for_testing(
         self,
         stream: JournalStreamIdentityV1,

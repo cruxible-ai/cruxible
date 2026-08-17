@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from datetime import datetime
 from typing import Literal, Protocol
@@ -20,9 +22,11 @@ from pydantic import (
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.canonical import (
     ArtifactDigest,
+    CanonicalValue,
     CasDigest,
     Sha256Value,
     canonical_bytes,
+    normalize_canonical,
     typed_digest,
 )
 from cruxible_core.playbill.errors import PlaybillJournalError
@@ -510,11 +514,32 @@ def verify_journal_range(
 def payload_digest(payload: object) -> str:
     """Address one canonical payload that may be stored in CAS separately."""
 
-    return typed_digest(
-        CasDigest,
-        "playbill-procedure-journal-payload-v1",
-        {"payload": payload},
-    ).tagged
+    return CasDigest(hashlib.sha256(journal_payload_bytes(payload)).hexdigest()).tagged
+
+
+def journal_payload_bytes(payload: object) -> bytes:
+    """Return the exact CAS bytes whose address is stored in a journal record."""
+
+    return canonical_bytes(
+        {
+            "tag": "playbill-procedure-journal-payload-v1",
+            "payload": payload,
+        }
+    )
+
+
+def parse_journal_payload(content: bytes) -> CanonicalValue:
+    """Verify and return one exact CAS-backed journal payload."""
+
+    try:
+        raw = json.loads(content)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise PlaybillJournalError("journal payload is malformed") from exc
+    if not isinstance(raw, dict) or raw.get("tag") != "playbill-procedure-journal-payload-v1":
+        raise PlaybillJournalError("journal payload has an unknown domain tag")
+    if set(raw) != {"tag", "payload"} or canonical_bytes(raw) != content:
+        raise PlaybillJournalError("journal payload is not in exact canonical form")
+    return normalize_canonical(raw["payload"])
 
 
 __all__ = [
@@ -535,7 +560,9 @@ __all__ = [
     "journal_genesis_digest",
     "journal_head_key",
     "journal_head_statement_bytes",
+    "journal_payload_bytes",
     "payload_digest",
+    "parse_journal_payload",
     "procedure_journal_record_digest",
     "verify_journal_head_manifest",
     "verify_journal_range",
