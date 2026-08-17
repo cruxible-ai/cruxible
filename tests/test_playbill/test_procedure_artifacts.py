@@ -54,6 +54,7 @@ def _definition(
     *,
     query: ArtifactPin | ProcedurePinSlotRefV1 | None = None,
     nodes: tuple[object, ...] | None = None,
+    terminal_capability: int = 1,
 ) -> ProcedureDefinitionV3:
     contract_in = _pin("contract-in", "Contract", "empty-input")
     contract_out = _pin("contract-out", "Contract", "claim-rows")
@@ -99,7 +100,7 @@ def _definition(
             max_items=200,
             max_repeat_attempts=1,
         ),
-        terminal_capability=1,
+        terminal_capability=terminal_capability,  # type: ignore[arg-type]
     )
 
 
@@ -221,7 +222,8 @@ def test_proposal_terminal_has_no_activation_or_direct_write_capability() -> Non
                 as_="result",
             ),
             terminal,
-        )
+        ),
+        terminal_capability=2,
     )
 
     assert definition.nodes[-1].model_dump(mode="json") == {

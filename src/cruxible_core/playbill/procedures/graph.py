@@ -2,19 +2,33 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from typing import Iterator
 
 from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
 from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.procedures.models import (
     TERMINAL_NODE_KINDS,
+    TERMINAL_REQUIRED_RUNGS,
+    CaptureEgressNodeV3,
     GuardNodeV3,
+    InboxEgressNodeV3,
+    MandateSettlementNodeV3,
     ProcedureDefinitionV3,
     ProcedureNodeV3,
     ProcedurePinSlotRefV1,
+    ProjectNodeV3,
+    ProposeChangeSetNodeV3,
+    ProviderNodeV3,
     RepeatNodeV3,
+    SourceNodeV3,
+    StateTapNodeV3,
+    TransformNodeV3,
     iter_pin_bindings,
 )
+
+_ALIAS_RE = re.compile(r"^[a-z][a-z0-9_]{0,127}$")
 
 
 class ProcedureGraphFormatError(PlaybillFormatError):
@@ -26,6 +40,13 @@ class ProcedureGraphV3:
     node_ids: tuple[str, ...]
     kinds: dict[str, str]
     edges: dict[str, dict[str, str]]
+    successors: dict[str, tuple[str, ...]]
+    predecessors: dict[str, tuple[str, ...]]
+    available_aliases: dict[str, frozenset[str]]
+    """Aliases produced on every path reaching each node (MUST)."""
+    reachable_aliases: dict[str, frozenset[str]]
+    """Aliases produced on at least one path reaching each node (MAY)."""
+    produced_alias: dict[str, str | None]
 
 
 @dataclass(frozen=True)
@@ -55,6 +76,133 @@ def _canonical_edges(edges: dict[str, str]) -> dict[str, str]:
     return {key: edges[key] for key in sorted(edges, key=lambda item: item.encode("utf-8"))}
 
 
+def _successors(edges: dict[str, str]) -> tuple[str, ...]:
+    return tuple(target for target in edges.values() if target != "$abort")
+
+
+def _reference_templates(node: ProcedureNodeV3) -> Iterator[tuple[str, object]]:
+    """Yield only fields whose values the v3 runtime resolves as references."""
+
+    if isinstance(node, StateTapNodeV3):
+        yield "parameters", node.parameters
+    elif isinstance(node, SourceNodeV3):
+        yield "request", node.request
+    elif isinstance(node, ProviderNodeV3):
+        yield "input", node.input
+    elif isinstance(node, TransformNodeV3):
+        yield "spec", node.spec
+    elif isinstance(node, ProjectNodeV3):
+        yield "fields", node.fields
+    elif isinstance(node, RepeatNodeV3):
+        return
+    elif isinstance(node, CaptureEgressNodeV3 | InboxEgressNodeV3):
+        yield "input", node.input
+    elif isinstance(node, ProposeChangeSetNodeV3):
+        yield "candidate_templates", node.candidate_templates
+    elif isinstance(node, MandateSettlementNodeV3):
+        yield "input", node.input
+
+
+def _step_alias_references(value: object, *, location: str) -> Iterator[str]:
+    """Extract structured ``$steps.<alias>`` references from canonical values."""
+
+    if isinstance(value, str):
+        if value == "$steps" or value.startswith("$steps."):
+            if not value.startswith("$steps."):
+                raise ProcedureGraphFormatError(
+                    f"{location} contains malformed step reference {value!r}"
+                )
+            remainder = value[len("$steps.") :]
+            alias = remainder.split(".", 1)[0]
+            if not _ALIAS_RE.fullmatch(alias):
+                raise ProcedureGraphFormatError(
+                    f"{location} contains malformed step reference {value!r}"
+                )
+            yield alias
+        return
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _step_alias_references(item, location=location)
+        return
+    if isinstance(value, tuple | list):
+        for item in value:
+            yield from _step_alias_references(item, location=location)
+
+
+def _alias_dataflow(
+    definition: ProcedureDefinitionV3,
+    *,
+    node_ids: tuple[str, ...],
+    predecessors: dict[str, tuple[str, ...]],
+) -> tuple[
+    dict[str, str | None],
+    dict[str, frozenset[str]],
+    dict[str, frozenset[str]],
+]:
+    """Compute distinct MUST-availability and MAY-reachability sets."""
+
+    produced = {node.node_id: _node_alias(node) for node in definition.nodes}
+    available: dict[str, frozenset[str]] = {}
+    reachable: dict[str, frozenset[str]] = {}
+
+    def after(node_id: str, aliases: frozenset[str]) -> frozenset[str]:
+        alias = produced[node_id]
+        return aliases if alias is None else aliases | frozenset({alias})
+
+    for position, node_id in enumerate(node_ids):
+        preds = predecessors[node_id]
+        if position == 0 or not preds:
+            available[node_id] = frozenset()
+            reachable[node_id] = frozenset()
+            continue
+        must_contributions = [after(pred, available[pred]) for pred in preds]
+        available[node_id] = frozenset.intersection(*must_contributions)
+        reachable[node_id] = frozenset().union(*[after(pred, reachable[pred]) for pred in preds])
+    return produced, available, reachable
+
+
+def _validate_node_references(
+    node: ProcedureNodeV3,
+    *,
+    available: frozenset[str],
+) -> None:
+    if isinstance(node, GuardNodeV3):
+        missing = set(node.predicate.step_aliases()) - available
+        if missing:
+            raise ProcedureGraphFormatError(
+                f"R15: guard {node.node_id!r} references aliases not produced on every "
+                f"path reaching it: {sorted(missing)}"
+            )
+
+    for field_name, template in _reference_templates(node):
+        location = f"Procedure node {node.node_id!r} field {field_name!r}"
+        missing = set(_step_alias_references(template, location=location)) - available
+        if missing:
+            raise ProcedureGraphFormatError(
+                f"R15: {location} references aliases not produced on every path "
+                f"reaching it: {sorted(missing)}"
+            )
+
+    if not isinstance(node, RepeatNodeV3):
+        return
+    body_available = set(available)
+    for body in node.body:
+        location = f"Procedure repeat {node.node_id!r} body {body.node_id!r} field 'spec'"
+        missing = set(_step_alias_references(body.spec, location=location)) - body_available
+        if missing:
+            raise ProcedureGraphFormatError(
+                f"R15: {location} references unavailable aliases: {sorted(missing)}"
+            )
+        body_available.add(body.as_)
+    body_aliases = {body.as_ for body in node.body}
+    missing = set(node.until.step_aliases()) - body_aliases
+    if missing:
+        raise ProcedureGraphFormatError(
+            f"repeat {node.node_id!r} predicate references aliases outside its body: "
+            f"{sorted(missing)}"
+        )
+
+
 def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
     """Enforce v3's forward-only, reachable, plane-typed graph."""
 
@@ -62,7 +210,6 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
     position = {node_id: index for index, node_id in enumerate(node_ids)}
     kinds: dict[str, str] = {node.node_id: node.kind for node in definition.nodes}
     edges: dict[str, dict[str, str]] = {}
-    available_aliases: set[str] = set()
     declared_slots = {slot.slot_name for slot in definition.pin_slots}
 
     for index, node in enumerate(definition.nodes):
@@ -81,6 +228,13 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
             raise ProcedureGraphFormatError(
                 f"R5: terminal Procedure node {node.node_id!r} cannot have successors"
             )
+        required_rung = TERMINAL_REQUIRED_RUNGS.get(node.kind)
+        if required_rung is not None and required_rung > definition.terminal_capability:
+            raise ProcedureGraphFormatError(
+                f"Procedure terminal {node.node_id!r} kind {node.kind!r} requires rung "
+                f"{required_rung}, above declared terminal_capability "
+                f"{definition.terminal_capability}"
+            )
         for label, target in declared.items():
             if target == "$abort":
                 continue
@@ -92,12 +246,6 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
                 raise ProcedureGraphFormatError(
                     f"R2: node {node.node_id!r} {label} must target a later node"
                 )
-        if isinstance(node, GuardNodeV3):
-            missing = set(node.predicate.step_aliases()) - available_aliases
-            if missing:
-                raise ProcedureGraphFormatError(
-                    f"R15: guard {node.node_id!r} references unavailable aliases {sorted(missing)}"
-                )
         for binding in iter_pin_bindings(node):
             if (
                 isinstance(binding, ProcedurePinSlotRefV1)
@@ -107,17 +255,6 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
                     f"Procedure node {node.node_id!r} references undeclared pin slot "
                     f"{binding.slot_name!r}"
                 )
-        if isinstance(node, RepeatNodeV3):
-            body_aliases = {body.as_ for body in node.body}
-            missing = set(node.until.step_aliases()) - body_aliases
-            if missing:
-                raise ProcedureGraphFormatError(
-                    f"repeat {node.node_id!r} predicate references aliases outside its body: "
-                    f"{sorted(missing)}"
-                )
-        alias = _node_alias(node)
-        if alias is not None:
-            available_aliases.add(alias)
         edges[node.node_id] = _canonical_edges(declared)
 
     reachable: set[str] = set()
@@ -132,6 +269,21 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
     if missing_nodes:
         raise ProcedureGraphFormatError(f"R3: unreachable Procedure nodes: {missing_nodes}")
 
+    successors = {node_id: _successors(edges[node_id]) for node_id in node_ids}
+    predecessor_lists: dict[str, list[str]] = {node_id: [] for node_id in node_ids}
+    for node_id, targets in successors.items():
+        for target in targets:
+            predecessor_lists[target].append(node_id)
+    predecessors = {node_id: tuple(values) for node_id, values in predecessor_lists.items()}
+    produced, available, reachable_aliases = _alias_dataflow(
+        definition,
+        node_ids=node_ids,
+        predecessors=predecessors,
+    )
+
+    for node in definition.nodes:
+        _validate_node_references(node, available=available[node.node_id])
+
     for node in definition.nodes:
         if edges[node.node_id]:
             continue
@@ -142,7 +294,16 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
                 f"the declared output alias {definition.returns!r}"
             )
 
-    return ProcedureGraphV3(node_ids=node_ids, kinds=kinds, edges=edges)
+    return ProcedureGraphV3(
+        node_ids=node_ids,
+        kinds=kinds,
+        edges=edges,
+        successors=successors,
+        predecessors=predecessors,
+        available_aliases=available,
+        reachable_aliases=reachable_aliases,
+        produced_alias=produced,
+    )
 
 
 def _node_local_payload(node: ProcedureNodeV3) -> dict[str, object]:

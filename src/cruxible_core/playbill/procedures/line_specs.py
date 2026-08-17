@@ -31,6 +31,14 @@ from cruxible_core.playbill.procedures.closure import (
     close_procedure_pin_slots,
 )
 from cruxible_core.playbill.procedures.models import ExhaustTapNodeV3, SourceNodeV3
+from cruxible_core.playbill.procedures.pin_expectations import (
+    TRIGGER_CADENCE_POLICY,
+    TRIGGER_CAPTURE_CONTRACT,
+    TRIGGER_LANDING_FILTER,
+    TRIGGER_WINDOW_POLICY,
+    PinExpectation,
+    validate_exact_pin_expectation,
+)
 from cruxible_core.playbill.semantic import SemanticAddress
 
 _LINE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -184,24 +192,56 @@ class LineSpecV1(_StrictLineModel):
         required.update(binding.artifact_pin for binding in self.slot_bindings)
         if not required.issubset(set(self.pins)):
             raise ValueError("LineSpec envelope pins do not contain its exact dependencies")
-        trigger_requirements = _trigger_pin_requirements(self.trigger_policy)
-        available = {(pin.role, pin.artifact_digest) for pin in self.pins}
-        if not trigger_requirements.issubset(available):
-            raise ValueError("LineSpec trigger digests lack exact role-named pins")
+        for role, digest, expectation in _trigger_pin_requirements(self.trigger_policy):
+            matches = tuple(
+                pin for pin in self.pins if pin.role == role and pin.artifact_digest == digest
+            )
+            if len(matches) != 1:
+                raise ValueError(
+                    "LineSpec trigger digest lacks one exact role-named pin: "
+                    f"role={role!r} digest={digest!r}"
+                )
+            validate_exact_pin_expectation(
+                matches[0],
+                expectation,
+                location=f"LineSpec trigger pin {role!r}",
+            )
         return self
 
 
-def _trigger_pin_requirements(trigger: TriggerPolicyV1) -> set[tuple[str, str]]:
+def _trigger_pin_requirements(
+    trigger: TriggerPolicyV1,
+) -> tuple[tuple[str, str, PinExpectation], ...]:
     if isinstance(trigger, CadenceTriggerPolicyV1):
-        return {("trigger-cadence-policy", trigger.cadence_policy_digest)}
+        return (
+            (
+                "trigger-cadence-policy",
+                trigger.cadence_policy_digest,
+                TRIGGER_CADENCE_POLICY,
+            ),
+        )
     if isinstance(trigger, CaptureLandingTriggerPolicyV1):
-        return {
-            ("trigger-capture-contract", trigger.anchor_capture_contract_digest),
-            ("trigger-landing-filter", trigger.landing_filter_digest),
-        }
+        return (
+            (
+                "trigger-capture-contract",
+                trigger.anchor_capture_contract_digest,
+                TRIGGER_CAPTURE_CONTRACT,
+            ),
+            (
+                "trigger-landing-filter",
+                trigger.landing_filter_digest,
+                TRIGGER_LANDING_FILTER,
+            ),
+        )
     if isinstance(trigger, WindowCloseTriggerPolicyV1):
-        return {("trigger-window-policy", trigger.window_policy_digest)}
-    return set()
+        return (
+            (
+                "trigger-window-policy",
+                trigger.window_policy_digest,
+                TRIGGER_WINDOW_POLICY,
+            ),
+        )
+    return ()
 
 
 def line_spec_path(name: str) -> str:

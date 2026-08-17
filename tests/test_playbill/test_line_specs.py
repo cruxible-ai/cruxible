@@ -30,8 +30,11 @@ from cruxible_core.playbill.procedures.graph import compute_procedure_definition
 from cruxible_core.playbill.procedures.line_specs import (
     AcceptedLineSpecV1,
     CadenceTriggerPolicyV1,
+    CaptureLandingTriggerPolicyV1,
     LineSpecV1,
     ManualTriggerPolicyV1,
+    TriggerPolicyV1,
+    WindowCloseTriggerPolicyV1,
     evaluate_line_spec_law,
     line_spec_digest,
     line_spec_path,
@@ -134,7 +137,7 @@ def _accepted_procedure() -> tuple[AcceptedProcedureV1, ArtifactPin, Mapping[str
 
 def _line(
     *,
-    trigger: ManualTriggerPolicyV1 | CadenceTriggerPolicyV1 | None = None,
+    trigger: TriggerPolicyV1 | None = None,
     epoch: int = 1,
     predecessor_digest: str | None = None,
     bindings: tuple[LineSlotBindingV1, ...] | None = None,
@@ -161,6 +164,32 @@ def _line(
                 "Policy",
                 "hourly",
                 digest=trigger.cadence_policy_digest,
+            )
+        )
+    elif isinstance(trigger, CaptureLandingTriggerPolicyV1):
+        pins.extend(
+            (
+                _pin(
+                    "trigger-capture-contract",
+                    "CaptureContract",
+                    "anchor-capture",
+                    digest=trigger.anchor_capture_contract_digest,
+                ),
+                _pin(
+                    "trigger-landing-filter",
+                    "LandingFilter",
+                    "landing-filter",
+                    digest=trigger.landing_filter_digest,
+                ),
+            )
+        )
+    elif isinstance(trigger, WindowCloseTriggerPolicyV1):
+        pins.append(
+            _pin(
+                "trigger-window-policy",
+                "Policy",
+                "window-policy",
+                digest=trigger.window_policy_digest,
             )
         )
     line = LineSpecV1(
@@ -313,6 +342,50 @@ def test_line_trigger_change_advances_epoch_but_rebinding_does_not() -> None:
         predecessor=prior,
     )
     assert result.diagnostics[0].code == "playbill.line.occurrence_epoch_mismatch"
+
+
+@pytest.mark.parametrize(
+    ("trigger", "pin_role"),
+    (
+        (
+            CadenceTriggerPolicyV1(cadence_policy_digest=_digest("hourly")),
+            "trigger-cadence-policy",
+        ),
+        (
+            CaptureLandingTriggerPolicyV1(
+                anchor_capture_contract_digest=_digest("anchor-capture"),
+                landing_filter_digest=_digest("landing-filter"),
+            ),
+            "trigger-capture-contract",
+        ),
+        (
+            CaptureLandingTriggerPolicyV1(
+                anchor_capture_contract_digest=_digest("anchor-capture"),
+                landing_filter_digest=_digest("landing-filter"),
+            ),
+            "trigger-landing-filter",
+        ),
+        (
+            WindowCloseTriggerPolicyV1(window_policy_digest=_digest("window-policy")),
+            "trigger-window-policy",
+        ),
+    ),
+)
+def test_line_trigger_pins_enforce_artifact_kind(
+    trigger: TriggerPolicyV1,
+    pin_role: str,
+) -> None:
+    line, _accepted, _interfaces = _line(trigger=trigger)
+    payload = line.model_dump(mode="json")
+    for pin in payload["pins"]:
+        if pin["role"] == pin_role:
+            pin["target"]["kind"] = "Provider"
+            break
+    else:  # pragma: no cover - fixture invariant
+        raise AssertionError(f"missing test trigger pin {pin_role!r}")
+
+    with pytest.raises(ValidationError, match="LineSpec trigger pin.*requires"):
+        LineSpecV1.model_validate(payload)
 
 
 def test_line_refuses_noncanonical_epsilon_and_rung_above_procedure_cap() -> None:

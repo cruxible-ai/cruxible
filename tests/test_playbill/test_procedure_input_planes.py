@@ -93,7 +93,7 @@ def test_capture_and_exhaust_cannot_be_relabelled_as_canonical_state() -> None:
     )
     exhaust_node = ExhaustTapNodeV3(
         node_id="exhaust",
-        reducer_or_query=_pin("reducer", "Procedure", "reduce-exhaust"),
+        reducer_or_query=_pin("reducer", "Reducer", "reduce-exhaust"),
         journal_identity="procedure-exhaust",
         as_="receipts",
     )

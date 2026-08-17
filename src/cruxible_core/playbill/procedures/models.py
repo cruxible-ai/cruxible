@@ -447,9 +447,13 @@ ProcedureNodeV3 = Annotated[
     Field(discriminator="kind"),
 ]
 
-TERMINAL_NODE_KINDS = frozenset(
-    {"emit_capture", "post_inbox", "propose_change_set", "mandate_settlement"}
-)
+TERMINAL_REQUIRED_RUNGS = {
+    "emit_capture": 0,
+    "post_inbox": 1,
+    "propose_change_set": 2,
+    "mandate_settlement": 3,
+}
+TERMINAL_NODE_KINDS = frozenset(TERMINAL_REQUIRED_RUNGS)
 
 
 class ProcedureDefinitionV3(_StrictProcedureModel):
@@ -524,9 +528,14 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
             for node in self.nodes
         ):
             raise ValueError("Procedure repeat exceeds its repeat-attempt hard cap")
-        # Import lazily so the model grammar does not depend on graph analysis at import time.
+        # Import lazily so the model grammar does not depend on static-analysis
+        # modules while its own classes are still being defined.
         from cruxible_core.playbill.procedures.graph import analyze_procedure_v3
+        from cruxible_core.playbill.procedures.pin_expectations import (
+            validate_procedure_pin_expectations,
+        )
 
+        validate_procedure_pin_expectations(self)
         analyze_procedure_v3(self)
         return self
 
@@ -579,6 +588,7 @@ __all__ = [
     "SourceNodeV3",
     "StateTapNodeV3",
     "TERMINAL_NODE_KINDS",
+    "TERMINAL_REQUIRED_RUNGS",
     "TransformNodeV3",
     "iter_pin_bindings",
 ]
