@@ -33,6 +33,14 @@ class PlaybillCasError(PlaybillError):
     """Content-addressed body storage is missing, corrupt, or unauthorized."""
 
 
+class PlaybillJournalError(PlaybillError):
+    """An operational journal record, head, range, or writer fence is invalid."""
+
+
+class PlaybillExecutionError(PlaybillError):
+    """A Procedure run cannot be admitted, executed, or finalized safely."""
+
+
 class DocumentFormatError(PlaybillError):
     """A governed Document shell is unsupported or malformed."""
 
@@ -104,6 +112,8 @@ __all__ = [
     "PlaybillError",
     "PlaybillFormatError",
     "PlaybillGitError",
+    "PlaybillExecutionError",
+    "PlaybillJournalError",
     "PlaybillKeyError",
     "PrincipalIntegrityError",
     "ProposalAdmissionError",
