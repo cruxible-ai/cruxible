@@ -1089,6 +1089,10 @@ def parse_projection_tree(
                                 "directly_runnable": procedure.directly_runnable,
                                 "identity": procedure.identity.model_dump(mode="json"),
                                 "input_digest": {"$digest": input_digest},
+                                "measurements": [
+                                    measurement.model_dump(mode="json")
+                                    for measurement in procedure.definition.measurements
+                                ],
                             },
                         ),
                         ProjectionFact(

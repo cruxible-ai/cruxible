@@ -54,6 +54,16 @@ from cruxible_core.playbill.procedures.line_specs import (
     parse_line_spec,
     render_line_spec,
 )
+from cruxible_core.playbill.procedures.measurements import (
+    AcceptedQueryProcedureMeasurementV1,
+    ClaimAttestationProcedureMeasurementV1,
+    ClaimStatementProcedureMeasurementV1,
+    ProcedureMeasurementDeclarationV1,
+    ProcedureMeasurementExpectationV1,
+    ProcedureMeasurementReviewTriggerV1,
+    ProcedureMeasurementSituationShapeV1,
+    ProcedureMeasurementV1,
+)
 from cruxible_core.playbill.procedures.models import (
     ProcedureDefinitionV3,
     ProcedurePinSlotRefV1,
@@ -62,11 +72,14 @@ from cruxible_core.playbill.procedures.models import (
 
 __all__ = [
     "AcceptedProcedureV1",
+    "AcceptedQueryProcedureMeasurementV1",
     "AcceptedLineSpecV1",
     "AcceptedClaimGuardBuilderV1",
     "AcceptedStateRunInputV1",
     "CadenceTriggerPolicyV1",
     "CaptureLandingTriggerPolicyV1",
+    "ClaimAttestationProcedureMeasurementV1",
+    "ClaimStatementProcedureMeasurementV1",
     "ExhaustRunInputV1",
     "ExhaustGuardBuilderV1",
     "LandedCaptureRunInputV1",
@@ -78,6 +91,11 @@ __all__ = [
     "ProcedureGraphV3",
     "ProcedureGuardExpansionV1",
     "ProcedureLawResultV1",
+    "ProcedureMeasurementDeclarationV1",
+    "ProcedureMeasurementExpectationV1",
+    "ProcedureMeasurementReviewTriggerV1",
+    "ProcedureMeasurementSituationShapeV1",
+    "ProcedureMeasurementV1",
     "ProcedureNodeDigestsV3",
     "ProcedurePinSlotRefV1",
     "ProcedurePinSlotV1",

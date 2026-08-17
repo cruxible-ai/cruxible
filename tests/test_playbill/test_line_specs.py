@@ -226,7 +226,7 @@ def test_line_spec_round_trip_and_digest_golden() -> None:
     line, accepted, interfaces = _line()
 
     assert line_spec_digest(line).tagged == (
-        "sha256:aef5c5627cd8e4a84177972abf720b411481336767c3e01722887622123aaa95"
+        "sha256:32d219682b484a59b01bcc1af12e2b39ab87b1db13547c6daf3ac8d0cc961a32"
     )
     content = render_line_spec(line)
     assert parse_line_spec(content, path=line_spec_path("triage-hourly")) == line

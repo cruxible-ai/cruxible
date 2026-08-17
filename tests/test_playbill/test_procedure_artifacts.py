@@ -143,7 +143,7 @@ def test_procedure_v3_round_trip_digest_and_node_golden() -> None:
     assert definition.graph_format == 3
     assert procedure.directly_runnable is True
     assert procedure.definition_digest == (
-        "sha256:bac0134bbf5c5846e24b05b5fd471483ed24f97d521bd21be0bb220307c1fcdd"
+        "sha256:be3b104bf50e7f958bc468cf3ac089dfdf57a36982027569bbc63baf06086001"
     )
     nodes = compute_procedure_node_digests_v3(definition)
     assert nodes["read"].subtree_digest == (

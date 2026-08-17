@@ -17,6 +17,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_core.playbill.artifacts import ArtifactPin
 from cruxible_core.playbill.canonical import ArtifactDigest, normalize_canonical
 from cruxible_core.playbill.captures import CanonicalDurationV1
+from cruxible_core.playbill.procedures.measurements import (
+    ProcedureMeasurementDeclarationV1,
+)
 
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _NODE_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -468,6 +471,7 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
     nodes: tuple[ProcedureNodeV3, ...]
     returns: str
     pin_slots: tuple[ProcedurePinSlotV1, ...] = ()
+    measurements: tuple[ProcedureMeasurementDeclarationV1, ...] = ()
     budget: ProcedureBudgetV3
     hard_caps: ProcedureHardCapsV3
     terminal_capability: Literal[1, 2, 3]
@@ -489,6 +493,17 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
         names = tuple(item.slot_name for item in value)
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("Procedure pin slots must be sorted and unique by slot_name")
+        return value
+
+    @field_validator("measurements")
+    @classmethod
+    def _measurements(
+        cls,
+        value: tuple[ProcedureMeasurementDeclarationV1, ...],
+    ) -> tuple[ProcedureMeasurementDeclarationV1, ...]:
+        names = tuple(item.name for item in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("M3: Procedure measurements must be sorted and unique by name")
         return value
 
     @field_validator("annotations", mode="before")
@@ -536,7 +551,30 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
         )
 
         validate_procedure_pin_expectations(self)
-        analyze_procedure_v3(self)
+        graph = analyze_procedure_v3(self)
+        for measurement in self.measurements:
+            if measurement.subject_grain == "procedure_unit":
+                continue
+            measurement_node_id = measurement.node_id
+            if measurement_node_id is None:  # pragma: no cover - declaration model invariant
+                raise ValueError("M1: non-unit measurement requires node_id")
+            if measurement_node_id not in graph.kinds:
+                raise ValueError(
+                    f"M1: measurement node_id {measurement_node_id!r} does not name "
+                    "a node in this graph-v3 definition"
+                )
+            if measurement.subject_grain != "arm":
+                continue
+            from_node_id = measurement.from_node_id
+            arm_label = measurement.arm_label
+            if from_node_id is None or arm_label is None:  # pragma: no cover - model invariant
+                raise ValueError("M2: arm measurement requires complete arm coordinates")
+            successor = graph.edges.get(from_node_id, {}).get(arm_label)
+            if successor != measurement_node_id:
+                raise ValueError(
+                    f"M2: measurement arm {from_node_id!r} "
+                    f"{arm_label!r} does not target {measurement_node_id!r}"
+                )
         return self
 
 
@@ -576,6 +614,7 @@ __all__ = [
     "ProcedureBudgetV3",
     "ProcedureDefinitionV3",
     "ProcedureHardCapsV3",
+    "ProcedureMeasurementDeclarationV1",
     "ProcedureNodeV3",
     "ProcedurePinBindingV1",
     "ProcedurePinSlotRefV1",
