@@ -17,11 +17,6 @@ import httpx
 
 from cruxible_core.config.schema import ProviderSchema
 from cruxible_core.errors import ConfigError, QueryExecutionError
-from cruxible_core.kits import (
-    is_kit_provider_ref,
-    load_kit_provider_module,
-    resolve_kit_provider_ref,
-)
 from cruxible_core.provider.types import ProviderCallable, ProviderContext
 
 
@@ -96,11 +91,8 @@ def get_provider_entrypoint_path(
       modules it imports, and code re-exported into it from elsewhere, are
       outside the pin. A ref pointing at a re-export pins the re-exporting file,
       not the file where the function is defined.
-    * A ``kit://`` provider pins the kit's whole declared provider tree (see
-      ``compute_kit_provider_sha256``), so helpers inside the kit are covered.
-
-    Kit providers are the ones to reach for when the pin must cover more than a
-    single file.
+    ``kit://`` refs were retired with the old compiler in PC-D. Playbill
+    providers are bound by exact artifact pins instead.
     """
     _enforce_execution_policy()
     if provider.runtime == "command":
@@ -114,14 +106,11 @@ def get_provider_entrypoint_path(
         return None
 
     ref = provider.ref
-    if is_kit_provider_ref(ref):
-        if config_base_path is None:
-            raise ConfigError(
-                f"Provider '{provider_name}' uses kit:// ref '{ref}', but no config base path "
-                "was provided for kit resolution"
-            )
-        module_path, _attr_name, _kit_root = resolve_kit_provider_ref(ref, config_base_path)
-        return module_path
+    if ref.startswith("kit://"):
+        raise ConfigError(
+            f"Provider '{provider_name}' uses retired kit:// ref '{ref}'; "
+            "Playbill authoring requires an exact Provider artifact pin"
+        )
 
     module_name, sep, _attr_name = ref.rpartition(".")
     if not sep:
@@ -284,20 +273,11 @@ def _resolve_python_candidate(
     config_base_path: Path | None,
 ) -> object:
     ref = provider.ref
-    if is_kit_provider_ref(ref):
-        if config_base_path is None:
-            raise ConfigError(
-                f"Provider '{provider_name}' uses kit:// ref '{ref}', but no config base path "
-                "was provided for kit resolution"
-            )
-        module_path, attr_name, kit_root = resolve_kit_provider_ref(ref, config_base_path)
-        module = load_kit_provider_module(module_path, kit_root)
-        try:
-            return getattr(module, attr_name)
-        except AttributeError as exc:
-            raise ConfigError(
-                f"Provider '{provider_name}' ref '{ref}' does not resolve to an attribute"
-            ) from exc
+    if ref.startswith("kit://"):
+        raise ConfigError(
+            f"Provider '{provider_name}' uses retired kit:// ref '{ref}'; "
+            "Playbill authoring requires an exact Provider artifact pin"
+        )
 
     module_name, sep, attr_name = ref.rpartition(".")
     if not sep:

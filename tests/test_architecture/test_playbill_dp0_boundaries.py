@@ -40,8 +40,6 @@ RATIFIED_DONOR_REMOVAL_BATCHES = {
     "cruxible_core.resolution_contracts": "PC-E1",
     "cruxible_core.provider": "PC-E2",
     "cruxible_core.providers": "PC-E2",
-    "cruxible_core.group": "PC-D",
-    "cruxible_core.kits": "PC-D",
     "cruxible_core.runtime.instance": "PC-F",
     "cruxible_core.storage.sqlite": "PC-F",
     "cruxible_core.instance_protocol": "PC-F",
@@ -472,6 +470,30 @@ def test_playbill_legacy_imports_are_adapter_only_and_manifested() -> None:
 def test_donor_manifest_matches_ratified_removal_batches() -> None:
     actual = {entry.module_prefix: entry.removal_batch for entry in DONOR_MANIFEST}
     assert actual == RATIFIED_DONOR_REMOVAL_BATCHES
+
+
+def test_pc_d_retired_donor_packages_and_modules_are_absent() -> None:
+    for package in ("group", "kits"):
+        root = CORE / package
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts for path in root.rglob("*")
+        )
+
+    retired_modules = (
+        CORE / "procedure" / "migration.py",
+        CORE / "procedure" / "reading_store.py",
+        CORE / "procedure" / "store.py",
+        CORE / "workflow" / "apply.py",
+        CORE / "workflow" / "proposal_preview.py",
+        CORE / "workflow" / "proposals.py",
+        CORE / "service" / "execution.py",
+        CORE / "service" / "group_read_models.py",
+        CORE / "service" / "group_transitions.py",
+        CORE / "service" / "groups.py",
+        CORE / "service" / "procedure_migrations.py",
+        CORE / "service" / "procedures.py",
+    )
+    assert not any(path.exists() for path in retired_modules)
 
 
 def test_destructive_pass_oracles_are_exact_and_immutable() -> None:

@@ -9,9 +9,6 @@ from typing import Any, Protocol
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
 from cruxible_core.instance_protocol import (
-    GroupStoreProtocol,
-    ProcedureReadingStoreProtocol,
-    ProcedureStoreProtocol,
     ReceiptStoreProtocol,
     ResolutionContractStoreProtocol,
     StateSnapshot,
@@ -51,9 +48,6 @@ class UnitOfWorkProtocol(Protocol):
     graph: GraphRepositoryProtocol
     snapshots: SnapshotRepositoryProtocol
     receipts: ReceiptStoreProtocol
-    groups: GroupStoreProtocol
-    procedures: ProcedureStoreProtocol
-    procedure_readings: ProcedureReadingStoreProtocol
     resolution_evidence: LegacyResolutionEvidenceReader
     resolution_contracts: ResolutionContractStoreProtocol
 

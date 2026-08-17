@@ -52,11 +52,6 @@ class _UniqueKeySafeLoader(yaml.SafeLoader):
 def load_config(source: str | Path) -> CoreConfig:
     """Load a CoreConfig from a YAML file path or raw YAML string.
 
-    An overlay kit entry config (a file next to a ``cruxible-kit.yaml`` with
-    ``role: overlay``) is validated as a partial layer: cross-layer reference
-    checks are deferred to post-compose validation, since the base layer is
-    declared by the manifest's ``target_state`` rather than an ``extends`` line.
-
     Args:
         source: Path to a YAML file, or a raw YAML string.
 
@@ -66,11 +61,10 @@ def load_config(source: str | Path) -> CoreConfig:
     Raises:
         ConfigError: If the file can't be read or YAML is invalid.
     """
-    source_path = _resolve_source_path(source)
     raw_yaml = _read_source(source)
     return _validate_config(
         _parse_config_yaml(raw_yaml),
-        partial_layer=_is_overlay_kit_entry_config(source_path),
+        partial_layer=False,
     )
 
 
@@ -151,24 +145,6 @@ def _read_source(source: str | Path) -> str:
 
     assert isinstance(source, str)
     return source
-
-
-def _is_overlay_kit_entry_config(path: Path | None) -> bool:
-    """Return whether a config path is the entry config of an overlay kit directory."""
-    if path is None:
-        return False
-    # Imported lazily to keep the loader import-light.
-    from cruxible_core.kits import KIT_MANIFEST_FILE, load_kit_manifest
-
-    resolved = path.resolve()
-    kit_dir = resolved.parent
-    if not (kit_dir / KIT_MANIFEST_FILE).exists():
-        return False
-    try:
-        manifest = load_kit_manifest(kit_dir)
-    except ConfigError:
-        return False
-    return manifest.role == "overlay" and (kit_dir / manifest.entry_config).resolve() == resolved
 
 
 def _parse_yaml(raw: str) -> dict[str, Any]:

@@ -15,11 +15,8 @@ from typing import Any, Literal
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.legacy_identity import dump_legacy_identity_map
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
-from cruxible_core.group.store import GroupStore
 from cruxible_core.instance_protocol import StateSnapshot
 from cruxible_core.primitives import canonical_json
-from cruxible_core.procedure.reading_store import ProcedureReadingStore
-from cruxible_core.procedure.store import ProcedureStore
 from cruxible_core.receipt.store import SQLiteReceiptStore
 from cruxible_core.resolution_contracts.store import ResolutionContractStore
 from cruxible_core.sqlite_ddl import execute_schema_script
@@ -121,9 +118,6 @@ _UNIFIED_STATE_MIGRATION = "0001_unified_sqlite_state"
 SNAPSHOT_SCHEMA_MIGRATION = "0002_snapshot_tables"
 READ_REVISION_MIGRATION = "0003_read_revision"
 CLAIM_IDENTITY_MIGRATION = "0004_claim_identity"
-PROCEDURE_REFUSAL_REASON_MIGRATION = "0005_procedure_refusal_reason"
-PROCEDURE_GRAPH_MIGRATION = "0009_procedure_graph"
-PROCEDURE_READINGS_MIGRATION = "0010_procedure_readings"
 
 # Every migration ``_initialize_connection`` knows how to apply. The steady-state
 # pre-check compares against this set to decide whether it needs the write lock
@@ -135,9 +129,6 @@ _ALL_STORAGE_MIGRATIONS = frozenset(
         SNAPSHOT_SCHEMA_MIGRATION,
         READ_REVISION_MIGRATION,
         CLAIM_IDENTITY_MIGRATION,
-        PROCEDURE_REFUSAL_REASON_MIGRATION,
-        PROCEDURE_GRAPH_MIGRATION,
-        PROCEDURE_READINGS_MIGRATION,
     }
 )
 
@@ -604,21 +595,6 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
             connection=self._conn,
             initialize_schema=False,
         )
-        self.groups = GroupStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
-        self.procedures = ProcedureStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
-        self.procedure_readings = ProcedureReadingStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
         self.resolution_evidence = LegacyResolutionEvidenceReader(connection=self._conn)
         self.resolution_contracts = ResolutionContractStore(
             self.db_path,
@@ -819,11 +795,7 @@ class SQLiteStorageBackend:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(graph_relationships)")}
         if "claim_id" not in columns:
             return False
-        run_columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedure_runs)")}
-        if "refusal_reason" not in run_columns:
-            return False
-        procedure_columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedures)")}
-        return "definition_format_version" in procedure_columns
+        return True
 
     @staticmethod
     def mark_migration_on_connection(conn: sqlite3.Connection, migration_id: str) -> None:
@@ -875,9 +847,6 @@ class SQLiteStorageBackend:
         execute_schema_script(conn, _GRAPH_SCHEMA)
         execute_schema_script(conn, _SNAPSHOT_SCHEMA)
         SQLiteReceiptStore(self.db_path, connection=conn)
-        GroupStore(self.db_path, connection=conn)
-        ProcedureStore(self.db_path, connection=conn)
-        ProcedureReadingStore(self.db_path, connection=conn)
         ResolutionContractStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
             row = conn.execute(
@@ -900,59 +869,6 @@ class SQLiteStorageBackend:
         if not self.has_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION):
             self._migrate_claim_identity(conn)
             self.mark_migration_on_connection(conn, CLAIM_IDENTITY_MIGRATION)
-        if not self.has_migration_on_connection(conn, PROCEDURE_REFUSAL_REASON_MIGRATION):
-            self._migrate_procedure_refusal_reason(conn)
-            self.mark_migration_on_connection(conn, PROCEDURE_REFUSAL_REASON_MIGRATION)
-        if not self.has_migration_on_connection(conn, PROCEDURE_GRAPH_MIGRATION):
-            self._migrate_procedure_graph(conn)
-            self.mark_migration_on_connection(conn, PROCEDURE_GRAPH_MIGRATION)
-        if not self.has_migration_on_connection(conn, PROCEDURE_READINGS_MIGRATION):
-            # Purely additive: ProcedureReadingStore created both tables above.
-            self.mark_migration_on_connection(conn, PROCEDURE_READINGS_MIGRATION)
-
-    @staticmethod
-    def _migrate_procedure_graph(conn: sqlite3.Connection) -> None:
-        """Add ``procedures.definition_format_version`` (migration 0009).
-
-        The two new tables -- ``procedure_node_digests`` and
-        ``procedure_acceptance_node_pins`` -- are created by the procedure
-        store's own schema script, which this initialization pass already
-        re-ran, so they need no statement here. The COLUMN does: ``CREATE TABLE
-        IF NOT EXISTS`` is a no-op on an existing table and would otherwise
-        leave every upgraded instance permanently without it.
-
-        Existing rows take 1, which is the truth rather than a default: every
-        definition written before this column was format v1, and none of them
-        can have been anything else.
-        """
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedures)")}
-        if "definition_format_version" in columns:
-            return
-        conn.execute(
-            "ALTER TABLE procedures ADD COLUMN definition_format_version INTEGER NOT NULL DEFAULT 1"
-        )
-
-    @staticmethod
-    def _migrate_procedure_refusal_reason(conn: sqlite3.Connection) -> None:
-        """Add ``procedure_runs.refusal_reason`` (migration 0005).
-
-        A pure additive column, so no table rebuild: ``CREATE TABLE IF NOT
-        EXISTS`` above is a no-op on an existing table and would otherwise leave
-        an upgraded instance permanently without the column. The track-record
-        covering index comes from the store's own schema script, which the same
-        initialization pass already re-ran.
-
-        Rows finalized before this point keep NULL. That is the honest answer,
-        not a gap to backfill: the refusal bucket is derived at the moment of
-        refusal from the branch that refused, and reconstructing it from the
-        historical receipt text would be classification-by-string-match on
-        messages nobody promised to keep stable.
-        """
-        columns = {row["name"] for row in conn.execute("PRAGMA table_info(procedure_runs)")}
-        if "refusal_reason" in columns:
-            return
-        conn.execute("ALTER TABLE procedure_runs ADD COLUMN refusal_reason TEXT")
-
     @staticmethod
     def _migrate_claim_identity(conn: sqlite3.Connection) -> None:
         """Rebuild ``graph_relationships`` around ``claim_id`` (migration 0004).

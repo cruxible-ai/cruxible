@@ -30,12 +30,6 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.group.types import (
-    CandidateMember,
-    QuerySourceEvidence,
-    SignalBucketBasis,
-    SignalValue,
-)
 from cruxible_core.procedure.guards import GuardSpec
 from cruxible_core.procedure.proposal import ProcedureProposeGroupSpec
 from cruxible_core.procedure.types import ProcedureRunFiredNode, ProjectSpec
@@ -228,7 +222,7 @@ class CandidateSet(_DuplicateTrackedCollection):
     """
 
     relationship_type: str
-    candidates: list[CandidateMember] = Field(default_factory=list)
+    candidates: list[Any] = Field(default_factory=list)
     query_receipt_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -251,11 +245,11 @@ class SignalBatchSignal(BaseModel):
 
     from_id: str
     to_id: str
-    signal: SignalValue
+    signal: Literal["support", "contradict", "unsure"]
     evidence: str = ""
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
-    basis: SignalBucketBasis | None = None
-    source_query_evidence: list[QuerySourceEvidence] = Field(default_factory=list)
+    basis: Any | None = None
+    source_query_evidence: list[Any] = Field(default_factory=list)
 
 
 class SignalBatch(BaseModel):
@@ -272,7 +266,7 @@ class RelationshipGroupProposalArtifact(BaseModel):
     relationship_type: str
     proposal_step_id: str | None = None
     candidates_from: str | None = None
-    members: list[CandidateMember]
+    members: list[Any]
     status: Literal["ready", "no_candidates"] = "ready"
     candidate_count: int = 0
     on_empty: Literal["complete"] | None = None

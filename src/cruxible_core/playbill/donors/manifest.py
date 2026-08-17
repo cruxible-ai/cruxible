@@ -19,12 +19,12 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
     DonorEntry(
         "cruxible_core.procedure",
         "PC-E2",
-        "definition, digest, static-law, and run/read donor through the final transplant",
+        "frozen definition/digest/static-law plus run/read model donor",
     ),
     DonorEntry(
         "cruxible_core.workflow",
         "PC-E2",
-        "compiler, contract, transform, and executor donor through line runtime parity",
+        "compiler, contract, transform, and executor-source oracle through runtime parity",
     ),
     DonorEntry(
         "cruxible_core.config.schema",
@@ -61,16 +61,6 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
         "cruxible_core.providers",
         "PC-E2",
         "provider implementations retained through line runtime parity",
-    ),
-    DonorEntry(
-        "cruxible_core.group",
-        "PC-D",
-        "frozen propose_group_from verifier support only",
-    ),
-    DonorEntry(
-        "cruxible_core.kits",
-        "PC-D",
-        "old-compiler helper pieces retained for frozen verification only",
     ),
     DonorEntry(
         "cruxible_core.runtime.instance",

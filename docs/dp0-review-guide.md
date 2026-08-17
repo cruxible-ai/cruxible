@@ -173,6 +173,12 @@ products, and their product-specific tests. Legacy config-authority, mutable
 graph, snapshot/overlay, kit-distribution, provider, and deep-dive documentation
 was removed or rewritten around the surviving Playbill surface.
 
+PC-D subsequently deleted the `cruxible_core.group` and `cruxible_core.kits`
+packages, workflow proposal/apply modules, and the old Procedure persistence
+lifecycle. The frozen Procedure graph-format-v1/v2 readers remain as a PC-E2
+proof oracle, but importing them no longer initializes any retired governance
+or storage path.
+
 ## Donor allowlist and removal batches
 
 This table is the complete import-level donor manifest. Served Playbill code
@@ -181,8 +187,8 @@ adapter. Every row has an owning removal batch.
 
 | Donor module prefix | Removal batch | Why retained | Adapter |
 |---|---:|---|---|
-| `cruxible_core.procedure` | PC-E2 | Definition, digest, static-law, and run/read oracle | — |
-| `cruxible_core.workflow` | PC-E2 | Compiler, contract, transform, and executor oracle | — |
+| `cruxible_core.procedure` | PC-E2 | Frozen definition/digest/static-law plus run/read models | — |
+| `cruxible_core.workflow` | PC-E2 | Compiler, contract, transform, and executor-source oracle | — |
 | `cruxible_core.config.schema` | PC-F | Selected step, query, provider, and contract schema donor | — |
 | `cruxible_core.predicate` | PC-F | Typed comparison and coercion donor | — |
 | `cruxible_core.query` | PC-F | Traversal, filtering, and projection donor | — |
@@ -193,18 +199,17 @@ adapter. Every row has an owning removal batch.
 | `cruxible_core.source_artifacts.markdown` | PC-C | Deterministic Markdown span-extraction donor | — |
 | `cruxible_core.provider` | PC-E2 | Provider contract, registry, and trace donor | — |
 | `cruxible_core.providers` | PC-E2 | Provider implementation donor | — |
-| `cruxible_core.group` | PC-D | Frozen `propose_group_from` verifier support | — |
-| `cruxible_core.kits` | PC-D | Old-compiler helpers for frozen verification | — |
 | `cruxible_core.runtime.instance` | PC-F | Temporary donor-parity harness | — |
 | `cruxible_core.storage.sqlite` | PC-F | Temporary donor-parity storage harness | — |
 | `cruxible_core.instance_protocol` | PC-F | Temporary interface, metadata, and integrity harness | — |
 
-The unserved lifecycle/group/feedback service code is behavior corpus, not a
-hidden product surface. Its operation names live in
+The remaining unserved lifecycle/feedback service code is behavior corpus, not
+a hidden product surface. Its operation names live in
 `DONOR_OPERATION_PERMISSIONS`, disjoint from both public MCP tools and active
 HTTP/CLI runtime operations, so parity tests retain the original authority law
-without re-registering deleted endpoints. Those service donors leave with the
-owning PC-C through PC-F transplants.
+without re-registering deleted endpoints. The group and Procedure/workflow
+governance services left in PC-D; the remaining service donors leave with the
+owning PC-E through PC-F transplants.
 
 ## Exact frozen goldens retained
 
@@ -267,7 +272,7 @@ transplant. DP-0 intentionally retains:
 |---|---|
 | `cruxible-client` | Reduced Playbill HTTP client shipped with the core |
 | `pydantic` | Active Playbill/client contracts and donor validation models |
-| `packaging` | Version comparison in the PC-D kit/compiler donor |
+| `packaging` | Requirement parsing in the architecture dependency audit |
 | `networkx` | Graph/query parity oracle through PC-F |
 | `polars` | Tabular provider/workflow parity through PC-E2/PC-F |
 | `pyyaml` | Active source-catalog CLI plus config/workflow donors |
