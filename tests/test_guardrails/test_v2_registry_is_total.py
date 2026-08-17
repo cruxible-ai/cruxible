@@ -9,7 +9,6 @@ total by construction, and adding a step type is a deliberate act.
 from __future__ import annotations
 
 import typing
-from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -70,23 +69,3 @@ def test_registered_v2_step_types_are_union_members() -> None:
         f"{stray} are registered as v2-only step types but cannot appear in a "
         "definition, so the structural check can never observe them"
     )
-
-
-def test_t3_keeps_both_of_its_halves() -> None:
-    """T3 is two claims, and losing either is invisible in a green run.
-
-    The dual-execution half runs a handful of shapes end to end; the
-    corpus-wide half asserts order equivalence over EVERY frozen definition.
-    A refactor that drops one leaves the other passing and the suite green,
-    which is exactly how a gate stops guarding without anyone noticing.
-    """
-    source = (
-        Path(__file__).resolve().parent.parent
-        / "test_procedures"
-        / "test_linear_definitions_execute_identically.py"
-    ).read_text()
-    for required in (
-        "def test_the_successor_walk_visits_the_flat_list_order",
-        "def test_t3_a_linear_definition_runs_identically_through_both_executors",
-    ):
-        assert required in source, f"T3 lost a half: {required} is gone"

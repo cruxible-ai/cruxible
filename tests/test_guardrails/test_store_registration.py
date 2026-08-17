@@ -14,8 +14,6 @@ import importlib
 from pathlib import Path
 from typing import Any, get_type_hints
 
-from tests.test_storage.test_sqlite_state import DIRECT_SQLITE_IMPORT_ALLOWLIST
-
 from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.storage import sqlite as sqlite_backend
 from cruxible_core.storage.protocols import UnitOfWorkProtocol
@@ -30,11 +28,28 @@ BACKEND_CLASS = "SQLiteStorageBackend"
 BACKEND_SCHEMA_HOOK = "_initialize_connection"
 RUNTIME_CLASS = "CruxibleInstance"
 
+# The former storage integration suite owned this cross-cutting allowlist, but
+# that suite retired with the legacy group and Procedure stores in PC-D. Keep
+# the still-live security boundary beside the guard that enforces it.
+DIRECT_SQLITE_IMPORT_ALLOWLIST = frozenset(
+    {
+        Path("src/cruxible_core/storage/sqlite.py"),
+        Path("src/cruxible_core/storage/playbill_projection.py"),
+        Path("src/cruxible_core/sqlite_ddl.py"),
+        Path("src/cruxible_core/receipt/store.py"),
+        Path("src/cruxible_core/storage/resolution_evidence.py"),
+        Path("src/cruxible_core/resolution_contracts/store.py"),
+        Path("src/cruxible_core/server/registry.py"),
+        Path("src/cruxible_core/server/credentials.py"),
+        Path("src/cruxible_core/server/app.py"),
+    }
+)
+
 CHECKLIST = """\
 Adding src/cruxible_core/<domain>/store.py means completing all of:
   1. define the store type in the module (``<Name>Store`` and/or
      ``<Name>StoreProtocol``);
-  2. add the allowlist entry in tests/test_storage/test_sqlite_state.py
+  2. add the allowlist entry in tests/test_guardrails/test_store_registration.py
      (DIRECT_SQLITE_IMPORT_ALLOWLIST) if the module imports sqlite3 directly;
   3. declare the slot on UnitOfWorkProtocol in storage/protocols.py, typed as
      the store's protocol;
@@ -64,9 +79,9 @@ UOW_EXEMPT_STORES: dict[Path, str] = {}
 def _store_modules() -> list[Path]:
     modules = sorted(SRC_ROOT.glob("*/store.py"))
     # Non-vacuity floor: PC-C deliberately retired the legacy attestation and
-    # source-artifact stores, leaving four registered stores. Discovering fewer
+    # source-artifact, group, and Procedure stores, leaving two registered stores. Discovering fewer
     # than that known set means the glob root or store inventory drifted.
-    assert len(modules) >= 4, f"store discovery found only {len(modules)} modules under {SRC_ROOT}"
+    assert len(modules) >= 2, f"store discovery found only {len(modules)} modules under {SRC_ROOT}"
     return modules
 
 
