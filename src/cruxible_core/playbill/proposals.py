@@ -1547,6 +1547,12 @@ def _evaluate_v2_proposal_tree(
                     installed.coordinate.digest,
                     {
                         "artifact_digest": procedure_law.artifact_digest,
+                        "authoring_expansion": (
+                            procedure.definition.annotations
+                            if isinstance(procedure.definition.annotations, dict)
+                            and "builder_kind" in procedure.definition.annotations
+                            else None
+                        ),
                         "definition_digest": procedure.definition_digest,
                         "directly_runnable": procedure.directly_runnable,
                         "verdict": "accepted",
