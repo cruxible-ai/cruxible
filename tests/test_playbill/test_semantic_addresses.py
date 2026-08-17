@@ -44,9 +44,16 @@ def test_content_spans_count_utf8_bytes_not_characters_or_utf16_units() -> None:
 
 
 def test_unknown_line_number_and_malformed_selectors_refuse() -> None:
-    assert registered_selector_schemes() == ("artifact-v1", "claim-statement-v1")
+    assert registered_selector_schemes() == (
+        "artifact-v1",
+        "claim-statement-v1",
+        "line-v1",
+        "procedure-arm-v1",
+        "procedure-node-v1",
+        "procedure-unit-v1",
+    )
     with pytest.raises(ValidationError, match="unknown semantic selector"):
-        SemanticSelector(scheme="line-v1", value="12")
+        SemanticSelector(scheme="line-number-v1", value="12")
     with pytest.raises(ValidationError, match="must be empty"):
         SemanticSelector(scheme="artifact-v1", value="/headings/intro")
     with pytest.raises(ValidationError, match="must be empty"):

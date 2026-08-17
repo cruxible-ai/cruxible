@@ -7,7 +7,9 @@ import pytest
 from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.laws import (
     DOCUMENT_LAW,
+    LINE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
+    PROCEDURE_LAW,
 )
 
 
@@ -32,3 +34,14 @@ def test_unknown_or_substituted_acceptance_law_refuses() -> None:
             identifier=DOCUMENT_LAW.identifier,
             digest="sha256:" + "00" * 32,
         )
+
+
+def test_pc_d_procedure_and_line_laws_are_exact_historical_coordinates() -> None:
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v1").coordinate
+        == PROCEDURE_LAW
+    )
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-line-v1").coordinate
+        == LINE_LAW
+    )

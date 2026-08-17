@@ -15,6 +15,8 @@ CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
 PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
 SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v1"
 STANDING_MANDATE_LAW_IDENTIFIER = "playbill.standing-mandate.v1"
+PROCEDURE_LAW_IDENTIFIER = "playbill.procedure.v1"
+LINE_LAW_IDENTIFIER = "playbill.line.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
 SUBJECT_LAW_IDENTIFIER = "playbill.subject.v1"
 
@@ -159,6 +161,8 @@ STANDING_MANDATE_LAW = _artifact_law_coordinate(
     STANDING_MANDATE_LAW_IDENTIFIER,
     "playbill-standing-mandate-v1",
 )
+PROCEDURE_LAW = _artifact_law_coordinate(PROCEDURE_LAW_IDENTIFIER, "playbill-procedure-v1")
+LINE_LAW = _artifact_law_coordinate(LINE_LAW_IDENTIFIER, "playbill-line-v1")
 
 
 @dataclass(frozen=True)
@@ -256,6 +260,16 @@ STANDING_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="standing-mandate",
     artifact_tag="playbill-standing-mandate-v1",
 )
+PROCEDURE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=PROCEDURE_LAW,
+    artifact_kind="procedure",
+    artifact_tag="playbill-procedure-v1",
+)
+LINE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=LINE_LAW,
+    artifact_kind="line",
+    artifact_tag="playbill-line-v1",
+)
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
@@ -263,6 +277,8 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CLAIM_TYPE_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
+        PROCEDURE_ACCEPTANCE_LAW,
+        LINE_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         STANDING_MANDATE_ACCEPTANCE_LAW,
@@ -286,6 +302,9 @@ __all__ = [
     "DOCUMENT_LAW",
     "DOCUMENT_LAW_IDENTIFIER",
     "InstalledAcceptanceLaw",
+    "LINE_ACCEPTANCE_LAW",
+    "LINE_LAW",
+    "LINE_LAW_IDENTIFIER",
     "PLAYBILL_ACCEPTANCE_LAWS",
     "PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW",
     "PRINCIPAL_LIFECYCLE_LAW",
@@ -293,6 +312,9 @@ __all__ = [
     "PROVIDER_ACCEPTANCE_LAW",
     "PROVIDER_LAW",
     "PROVIDER_LAW_IDENTIFIER",
+    "PROCEDURE_ACCEPTANCE_LAW",
+    "PROCEDURE_LAW",
+    "PROCEDURE_LAW_IDENTIFIER",
     "SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW",
     "SOURCE_ACQUISITION_POLICY_LAW",
     "SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER",

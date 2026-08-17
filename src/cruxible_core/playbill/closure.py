@@ -46,6 +46,16 @@ from cruxible_core.playbill.documents import (
     parse_document,
 )
 from cruxible_core.playbill.errors import DocumentFormatError, SubjectFormatError
+from cruxible_core.playbill.procedures.artifacts import (
+    ProcedureFormatError,
+    parse_procedure,
+    procedure_artifact_digest,
+)
+from cruxible_core.playbill.procedures.line_specs import (
+    LineSpecFormatError,
+    line_spec_digest,
+    parse_line_spec,
+)
 from cruxible_core.playbill.providers import ProviderFormatError, parse_provider, provider_digest
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.standing_mandates import (
@@ -74,6 +84,8 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "source-acquisition-policy",
         "standing-mandate",
         "claim",
+        "procedure",
+        "line",
     ]
     artifact_tag: str
     identity: ArtifactIdentity
@@ -192,6 +204,28 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
                 pins=claim.pins,
                 lifecycle=claim.lifecycle,
             )
+        if path.startswith("procedures/"):
+            procedure = parse_procedure(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="procedure",
+                artifact_tag=procedure.artifact_format,
+                identity=procedure.identity,
+                artifact_digest=procedure_artifact_digest(procedure).tagged,
+                pins=procedure.pins,
+                lifecycle=procedure.lifecycle,
+            )
+        if path.startswith("lines/"):
+            line = parse_line_spec(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="line",
+                artifact_tag=line.artifact_format,
+                identity=line.identity,
+                artifact_digest=line_spec_digest(line).tagged,
+                pins=line.pins,
+                lifecycle=line.lifecycle,
+            )
     except (
         CaptureFormatError,
         ClaimFormatError,
@@ -201,6 +235,8 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
         StandingMandateError,
         SubjectFormatError,
         ClaimTypeFormatError,
+        ProcedureFormatError,
+        LineSpecFormatError,
     ):
         raise
     return None
@@ -308,9 +344,20 @@ def _unresolved_pins(
         if source.path not in source_paths:
             continue
         for pin in source.pins:
-            # Non-artifact Capture components are verified against the exact
-            # compiler registry by their acceptance law.
-            if pin.target.kind == "Contract":
+            # These component families are exact compiler/policy-registry pins
+            # until PC-F gives QueryDefinition and Contract ledger artifacts.
+            # Their family law verifies the role-named digest; this exception
+            # is never a name lookup and never permits a missing Playbill
+            # artifact kind such as Procedure, ClaimType, or Provider.
+            if pin.target.kind in {
+                "Contract",
+                "EffectPolicy",
+                "EnvironmentManifest",
+                "LandingFilter",
+                "Policy",
+                "QueryDefinition",
+                "Reducer",
+            }:
                 continue
             target = by_identity.get(pin.target.qualified)
             reason: Literal["missing_or_digest_mismatch", "live_source_targets_retired"] | None = (

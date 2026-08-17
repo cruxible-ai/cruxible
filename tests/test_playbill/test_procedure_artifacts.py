@@ -32,6 +32,7 @@ from cruxible_core.playbill.procedures.models import (
     ProcedurePinSlotRefV1,
     ProcedurePinSlotV1,
     ProjectNodeV3,
+    ProposeChangeSetNodeV3,
     StateTapNodeV3,
 )
 from cruxible_core.procedure.digest import DIGEST_FUNCTIONS
@@ -203,6 +204,42 @@ def test_v3_graph_refuses_backward_edge() -> None:
                 ),
             )
         )
+
+
+def test_proposal_terminal_has_no_activation_or_direct_write_capability() -> None:
+    contract_out = _pin("contract-out", "Contract", "claim-rows")
+    terminal = ProposeChangeSetNodeV3(
+        node_id="propose",
+        candidate_templates=({"artifact_kind": "Claim", "input": "$steps.result"},),
+    )
+    definition = _definition(
+        nodes=(
+            ProjectNodeV3(
+                node_id="shape",
+                fields={"status": "ready"},
+                contract_out=contract_out,
+                as_="result",
+            ),
+            terminal,
+        )
+    )
+
+    assert definition.nodes[-1].model_dump(mode="json") == {
+        "kind": "propose_change_set",
+        "node_id": "propose",
+        "candidate_templates": [{"artifact_kind": "Claim", "input": "$steps.result"}],
+    }
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        ProposeChangeSetNodeV3.model_validate(
+            {
+                **terminal.model_dump(mode="json"),
+                "activate": True,
+            }
+        )
+    payload = definition.model_dump(mode="json", by_alias=True)
+    payload["nodes"][1] = {"kind": "apply_entities", "node_id": "write"}
+    with pytest.raises(ValidationError, match="union_tag_invalid"):
+        ProcedureDefinitionV3.model_validate(payload)
 
 
 def test_historical_reader_dispatch_remains_separate() -> None:

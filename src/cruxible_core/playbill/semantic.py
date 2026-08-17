@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Literal
 
@@ -27,9 +28,38 @@ def _validate_claim_statement(value: str) -> str:
     return value
 
 
+_PROCEDURE_NODE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_PROCEDURE_ARM_RE = re.compile(
+    r"^[a-z][a-z0-9_.-]{0,127}:(?:next|on_true|on_false):"
+    r"(?:\$abort|[a-z][a-z0-9_.-]{0,127})$"
+)
+
+
+def _validate_empty_selector(value: str) -> str:
+    if value != "":
+        raise ValueError("whole semantic-unit selector value must be empty")
+    return value
+
+
+def _validate_procedure_node(value: str) -> str:
+    if not _PROCEDURE_NODE_RE.fullmatch(value):
+        raise ValueError("procedure-node-v1 selector must be a stable authored node_id")
+    return value
+
+
+def _validate_procedure_arm(value: str) -> str:
+    if not _PROCEDURE_ARM_RE.fullmatch(value):
+        raise ValueError("procedure-arm-v1 selector must be from_node_id:arm_label:target_node_id")
+    return value
+
+
 _SELECTOR_SCHEMES: dict[str, Callable[[str], str]] = {
     "artifact-v1": _validate_whole_artifact,
     "claim-statement-v1": _validate_claim_statement,
+    "line-v1": _validate_empty_selector,
+    "procedure-arm-v1": _validate_procedure_arm,
+    "procedure-node-v1": _validate_procedure_node,
+    "procedure-unit-v1": _validate_empty_selector,
 }
 
 
@@ -87,6 +117,44 @@ class SemanticAddress(_StrictSemanticModel):
         return cls(
             artifact_path=artifact_path,
             selector=SemanticSelector(scheme="claim-statement-v1", value=""),
+        )
+
+    @classmethod
+    def procedure_unit(cls, artifact_path: str) -> "SemanticAddress":
+        return cls(
+            artifact_path=artifact_path,
+            selector=SemanticSelector(scheme="procedure-unit-v1", value=""),
+        )
+
+    @classmethod
+    def procedure_node(cls, artifact_path: str, node_id: str) -> "SemanticAddress":
+        return cls(
+            artifact_path=artifact_path,
+            selector=SemanticSelector(scheme="procedure-node-v1", value=node_id),
+        )
+
+    @classmethod
+    def procedure_arm(
+        cls,
+        artifact_path: str,
+        *,
+        from_node_id: str,
+        arm_label: Literal["next", "on_true", "on_false"],
+        target_node_id: str,
+    ) -> "SemanticAddress":
+        return cls(
+            artifact_path=artifact_path,
+            selector=SemanticSelector(
+                scheme="procedure-arm-v1",
+                value=f"{from_node_id}:{arm_label}:{target_node_id}",
+            ),
+        )
+
+    @classmethod
+    def line(cls, artifact_path: str) -> "SemanticAddress":
+        return cls(
+            artifact_path=artifact_path,
+            selector=SemanticSelector(scheme="line-v1", value=""),
         )
 
 

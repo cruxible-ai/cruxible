@@ -140,6 +140,20 @@ from cruxible_core.playbill.policies import (
 )
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.principals import principal_registry_from_tree
+from cruxible_core.playbill.procedures.artifacts import (
+    AcceptedProcedureV1,
+    ProcedureFormatError,
+    evaluate_procedure_law,
+    parse_procedure,
+    procedure_artifact_digest,
+)
+from cruxible_core.playbill.procedures.line_specs import (
+    AcceptedLineSpecV1,
+    LineSpecFormatError,
+    evaluate_line_spec_law,
+    line_spec_digest,
+    parse_line_spec,
+)
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.providers import (
     AcceptedProviderV1,
@@ -186,6 +200,8 @@ _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
 )
 _STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$")
+_PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.yaml$")
+_LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _LFS_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
 
@@ -658,6 +674,8 @@ def validate_proposal_tree(
             or _SOURCE_ACQUISITION_POLICY_PATH_RE.fullmatch(path)
             or _STANDING_MANDATE_PATH_RE.fullmatch(path)
             or _CLAIM_PATH_RE.fullmatch(path)
+            or _PROCEDURE_PATH_RE.fullmatch(path)
+            or _LINE_PATH_RE.fullmatch(path)
         )
         if not authorable and base.get(path) != content:
             raise ProposalAdmissionError(
@@ -682,6 +700,8 @@ def validate_proposal_tree(
             or _SOURCE_ACQUISITION_POLICY_PATH_RE.fullmatch(path)
             or _STANDING_MANDATE_PATH_RE.fullmatch(path)
             or _CLAIM_PATH_RE.fullmatch(path)
+            or _PROCEDURE_PATH_RE.fullmatch(path)
+            or _LINE_PATH_RE.fullmatch(path)
         )
         if not authorable and path not in result:
             raise ProposalAdmissionError(
@@ -1302,6 +1322,8 @@ def _evaluate_v2_proposal_tree(
                     _SOURCE_ACQUISITION_POLICY_PATH_RE,
                     _STANDING_MANDATE_PATH_RE,
                     _CLAIM_PATH_RE,
+                    _PROCEDURE_PATH_RE,
+                    _LINE_PATH_RE,
                 )
             ):
                 dependency_artifacts({path: proposed_bytes})
@@ -1314,6 +1336,8 @@ def _evaluate_v2_proposal_tree(
             StandingMandateError,
             SubjectFormatError,
             ClaimTypeFormatError,
+            ProcedureFormatError,
+            LineSpecFormatError,
         ) as exc:
             return CandidateEvaluation(
                 candidate_tree,
@@ -1378,6 +1402,7 @@ def _evaluate_v2_proposal_tree(
     resolved_claim_types: dict[str, AcceptedClaimType] = {}
     resolved_capture_contracts: dict[str, AcceptedCaptureContract] = {}
     resolved_providers: dict[str, ProviderV1] = {}
+    resolved_procedures: dict[str, AcceptedProcedureV1] = {}
     for state in candidate_states.values():
         content = candidate_tree[state.path]
         if state.artifact_kind == "subject":
@@ -1406,6 +1431,13 @@ def _evaluate_v2_proposal_tree(
         elif state.artifact_kind == "provider":
             provider = parse_provider(content, path=state.path)
             resolved_providers[provider.identity.qualified] = provider
+        elif state.artifact_kind == "procedure":
+            procedure = parse_procedure(content, path=state.path)
+            resolved_procedures[procedure.identity.qualified] = AcceptedProcedureV1(
+                path=state.path,
+                procedure=procedure,
+                artifact_digest=state.artifact_digest,
+            )
     actor_roles: tuple[str, ...] = ()
     if actor_id is not None:
         try:
@@ -1471,6 +1503,121 @@ def _evaluate_v2_proposal_tree(
                     "playbill.proposal.unregistered_semantic_kind",
                     "No PC-A2 acceptance law is registered for this changed path.",
                     path,
+                )
+            )
+            continue
+        if _PROCEDURE_PATH_RE.fullmatch(path):
+            procedure = parse_procedure(proposed_bytes, path=path)
+            predecessor_procedure: AcceptedProcedureV1 | None = None
+            if parent_state is not None:
+                previous_procedure = parse_procedure(current_tree[path], path=path)
+                predecessor_procedure = AcceptedProcedureV1(
+                    path=path,
+                    procedure=previous_procedure,
+                    artifact_digest=procedure_artifact_digest(previous_procedure).tagged,
+                )
+            procedure_law = evaluate_procedure_law(
+                procedure,
+                path=path,
+                actor_roles=actor_roles,
+                predecessor=predecessor_procedure,
+            )
+            if procedure_law.verdict == "refused":
+                diagnostics.extend(procedure_law.diagnostics)
+                continue
+            if procedure_law.artifact_digest is None or procedure_law.required_tier is None:
+                raise ProposalIntegrityError("accepted Procedure law result is incomplete")
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+                artifact_tag=procedure.artifact_format
+            )
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    (
+                        None
+                        if predecessor_procedure is None
+                        else predecessor_procedure.artifact_digest
+                    ),
+                    procedure_law.artifact_digest,
+                    procedure_law.required_tier,
+                    procedure_law.approval_scope,
+                    procedure.activation_policy,
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": procedure_law.artifact_digest,
+                        "definition_digest": procedure.definition_digest,
+                        "directly_runnable": procedure.directly_runnable,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    procedure.lifecycle.state == "retired",
+                )
+            )
+            continue
+        if _LINE_PATH_RE.fullmatch(path):
+            line = parse_line_spec(proposed_bytes, path=path)
+            accepted_procedure = resolved_procedures.get(line.procedure.target.qualified)
+            if accepted_procedure is None:
+                diagnostics.append(
+                    _diagnostic(
+                        "playbill.line.procedure_unavailable",
+                        "LineSpec's exact Procedure is unavailable in candidate state.",
+                        path,
+                    )
+                )
+                continue
+            predecessor_line: AcceptedLineSpecV1 | None = None
+            if parent_state is not None:
+                previous_line = parse_line_spec(current_tree[path], path=path)
+                predecessor_line = AcceptedLineSpecV1(
+                    path=path,
+                    line=previous_line,
+                    artifact_digest=line_spec_digest(previous_line).tagged,
+                )
+            interface_digests: dict[str, str] = {}
+            for state in candidate_states.values():
+                interface_digests[state.artifact_digest] = state.artifact_digest
+                interface_pin = next(
+                    (pin for pin in state.pins if pin.role == "interface"),
+                    None,
+                )
+                if interface_pin is not None:
+                    interface_digests[state.artifact_digest] = interface_pin.artifact_digest
+            line_law = evaluate_line_spec_law(
+                line,
+                path=path,
+                actor_roles=actor_roles,
+                procedure=accepted_procedure,
+                interface_digests=interface_digests,
+                predecessor=predecessor_line,
+            )
+            if line_law.verdict == "refused":
+                diagnostics.extend(line_law.diagnostics)
+                continue
+            if line_law.artifact_digest is None or line_law.required_tier is None:
+                raise ProposalIntegrityError("accepted LineSpec law result is incomplete")
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag=line.artifact_format)
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    None if predecessor_line is None else predecessor_line.artifact_digest,
+                    line_law.artifact_digest,
+                    line_law.required_tier,
+                    line_law.approval_scope,
+                    "snapshot",
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": line_law.artifact_digest,
+                        "occurrence_epoch": line.occurrence_epoch,
+                        "procedure_digest": line.procedure.artifact_digest,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    line.lifecycle.state == "retired",
                 )
             )
             continue
@@ -2103,6 +2250,8 @@ def evaluate_proposal_tree(
                     _SOURCE_ACQUISITION_POLICY_PATH_RE,
                     _STANDING_MANDATE_PATH_RE,
                     _CLAIM_PATH_RE,
+                    _PROCEDURE_PATH_RE,
+                    _LINE_PATH_RE,
                 )
             )
             for path in original_scope
@@ -2152,6 +2301,8 @@ def evaluate_proposal_tree(
                 _SOURCE_ACQUISITION_POLICY_PATH_RE,
                 _STANDING_MANDATE_PATH_RE,
                 _CLAIM_PATH_RE,
+                _PROCEDURE_PATH_RE,
+                _LINE_PATH_RE,
             )
         )
         for path in scope

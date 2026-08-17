@@ -10,12 +10,40 @@ from cruxible_core.playbill.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
+from cruxible_core.playbill.procedures.closure import (
+    LineSlotBindingV1,
+    ProcedurePinClosureError,
+    ProcedureSlotInterfaceV1,
+    close_procedure_pin_slots,
+    procedure_slot_interface_digest,
+)
 from cruxible_core.playbill.procedures.graph import (
     ProcedureGraphV3,
     ProcedureNodeDigestsV3,
     analyze_procedure_v3,
     compute_procedure_definition_digest_v3,
     compute_procedure_node_digests_v3,
+)
+from cruxible_core.playbill.procedures.input_planes import (
+    AcceptedStateRunInputV1,
+    ExhaustRunInputV1,
+    LandedCaptureRunInputV1,
+    ProcedureRunInputV1,
+    validate_node_input_plane,
+    validate_run_input_vector,
+)
+from cruxible_core.playbill.procedures.line_specs import (
+    AcceptedLineSpecV1,
+    CadenceTriggerPolicyV1,
+    CaptureLandingTriggerPolicyV1,
+    LineSpecV1,
+    ManualTriggerPolicyV1,
+    WindowCloseTriggerPolicyV1,
+    evaluate_line_spec_law,
+    line_spec_digest,
+    line_spec_path,
+    parse_line_spec,
+    render_line_spec,
 )
 from cruxible_core.playbill.procedures.models import (
     ProcedureDefinitionV3,
@@ -25,6 +53,15 @@ from cruxible_core.playbill.procedures.models import (
 
 __all__ = [
     "AcceptedProcedureV1",
+    "AcceptedLineSpecV1",
+    "AcceptedStateRunInputV1",
+    "CadenceTriggerPolicyV1",
+    "CaptureLandingTriggerPolicyV1",
+    "ExhaustRunInputV1",
+    "LandedCaptureRunInputV1",
+    "LineSlotBindingV1",
+    "LineSpecV1",
+    "ManualTriggerPolicyV1",
     "ProcedureArtifactV1",
     "ProcedureDefinitionV3",
     "ProcedureGraphV3",
@@ -32,12 +69,25 @@ __all__ = [
     "ProcedureNodeDigestsV3",
     "ProcedurePinSlotRefV1",
     "ProcedurePinSlotV1",
+    "ProcedurePinClosureError",
+    "ProcedureRunInputV1",
+    "ProcedureSlotInterfaceV1",
+    "WindowCloseTriggerPolicyV1",
     "analyze_procedure_v3",
     "compute_procedure_definition_digest_v3",
     "compute_procedure_node_digests_v3",
+    "close_procedure_pin_slots",
+    "evaluate_line_spec_law",
     "evaluate_procedure_law",
     "parse_procedure",
+    "line_spec_digest",
+    "line_spec_path",
+    "parse_line_spec",
+    "procedure_slot_interface_digest",
     "procedure_artifact_digest",
     "procedure_path",
     "render_procedure",
+    "render_line_spec",
+    "validate_node_input_plane",
+    "validate_run_input_vector",
 ]

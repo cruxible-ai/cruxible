@@ -491,6 +491,38 @@ def playbill_evidence_extension_registry() -> ProjectionExtensionRegistry:
     )
 
 
+def playbill_procedure_extension_registry() -> ProjectionExtensionRegistry:
+    """Return PC-D's additive Procedure and LineSpec projection schemas."""
+
+    prior = playbill_evidence_extension_registry()
+    procedures = tuple(
+        ProjectionFactDeclaration(
+            schema_id=schema_id,
+            schema_version=1,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        )
+        for schema_id in (
+            "playbill.line.attestation_coverage",
+            "playbill.line.governance",
+            "playbill.line.history",
+            "playbill.line.provenance",
+            "playbill.line.source_mapping",
+            "playbill.line.spec",
+            "playbill.procedure.attestation_coverage",
+            "playbill.procedure.definition",
+            "playbill.procedure.governance",
+            "playbill.procedure.graph",
+            "playbill.procedure.history",
+            "playbill.procedure.provenance",
+            "playbill.procedure.source_mapping",
+        )
+    )
+    return ProjectionExtensionRegistry(
+        (*prior.declarations("semantic"), *procedures, *prior.declarations("presentation"))
+    )
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -500,6 +532,7 @@ __all__ = [
     "normalize_projection_value",
     "playbill_claim_extension_registry",
     "playbill_evidence_extension_registry",
+    "playbill_procedure_extension_registry",
     "playbill_claim_type_extension_registry",
     "playbill_extension_registry",
     "playbill_governance_extension_registry",

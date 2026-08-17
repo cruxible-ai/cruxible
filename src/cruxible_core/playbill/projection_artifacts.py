@@ -41,7 +41,12 @@ from cruxible_core.playbill.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
 )
-from cruxible_core.playbill.semantic import SemanticAddress, whole_body_mapping
+from cruxible_core.playbill.semantic import (
+    ContentSpan,
+    SemanticAddress,
+    SourceMapping,
+    whole_body_mapping,
+)
 from cruxible_core.playbill.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.types import PrincipalRecord
 
@@ -94,9 +99,12 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
             re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$"),
         ),
         ArtifactPathKind(
+            "procedure",
+            re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+        ),
+        ArtifactPathKind(
             "line",
             re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
-            implemented=False,
         ),
         ArtifactPathKind(
             "fixture",
@@ -122,6 +130,14 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-capture-contract-v1",
                 "playbill-capture-envelope-v1",
                 "playbill-claim-v1",
+                "playbill-accepted-state-run-input-v1",
+                "playbill-exhaust-run-input-v1",
+                "playbill-landed-capture-run-input-v1",
+                "playbill-line-slot-binding-v1",
+                "playbill-line-v1",
+                "playbill-procedure-pin-slot-ref-v1",
+                "playbill-procedure-pin-slot-v1",
+                "playbill-procedure-v1",
                 "playbill-provider-v1",
                 "playbill-source-acquisition-policy-v1",
                 "playbill-standing-mandate-v1",
@@ -136,7 +152,9 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-landed-capture-run-input-v1",
             "playbill-line-slot-binding-v1",
             "playbill-line-v1",
+            "playbill-procedure-pin-slot-v1",
             "playbill-procedure-pin-slot-ref-v1",
+            "playbill-procedure-v1",
             "playbill-provider-v1",
             "playbill-source-acquisition-policy-v1",
             "playbill-standing-mandate-v1",
@@ -154,6 +172,7 @@ RegisteredPathKind = Literal[
     "line",
     "presentation",
     "principal",
+    "procedure",
     "provider",
     "source-acquisition-policy",
     "standing-mandate",
@@ -367,6 +386,41 @@ def _load_object(content: bytes, *, path: str) -> dict[str, object]:
 
 def _canonical_model_bytes(model: BaseModel) -> bytes:
     return canonical_bytes(model.model_dump(mode="json")) + b"\n"
+
+
+def _whole_semantic_mapping(
+    address: SemanticAddress,
+    *,
+    content_digest: str,
+    byte_length: int,
+) -> SourceMapping:
+    return SourceMapping(
+        subject=address,
+        spans=(
+            ContentSpan(
+                content_digest=content_digest,
+                start_byte=0,
+                end_byte=byte_length,
+            ),
+        ),
+    )
+
+
+def _procedure_node_span(
+    content: bytes,
+    node: BaseModel,
+    *,
+    content_digest: str,
+) -> ContentSpan:
+    encoded = canonical_bytes(node.model_dump(mode="json", by_alias=True))
+    start = content.find(encoded)
+    if start < 0 or content.find(encoded, start + 1) >= 0:
+        raise ProjectionFormatError("Procedure node bytes do not have one exact source occurrence")
+    return ContentSpan(
+        content_digest=content_digest,
+        start_byte=start,
+        end_byte=start + len(encoded),
+    )
 
 
 def parse_projection_tree(
@@ -931,6 +985,254 @@ def parse_projection_tree(
                         value=mandate.model_dump(mode="json"),
                     )
                 )
+                continue
+            if kind == "procedure":
+                from cruxible_core.playbill.procedures.artifacts import (
+                    parse_procedure,
+                    procedure_artifact_digest,
+                )
+                from cruxible_core.playbill.procedures.graph import (
+                    analyze_procedure_v3,
+                    compute_procedure_node_digests_v3,
+                )
+
+                procedure = parse_procedure(content, path=path)
+                identity = procedure.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = procedure_artifact_digest(procedure).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="procedure",
+                        format_tag=procedure.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=procedure.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                if procedure.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in procedure.pins
+                )
+                graph = analyze_procedure_v3(procedure.definition)
+                node_digests = compute_procedure_node_digests_v3(procedure.definition)
+                mappings: list[tuple[str, SourceMapping]] = [
+                    (
+                        "unit",
+                        _whole_semantic_mapping(
+                            SemanticAddress.procedure_unit(path),
+                            content_digest=input_digest,
+                            byte_length=len(content),
+                        ),
+                    )
+                ]
+                for node in procedure.definition.nodes:
+                    span = _procedure_node_span(
+                        content,
+                        node,
+                        content_digest=input_digest,
+                    )
+                    mappings.append(
+                        (
+                            f"node.{node.node_id}",
+                            SourceMapping(
+                                subject=SemanticAddress.procedure_node(path, node.node_id),
+                                spans=(span,),
+                            ),
+                        )
+                    )
+                    for label, target in graph.edges[node.node_id].items():
+                        mappings.append(
+                            (
+                                f"arm.{len(mappings):04d}",
+                                SourceMapping(
+                                    subject=SemanticAddress.procedure_arm(
+                                        path,
+                                        from_node_id=node.node_id,
+                                        arm_label=cast(
+                                            Literal["next", "on_true", "on_false"], label
+                                        ),
+                                        target_node_id=target,
+                                    ),
+                                    spans=(span,),
+                                ),
+                            )
+                        )
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.procedure.definition",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="definition",
+                            value={
+                                "address": SemanticAddress.procedure_unit(path).model_dump(
+                                    mode="json"
+                                ),
+                                "artifact_digest": {"$digest": artifact_digest},
+                                "definition_digest": {"$digest": procedure.definition_digest},
+                                "directly_runnable": procedure.directly_runnable,
+                                "identity": procedure.identity.model_dump(mode="json"),
+                                "input_digest": {"$digest": input_digest},
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.procedure.graph",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="graph_v3",
+                            value={
+                                "edges": graph.edges,
+                                "nodes": [
+                                    {
+                                        "address": SemanticAddress.procedure_node(
+                                            path, node_id
+                                        ).model_dump(mode="json"),
+                                        "kind": graph.kinds[node_id],
+                                        "local_digest": {
+                                            "$digest": node_digests[node_id].local_digest
+                                        },
+                                        "node_id": node_id,
+                                        "subtree_digest": {
+                                            "$digest": node_digests[node_id].subtree_digest
+                                        },
+                                    }
+                                    for node_id in graph.node_ids
+                                ],
+                                "pin_slots": [
+                                    slot.model_dump(mode="json")
+                                    for slot in procedure.definition.pin_slots
+                                ],
+                            },
+                        ),
+                        *(
+                            ProjectionFact(
+                                schema_id="playbill.procedure.source_mapping",
+                                schema_version=1,
+                                subject_identity=identity,
+                                fact_key=fact_key,
+                                value=mapping.model_dump(mode="json"),
+                            )
+                            for fact_key, mapping in mappings
+                        ),
+                    )
+                )
+                if coordinate is not None and registry.supports(
+                    "playbill.procedure.attestation_coverage",
+                    1,
+                    classification="semantic",
+                ):
+                    semantic_facts.extend(
+                        accepted_artifact_explanation_facts(
+                            artifact_family="procedure",
+                            subject_identity=identity,
+                            artifact_path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                            predecessor_digest=procedure.lifecycle.predecessor_digest,
+                            records=accepted_change_sets,
+                            coordinate=coordinate,
+                        )
+                    )
+                continue
+            if kind == "line":
+                from cruxible_core.playbill.procedures.line_specs import (
+                    line_spec_digest,
+                    parse_line_spec,
+                )
+
+                line = parse_line_spec(content, path=path)
+                identity = line.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = line_spec_digest(line).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="line",
+                        format_tag=line.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=line.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                if line.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in line.pins
+                )
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.line.spec",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="instantiation",
+                            value={
+                                "address": SemanticAddress.line(path).model_dump(mode="json"),
+                                "artifact_digest": {"$digest": artifact_digest},
+                                "input_digest": {"$digest": input_digest},
+                                "line": line.model_dump(mode="json"),
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.line.source_mapping",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="line",
+                            value=_whole_semantic_mapping(
+                                SemanticAddress.line(path),
+                                content_digest=input_digest,
+                                byte_length=len(content),
+                            ).model_dump(mode="json"),
+                        ),
+                    )
+                )
+                if coordinate is not None and registry.supports(
+                    "playbill.line.attestation_coverage",
+                    1,
+                    classification="semantic",
+                ):
+                    semantic_facts.extend(
+                        accepted_artifact_explanation_facts(
+                            artifact_family="line",
+                            subject_identity=identity,
+                            artifact_path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                            predecessor_digest=line.lifecycle.predecessor_digest,
+                            records=accepted_change_sets,
+                            coordinate=coordinate,
+                        )
+                    )
                 continue
             if kind == "capture-contract":
                 try:
