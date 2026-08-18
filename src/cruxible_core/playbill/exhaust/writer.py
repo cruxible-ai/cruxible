@@ -45,6 +45,9 @@ class ProcedureExhaustWriter:
         payload: object,
         run_id: str | None = None,
         admission_binding_digest: str | None = None,
+        line_spec_digest: str | None = None,
+        occurrence_id: str | None = None,
+        attempt: int | None = None,
     ) -> StoredProcedureJournalRecordV1:
         metadata = self.bodies.store(journal_payload_bytes(payload))
         head = self.journal.read_head(stream, partition_id)
@@ -57,6 +60,9 @@ class ProcedureExhaustWriter:
                 procedure_artifact_digest=procedure_artifact_digest,
                 definition_digest=definition_digest,
                 run_id=run_id,
+                line_spec_digest=line_spec_digest,
+                occurrence_id=occurrence_id,
+                attempt=attempt,
                 admission_binding_digest=admission_binding_digest,
                 payload_digest=metadata.digest,
                 actor_context=actor_context,

@@ -339,6 +339,15 @@ class LocalJournalBackend:
             raise PlaybillJournalError("journal writer state is not canonical")
         return state
 
+    def writer_state(
+        self,
+        stream: JournalStreamIdentityV1,
+        partition_id: str,
+    ) -> JournalWriterStateV1 | None:
+        """Return the durable fence for one partition; reading never appends."""
+
+        return self._writer_state(stream, partition_id)
+
     def activate_writer(
         self,
         stream: JournalStreamIdentityV1,
