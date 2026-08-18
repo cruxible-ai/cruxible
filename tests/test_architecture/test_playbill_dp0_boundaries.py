@@ -36,8 +36,6 @@ RATIFIED_DONOR_REMOVAL_BATCHES = {
     "cruxible_core.predicate": "PC-F",
     "cruxible_core.query": "PC-F",
     "cruxible_core.graph": "PC-F",
-    "cruxible_core.receipt": "PC-E1",
-    "cruxible_core.resolution_contracts": "PC-E1",
     "cruxible_core.provider": "PC-E2",
     "cruxible_core.providers": "PC-E2",
     "cruxible_core.runtime.instance": "PC-F",
@@ -499,6 +497,52 @@ def test_pc_d_retired_donor_packages_and_modules_are_absent() -> None:
     mutation_source = (CORE / "service" / "mutations.py").read_text(encoding="utf-8")
     assert "cruxible_core.group" not in mutation_source
     assert "get_group_store" not in mutation_source
+
+
+def test_pc_e1_retired_storage_authorities_and_executor_are_absent() -> None:
+    for package in ("receipt", "resolution_contracts"):
+        root = CORE / package
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts for path in root.rglob("*")
+        )
+
+    retired_modules = (
+        CORE / "service" / "resolution_contracts.py",
+        CORE / "service" / "artifact_lifecycle.py",
+        CORE / "service" / "gates.py",
+        CORE / "service" / "mutation_receipts.py",
+        CORE / "storage" / "resolution_evidence.py",
+        CORE / "workflow" / "execution_context.py",
+        CORE / "workflow" / "executor.py",
+        CORE / "workflow" / "io.py",
+        CORE / "workflow" / "step_handlers.py",
+        CORE / "workflow" / "tracing.py",
+    )
+    assert not any(path.exists() for path in retired_modules)
+
+    sqlite_source = (CORE / "storage" / "sqlite.py").read_text(encoding="utf-8")
+    assert "SQLiteReceiptStore" not in sqlite_source
+    assert "ResolutionContractStore" not in sqlite_source
+
+    instance_protocol = (CORE / "instance_protocol.py").read_text(encoding="utf-8")
+    for retired_protocol in (
+        "ReceiptStoreProtocol",
+        "ProcedureStoreProtocol",
+        "ProcedureReadingStoreProtocol",
+        "ResolutionContractStoreProtocol",
+        "GroupStoreProtocol",
+    ):
+        assert retired_protocol not in instance_protocol
+
+    runtime_instance = (CORE / "runtime" / "instance.py").read_text(encoding="utf-8")
+    for retired_accessor in (
+        "get_receipt_store",
+        "get_procedure_store",
+        "get_procedure_reading_store",
+        "get_resolution_contract_store",
+        "get_group_store",
+    ):
+        assert retired_accessor not in runtime_instance
 
 
 def test_destructive_pass_oracles_are_exact_and_immutable() -> None:

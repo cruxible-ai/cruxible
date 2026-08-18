@@ -13,9 +13,9 @@ from cruxible_core.config.schema import (
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.query.engine import execute_query
-from cruxible_core.receipt.builder import ReceiptBuilder
-from cruxible_core.receipt.serializer import to_json, to_markdown, to_mermaid
-from cruxible_core.receipt.types import Receipt
+from cruxible_core.workflow.receipt_builder import ReceiptBuilder
+from cruxible_core.workflow.receipt_serializer import to_json, to_markdown, to_mermaid
+from cruxible_core.workflow.receipt_types import Receipt
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -679,15 +679,15 @@ class TestSerializer:
         assert "Mutation: add_entity" in mermaid
 
     def test_node_label_validation(self):
-        from cruxible_core.receipt.serializer import _node_label
-        from cruxible_core.receipt.types import ReceiptNode
+        from cruxible_core.workflow.receipt_serializer import _node_label
+        from cruxible_core.workflow.receipt_types import ReceiptNode
 
         node = ReceiptNode(node_id="n1", node_type="validation", detail={"passed": True})
         assert _node_label(node) == "Validation: PASS"
 
     def test_node_label_entity_write(self):
-        from cruxible_core.receipt.serializer import _node_label
-        from cruxible_core.receipt.types import ReceiptNode
+        from cruxible_core.workflow.receipt_serializer import _node_label
+        from cruxible_core.workflow.receipt_types import ReceiptNode
 
         node = ReceiptNode(
             node_id="n1",
@@ -699,8 +699,8 @@ class TestSerializer:
         assert _node_label(node) == "Write: Vehicle:V-1 (add)"
 
     def test_node_label_relationship_write(self):
-        from cruxible_core.receipt.serializer import _node_label
-        from cruxible_core.receipt.types import ReceiptNode
+        from cruxible_core.workflow.receipt_serializer import _node_label
+        from cruxible_core.workflow.receipt_types import ReceiptNode
 
         node = ReceiptNode(
             node_id="n1",
@@ -715,8 +715,8 @@ class TestSerializer:
         assert _node_label(node) == "Write: P-1 --fits--> V-1 (update)"
 
     def test_node_label_feedback_applied(self):
-        from cruxible_core.receipt.serializer import _node_label
-        from cruxible_core.receipt.types import ReceiptNode
+        from cruxible_core.workflow.receipt_serializer import _node_label
+        from cruxible_core.workflow.receipt_types import ReceiptNode
 
         node = ReceiptNode(
             node_id="n1",

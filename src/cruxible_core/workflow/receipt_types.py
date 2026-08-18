@@ -1,4 +1,4 @@
-"""Receipt types: a DAG of evidence showing how a query result was derived.
+"""Pure receipt-tree oracle retained with the PC-E2 workflow donor.
 
 A receipt is a structured proof — not a log, not a trace. It records which
 entities were consulted, which edges were traversed, which filters/constraints
@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field
 
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import new_id
-from cruxible_core.receipt.mutation_payloads import MutationPayloadMetadata
 from cruxible_core.temporal import utc_now
+from cruxible_core.workflow.mutation_payloads import MutationPayloadMetadata
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 OperationType = Literal[

@@ -23,8 +23,8 @@ from pydantic import BaseModel, ConfigDict
 from cruxible_core.errors import ConfigError
 from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.analysis import build_procedure_graph
+from cruxible_core.procedure.resolution_oracle import compute_query_definition_digest
 from cruxible_core.procedure.types import ProcedureRepeatStepSchema, unwrap_procedure_step
-from cruxible_core.resolution_contracts.types import compute_query_definition_digest
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from cruxible_core.config.schema import CoreConfig

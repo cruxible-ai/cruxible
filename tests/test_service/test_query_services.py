@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -13,10 +12,8 @@ from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.errors import (
     ConfigError,
     EntityTypeNotFoundError,
-    ReceiptNotFoundError,
     RelationshipAmbiguityError,
     RelationshipNotFoundError,
-    TraceNotFoundError,
 )
 from cruxible_core.graph.assertion_state import RelationshipAssertion, RelationshipReviewState
 from cruxible_core.graph.provenance import RelationshipProvenance
@@ -26,71 +23,25 @@ from cruxible_core.graph.types import (
     RelationshipMetadata,
     mint_claim_id,
 )
-from cruxible_core.provider.types import ExecutionTrace
-from cruxible_core.receipt.builder import ReceiptBuilder
 from cruxible_core.service.mutations import (
     service_add_entities,
     service_add_entity_inputs,
-    service_batch_direct_write,
 )
 from cruxible_core.service.queries import (
     _warn_on_dropped_read,
     service_get_entity,
-    service_get_entity_change_history,
-    service_get_receipt,
     service_get_relationship,
     service_get_relationship_lineage,
-    service_get_trace,
     service_inspect_entity,
     service_list,
-    service_list_traces,
-    service_query,
     service_query_inline_surface,
     service_sample,
     service_stats,
 )
 from cruxible_core.service.types import (
-    BatchDirectWriteInput,
     EntityWriteInput,
     QueryServiceResult,
 )
-
-STATUS_HISTORY_YAML = """\
-version: '1.0'
-name: status_history_demo
-entity_types:
-  Task:
-    properties:
-      task_id: {type: string, primary_key: true}
-      status:
-        type: string
-        enum: [planned, active, closed]
-      title: {type: string, optional: true}
-  Note:
-    properties:
-      note_id: {type: string, primary_key: true}
-      body: {type: string}
-relationships: []
-"""
-
-
-def _status_history_instance(tmp_path: Path) -> CruxibleInstance:
-    (tmp_path / "config.yaml").write_text(STATUS_HISTORY_YAML)
-    return CruxibleInstance.init(tmp_path, "config.yaml")
-
-
-def _history_changes(result):
-    return [
-        (
-            item.change_kind,
-            [
-                (change.property, change.from_value, change.to_value)
-                for change in item.property_changes
-            ],
-        )
-        for item in result.items
-    ]
-
 
 # ---------------------------------------------------------------------------
 # service_sample
@@ -258,185 +209,6 @@ class TestGetEntity:
             )
 
         assert exc_info.value.relationship_name == "missing_relationship"
-
-
-# ---------------------------------------------------------------------------
-# service_get_entity_change_history
-# ---------------------------------------------------------------------------
-
-
-class TestEntityChangeHistory:
-    def test_entity_specific_change_history_from_mutation_receipts(self, tmp_path: Path) -> None:
-        instance = _status_history_instance(tmp_path)
-        service_add_entities(
-            instance,
-            [
-                EntityInstance(
-                    entity_type="Task",
-                    entity_id="T-1",
-                    properties={"status": "planned", "title": "First"},
-                )
-            ],
-        )
-        service_add_entities(
-            instance,
-            [
-                EntityInstance(
-                    entity_type="Task",
-                    entity_id="T-1",
-                    properties={"status": "active"},
-                )
-            ],
-        )
-        service_add_entities(
-            instance,
-            [
-                EntityInstance(
-                    entity_type="Task",
-                    entity_id="T-1",
-                    properties={"title": "Renamed"},
-                )
-            ],
-        )
-        service_add_entities(
-            instance,
-            [
-                EntityInstance(
-                    entity_type="Task",
-                    entity_id="T-1",
-                    properties={"status": "active"},
-                )
-            ],
-        )
-
-        history = service_get_entity_change_history(instance, "Task", entity_id="T-1")
-
-        assert history.total == 3
-        assert history.legacy_entity_write_count == 0
-        assert _history_changes(history) == [
-            ("updated", [("title", "First", "Renamed")]),
-            ("updated", [("status", "planned", "active")]),
-            (
-                "created",
-                [
-                    ("status", None, "planned"),
-                    ("title", None, "First"),
-                ],
-            ),
-        ]
-        assert {item.operation_type for item in history.items} == {"add_entity"}
-        assert all(item.receipt_id.startswith("RCP-") for item in history.items)
-
-    def test_type_wide_change_history_and_pagination(self, tmp_path: Path) -> None:
-        instance = _status_history_instance(tmp_path)
-        service_add_entities(
-            instance,
-            [
-                EntityInstance(
-                    entity_type="Task",
-                    entity_id="T-1",
-                    properties={"status": "planned"},
-                ),
-                EntityInstance(
-                    entity_type="Task",
-                    entity_id="T-2",
-                    properties={"status": "active"},
-                ),
-            ],
-        )
-
-        history = service_get_entity_change_history(instance, "Task", limit=1, offset=1)
-
-        assert history.total == 2
-        assert len(history.items) == 1
-        assert history.items[0].change_kind == "created"
-        assert history.items[0].entity_id in {"T-1", "T-2"}
-
-    def test_batch_direct_write_records_property_changes(self, tmp_path: Path) -> None:
-        instance = _status_history_instance(tmp_path)
-        service_batch_direct_write(
-            instance,
-            BatchDirectWriteInput(
-                entities=[
-                    EntityWriteInput(
-                        entity_type="Task",
-                        entity_id="T-1",
-                        properties={"status": "planned"},
-                    )
-                ]
-            ),
-        )
-        service_batch_direct_write(
-            instance,
-            BatchDirectWriteInput(
-                entities=[
-                    EntityWriteInput(
-                        entity_type="Task",
-                        entity_id="T-1",
-                        properties={"status": "closed"},
-                    )
-                ]
-            ),
-        )
-
-        history = service_get_entity_change_history(instance, "Task", entity_id="T-1")
-
-        assert _history_changes(history) == [
-            ("updated", [("status", "planned", "closed")]),
-            ("created", [("status", None, "planned")]),
-        ]
-        assert {item.operation_type for item in history.items} == {"batch_direct_write"}
-
-    def test_legacy_entity_write_receipts_are_not_inferred(self, tmp_path: Path) -> None:
-        instance = _status_history_instance(tmp_path)
-        builder = ReceiptBuilder(operation_type="add_entity")
-        builder.record_entity_write("Task", "T-legacy", is_update=False)
-        receipt = builder.build()
-        with instance.write_transaction() as uow:
-            uow.receipts.save_receipt(receipt)
-
-        history = service_get_entity_change_history(instance, "Task", entity_id="T-legacy")
-
-        assert history.items == []
-        assert history.total == 0
-        assert history.legacy_entity_write_count == 1
-        assert history.warnings == ["1 legacy entity write(s) lacked property change detail"]
-
-    def test_entity_type_without_status_is_supported(self, tmp_path: Path) -> None:
-        instance = _status_history_instance(tmp_path)
-        service_add_entities(
-            instance,
-            [
-                EntityInstance(
-                    entity_type="Note",
-                    entity_id="N-1",
-                    properties={"body": "Initial"},
-                )
-            ],
-        )
-        service_add_entities(
-            instance,
-            [
-                EntityInstance(
-                    entity_type="Note",
-                    entity_id="N-1",
-                    properties={"body": "Updated"},
-                )
-            ],
-        )
-
-        history = service_get_entity_change_history(instance, "Note", entity_id="N-1")
-
-        assert _history_changes(history) == [
-            ("updated", [("body", "Initial", "Updated")]),
-            ("created", [("body", None, "Initial")]),
-        ]
-
-    def test_unknown_entity_type_raises_typed_error(self, tmp_path: Path) -> None:
-        instance = _status_history_instance(tmp_path)
-
-        with pytest.raises(EntityTypeNotFoundError):
-            service_get_entity_change_history(instance, "Missing")
 
 
 # ---------------------------------------------------------------------------
@@ -657,116 +429,6 @@ class TestGetRelationship:
 
 
 # ---------------------------------------------------------------------------
-# service_get_receipt
-# ---------------------------------------------------------------------------
-
-
-class TestGetReceipt:
-    def test_found(self, populated_instance: CruxibleInstance) -> None:
-        query_result = service_query(
-            populated_instance,
-            "parts_for_vehicle",
-            {"vehicle_id": "V-2024-CIVIC-EX"},
-        )
-        assert query_result.receipt_id is not None
-        receipt = service_get_receipt(populated_instance, query_result.receipt_id)
-        assert receipt.receipt_id == query_result.receipt_id
-        assert query_result.param_hints is not None
-        assert query_result.param_hints.primary_key == "vehicle_id"
-        assert "V-2024-CIVIC-EX" in query_result.param_hints.example_ids
-
-    def test_not_found(self, populated_instance: CruxibleInstance) -> None:
-        with pytest.raises(ReceiptNotFoundError):
-            service_get_receipt(populated_instance, "nonexistent-receipt")
-
-    def test_store_lifecycle(self, populated_instance: CruxibleInstance) -> None:
-        """Verify store closes even on error."""
-        with pytest.raises(ReceiptNotFoundError):
-            service_get_receipt(populated_instance, "bad-id")
-        # Should be able to open store again
-        store = populated_instance.get_receipt_store()
-        store.close()
-
-
-# ---------------------------------------------------------------------------
-# service_get_trace / service_list_traces
-# ---------------------------------------------------------------------------
-
-
-def _trace(
-    *,
-    trace_id: str,
-    workflow_name: str = "load_assets",
-    provider_name: str = "asset_loader",
-) -> ExecutionTrace:
-    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    return ExecutionTrace(
-        trace_id=trace_id,
-        workflow_name=workflow_name,
-        step_id="load",
-        provider_name=provider_name,
-        provider_version="1.0.0",
-        provider_ref="tests.support.workflow_test_providers.asset_loader",
-        runtime="python",
-        deterministic=True,
-        side_effects=False,
-        input_payload={"source": "fixture"},
-        output_payload={"rows": 2},
-        started_at=started_at,
-        finished_at=started_at,
-        duration_ms=0.0,
-    )
-
-
-class TestTraceReads:
-    def test_get_trace_found(self, populated_instance: CruxibleInstance) -> None:
-        trace = _trace(trace_id="TRC-service-001")
-        with populated_instance.write_transaction() as uow:
-            uow.receipts.save_trace(trace)
-
-        loaded = service_get_trace(populated_instance, trace.trace_id)
-
-        assert loaded.trace_id == trace.trace_id
-        assert loaded.output_payload["rows"] == 2
-
-    def test_get_trace_returns_large_payload_preview_by_default(
-        self,
-        populated_instance: CruxibleInstance,
-    ) -> None:
-        large_payload = {"body": "x" * 40000, "source": "fixture"}
-        trace = _trace(trace_id="TRC-service-large")
-        trace.input_payload = large_payload
-        trace.output_payload = large_payload
-        with populated_instance.write_transaction() as uow:
-            uow.receipts.save_trace(trace)
-
-        preview = service_get_trace(populated_instance, trace.trace_id)
-
-        assert preview.input_payload != large_payload
-        assert preview.input_payload_metadata is not None
-        assert preview.input_payload_metadata.retention == "preview"
-        assert preview.input_payload_metadata.stored_inline is False
-
-    def test_get_trace_not_found(self, populated_instance: CruxibleInstance) -> None:
-        with pytest.raises(TraceNotFoundError):
-            service_get_trace(populated_instance, "TRC-missing")
-
-    def test_list_traces_with_filters(self, populated_instance: CruxibleInstance) -> None:
-        with populated_instance.write_transaction() as uow:
-            uow.receipts.save_trace(_trace(trace_id="TRC-a", workflow_name="wf_a"))
-            uow.receipts.save_trace(_trace(trace_id="TRC-b", workflow_name="wf_b"))
-
-        result = service_list_traces(populated_instance, workflow_name="wf_a", limit=10)
-
-        assert result.total == 1
-        assert result.items[0]["trace_id"] == "TRC-a"
-        assert result.limit == 10
-        assert result.offset == 0
-        assert result.truncated is False
-        assert result.read_revision == populated_instance.get_read_revision()
-
-
-# ---------------------------------------------------------------------------
 # service_list
 # ---------------------------------------------------------------------------
 
@@ -965,16 +627,6 @@ class TestList:
 
         assert result.total == 3
         assert any(edge["from_id"] == "BP-1002" for edge in result.items)
-
-    def test_receipts(self, populated_instance: CruxibleInstance) -> None:
-        # Create a receipt first
-        service_query(
-            populated_instance,
-            "parts_for_vehicle",
-            {"vehicle_id": "V-2024-CIVIC-EX"},
-        )
-        result = service_list(populated_instance, "receipts")
-        assert result.total >= 1
 
     def test_entities_requires_type(self, populated_instance: CruxibleInstance) -> None:
         with pytest.raises(ConfigError, match="entity_type is required"):
@@ -1258,14 +910,4 @@ class TestReadPipelineDropDetection:
             result = service_list(populated_instance, "entities", entity_type="Vehicle")
         assert result.total == 2
         assert len(result.items) == 2
-        assert _drop_warnings(events) == []
-
-    def test_list_silent_on_legitimate_empty(
-        self,
-        initialized_instance: CruxibleInstance,
-    ) -> None:
-        with structlog.testing.capture_logs() as events:
-            result = service_list(initialized_instance, "receipts")
-        assert result.total == 0
-        assert result.items == []
         assert _drop_warnings(events) == []

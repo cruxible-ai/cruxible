@@ -815,11 +815,12 @@ def _kit_actor(actor_id: str) -> GovernedActorContext:
 
 
 def _seed_review(instance: CruxibleInstance, *, approve: bool) -> None:
-    """Create rr-1 (change_head pinned) as implementer; optionally approve as reviewer.
+    """Seed the historical donor state needed by the freeze-law tests.
 
-    Approval satisfies the kit's verdict guards: the authorized-reviewer actor
-    (distinct from the creator) co-writes the required review_note in the same
-    batch.
+    PC-E1 retired the ReceiptStore-backed actor-separation path, so this fixture
+    no longer exercises that removed approval surface. It constructs the
+    already-approved precondition directly and keeps these tests focused on the
+    independent frozen-property semantics they still transplant.
     """
     service_add_entity_inputs(
         instance,
@@ -843,17 +844,19 @@ def _seed_review(instance: CruxibleInstance, *, approve: bool) -> None:
         instance,
         BatchDirectWriteInput(
             entities=[
-                EntityWriteInput(
-                    entity_type="ReviewRequest",
-                    entity_id="rr-1",
-                    properties={"status": "approved"},
-                ),
                 _note("sn-approve", kind="review_note"),
             ],
             relationships=[_note_edge("sn-approve")],
         ),
         actor_context=_kit_actor("authorized-reviewer"),
     )
+    graph = instance.load_graph()
+    review = graph.get_entity("ReviewRequest", "rr-1")
+    assert review is not None
+    assert graph.update_entity_properties("ReviewRequest", "rr-1", {"status": "approved"})
+    with instance.write_transaction() as uow:
+        uow.graph.save_graph(graph)
+    instance.invalidate_graph_cache()
 
 
 def _note(note_id: str, *, kind: str) -> EntityWriteInput:

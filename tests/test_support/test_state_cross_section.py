@@ -15,7 +15,6 @@ from tests.test_cli.conftest import CAR_PARTS_YAML
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.runtime.instance import CruxibleInstance
 from cruxible_core.service.mutations import service_add_entities, service_add_relationships
-from cruxible_core.service.queries import service_query
 
 
 def _new_instance(tmp_path: Path) -> CruxibleInstance:
@@ -83,7 +82,7 @@ def test_cross_section_tokenization_is_global_across_state_and_snapshots(
     assert report["state"]["head_snapshot_id"].startswith("<SNAPSHOT_")
 
 
-def test_cross_section_query_capture_does_not_persist_receipts(tmp_path: Path) -> None:
+def test_cross_section_query_capture_includes_local_receipt_summary(tmp_path: Path) -> None:
     instance = _new_instance(tmp_path)
     _seed_vehicle_and_part(instance)
 
@@ -97,7 +96,6 @@ def test_cross_section_query_capture_does_not_persist_receipts(tmp_path: Path) -
                     include_receipt_summary=True,
                 ),
             ),
-            include_receipts=True,
         ),
     )
 
@@ -106,7 +104,6 @@ def test_cross_section_query_capture_does_not_persist_receipts(tmp_path: Path) -
         "parameters": {"vehicle_id": "V-CIVIC"},
         "query_name": "parts_for_vehicle",
     }
-    assert report["receipts"] == []
 
 
 def test_cross_section_query_capture_is_stable_across_repeated_builds(tmp_path: Path) -> None:
@@ -127,23 +124,6 @@ def test_cross_section_query_capture_is_stable_across_repeated_builds(tmp_path: 
 
     assert first == second
     assert diff_state(first, second) == {"summary": {"changed": False}, "version": 1}
-
-
-def test_cross_section_receipt_section_uses_existing_receipts(tmp_path: Path) -> None:
-    instance = _new_instance(tmp_path)
-    _seed_vehicle_and_part(instance)
-    persisted = service_query(instance, "parts_for_vehicle", {"vehicle_id": "V-CIVIC"})
-
-    report = build_state_cross_section(
-        instance,
-        StateCrossSectionSpec(include_receipts=True),
-    )
-
-    assert persisted.receipt_id is not None
-    receipt_entry = report["receipts"][0]
-    assert receipt_entry["query_name"] == "parts_for_vehicle"
-    assert receipt_entry["receipt_id"].startswith("<RECEIPT_")
-    assert receipt_entry["created_at"] == "<TIMESTAMP>"
 
 
 def test_state_diff_reports_selected_graph_changes(tmp_path: Path) -> None:

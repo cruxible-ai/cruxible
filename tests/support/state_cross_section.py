@@ -22,10 +22,6 @@ class CrossSectionLimits:
 
     entities_per_type: int = 50
     relationships_per_type: int = 50
-    groups: int = 25
-    group_members: int = 50
-    receipts: int = 25
-    traces: int = 25
     snapshots: int = 25
 
 
@@ -46,9 +42,6 @@ class StateCrossSectionSpec:
     entity_types: tuple[str, ...] = ()
     relationship_types: tuple[str, ...] = ()
     queries: tuple[QueryCrossSectionSpec, ...] = ()
-    include_groups: bool = False
-    include_receipts: bool = False
-    include_traces: bool = False
     include_snapshots: bool = False
     include_state: bool = False
     limits: CrossSectionLimits = field(default_factory=CrossSectionLimits)
@@ -176,18 +169,8 @@ def build_state_cross_section(
         raw["state"] = _build_state_section(instance)
     if spec.include_snapshots:
         raw["snapshots"] = _build_snapshots_section(instance, spec.limits.snapshots)
-    if spec.include_groups:
-        raw["groups"] = _build_groups_section(
-            instance,
-            spec.limits.groups,
-            spec.limits.group_members,
-        )
     if spec.queries:
         raw["queries"] = _build_queries_section(instance, spec.queries)
-    if spec.include_receipts:
-        raw["receipts"] = _build_receipts_section(instance, spec.limits.receipts)
-    if spec.include_traces:
-        raw["traces"] = _build_traces_section(instance, spec.limits.traces)
     return _normalize_value(raw, registry=registry)
 
 
@@ -207,9 +190,6 @@ def diff_state(before: Mapping[str, Any], after: Mapping[str, Any]) -> JsonObjec
         summary["relationships_removed"] = len(relationships.get("removed", []))
         summary["relationships_changed"] = len(relationships.get("changed", []))
     for section, id_key in (
-        ("groups", "group_id"),
-        ("receipts", "receipt_id"),
-        ("traces", "trace_id"),
         ("snapshots", "snapshot_id"),
     ):
         section_diff = _diff_item_list(
@@ -332,61 +312,6 @@ def _build_state_section(instance: InstanceProtocol) -> JsonObject:
 def _build_snapshots_section(instance: InstanceProtocol, limit: int) -> list[JsonObject]:
     snapshots = instance.list_snapshots()[:limit]
     return sorted([_model_dump(snapshot) for snapshot in snapshots], key=_snapshot_sort_key)
-
-
-def _build_groups_section(
-    instance: InstanceProtocol,
-    group_limit: int,
-    member_limit: int,
-) -> list[JsonObject]:
-    store = instance.get_group_store()
-    try:
-        groups = store.list_groups(limit=group_limit)
-        reports: list[JsonObject] = []
-        for group in groups:
-            report = _model_dump(group)
-            members = store.get_members(group.group_id)
-            report["members"] = [
-                _model_dump(member)
-                for member in sorted(
-                    members,
-                    key=lambda item: (
-                        item.from_type,
-                        item.from_id,
-                        item.relationship_type,
-                        item.to_type,
-                        item.to_id,
-                    ),
-                )[:member_limit]
-            ]
-            if group.resolution_id is not None:
-                resolution = store.get_resolution(group.resolution_id)
-                if resolution is not None:
-                    report["resolution"] = _model_dump(resolution)
-            reports.append(report)
-        return sorted(reports, key=_group_sort_key)
-    finally:
-        store.close()
-
-
-def _build_receipts_section(instance: InstanceProtocol, limit: int) -> list[JsonObject]:
-    store = instance.get_receipt_store()
-    try:
-        group_sort_keys = _receipt_group_sort_keys(instance)
-        return sorted(
-            store.list_receipts(limit=limit),
-            key=lambda receipt: _receipt_sort_key(receipt, group_sort_keys),
-        )
-    finally:
-        store.close()
-
-
-def _build_traces_section(instance: InstanceProtocol, limit: int) -> list[JsonObject]:
-    store = instance.get_receipt_store()
-    try:
-        return sorted(store.list_traces(limit=limit), key=_trace_sort_key)
-    finally:
-        store.close()
 
 
 def _build_queries_section(
@@ -730,47 +655,6 @@ def _annotate_ownership(
     return {"ownership": "local"}
 
 
-def _group_sort_key(group: Mapping[str, Any]) -> tuple[str, str, str, str, str]:
-    stable = _group_stable_sort_key(group)
-    return (*stable, str(group.get("group_id")))
-
-
-def _group_stable_sort_key(group: Mapping[str, Any]) -> tuple[str, str, str, str]:
-    return (
-        str(group.get("relationship_type")),
-        str(group.get("signature")),
-        str(group.get("group_kind")),
-        str(group.get("status")),
-    )
-
-
-def _receipt_sort_key(
-    receipt: Mapping[str, Any],
-    group_sort_keys: Mapping[str, tuple[str, str, str, str]],
-) -> tuple[str, str, str, str, str]:
-    parameters = receipt.get("parameters")
-    parameters = parameters if isinstance(parameters, Mapping) else {}
-    stable_parameters = dict(parameters)
-    group_id = stable_parameters.pop("group_id", None)
-    group_sort_key = group_sort_keys.get(str(group_id), ("", "", "", ""))
-    return (
-        str(receipt.get("operation_type")),
-        _canonical_json({"group": group_sort_key}).strip(),
-        str(receipt.get("query_name")),
-        str(receipt.get("workflow_name")),
-        _canonical_json(stable_parameters).strip(),
-    )
-
-
-def _trace_sort_key(trace: Mapping[str, Any]) -> tuple[str, str, str, str]:
-    return (
-        str(trace.get("workflow_name")),
-        str(trace.get("step_id")),
-        str(trace.get("provider_name")),
-        str(trace.get("trace_id")),
-    )
-
-
 def _snapshot_sort_key(snapshot: Mapping[str, Any]) -> tuple[str, str, str, str]:
     return (
         str(snapshot.get("label")),
@@ -786,15 +670,6 @@ def _query_sort_key(query: Mapping[str, Any]) -> tuple[str, str, str]:
         _canonical_json(query.get("params") or {}).strip(),
         str(query.get("limit")),
     )
-
-
-def _receipt_group_sort_keys(
-    instance: InstanceProtocol,
-) -> dict[str, tuple[str, str, str, str]]:
-    """Return no retired group-store enrichments for receipt ordering."""
-
-    del instance
-    return {}
 
 
 def _upstream_metadata(cross_section: Mapping[str, Any]) -> Mapping[str, Any]:

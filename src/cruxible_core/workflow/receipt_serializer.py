@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cruxible_core.receipt.types import Receipt, ReceiptNode
+from cruxible_core.workflow.receipt_types import Receipt, ReceiptNode
 
 
 def to_json(receipt: Receipt) -> str:

@@ -16,9 +16,7 @@ from cruxible_core.errors import (
     ConfigError,
     EntityTypeNotFoundError,
     QueryNotFoundError,
-    ReceiptNotFoundError,
     RelationshipNotFoundError,
-    TraceNotFoundError,
 )
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.provenance import (
@@ -27,7 +25,6 @@ from cruxible_core.graph.provenance import (
 )
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, RelationshipMetadata
 from cruxible_core.instance_protocol import InstanceProtocol
-from cruxible_core.provider.types import ExecutionTrace
 from cruxible_core.query.engine import execute_query_definition
 from cruxible_core.query.entity_state import resolve_entity_visibility_state
 from cruxible_core.query.enums import LifecycleStatus, QueryVisibilityState
@@ -70,10 +67,7 @@ from cruxible_core.query.read_surface import (
 )
 from cruxible_core.query.relationship_state import relationship_matches_query_state
 from cruxible_core.query.types import QueryPathSegment
-from cruxible_core.receipt.types import Receipt
 from cruxible_core.service.types import (
-    EntityChangeHistoryItem,
-    EntityChangeHistoryResult,
     InspectEntityResult,
     InspectNeighborhoodResult,
     InspectNeighborResult,
@@ -82,13 +76,11 @@ from cruxible_core.service.types import (
     NeighborhoodEdgeResult,
     NeighborhoodNodeResult,
     OperationContext,
-    PropertyChangeItem,
     QueryDefinitionServiceResult,
     QueryParamHints,
     QueryServiceResult,
     RelationshipLineageResult,
     StatsServiceResult,
-    TraceListResult,
     list_truncated,
 )
 
@@ -105,7 +97,6 @@ _INLINE_DEFAULT_MAX_PATHS = 1000
 _INLINE_MAX_PATHS = 5000
 _INLINE_DEFAULT_MAX_PATHS_PER_RESULT = 25
 _INLINE_MAX_PATHS_PER_RESULT = 100
-_ENTITY_HISTORY_RECEIPT_PAGE_SIZE = 500
 
 # ---------------------------------------------------------------------------
 # Query
@@ -121,7 +112,7 @@ def service_query(
     lifecycle_status: LifecycleStatus | None = None,
     context: OperationContext | None = None,
 ) -> QueryServiceResult:
-    """Execute a named query and persist the receipt.
+    """Execute a named query and return its non-authoritative donor receipt.
 
     Returns results, receipt, and execution metadata.
     """
@@ -132,9 +123,6 @@ def service_query(
         relationship_state=relationship_state,
         lifecycle_status=lifecycle_status,
     )
-    if result.receipt:
-        with instance.write_transaction() as uow:
-            uow.receipts.save_receipt(result.receipt)
     return result
 
 
@@ -215,9 +203,6 @@ def service_query_inline_surface(
         relationship_state=relationship_state,
         lifecycle_status=lifecycle_status,
     )
-    if result.receipt:
-        with instance.write_transaction() as uow:
-            uow.receipts.save_receipt(result.receipt)
     return _query_result_with_response_limit(
         result,
         surface_limit=surface_limit,
@@ -717,129 +702,6 @@ def service_inspect_entity(
     )
 
 
-def service_get_entity_change_history(
-    instance: InstanceProtocol,
-    entity_type: str,
-    *,
-    entity_id: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
-) -> EntityChangeHistoryResult:
-    """Return receipt-derived property changes for one entity type or entity."""
-    if limit < 1:
-        raise ConfigError("limit must be at least 1")
-    if offset < 0:
-        raise ConfigError("offset must be non-negative")
-
-    config = instance.load_config()
-    _validate_entity_history_entity_type(config, entity_type)
-
-    store = instance.get_receipt_store()
-    changes: list[EntityChangeHistoryItem] = []
-    legacy_count = 0
-    try:
-        receipt_ids = (
-            store.get_receipts_for_entity(entity_type, entity_id)
-            if entity_id is not None
-            else _all_receipt_ids(store)
-        )
-        for receipt_id in receipt_ids:
-            receipt = store.get_receipt(receipt_id)
-            if receipt is None:
-                continue
-            for node in receipt.nodes:
-                if node.node_type != "entity_write":
-                    continue
-                if node.entity_type != entity_type:
-                    continue
-                if entity_id is not None and node.entity_id != entity_id:
-                    continue
-                detail = node.detail
-                change_kind = detail.get("change_kind")
-                raw_property_changes = detail.get("property_changes")
-                if change_kind not in {"created", "updated"} or not isinstance(
-                    raw_property_changes, list
-                ):
-                    legacy_count += 1
-                    continue
-                property_changes = _property_change_items(raw_property_changes)
-                if change_kind == "updated" and not property_changes:
-                    continue
-                actor_context = detail.get("actor_context")
-                changes.append(
-                    EntityChangeHistoryItem(
-                        entity_type=entity_type,
-                        entity_id=node.entity_id or "",
-                        change_kind=cast(Literal["created", "updated"], change_kind),
-                        property_changes=property_changes,
-                        changed_at=node.timestamp,
-                        receipt_id=receipt.receipt_id,
-                        operation_type=receipt.operation_type,
-                        actor_context=actor_context if isinstance(actor_context, dict) else None,
-                    )
-                )
-    finally:
-        store.close()
-
-    changes.sort(key=lambda item: (item.changed_at, item.receipt_id), reverse=True)
-    total = len(changes)
-    page = changes[offset : offset + limit]
-    warnings = (
-        [f"{legacy_count} legacy entity write(s) lacked property change detail"]
-        if legacy_count
-        else []
-    )
-    return EntityChangeHistoryResult(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        items=page,
-        total=total,
-        limit=limit,
-        offset=offset,
-        truncated=list_truncated(total=total, offset=offset, returned=len(page)),
-        legacy_entity_write_count=legacy_count,
-        warnings=warnings,
-    )
-
-
-def _validate_entity_history_entity_type(config: CoreConfig, entity_type: str) -> None:
-    entity_schema = config.get_entity_type(entity_type)
-    if entity_schema is None:
-        raise EntityTypeNotFoundError(entity_type, known_entity_types=list(config.entity_types))
-
-
-def _all_receipt_ids(store: Any) -> list[str]:
-    receipt_ids: list[str] = []
-    offset = 0
-    while True:
-        page = store.list_receipts(limit=_ENTITY_HISTORY_RECEIPT_PAGE_SIZE, offset=offset)
-        if not page:
-            break
-        receipt_ids.extend(str(row["receipt_id"]) for row in page)
-        if len(page) < _ENTITY_HISTORY_RECEIPT_PAGE_SIZE:
-            break
-        offset += _ENTITY_HISTORY_RECEIPT_PAGE_SIZE
-    return receipt_ids
-
-
-def _property_change_items(raw_changes: list[Any]) -> list[PropertyChangeItem]:
-    changes: list[PropertyChangeItem] = []
-    for raw_change in raw_changes:
-        if not isinstance(raw_change, Mapping):
-            continue
-        property_name = raw_change.get("property")
-        if not isinstance(property_name, str) or not property_name:
-            continue
-        changes.append(
-            PropertyChangeItem(
-                property=property_name,
-                from_value=raw_change.get("from_value"),
-                to_value=raw_change.get("to_value"),
-            )
-        )
-    return changes
-
-
 def service_get_relationship(
     instance: InstanceProtocol,
     from_type: str,
@@ -923,76 +785,6 @@ def service_get_relationship_lineage(
     )
 
 
-def service_get_receipt(
-    instance: InstanceProtocol,
-    receipt_id: str,
-) -> Receipt:
-    """Retrieve a stored receipt by ID.
-
-    Raises ReceiptNotFoundError if not found.
-    """
-    store = instance.get_receipt_store()
-    try:
-        receipt = store.get_receipt(receipt_id)
-    finally:
-        store.close()
-    if receipt is None:
-        raise ReceiptNotFoundError(receipt_id)
-    return receipt
-
-
-def service_get_trace(instance: InstanceProtocol, trace_id: str) -> ExecutionTrace:
-    """Retrieve a stored provider execution trace by ID.
-
-    Raises TraceNotFoundError if not found.
-    """
-    store = instance.get_receipt_store()
-    try:
-        trace = store.get_trace(trace_id)
-    finally:
-        store.close()
-    if trace is None:
-        raise TraceNotFoundError(trace_id)
-    return trace
-
-
-def service_list_traces(
-    instance: InstanceProtocol,
-    *,
-    workflow_name: str | None = None,
-    provider_name: str | None = None,
-    limit: int = 100,
-    offset: int = 0,
-) -> TraceListResult:
-    """List stored provider execution trace summaries."""
-    if limit < 1:
-        raise ConfigError("limit must be at least 1")
-    if offset < 0:
-        raise ConfigError("offset must be non-negative")
-    store = instance.get_receipt_store()
-    try:
-        traces = store.list_traces(
-            workflow_name=workflow_name,
-            provider_name=provider_name,
-            limit=limit,
-            offset=offset,
-        )
-        total = store.count_traces(
-            workflow_name=workflow_name,
-            provider_name=provider_name,
-        )
-    finally:
-        store.close()
-    return TraceListResult(
-        items=traces,
-        total=total,
-        limit=limit,
-        offset=offset,
-        truncated=list_truncated(total=total, offset=offset, returned=len(traces)),
-        read_revision=instance.get_read_revision(),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Listing
 # ---------------------------------------------------------------------------
@@ -1000,31 +792,19 @@ def service_list_traces(
 
 def service_list(
     instance: InstanceProtocol,
-    resource: Literal["entities", "edges", "receipts"],
+    resource: Literal["entities", "edges"],
     *,
     entity_type: str | None = None,
     relationship_type: str | None = None,
-    query_name: str | None = None,
-    receipt_id: str | None = None,
     property_filter: dict[str, Any] | None = None,
     where: Mapping[str, Mapping[str, Any]] | None = None,
     relationship_state: QueryVisibilityState | None = None,
     lifecycle_status: LifecycleStatus | None = None,
-    operation_type: str | None = None,
     fields: list[str] | None = None,
     limit: int = 50,
     offset: int = 0,
-    receipt_before: tuple[str, str] | None = None,
 ) -> ListResult:
-    """List entities, edges, or receipts.
-
-    ``receipt_before`` (receipts only) is the keyset continuation cursor: a
-    ``(created_at, receipt_id)`` high-water mark; the page holds only receipts
-    strictly older than it in the newest-first ordering. Keyset resumption is
-    stable under receipt insertion between pages (receipts are audit rows and
-    do not bump ``read_revision``, so an offset cursor would silently shift).
-    When set, ``offset`` is reported in the envelope for progression display
-    but never applied to the scan.
+    """List entities or edges.
 
     ``relationship_state`` is the unified read-visibility selector. For ENTITIES
     it gates by lifecycle through the shared :func:`entity_matches_query_state`
@@ -1043,7 +823,7 @@ def service_list(
     it replaces the implicit live-only default so ``retired`` and ``superseded``
     remain directly inspectable; an explicit selector still composes normally.
     """
-    _VALID_RESOURCES = ("entities", "edges", "receipts")
+    _VALID_RESOURCES = ("entities", "edges")
     if resource not in _VALID_RESOURCES:
         raise ConfigError(f"Unknown resource '{resource}'. Use: {', '.join(_VALID_RESOURCES)}")
 
@@ -1059,11 +839,6 @@ def service_list(
         raise ConfigError("lifecycle_status is only supported for entities and edges")
     if fields is not None and resource != "entities":
         raise ConfigError("fields is only supported for entities")
-    if receipt_before is not None and resource != "receipts":
-        raise ConfigError("receipt_before is only supported for receipts")
-
-    receipts_remaining: int | None = None
-
     if resource == "entities":
         if not entity_type:
             raise ConfigError("entity_type is required when listing entities")
@@ -1089,32 +864,6 @@ def service_list(
             limit=limit,
             offset=offset,
         )
-    elif resource == "receipts":
-        store = instance.get_receipt_store()
-        try:
-            summaries = store.list_receipts(
-                query_name=query_name,
-                operation_type=operation_type,
-                limit=limit,
-                # Keyset resumption replaces the offset scan entirely; the
-                # nominal offset stays in the envelope for progression only.
-                offset=0 if receipt_before is not None else offset,
-                before=receipt_before,
-            )
-            total = store.count_receipts(query_name=query_name, operation_type=operation_type)
-            # Keyset truncation: receipts strictly older than the last item of
-            # this page. Receipts inserted mid-scan are NEWER than any cursor,
-            # so this is exact where offset math would drift.
-            if summaries:
-                last = summaries[-1]
-                receipts_remaining = store.count_receipts(
-                    query_name=query_name,
-                    operation_type=operation_type,
-                    before=(str(last["created_at"]), str(last["receipt_id"])),
-                )
-        finally:
-            store.close()
-        result = ListResult(items=summaries, total=total)
     _warn_on_dropped_read(
         resource=f"list:{resource}",
         total=result.total,
@@ -1128,16 +877,6 @@ def service_list(
     result.limit = limit
     result.offset = offset
     result.truncated = list_truncated(total=result.total, offset=offset, returned=len(result.items))
-    if resource == "receipts":
-        if receipts_remaining is not None:
-            # Truncation for receipts is keyset-derived (strictly-older count
-            # below the page's last item), never offset math: the audit table
-            # grows without bumping read_revision, so offsets drift mid-scan.
-            result.truncated = receipts_remaining > 0
-        elif receipt_before is not None:
-            # A resumed page with no rows means nothing older remains (the
-            # tail was deleted); that is the end of the scan, not a drop.
-            result.truncated = False
     result.read_revision = instance.get_read_revision()
     return result
 

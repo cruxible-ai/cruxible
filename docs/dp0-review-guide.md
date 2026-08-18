@@ -154,12 +154,16 @@ These legacy service modules were deleted:
 
 ```text
 service/analysis.py
+service/artifact_lifecycle.py
 service/bindings.py
 service/config_mutations.py
 service/decisions.py
 service/feedback.py
+service/gates.py
 service/installs.py
 service/lifecycle.py
+service/mutation_receipts.py
+service/resolution_contracts.py
 service/snapshots.py
 service/state.py
 service/state_diff.py
@@ -180,6 +184,14 @@ lifecycle. The frozen Procedure graph-format-v1/v2 readers remain as a PC-E2
 proof oracle, but importing them no longer initializes any retired governance
 or storage path.
 
+PC-E1 deleted the ReceiptStore and ResolutionContractStore packages, protocols,
+runtime accessors, SQLite initialization, receipt-derived history/trace reads,
+and the old workflow executor/service path. It rehomed only the pure receipt
+tree under `workflow/` and the storage-free resolution oracle under
+`procedure/`. Procedure journals and promoted exhaust are now the sole durable
+operational-evidence path; retained graph mutation fixtures use a transaction
+wrapper that cannot emit a receipt or write a replacement audit store.
+
 ## Donor allowlist and removal batches
 
 This table is the complete import-level donor manifest. Served Playbill code
@@ -188,29 +200,26 @@ adapter. Every row has an owning removal batch.
 
 | Donor module prefix | Removal batch | Why retained | Adapter |
 |---|---:|---|---|
-| `cruxible_core.procedure` | PC-E2 | Frozen definition/digest/static-law plus run/read models | — |
-| `cruxible_core.workflow` | PC-E2 | Compiler, contract, transform, and executor-source oracle | — |
+| `cruxible_core.procedure` | PC-E2 | Frozen definition/digest/static-law plus measurement oracle | — |
+| `cruxible_core.workflow` | PC-E2 | Compiler, contract, transform, and pure receipt-tree oracle | — |
 | `cruxible_core.config.schema` | PC-F | Selected step, query, provider, and contract schema donor | — |
 | `cruxible_core.predicate` | PC-F | Typed comparison and coercion donor | — |
 | `cruxible_core.query` | PC-F | Traversal, filtering, and projection donor | — |
 | `cruxible_core.graph` | PC-F | Query-oracle types and `EvidenceRef` behavior | — |
-| `cruxible_core.receipt` | PC-E1 | Exhaust receipt-tree donor | — |
-| `cruxible_core.attestation` | PC-C | Stance, disposition, and idempotency donor | — |
-| `cruxible_core.resolution_contracts` | PC-E1 | Resolution declaration, activation, and disposition donor | — |
-| `cruxible_core.source_artifacts.markdown` | PC-C | Deterministic Markdown span-extraction donor | — |
 | `cruxible_core.provider` | PC-E2 | Provider contract, registry, and trace donor | — |
 | `cruxible_core.providers` | PC-E2 | Provider implementation donor | — |
 | `cruxible_core.runtime.instance` | PC-F | Temporary donor-parity harness | — |
 | `cruxible_core.storage.sqlite` | PC-F | Temporary donor-parity storage harness | — |
 | `cruxible_core.instance_protocol` | PC-F | Temporary interface, metadata, and integrity harness | — |
 
-The remaining unserved artifact-lifecycle, mutation, query, and resolution
-service code is behavior corpus, not a hidden product surface. Its operation names live in
+The remaining unserved mutation and query service code is behavior corpus, not
+a hidden product surface. Its operation names live in
 `DONOR_OPERATION_PERMISSIONS`, disjoint from both public MCP tools and active
 HTTP/CLI runtime operations, so parity tests retain the original authority law
 without re-registering deleted endpoints. The group and Procedure/workflow
-governance services left in PC-D; the remaining service donors leave with the
-owning PC-E through PC-F transplants.
+governance services left in PC-D, and receipt/resolution/gate/lifecycle services
+left in PC-E1; the remaining service donors leave with the owning PC-E2 through
+PC-F transplants.
 
 ## Exact frozen goldens retained
 

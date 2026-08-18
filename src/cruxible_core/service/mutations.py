@@ -29,18 +29,15 @@ from cruxible_core.graph.types import (
     RelationshipInstance,
     RelationshipMetadata,
 )
-from cruxible_core.instance_protocol import InstanceProtocol, ResolutionContractStoreProtocol
+from cruxible_core.instance_protocol import InstanceProtocol
 from cruxible_core.playbill.actor_context import GovernedActorContext, dump_actor_context
 from cruxible_core.service.direct_write_policy import refuse_governed_source_at_direct_write_entry
 from cruxible_core.service.evidence import resolve_evidence_refs
 from cruxible_core.service.mutation_guards import (
-    ContractActivationIntent,
     GuardEvaluation,
     build_guard_write_delta,
     evaluate_mutation_guards,
     evaluate_relationship_mutation_guards,
-    receipt_creation_actor_resolver,
-    record_contract_activations,
     record_guard_evaluation,
 )
 from cruxible_core.service.mutation_proposals import (
@@ -49,7 +46,10 @@ from cruxible_core.service.mutation_proposals import (
     entity_instance_member,
     relationship_instance_member,
 )
-from cruxible_core.service.mutation_receipts import mutation_receipt, save_graph_for_mutation
+from cruxible_core.service.mutation_transactions import (
+    mutation_transaction,
+    save_graph_for_mutation,
+)
 from cruxible_core.service.types import (
     AddEntityResult,
     AddRelationshipResult,
@@ -100,7 +100,6 @@ class _PreparedBatchDirectWrite:
     identity_warnings: list[EntityIdentityWarning]
     evidence_sources_used: list[str]
     interactions: _DirectWriteGroupInteractions
-    contract_activations: tuple[ContractActivationIntent, ...] = ()
 
 
 @dataclass
@@ -280,7 +279,6 @@ def _prepare_batch_direct_write(
     source_ref: str,
     actor_context: GovernedActorContext | None = None,
     builder: Any | None = None,
-    resolution_contract_store: ResolutionContractStoreProtocol | None = None,
 ) -> _PreparedBatchDirectWrite:
     # Seam check, ahead of every validation and every write: a batch direct
     # write may not name a governed verb as its provenance source. Placed in
@@ -470,8 +468,6 @@ def _prepare_batch_direct_write(
                 validated_entities,
                 [item.validated for item in validated_relationships],
             ),
-            creation_actor_resolver=receipt_creation_actor_resolver(instance),
-            resolution_contract_store=resolution_contract_store,
         )
     except DataValidationError as exc:
         guard_evaluation = GuardEvaluation.from_messages([str(exc), *exc.errors])
@@ -510,7 +506,6 @@ def _prepare_batch_direct_write(
         identity_warnings=identity_warnings,
         evidence_sources_used=evidence_sources,
         interactions=interactions,
-        contract_activations=guard_evaluation.contract_activations,
     )
 
 
@@ -564,25 +559,16 @@ def service_batch_direct_write(
     )
 
     if dry_run:
-        # A preview opens no unit of work, so it reads eligibility on its own
-        # connection. That is safe precisely because it writes nothing: the
-        # activation intents it produces are discarded, so no contract is
-        # consumed by a write that never happened.
-        preview_contract_store = instance.get_resolution_contract_store()
-        try:
-            prepared = _prepare_batch_direct_write(
-                instance,
-                payload,
-                source=source,
-                source_ref=source_ref,
-                actor_context=actor_context,
-                resolution_contract_store=preview_contract_store,
-            )
-        finally:
-            preview_contract_store.close()
+        prepared = _prepare_batch_direct_write(
+            instance,
+            payload,
+            source=source,
+            source_ref=source_ref,
+            actor_context=actor_context,
+        )
         return _batch_direct_write_result(prepared, dry_run=True)
 
-    with mutation_receipt(
+    with mutation_transaction(
         instance,
         "batch_direct_write",
         {
@@ -604,16 +590,7 @@ def service_batch_direct_write(
             source_ref=source_ref,
             actor_context=actor_context,
             builder=builder,
-            resolution_contract_store=(
-                ctx.uow.resolution_contracts if ctx.uow is not None else None
-            ),
         )
-        if ctx.uow is not None and prepared.contract_activations:
-            record_contract_activations(
-                ctx.uow.resolution_contracts,
-                prepared.contract_activations,
-                acceptance_receipt_id=builder.receipt_id if builder else None,
-            )
         touched_entities = []
         for entity_item in prepared.entities:
             persisted_entity = prepared.graph.get_entity(
@@ -735,7 +712,7 @@ def service_add_entities(
     current_graph = instance.load_graph()
     graph = EntityGraph.from_dict(deepcopy(current_graph.to_dict()))
 
-    with mutation_receipt(
+    with mutation_transaction(
         instance,
         "add_entity",
         {"count": len(entities)},
@@ -819,10 +796,6 @@ def service_add_entities(
                 entities=pending,
                 actor_context=actor_context,
                 write_delta=build_guard_write_delta(pending),
-                creation_actor_resolver=receipt_creation_actor_resolver(instance),
-                resolution_contract_store=(
-                    ctx.uow.resolution_contracts if ctx.uow is not None else None
-                ),
             )
         except DataValidationError as exc:
             guard_evaluation = GuardEvaluation.from_messages([str(exc), *exc.errors])
@@ -840,13 +813,6 @@ def service_add_entities(
                 added=sum(1 for validated in pending if not validated.is_update),
                 updated=sum(1 for validated in pending if validated.is_update),
                 identity_warnings=identity_warnings,
-            )
-
-        if ctx.uow is not None and guard_evaluation.contract_activations:
-            record_contract_activations(
-                ctx.uow.resolution_contracts,
-                guard_evaluation.contract_activations,
-                acceptance_receipt_id=builder.receipt_id if builder else None,
             )
 
         added = 0
@@ -971,7 +937,7 @@ def service_add_relationships(
     config = instance.load_config()
     graph = instance.load_graph()
 
-    with mutation_receipt(
+    with mutation_transaction(
         instance,
         "add_relationship",
         {"count": len(relationships), "source": source},

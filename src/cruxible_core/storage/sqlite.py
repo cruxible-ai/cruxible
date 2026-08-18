@@ -17,15 +17,12 @@ from cruxible_core.graph.legacy_identity import dump_legacy_identity_map
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
 from cruxible_core.instance_protocol import StateSnapshot
 from cruxible_core.primitives import canonical_json
-from cruxible_core.receipt.store import SQLiteReceiptStore
-from cruxible_core.resolution_contracts.store import ResolutionContractStore
 from cruxible_core.sqlite_ddl import execute_schema_script
 from cruxible_core.storage.protocols import (
     GraphRepositoryProtocol,
     SnapshotRepositoryProtocol,
     UnitOfWorkProtocol,
 )
-from cruxible_core.storage.resolution_evidence import LegacyResolutionEvidenceReader
 from cruxible_core.temporal import format_datetime, utc_now
 
 StorageIntegrityError = sqlite3.IntegrityError
@@ -590,17 +587,6 @@ class SQLiteUnitOfWork(UnitOfWorkProtocol):
         _configure_connection(self._conn)
         self.graph: GraphRepositoryProtocol = SQLiteGraphRepository(self._conn)
         self.snapshots: SnapshotRepositoryProtocol = SQLiteSnapshotRepository(self._conn)
-        self.receipts = SQLiteReceiptStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
-        self.resolution_evidence = LegacyResolutionEvidenceReader(connection=self._conn)
-        self.resolution_contracts = ResolutionContractStore(
-            self.db_path,
-            connection=self._conn,
-            initialize_schema=False,
-        )
         self._entered = False
         self._started_transaction = False
         self._after_commit: list[Any] = []
@@ -846,8 +832,6 @@ class SQLiteStorageBackend:
                 return
         execute_schema_script(conn, _GRAPH_SCHEMA)
         execute_schema_script(conn, _SNAPSHOT_SCHEMA)
-        SQLiteReceiptStore(self.db_path, connection=conn)
-        ResolutionContractStore(self.db_path, connection=conn)
         for migration_id in (_UNIFIED_STATE_MIGRATION, SNAPSHOT_SCHEMA_MIGRATION):
             row = conn.execute(
                 "SELECT migration_id FROM storage_migrations WHERE migration_id = ?",

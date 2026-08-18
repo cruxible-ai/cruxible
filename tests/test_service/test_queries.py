@@ -150,7 +150,7 @@ def test_sample_entities_projects_requested_fields(
     assert result.truncated == (len(result.items) < result.total)
 
 
-def test_inline_collection_query_persists_receipt_and_not_config(
+def test_inline_collection_query_returns_local_receipt_and_not_config(
     populated_instance: CruxibleInstance,
 ) -> None:
     result = service_query_inline_surface(
@@ -166,12 +166,7 @@ def test_inline_collection_query_persists_receipt_and_not_config(
     assert result.receipt.query_name == "inline:brake_parts"
     assert "brake_parts" not in populated_instance.load_config().named_queries
 
-    store = populated_instance.get_receipt_store()
-    try:
-        receipts = store.list_receipts(query_name="inline:brake_parts")
-    finally:
-        store.close()
-    assert [receipt["receipt_id"] for receipt in receipts] == [result.receipt_id]
+    assert result.receipt.receipt_id == result.receipt_id
 
 
 def test_inline_traversal_query_uses_path_budget_defaults(
@@ -395,17 +390,11 @@ def test_list_edges_default_state_keeps_full_inspection_view(
     )
 
 
-def test_list_rejects_state_for_unsupported_resources(
+def test_list_rejects_retired_receipt_resource(
     populated_instance: CruxibleInstance,
 ) -> None:
-    # The unified visibility selector gates entities (lifecycle) and edges
-    # (review+lifecycle); resources without a visibility axis must reject it.
-    with pytest.raises(ConfigError, match="state is only supported for entities and edges"):
-        service_list(
-            populated_instance,
-            "receipts",
-            relationship_state="live",
-        )
+    with pytest.raises(ConfigError, match="Unknown resource 'receipts'"):
+        service_list(populated_instance, "receipts")  # type: ignore[arg-type]
 
 
 def test_list_entities_accepts_state_selector(

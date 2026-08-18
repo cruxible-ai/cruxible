@@ -1,4 +1,4 @@
-"""Immutable resolution-contract, activation, resolution, and disposition types.
+"""Frozen resolution vocabulary retained with the PC-E2 Procedure donor.
 
 A **resolution contract** declares, at acceptance time and in advance, what
 observable result counts as success for one governed subject, how it will be

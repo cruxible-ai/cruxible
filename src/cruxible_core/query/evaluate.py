@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -16,10 +16,6 @@ from cruxible_core.config.constraint_rules import parse_constraint_rule
 from cruxible_core.config.property_validation import entity_properties_with_identity
 from cruxible_core.config.schema import CoreConfig
 from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.provenance import (
-    RelationshipProvenance,
-    provenance_group_id,
-)
 from cruxible_core.graph.types import (
     RelationshipMetadata,
     make_node_id,
@@ -28,10 +24,6 @@ from cruxible_core.graph.types import (
 from cruxible_core.predicate import evaluate_typed_comparison
 from cruxible_core.query.engine import execute_query
 from cruxible_core.query.relationship_state import relationship_matches_query_state
-
-if TYPE_CHECKING:
-    from cruxible_core.group.types import CandidateMember
-    from cruxible_core.instance_protocol import GroupStoreProtocol
 
 FindingCategory = Literal[
     "orphan_entity",
@@ -73,7 +65,6 @@ def evaluate_graph(
     config: CoreConfig,
     graph: EntityGraph,
     *,
-    group_store: GroupStoreProtocol | None = None,
     max_findings: int = 100,
     exclude_orphan_types: list[str] | None = None,
     severity_filter: list[FindingSeverity] | None = None,
@@ -98,7 +89,7 @@ def evaluate_graph(
     _check_orphans(graph, findings, exclude_types=exclude_orphan_types)
     _check_coverage_gaps(config, graph, findings)
     _check_constraint_violations(config, graph, findings, constraint_summary)
-    _check_governed_support_relationships(config, graph, findings, group_store)
+    _check_governed_support_relationships(config, graph, findings)
     _check_unreviewed_co_members(config, graph, findings)
     _check_quality_rules(config, graph, findings, quality_summary)
 
@@ -290,7 +281,6 @@ def _check_governed_support_relationships(
     config: CoreConfig,
     graph: EntityGraph,
     findings: list[EvaluationFinding],
-    group_store: GroupStoreProtocol | None,
 ) -> None:
     """Find governed relationships whose tri-state support needs review."""
     governed = {
@@ -335,126 +325,10 @@ def _check_governed_support_relationships(
             )
             continue
 
-        if not relationship_matches_query_state(metadata, "live"):
-            continue
-
-        if group_store is None:
-            continue
-
-        member = resolve_edge_signal_history(
-            group_store,
-            from_type=from_type,
-            from_id=from_id,
-            relationship_type=relationship_type,
-            to_type=to_type,
-            to_id=to_id,
-            provenance=metadata.provenance,
-        )
-        if member is None:
-            if _has_direct_evidence_support(metadata):
-                continue
-            findings.append(
-                _governed_support_finding(
-                    from_type,
-                    from_id,
-                    relationship_type,
-                    to_type,
-                    to_id,
-                    "missing_support_evidence",
-                    (
-                        "Governed relationship has no resolvable group signal trail "
-                        "or direct evidence refs"
-                    ),
-                    support_state="direct_without_evidence",
-                )
-            )
-            continue
-
-        signals_by_source = {signal.signal_source: signal.signal for signal in member.signals}
-        required_signal_sources = {
-            name
-            for name, guardrail in relationship.proposal_policy.signals.items()
-            if guardrail.role in {"blocking", "required"}
-        }
-        missing = sorted(required_signal_sources - set(signals_by_source))
-        if missing:
-            findings.append(
-                _governed_support_finding(
-                    from_type,
-                    from_id,
-                    relationship_type,
-                    to_type,
-                    to_id,
-                    "missing_required_signal",
-                    "Governed relationship is missing required signal-source support",
-                    signal_sources=missing,
-                )
-            )
-
-        for source_name, guardrail in relationship.proposal_policy.signals.items():
-            signal = signals_by_source.get(source_name)
-            if guardrail.role == "blocking" and signal == "contradict":
-                findings.append(
-                    _governed_support_finding(
-                        from_type,
-                        from_id,
-                        relationship_type,
-                        to_type,
-                        to_id,
-                        "blocking_contradict",
-                        "Governed relationship has a blocking contradict signal",
-                        signal_sources=[source_name],
-                    )
-                )
-            elif guardrail.role in {"blocking", "required"} and signal == "unsure":
-                findings.append(
-                    _governed_support_finding(
-                        from_type,
-                        from_id,
-                        relationship_type,
-                        to_type,
-                        to_id,
-                        "required_unsure",
-                        "Governed relationship has required or blocking unsure support",
-                        signal_sources=[source_name],
-                    )
-                )
-
-
-def resolve_edge_signal_history(
-    group_store: GroupStoreProtocol,
-    *,
-    from_type: str,
-    from_id: str,
-    relationship_type: str,
-    to_type: str,
-    to_id: str,
-    provenance: RelationshipProvenance | None,
-) -> CandidateMember | None:
-    """Resolve a graph edge back to its approved group candidate member."""
-    if provenance is None:
-        return None
-    group_id = provenance_group_id(provenance)
-    if group_id is None:
-        return None
-    group = group_store.get_group(group_id)
-    if group is None:
-        return None
-    for member in group_store.get_members(group_id):
-        if (
-            member.from_type == from_type
-            and member.from_id == from_id
-            and member.relationship_type == relationship_type
-            and member.to_type == to_type
-            and member.to_id == to_id
-        ):
-            return member
-    return None
-
-
-def _has_direct_evidence_support(metadata: RelationshipMetadata) -> bool:
-    evidence = metadata.evidence
-    return evidence is not None and bool(evidence.evidence_refs)
+        # Candidate-group storage and signal history retired in PC-D. Pending
+        # review remains observable from edge metadata; accepted-edge support
+        # is rebuilt from Playbill Claim evidence in PC-F rather than inferred
+        # through a hidden group-store compatibility path.
 
 
 def _governed_support_finding(

@@ -39,7 +39,7 @@ from cruxible_core.query.enums import (
 )
 from cruxible_core.query.evaluate import EvaluationReport
 from cruxible_core.query.types import QueryRow
-from cruxible_core.receipt.types import Receipt
+from cruxible_core.workflow.receipt_types import Receipt
 from cruxible_core.workflow.types import CompiledPlan
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
@@ -67,30 +67,6 @@ class OperationContext:
 
 
 NeighborDirection = Literal["incoming", "outgoing"]
-GateEvaluationVerdict = Literal["satisfied", "unsatisfied", "error"]
-
-
-@dataclass(frozen=True)
-class GateCandidateOutcome:
-    candidate: str
-    satisfied: bool
-    satisfying_entity_ids: list[str] = field(default_factory=list)
-
-
-@dataclass
-class GateEvaluationResult:
-    gate_name: str
-    kind: str | None
-    candidates: list[str]
-    candidate_outcomes: list[GateCandidateOutcome]
-    verdict: GateEvaluationVerdict
-    reason: str | None
-    instance_id: str
-    read_revision: int
-    receipt_id: str
-    receipt: Receipt
-
-
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -159,29 +135,6 @@ class AddEntityResult:
     added: int
     updated: int
     identity_warnings: list[EntityIdentityWarning] = field(default_factory=list)
-    receipt_id: str | None = None
-
-
-@dataclass
-class ClaimLifecycleResult:
-    """Result of one settled relationship-claim lifecycle adjudication."""
-
-    action: Literal["supersede", "retract"]
-    claim: RelationshipInstance
-    reason: str
-    successor: RelationshipInstance | None = None
-    receipt_id: str | None = None
-
-
-@dataclass
-class EntityLifecycleResult:
-    """Result of one settled entity lifecycle adjudication."""
-
-    action: Literal["supersede", "retire"]
-    entity: EntityInstance
-    reason: str
-    successor: EntityInstance | None = None
-    stranded_live_edge_count: int = 0
     receipt_id: str | None = None
 
 
@@ -389,54 +342,6 @@ class InspectNeighborhoodResult:
     resumable: bool = False
     cursor_nodes_seen: int = 0
     cursor_edges_seen: int = 0
-
-
-@dataclass
-class EntityChangeHistoryItem:
-    entity_type: str
-    entity_id: str
-    change_kind: Literal["created", "updated"]
-    property_changes: list[PropertyChangeItem]
-    changed_at: datetime
-    receipt_id: str
-    operation_type: str
-    actor_context: dict[str, Any] | None = None
-
-
-@dataclass
-class EntityChangeHistoryResult:
-    entity_type: str
-    entity_id: str | None = None
-    items: list[EntityChangeHistoryItem] = field(default_factory=list)
-    total: int = 0
-    limit: int | None = None
-    offset: int = 0
-    truncated: bool = False
-    legacy_entity_write_count: int = 0
-    warnings: list[str] = field(default_factory=list)
-
-
-@dataclass
-class CanonicalViewResult:
-    view: str
-    payload: dict[str, Any]
-
-
-@dataclass
-class ReceiptExplanationResult:
-    receipt_id: str
-    format: Literal["json", "markdown", "mermaid"]
-    content: str
-
-
-@dataclass
-class TraceListResult:
-    items: list[dict[str, Any]] = field(default_factory=list)
-    total: int = 0
-    limit: int | None = None
-    offset: int = 0
-    truncated: bool = False
-    read_revision: int | None = None
 
 
 @dataclass

@@ -8,12 +8,7 @@ from typing import Any, Protocol
 
 from cruxible_core.graph.entity_graph import EntityGraph
 from cruxible_core.graph.types import EntityInstance, RelationshipInstance
-from cruxible_core.instance_protocol import (
-    ReceiptStoreProtocol,
-    ResolutionContractStoreProtocol,
-    StateSnapshot,
-)
-from cruxible_core.storage.resolution_evidence import LegacyResolutionEvidenceReader
+from cruxible_core.instance_protocol import StateSnapshot
 
 
 class GraphRepositoryProtocol(Protocol):
@@ -43,13 +38,10 @@ class SnapshotRepositoryProtocol(Protocol):
 
 
 class UnitOfWorkProtocol(Protocol):
-    """Transaction boundary spanning graph and audit repositories."""
+    """Temporary donor transaction boundary for graph and snapshot repositories."""
 
     graph: GraphRepositoryProtocol
     snapshots: SnapshotRepositoryProtocol
-    receipts: ReceiptStoreProtocol
-    resolution_evidence: LegacyResolutionEvidenceReader
-    resolution_contracts: ResolutionContractStoreProtocol
 
     def register_after_commit(self, callback: Any) -> None: ...
     def register_after_rollback(self, callback: Any) -> None: ...

@@ -40,8 +40,6 @@ from cruxible_core.instance_protocol import (
 )
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import new_id
-from cruxible_core.receipt.store import SQLiteReceiptStore
-from cruxible_core.resolution_contracts.store import ResolutionContractStore
 from cruxible_core.storage.sqlite import (
     SQLiteStorageBackend,
     SQLiteUnitOfWork,
@@ -693,38 +691,6 @@ class CruxibleInstance(InstanceProtocol):
             )
         instance._graph_cache = graph
         return instance, snapshot
-
-    def get_receipt_store(self) -> SQLiteReceiptStore:
-        """Get or create the receipt SQLite store."""
-        if self._active_uow is not None:
-            return self._active_uow.receipts
-        self._ensure_state_initialized()
-        return SQLiteReceiptStore(self._state_db_path())
-
-    def get_group_store(self) -> Any:
-        """Refuse the retired legacy group-store surface."""
-        raise ConfigError("legacy group storage was retired in Playbill PC-D")
-
-    def get_procedure_store(self) -> Any:
-        """Refuse the retired legacy Procedure-store surface."""
-        raise ConfigError("legacy Procedure storage was retired in Playbill PC-D")
-
-    def get_procedure_reading_store(self) -> Any:
-        """Refuse the retired legacy Procedure-reading surface."""
-        raise ConfigError("legacy Procedure readings were retired in Playbill PC-D")
-
-    def get_resolution_contract_store(self) -> ResolutionContractStore:
-        """Get or create the append-only resolution contract SQLite store.
-
-        Guard evaluation MUST receive the active unit-of-work's store: the
-        eligibility lookup and the activation the acceptance writes have to be
-        atomic with the accepted entity write, or a second acceptance can
-        consume the same contract between them.
-        """
-        if self._active_uow is not None:
-            return self._active_uow.resolution_contracts
-        self._ensure_state_initialized()
-        return ResolutionContractStore(self._state_db_path())
 
     @classmethod
     def _validate_instance_mode(cls, instance_mode: str) -> None:

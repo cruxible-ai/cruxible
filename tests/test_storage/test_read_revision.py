@@ -1,10 +1,9 @@
 """Monotonic read_revision: bumped once per mutation commit, never on reads.
 
 The revision advances inside the SAME SQLite transaction as every
-state-mutating commit (graph, snapshots, groups, source artifacts) and NEVER
-for audit-only writes (query receipts and traces) — so read paths that persist
-proof records keep the revision unchanged. Receipts prove computation, never
-freshness.
+state-mutating commit (graph, snapshots, groups, source artifacts) and never
+for reads. Query donors may return a request-local receipt tree, but PC-E1
+persists operational evidence only in Procedure journals.
 """
 
 from __future__ import annotations
@@ -153,7 +152,7 @@ class TestRevisionIncrementsOncePerMutationCommit:
 
 
 # ---------------------------------------------------------------------------
-# (a) never on reads — even reads that persist audit records
+# (a) never on reads
 # ---------------------------------------------------------------------------
 
 
@@ -168,7 +167,7 @@ def test_reads_never_advance_revision(instance: CruxibleInstance) -> None:
     service_stats(instance)
     service_sample(instance, "Vehicle")
     service_inspect_entity(instance, "Vehicle", "V-1", depth=2)
-    # A query persists its receipt (an audit record) — still not a mutation.
+    # A query returns a request-local receipt tree — still not a mutation.
     result = service_query_surface(instance, "parts_for_vehicle", {"vehicle_id": "V-1"})
     assert result.receipt_id is not None
 

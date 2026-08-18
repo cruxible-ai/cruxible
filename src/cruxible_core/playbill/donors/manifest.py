@@ -19,12 +19,12 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
     DonorEntry(
         "cruxible_core.procedure",
         "PC-E2",
-        "frozen definition/digest/static-law plus run/read model donor",
+        "frozen definition/digest/static-law plus measurement oracle",
     ),
     DonorEntry(
         "cruxible_core.workflow",
         "PC-E2",
-        "compiler, contract, transform, and executor-source oracle through runtime parity",
+        "compiler, contract, transform, and pure receipt-tree oracle through runtime parity",
     ),
     DonorEntry(
         "cruxible_core.config.schema",
@@ -45,12 +45,6 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
         "cruxible_core.graph",
         "PC-F",
         "query-oracle types and EvidenceRef behavior donor",
-    ),
-    DonorEntry("cruxible_core.receipt", "PC-E1", "exhaust receipt-tree donor"),
-    DonorEntry(
-        "cruxible_core.resolution_contracts",
-        "PC-E1",
-        "resolution declaration, activation, and disposition donor",
     ),
     DonorEntry(
         "cruxible_core.provider",
