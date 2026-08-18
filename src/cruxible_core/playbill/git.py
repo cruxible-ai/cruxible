@@ -512,15 +512,16 @@ class GitLedger:
         raise PlaybillGitError("Playbill refuses merge commits on main")
 
     def read_tree(self, oid: str) -> dict[str, bytes]:
-        tree: dict[str, bytes] = {}
-        for entry in self.list_tree(oid):
+        entries = self.list_tree(oid)
+        for entry in entries:
             if entry.object_type != "blob" or entry.mode != "100644":
                 raise PlaybillGitError(
                     f"ledger tree contains unsupported {entry.mode} "
                     f"{entry.object_type}: {entry.path}"
                 )
-            tree[entry.path] = self.read_blob(entry.oid)
-        return tree
+        # One batched read keeps whole-tree cost independent of the artifact count.
+        blobs = self.read_blobs(tuple(entry.oid for entry in entries))
+        return {entry.path: blobs[entry.oid] for entry in entries}
 
     def list_tree(self, oid: str) -> tuple[GitTreeEntry, ...]:
         """List an exact commit recursively without reading any blob payload."""
