@@ -1442,17 +1442,33 @@ def parse_projection_tree(
                         raise ProjectionFormatError(
                             "ExhaustPromotion canonical output is missing or malformed"
                         ) from exc
-                    semantic_facts.extend(
-                        procedure_track_record_facts(
-                            AcceptedExhaustPromotionV1(
-                                path=path,
-                                promotion=promotion,
-                                artifact_digest=artifact_digest,
-                                accepted_coordinate=accepted_coordinate,
-                            ),
-                            output=output,
-                        )
+                    accepted_promotion = AcceptedExhaustPromotionV1(
+                        path=path,
+                        promotion=promotion,
+                        artifact_digest=artifact_digest,
+                        accepted_coordinate=accepted_coordinate,
                     )
+                    semantic_facts.extend(
+                        procedure_track_record_facts(accepted_promotion, output=output)
+                    )
+                    if registry.supports(
+                        "playbill.line.track_record",
+                        1,
+                        classification="semantic",
+                    ):
+                        from cruxible_core.playbill.exhaust.line_track_records import (
+                            LineTrackRecordError,
+                            line_track_record_facts,
+                        )
+
+                        try:
+                            semantic_facts.extend(
+                                line_track_record_facts(accepted_promotion, output=output)
+                            )
+                        except LineTrackRecordError as exc:
+                            raise ProjectionFormatError(
+                                "ExhaustPromotion declares an unprojectable Line track record"
+                            ) from exc
                 continue
             if kind == "capture-contract":
                 try:

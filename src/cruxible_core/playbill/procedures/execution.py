@@ -54,6 +54,7 @@ from cruxible_core.playbill.procedures.egress import (
     TerminalEgressRequestV1,
     TerminalEgressSinkProtocol,
     effect_dispatch_refusal,
+    effective_rung_digest,
     verify_terminal_egress_receipt,
 )
 from cruxible_core.playbill.procedures.graph import analyze_procedure_v3
@@ -1619,6 +1620,7 @@ class ProcedureExecutor:
         payload = {
             **payload,
             "effective_rung": rung.effective_rung,
+            "effective_rung_digest": effective_rung_digest(rung),
             "limiting_term": rung.limiting_term,
             "terms": [item.model_dump(mode="json") for item in rung.terms],
         }
@@ -2033,6 +2035,8 @@ class ProcedureExecutor:
             procedure_artifact_digest=admission.procedure_artifact_digest,
             definition_digest=admission.definition_digest,
             run_id=admission.run_id,
+            line_spec_digest=admission.line_spec_digest,
+            occurrence_id=admission.occurrence_id,
             attempt=admission.attempt,
             admission_binding_digest=admission.admission_binding_digest,
             payload_digest=metadata.digest,

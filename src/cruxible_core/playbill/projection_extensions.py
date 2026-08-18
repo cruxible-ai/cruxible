@@ -524,7 +524,11 @@ def playbill_procedure_extension_registry() -> ProjectionExtensionRegistry:
 
 
 def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
-    """Return PC-E1's additive activation, promotion, and track-record schemas."""
+    """Return the additive activation, promotion, and track-record schemas.
+
+    PC-E1 added the Procedure grain; PC-E2 adds the Line grain, keyed by Line
+    identity and occurrence epoch so a rebind never splits a Line's history.
+    """
 
     prior = playbill_procedure_extension_registry()
     runtime = tuple(
@@ -536,6 +540,7 @@ def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
         )
         for schema_id in (
             "playbill.exhaust_promotion.basis",
+            "playbill.line.track_record",
             "playbill.procedure.resolution_activation",
             "playbill.procedure.track_record",
         )

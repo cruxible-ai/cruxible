@@ -110,16 +110,43 @@ def exhaust_receipt_set_manifest_digest(manifest: ExhaustReceiptSetManifestV1) -
 
 
 class VerifiedExhaustRecordV1(_StrictPromotionModel):
+    """One verified record, carrying the coordinates the record itself declares.
+
+    A reducer sees the record's own run/occurrence/implementation coordinates so
+    a reduction can separate what a range actually contains.  These are the
+    stored record's fields, not a caller's assertion, and they grant no
+    authority beyond the range the promotion law already verified.
+    """
+
     record_digest: str
     sequence: int
     event_kind: str
     generation_digest: str
     payload_digest: str
     payload: object
+    procedure_artifact_digest: str
+    definition_digest: str
+    run_id: str | None = None
+    occurrence_id: str | None = None
+    attempt: int | None = Field(default=None, ge=1)
+    line_spec_digest: str | None = None
 
-    @field_validator("record_digest", "generation_digest", "payload_digest")
+    @field_validator(
+        "record_digest",
+        "generation_digest",
+        "payload_digest",
+        "procedure_artifact_digest",
+        "definition_digest",
+    )
     @classmethod
     def _digests(cls, value: str, info: object) -> str:
+        return _digest(value, label=str(getattr(info, "field_name", "exhaust digest")))
+
+    @field_validator("line_spec_digest")
+    @classmethod
+    def _optional_digests(cls, value: str | None, info: object) -> str | None:
+        if value is None:
+            return None
         return _digest(value, label=str(getattr(info, "field_name", "exhaust digest")))
 
     @field_validator("payload", mode="before")
@@ -385,6 +412,12 @@ def evaluate_exhaust_promotion_law(
                 payload=parse_journal_payload(
                     bodies.read(stored.record.payload_digest, access=access)
                 ),
+                procedure_artifact_digest=stored.record.procedure_artifact_digest,
+                definition_digest=stored.record.definition_digest,
+                run_id=stored.record.run_id,
+                occurrence_id=stored.record.occurrence_id,
+                attempt=stored.record.attempt,
+                line_spec_digest=stored.record.line_spec_digest,
             )
             for stored in records
         )
