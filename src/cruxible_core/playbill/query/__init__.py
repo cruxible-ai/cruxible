@@ -12,7 +12,10 @@ exact/lexical discovery layer over the accepted vocabulary, the disposable
 grep-friendly indexes, bounded instruction/data-separated capsules, and the
 query-receipt journal -- where executions receipt and reads do not. Slice 5 adds
 the compact claim-side interface: coordinate-pure ClaimType cards and Subject
-profiles carrying their deterministic match bases.
+profiles carrying their deterministic match bases, and the coordinate- and
+time-bound dependency-impact walk that pairs the exact generation each dependent
+used with the current standing of the Claim it used, without ever relabelling the
+historical coordinate.
 """
 
 from __future__ import annotations
