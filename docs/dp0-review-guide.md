@@ -221,8 +221,8 @@ a hidden product surface. Its operation names live in
 HTTP/CLI runtime operations, so parity tests retain the original authority law
 without re-registering deleted endpoints. The group and Procedure/workflow
 governance services left in PC-D, and receipt/resolution/gate/lifecycle services
-left in PC-E1; the remaining service donors leave with the owning PC-E2 through
-PC-F transplants.
+left in PC-E1; the remaining service donors leave with the owning PC-F
+transplants, and the un-transplanted provider readers with PC-G.
 
 ## Exact frozen goldens retained
 
@@ -287,20 +287,20 @@ transplant. DP-0 intentionally retains:
 | `pydantic` | Active Playbill/client contracts and donor validation models |
 | `packaging` | Requirement parsing in the architecture dependency audit |
 | `networkx` | Graph/query parity oracle through PC-F |
-| `polars` | Tabular provider/workflow parity through PC-E2/PC-F |
+| `polars` | Tabular provider/workflow parity through PC-F/PC-G |
 | `pyyaml` | Active source-catalog CLI plus config/workflow donors |
 | `structlog` | Active daemon audit/request logging and service donors |
 | `click` | Active four-group CLI |
 | `cryptography` | Ed25519 principal keys, signatures, and Git verification |
 | `rich` | Packaging cleanup deferred to the import-based PC-H prune; no new Playbill contract depends on it |
 | `httpx` | Reduced client/CLI transport and provider donor |
-| `pypdf` | PDF provider donor through PC-E2 |
+| `pypdf` | PDF provider donor through PC-G |
 | `markdown-it-py` | Deterministic Markdown source-span donor through PC-C |
 | `fastapi` | Active HTTP daemon |
 | `python-multipart` | Daemon dependency retained until the PC-H import audit |
 | `uvicorn` | Active daemon launcher |
 | `mcp` (optional extra) | Active Playbill MCP server |
-| `docling` (optional `pdf` extra) | Layout-aware PDF provider donor through PC-E2 |
+| `docling` (optional `pdf` extra) | Layout-aware PDF provider donor through PC-G |
 
 No dependency in this table is evidence that its legacy product is still
 public. The served dependency-closure guard separately proves that Playbill
