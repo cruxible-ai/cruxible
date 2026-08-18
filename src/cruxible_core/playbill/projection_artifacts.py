@@ -114,6 +114,10 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
             re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
         ),
         ArtifactPathKind(
+            "query-definition",
+            re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+        ),
+        ArtifactPathKind(
             "exhaust-promotion",
             re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
         ),
@@ -151,6 +155,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-procedure-pin-slot-v1",
                 "playbill-procedure-v1",
                 "playbill-provider-v1",
+                "playbill-query-definition-v1",
                 "playbill-source-acquisition-policy-v1",
                 "playbill-standing-mandate-v1",
             },
@@ -169,6 +174,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-procedure-pin-slot-ref-v1",
             "playbill-procedure-v1",
             "playbill-provider-v1",
+            "playbill-query-definition-v1",
             "playbill-source-acquisition-policy-v1",
             "playbill-standing-mandate-v1",
         )
@@ -188,6 +194,7 @@ RegisteredPathKind = Literal[
     "principal",
     "procedure",
     "provider",
+    "query-definition",
     "source-acquisition-policy",
     "standing-mandate",
     "subject",
@@ -1348,6 +1355,110 @@ def parse_projection_tree(
                             input_digest=input_digest,
                             artifact_digest=artifact_digest,
                             predecessor_digest=line.lifecycle.predecessor_digest,
+                            records=accepted_change_sets,
+                            coordinate=coordinate,
+                        )
+                    )
+                continue
+            if kind == "query-definition":
+                from cruxible_core.playbill.query.definitions import (
+                    parse_query_definition,
+                    query_definition_digest,
+                )
+
+                query = parse_query_definition(content, path=path)
+                identity = query.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = query_definition_digest(query).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="query-definition",
+                        format_tag=query.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=query.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                if query.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in query.pins
+                )
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.query_definition.definition",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="declaration",
+                            value={
+                                "address": SemanticAddress.whole_artifact(path).model_dump(
+                                    mode="json"
+                                ),
+                                "artifact_digest": {"$digest": artifact_digest},
+                                "identity": query.identity.model_dump(mode="json"),
+                                "input_digest": {"$digest": input_digest},
+                                "query": query.model_dump(mode="json"),
+                                "referenced_predicates": list(query.referenced_predicates),
+                                "subject_kinds": list(query.subject_kinds),
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.query_definition.policy",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="evaluation",
+                            value={
+                                "default_budgets": query.default_budgets.model_dump(mode="json"),
+                                "evaluation_policy": query.evaluation_policy.model_dump(
+                                    mode="json"
+                                ),
+                                "maximum_budgets": query.maximum_budgets.model_dump(mode="json"),
+                                "result_cardinality": query.result_cardinality,
+                                "result_shape": query.result_shape,
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.query_definition.references",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="declared",
+                            value={
+                                "authority": query.authority.model_dump(mode="json"),
+                                "lifecycle": query.lifecycle.model_dump(mode="json"),
+                                "pins": [pin.model_dump(mode="json") for pin in query.pins],
+                            },
+                        ),
+                    )
+                )
+                if coordinate is not None and registry.supports(
+                    "playbill.query_definition.attestation_coverage",
+                    1,
+                    classification="semantic",
+                ):
+                    semantic_facts.extend(
+                        accepted_artifact_explanation_facts(
+                            artifact_family="query_definition",
+                            subject_identity=identity,
+                            artifact_path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                            predecessor_digest=query.lifecycle.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
                         )

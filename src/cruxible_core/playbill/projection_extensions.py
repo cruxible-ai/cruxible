@@ -528,6 +528,9 @@ def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
 
     PC-E1 added the Procedure grain; PC-E2 adds the Line grain, keyed by Line
     identity and occurrence epoch so a rebind never splits a Line's history.
+    PC-F adds the governed QueryDefinition grain so a canonical query's
+    declaration, verdict/conflict policy, and budgets project like every other
+    accepted artifact family.
     """
 
     prior = playbill_procedure_extension_registry()
@@ -543,6 +546,13 @@ def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.line.track_record",
             "playbill.procedure.resolution_activation",
             "playbill.procedure.track_record",
+            "playbill.query_definition.attestation_coverage",
+            "playbill.query_definition.definition",
+            "playbill.query_definition.governance",
+            "playbill.query_definition.history",
+            "playbill.query_definition.policy",
+            "playbill.query_definition.provenance",
+            "playbill.query_definition.references",
         )
     )
     return ProjectionExtensionRegistry(

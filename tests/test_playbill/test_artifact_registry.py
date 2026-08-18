@@ -1,4 +1,4 @@
-"""PC-D artifact-path and component-tag activation."""
+"""PC-D and PC-F artifact-path and component-tag activation."""
 
 from __future__ import annotations
 
@@ -19,6 +19,12 @@ def test_pc_d_activates_procedure_and_line_paths() -> None:
     assert PLAYBILL_ARTIFACT_KINDS.reserved_kinds() == ()
 
 
+def test_pc_f_activates_the_query_definition_path_kind() -> None:
+    assert registered_path_kind("query-definitions/project.active_work.yaml") == "query-definition"
+    assert "query-definition" in PLAYBILL_ARTIFACT_KINDS.implemented_kinds()
+    assert PLAYBILL_ARTIFACT_KINDS.reserved_kinds() == ()
+
+
 def test_pc_e1_activates_procedure_line_run_input_and_promotion_tags() -> None:
     assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == (
         "playbill-accepted-state-run-input-v1",
@@ -34,6 +40,7 @@ def test_pc_e1_activates_procedure_line_run_input_and_promotion_tags() -> None:
         "playbill-procedure-pin-slot-v1",
         "playbill-procedure-v1",
         "playbill-provider-v1",
+        "playbill-query-definition-v1",
         "playbill-source-acquisition-policy-v1",
         "playbill-standing-mandate-v1",
     )

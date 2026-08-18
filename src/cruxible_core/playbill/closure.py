@@ -62,6 +62,11 @@ from cruxible_core.playbill.procedures.line_specs import (
     parse_line_spec,
 )
 from cruxible_core.playbill.providers import ProviderFormatError, parse_provider, provider_digest
+from cruxible_core.playbill.query.definitions import (
+    QueryDefinitionFormatError,
+    parse_query_definition,
+    query_definition_digest,
+)
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.standing_mandates import (
     StandingMandateError,
@@ -91,6 +96,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "claim",
         "procedure",
         "line",
+        "query-definition",
         "exhaust-promotion",
     ]
     artifact_tag: str
@@ -232,6 +238,17 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
                 pins=line.pins,
                 lifecycle=line.lifecycle,
             )
+        if path.startswith("query-definitions/"):
+            query = parse_query_definition(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="query-definition",
+                artifact_tag=query.artifact_format,
+                identity=query.identity,
+                artifact_digest=query_definition_digest(query).tagged,
+                pins=query.pins,
+                lifecycle=query.lifecycle,
+            )
         if path.startswith("exhaust-promotions/"):
             promotion = parse_exhaust_promotion(content, path=path)
             return ArtifactDependencyStateV1(
@@ -254,6 +271,7 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
         ClaimTypeFormatError,
         ProcedureFormatError,
         LineSpecFormatError,
+        QueryDefinitionFormatError,
         ExhaustPromotionError,
     ):
         raise
@@ -363,10 +381,19 @@ def _unresolved_pins(
             continue
         for pin in source.pins:
             # These component families are exact compiler/policy-registry pins,
-            # or content-addressed receipt manifests, until PC-F gives them
-            # ledger artifact envelopes. Their owning law verifies the role-named
-            # digest; this exception is never a name lookup and never permits a
-            # missing Playbill artifact kind such as Procedure, ClaimType, or Provider.
+            # or content-addressed receipt manifests, until a later batch gives
+            # them ledger artifact envelopes. Their owning law verifies the
+            # role-named digest; this exception is never a name lookup and never
+            # permits a missing Playbill artifact kind such as Procedure,
+            # ClaimType, or Provider.
+            #
+            # A QueryDefinition ledger envelope exists from PC-F slice 1, so a
+            # QueryDefinition's own ClaimType pins already close exactly here.
+            # Referent-side resolution of a Procedure/LineSpec role='query' pin
+            # stays deferred to the PC-F engine slice that re-authors those
+            # Procedures against real accepted QueryDefinitions; resolving it
+            # earlier would only refuse placeholder pins that no accepted query
+            # yet backs.
             if pin.target.kind in {
                 "Contract",
                 "EffectPolicy",

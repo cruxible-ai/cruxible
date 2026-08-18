@@ -248,6 +248,7 @@ tests/goldens/playbill/capture-claim-v1.json
 tests/goldens/playbill/claim-type-v1.json
 tests/goldens/playbill/oracles-v1.json
 tests/goldens/playbill/projection-v1.json
+tests/goldens/playbill/query-definition-v1.json
 tests/goldens/playbill/semantic-genesis-v1.json
 tests/goldens/playbill/served-surface-dp0b-v1.json
 tests/goldens/playbill/settlement-roots-v1.json
@@ -265,6 +266,10 @@ layers.
 
 `tests/goldens/playbill/source-reference-v1.json` preserves locator-free external
 source identity and remote-state refusal behavior.
+
+`tests/goldens/playbill/query-definition-v1.json` preserves the canonical
+Claim-native QueryDefinition v1 wire, its verdict/conflict policy and budget
+declarations, and its envelope digest.
 
 `tests/goldens/playbill/oracles-v1.json` pins the Family-1 oracle at
 `e3fe35b360d098f14a5d59bf770ffee401224f0c` and the Procedure graph-program

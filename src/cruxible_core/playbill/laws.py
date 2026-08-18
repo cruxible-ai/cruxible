@@ -17,6 +17,7 @@ SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v
 STANDING_MANDATE_LAW_IDENTIFIER = "playbill.standing-mandate.v1"
 PROCEDURE_LAW_IDENTIFIER = "playbill.procedure.v1"
 LINE_LAW_IDENTIFIER = "playbill.line.v1"
+QUERY_DEFINITION_LAW_IDENTIFIER = "playbill.query-definition.v1"
 EXHAUST_PROMOTION_LAW_IDENTIFIER = "playbill.exhaust-promotion.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
 SUBJECT_LAW_IDENTIFIER = "playbill.subject.v1"
@@ -164,6 +165,10 @@ STANDING_MANDATE_LAW = _artifact_law_coordinate(
 )
 PROCEDURE_LAW = _artifact_law_coordinate(PROCEDURE_LAW_IDENTIFIER, "playbill-procedure-v1")
 LINE_LAW = _artifact_law_coordinate(LINE_LAW_IDENTIFIER, "playbill-line-v1")
+QUERY_DEFINITION_LAW = _artifact_law_coordinate(
+    QUERY_DEFINITION_LAW_IDENTIFIER,
+    "playbill-query-definition-v1",
+)
 EXHAUST_PROMOTION_LAW = _artifact_law_coordinate(
     EXHAUST_PROMOTION_LAW_IDENTIFIER,
     "playbill-exhaust-promotion-v1",
@@ -275,6 +280,11 @@ LINE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="line",
     artifact_tag="playbill-line-v1",
 )
+QUERY_DEFINITION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=QUERY_DEFINITION_LAW,
+    artifact_kind="query-definition",
+    artifact_tag="playbill-query-definition-v1",
+)
 EXHAUST_PROMOTION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=EXHAUST_PROMOTION_LAW,
     artifact_kind="exhaust-promotion",
@@ -291,6 +301,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         PROCEDURE_ACCEPTANCE_LAW,
         LINE_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
+        QUERY_DEFINITION_ACCEPTANCE_LAW,
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         STANDING_MANDATE_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
@@ -329,6 +340,9 @@ __all__ = [
     "PROCEDURE_ACCEPTANCE_LAW",
     "PROCEDURE_LAW",
     "PROCEDURE_LAW_IDENTIFIER",
+    "QUERY_DEFINITION_ACCEPTANCE_LAW",
+    "QUERY_DEFINITION_LAW",
+    "QUERY_DEFINITION_LAW_IDENTIFIER",
     "SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW",
     "SOURCE_ACQUISITION_POLICY_LAW",
     "SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER",

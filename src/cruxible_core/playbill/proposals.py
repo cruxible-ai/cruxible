@@ -172,6 +172,13 @@ from cruxible_core.playbill.providers import (
     parse_provider,
     provider_digest,
 )
+from cruxible_core.playbill.query.definitions import (
+    AcceptedQueryDefinitionV1,
+    QueryDefinitionFormatError,
+    evaluate_query_definition_law,
+    parse_query_definition,
+    query_definition_digest,
+)
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationManifest
 from cruxible_core.playbill.standing_mandates import (
@@ -211,6 +218,7 @@ _STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,2
 _CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$")
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.yaml$")
+_QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _LFS_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
@@ -695,6 +703,7 @@ def validate_proposal_tree(
             or _CLAIM_PATH_RE.fullmatch(path)
             or _PROCEDURE_PATH_RE.fullmatch(path)
             or _LINE_PATH_RE.fullmatch(path)
+            or _QUERY_DEFINITION_PATH_RE.fullmatch(path)
             or _EXHAUST_PROMOTION_PATH_RE.fullmatch(path)
         )
         if not authorable and base.get(path) != content:
@@ -722,6 +731,7 @@ def validate_proposal_tree(
             or _CLAIM_PATH_RE.fullmatch(path)
             or _PROCEDURE_PATH_RE.fullmatch(path)
             or _LINE_PATH_RE.fullmatch(path)
+            or _QUERY_DEFINITION_PATH_RE.fullmatch(path)
             or _EXHAUST_PROMOTION_PATH_RE.fullmatch(path)
         )
         if not authorable and path not in result:
@@ -1346,6 +1356,7 @@ def _evaluate_v2_proposal_tree(
                     _CLAIM_PATH_RE,
                     _PROCEDURE_PATH_RE,
                     _LINE_PATH_RE,
+                    _QUERY_DEFINITION_PATH_RE,
                     _EXHAUST_PROMOTION_PATH_RE,
                 )
             ):
@@ -1361,6 +1372,7 @@ def _evaluate_v2_proposal_tree(
             ClaimTypeFormatError,
             ProcedureFormatError,
             LineSpecFormatError,
+            QueryDefinitionFormatError,
             ExhaustPromotionError,
         ) as exc:
             return CandidateEvaluation(
@@ -1714,6 +1726,52 @@ def _evaluate_v2_proposal_tree(
                     },
                     (),
                     line.lifecycle.state == "retired",
+                )
+            )
+            continue
+        if _QUERY_DEFINITION_PATH_RE.fullmatch(path):
+            query_definition = parse_query_definition(proposed_bytes, path=path)
+            predecessor_query: AcceptedQueryDefinitionV1 | None = None
+            if parent_state is not None:
+                previous_query = parse_query_definition(current_tree[path], path=path)
+                predecessor_query = AcceptedQueryDefinitionV1(
+                    path=path,
+                    query=previous_query,
+                    artifact_digest=query_definition_digest(previous_query).tagged,
+                )
+            query_law = evaluate_query_definition_law(
+                query_definition,
+                path=path,
+                actor_roles=actor_roles,
+                predecessor=predecessor_query,
+                accepted_artifacts=candidate_identities,
+            )
+            if query_law.verdict == "refused":
+                diagnostics.extend(query_law.diagnostics)
+                continue
+            if query_law.artifact_digest is None or query_law.required_tier is None:
+                raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+                artifact_tag=query_definition.artifact_format
+            )
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    None if predecessor_query is None else predecessor_query.artifact_digest,
+                    query_law.artifact_digest,
+                    query_law.required_tier,
+                    query_law.approval_scope,
+                    "snapshot",
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    {
+                        "artifact_digest": query_law.artifact_digest,
+                        "result_cardinality": query_definition.result_cardinality,
+                        "verdict": "accepted",
+                    },
+                    (),
+                    query_definition.lifecycle.state == "retired",
                 )
             )
             continue
@@ -2349,6 +2407,7 @@ def evaluate_proposal_tree(
                     _CLAIM_PATH_RE,
                     _PROCEDURE_PATH_RE,
                     _LINE_PATH_RE,
+                    _QUERY_DEFINITION_PATH_RE,
                     _EXHAUST_PROMOTION_PATH_RE,
                 )
             )
@@ -2401,6 +2460,7 @@ def evaluate_proposal_tree(
                 _CLAIM_PATH_RE,
                 _PROCEDURE_PATH_RE,
                 _LINE_PATH_RE,
+                _QUERY_DEFINITION_PATH_RE,
                 _EXHAUST_PROMOTION_PATH_RE,
             )
         )
