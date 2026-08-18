@@ -42,6 +42,7 @@ _HEX_SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
 
 JournalEventKindV1 = Literal[
     "occurrence_materialized",
+    "occurrence_lapsed",
     "attempt_started",
     "admission_bound",
     "node_fired",
