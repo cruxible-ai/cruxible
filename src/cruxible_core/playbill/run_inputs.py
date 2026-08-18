@@ -58,6 +58,10 @@ from cruxible_core.playbill.occurrences import LineOccurrenceV1, line_occurrence
 from cruxible_core.playbill.procedures.acquisition import ProcedureSourceAcquirerProtocol
 from cruxible_core.playbill.procedures.artifacts import AcceptedProcedureV1
 from cruxible_core.playbill.procedures.closure import close_procedure_pin_slots
+from cruxible_core.playbill.procedures.egress import (
+    EffectiveRungV1,
+    compute_effective_rung,
+)
 from cruxible_core.playbill.procedures.execution import (
     AcceptedStateRunMaterialV1,
     ExhaustRunMaterialV1,
@@ -92,6 +96,7 @@ from cruxible_core.playbill.procedures.terminal_dependencies import (
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.source_readers import ProducerBindingV1
+from cruxible_core.playbill.standing_mandates import MandateGrantV1, MandateRuntimeCapV1
 from cruxible_core.temporal import ensure_utc
 
 # ---------------------------------------------------------------------------
@@ -415,6 +420,29 @@ def epsilon_membership(
     return draw * fraction.denominator < fraction.numerator * (1 << 256)
 
 
+def build_calibration_read(
+    *,
+    accepted_line: AcceptedLineSpecV1,
+    occurrence: LineOccurrenceV1,
+    accepted_coordinate: AcceptedCoordinate,
+    calibration_pin: ArtifactPin | None = None,
+) -> ProcedureCalibrationReadV1:
+    """Bind one run's calibration coordinate, including its stable epsilon draw."""
+
+    line = accepted_line.line
+    return ProcedureCalibrationReadV1(
+        accepted_coordinate=accepted_coordinate,
+        calibration_pin=calibration_pin,
+        epsilon=line.epsilon,
+        epsilon_member=epsilon_membership(
+            line_id=line.identity.name,
+            occurrence_epoch=line.occurrence_epoch,
+            occurrence_digest=line_occurrence_digest(occurrence),
+            epsilon=line.epsilon,
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Sensitivity policy
 # ---------------------------------------------------------------------------
@@ -475,6 +503,53 @@ def build_sensitivity_policy(
             )
         )
     return ProcedureSensitivityPolicyV1(inputs=tuple(entries))
+
+
+# ---------------------------------------------------------------------------
+# The five-term effective rung, over admission-bound coordinates only
+# ---------------------------------------------------------------------------
+
+
+def line_effective_rung(
+    *,
+    accepted_line: AcceptedLineSpecV1,
+    accepted_procedure: AcceptedProcedureV1,
+    sensitivity_policy: ProcedureSensitivityPolicyV1,
+    mandate_read: ProcedureMandateReadV1,
+    calibration: ProcedureCalibrationReadV1,
+    mandate_grants: Mapping[str, MandateGrantV1] | None = None,
+    calibration_caps: tuple[MandateRuntimeCapV1, ...] = (),
+    taint_labels: tuple[str, ...] = (),
+    evaluation_time: datetime,
+) -> EffectiveRungV1:
+    """Compute §8.5.1's five-term cap from exactly what this run's admission bound.
+
+    Only grants whose basis already resolved through ``resolve_authority_basis``
+    reach the mandate term; an expired, superseded, or absent mandate is dropped
+    here rather than downgraded later, so absence contributes nothing at all.
+    """
+
+    resolved = {
+        digest: grant
+        for digest, grant in (mandate_grants or {}).items()
+        if digest in mandate_read.resolved_basis_digests
+    }
+    return compute_effective_rung(
+        procedure_terminal_capability=accepted_procedure.procedure.definition.terminal_capability,
+        requested_terminal_rung=accepted_line.line.requested_terminal_rung,
+        selector_privacies={
+            item.input_name: item.selector_privacy for item in sensitivity_policy.inputs
+        },
+        taint_labels=taint_labels,
+        mandate_grants=resolved,
+        calibration_caps=calibration_caps,
+        evaluation_time=evaluation_time,
+        procedure_definition_digest=accepted_procedure.procedure.definition_digest,
+        line_spec_digest=accepted_line.artifact_digest,
+        sensitivity_policy_digest=sensitivity_policy_digest(sensitivity_policy),
+        mandate_coordinate_digest=mandate_read_digest(mandate_read),
+        calibration_coordinate_digest=calibration_read_digest(calibration),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -915,18 +990,13 @@ def admit_line_procedure_run(
     landed_materials.sort(key=lambda item: item.input.input_name.encode("utf-8"))
 
     occurrence_digest = line_occurrence_digest(occurrence)
-    member = epsilon_membership(
-        line_id=line.identity.name,
-        occurrence_epoch=line.occurrence_epoch,
-        occurrence_digest=occurrence_digest,
-        epsilon=line.epsilon,
-    )
-    calibration = ProcedureCalibrationReadV1(
+    calibration = build_calibration_read(
+        accepted_line=accepted_line,
+        occurrence=occurrence,
         accepted_coordinate=accepted_coordinate,
         calibration_pin=calibration_pin,
-        epsilon=line.epsilon,
-        epsilon_member=member,
     )
+    member = calibration.epsilon_member
     node_pin_sets = procedure_node_pin_sets(accepted_procedure, slot_pins)
     full_pins = closure.exact_pins
     pin_digest = procedure_pin_set_digest(full_pins, node_pin_sets)
@@ -1004,12 +1074,14 @@ __all__ = [
     "ProviderBindingSnapshotV1",
     "admit_line_procedure_run",
     "assert_nonsecret_binding",
+    "build_calibration_read",
     "build_deployment_binding_snapshot",
     "build_sensitivity_policy",
     "calibration_read_digest",
     "deployment_binding_snapshot_digest",
     "epsilon_membership",
     "journal_cursor",
+    "line_effective_rung",
     "line_run_budget",
     "line_run_slot_pins",
     "mandate_read_digest",

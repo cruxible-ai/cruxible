@@ -47,6 +47,15 @@ from cruxible_core.playbill.procedures.artifacts import (
     AcceptedProcedureV1,
     procedure_artifact_digest,
 )
+from cruxible_core.playbill.procedures.egress import (
+    EffectiveRungV1,
+    TerminalEgressError,
+    TerminalEgressItemV1,
+    TerminalEgressRequestV1,
+    TerminalEgressSinkProtocol,
+    effect_dispatch_refusal,
+    verify_terminal_egress_receipt,
+)
 from cruxible_core.playbill.procedures.graph import analyze_procedure_v3
 from cruxible_core.playbill.procedures.input_planes import (
     AcceptedStateRunInputV1,
@@ -59,6 +68,7 @@ from cruxible_core.playbill.procedures.input_planes import (
     validate_run_input_vector,
 )
 from cruxible_core.playbill.procedures.models import (
+    TERMINAL_REQUIRED_RUNGS,
     CaptureEgressNodeV3,
     ExhaustTapNodeV3,
     GuardNodeV3,
@@ -792,6 +802,9 @@ class ProcedureExecutor:
         acquisition_policy: SourceAcquisitionPolicyV1 | None = None,
         default_authorizations: tuple[str, ...] = (),
         slot_pins: Mapping[str, ArtifactPin] | None = None,
+        effective_rung: EffectiveRungV1 | None = None,
+        egress_sink: TerminalEgressSinkProtocol | None = None,
+        declared_effect_grants: tuple[str, ...] = (),
         clock: ProcedureClockProtocol | None = None,
     ) -> None:
         self.journal = journal
@@ -805,6 +818,9 @@ class ProcedureExecutor:
         self.acquisition_policy = acquisition_policy
         self.default_authorizations = default_authorizations
         self.slot_pins: Mapping[str, ArtifactPin] = slot_pins or {}
+        self.effective_rung = effective_rung
+        self.egress_sink = egress_sink
+        self.declared_effect_grants = declared_effect_grants
         self.clock = clock or SystemProcedureClock()
 
     def _pin(
@@ -1020,6 +1036,7 @@ class ProcedureExecutor:
                 raise PlaybillExecutionError("Line run budget exceeds the Procedure hard caps")
         if _node_pin_sets(accepted, self.slot_pins) != admission.node_pin_sets:
             raise PlaybillExecutionError("Procedure node pins changed after admission")
+        self._verify_effective_rung(admission)
         self._verify_input_planes(admission, accepted)
         expected_state_inputs = {
             node.as_: (
@@ -1042,6 +1059,32 @@ class ProcedureExecutor:
                 raise PlaybillExecutionError(
                     f"Procedure admission state_tap input {name!r} differs"
                 )
+
+    def _verify_effective_rung(self, admission: ProcedureRunAdmissionV1) -> None:
+        """Refuse a five-term cap computed against any other admission binding.
+
+        The rung is authority, so it is checked against the frozen tuple rather
+        than recomputed here: every term already resolved through the mandate,
+        calibration, and sensitivity coordinates this admission bound.
+        """
+
+        rung = self.effective_rung
+        if rung is None:
+            return
+        if admission.invocation_origin != "line":
+            raise PlaybillExecutionError(
+                "an effective rung binds a Line run, never a direct actor invocation"
+            )
+        if (
+            rung.procedure_definition_digest != admission.definition_digest
+            or rung.line_spec_digest != admission.line_spec_digest
+            or rung.sensitivity_policy_digest != admission.sensitivity_policy_digest
+            or rung.mandate_coordinate_digest != admission.mandate_coordinate_digest
+            or rung.calibration_coordinate_digest != admission.calibration_coordinate_digest
+        ):
+            raise PlaybillExecutionError(
+                "effective rung was computed against another admission binding"
+            )
 
     def _verify_input_planes(
         self,
@@ -1325,29 +1368,8 @@ class ProcedureExecutor:
             | ProposeChangeSetNodeV3
             | MandateSettlementNodeV3,
         ):
-            children = self._record_terminal_items(
-                node,
-                admission=admission,
-                state=state,
-                records=records,
-            )
-            self._append_event(
-                admission,
-                records,
-                "terminal_egress",
-                {
-                    "node_id": node.node_id,
-                    "kind": node.kind,
-                    "verdict": "dependencies_bound_egress_pending",
-                    "children": [item.model_dump(mode="json") for item in children],
-                },
-            )
-            raise _RunRefusal(
-                "terminal_not_available",
-                "Governed terminal egress lands with the effective-rung cap; "
-                "this run bound its per-item dependency closure only.",
-                node_id=node.node_id,
-            )
+            self._run_terminal(node, admission=admission, state=state, records=records)
+            return None
         raise PlaybillExecutionError(f"unsupported graph-v3 node {type(node).__name__}")
 
     @staticmethod
@@ -1549,6 +1571,159 @@ class ProcedureExecutor:
             },
         )
 
+    def _run_terminal(
+        self,
+        node: CaptureEgressNodeV3
+        | InboxEgressNodeV3
+        | ProposeChangeSetNodeV3
+        | MandateSettlementNodeV3,
+        *,
+        admission: ProcedureRunAdmissionV1,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> None:
+        """Bind this terminal's per-item closure, then cap it and deliver it.
+
+        The closure is bound before the cap is applied on purpose: a run that a
+        term refused still owes an auditable account of exactly what it would
+        have emitted and which term stopped it.
+        """
+
+        children, values = self._record_terminal_items(
+            node,
+            admission=admission,
+            state=state,
+            records=records,
+        )
+        required = TERMINAL_REQUIRED_RUNGS[node.kind]
+        payload: dict[str, object] = {
+            "node_id": node.node_id,
+            "kind": node.kind,
+            "required_rung": required,
+            "children": [item.model_dump(mode="json") for item in children],
+        }
+        rung = self.effective_rung
+        if rung is None or self.egress_sink is None:
+            self._append_event(
+                admission,
+                records,
+                "terminal_egress",
+                {**payload, "verdict": "dependencies_bound_egress_pending"},
+            )
+            raise _RunRefusal(
+                "terminal_not_available",
+                "Governed terminal egress requires a bound effective rung and an egress sink; "
+                "this run bound its per-item dependency closure only.",
+                node_id=node.node_id,
+            )
+        payload = {
+            **payload,
+            "effective_rung": rung.effective_rung,
+            "limiting_term": rung.limiting_term,
+            "terms": [item.model_dump(mode="json") for item in rung.terms],
+        }
+        if not rung.permits(node.kind):
+            self._append_event(
+                admission,
+                records,
+                "terminal_egress",
+                {**payload, "verdict": "refused_effective_rung"},
+            )
+            raise _RunRefusal(
+                rung.refusal_code,
+                f"Terminal {node.kind!r} requires rung {required}; the "
+                f"{rung.limiting_term} term capped this run at {rung.effective_rung}. "
+                f"{rung.term(rung.limiting_term).reason}",
+                node_id=node.node_id,
+            )
+        request = self._terminal_egress_request(
+            node,
+            admission=admission,
+            rung=rung,
+            children=children,
+            values=values,
+        )
+        receipt = self.egress_sink.deliver_terminal_egress(request=request)
+        try:
+            verify_terminal_egress_receipt(request, receipt)
+        except TerminalEgressError as exc:
+            raise _RunRefusal(
+                "terminal_egress_unverified",
+                str(exc),
+                node_id=node.node_id,
+            ) from exc
+        self._append_event(
+            admission,
+            records,
+            "terminal_egress",
+            {
+                **payload,
+                "verdict": "delivered",
+                "granted_operation": request.granted_operation,
+                "receipt": receipt.model_dump(mode="json"),
+            },
+        )
+
+    def _terminal_egress_request(
+        self,
+        node: CaptureEgressNodeV3
+        | InboxEgressNodeV3
+        | ProposeChangeSetNodeV3
+        | MandateSettlementNodeV3,
+        *,
+        admission: ProcedureRunAdmissionV1,
+        rung: EffectiveRungV1,
+        children: tuple[TerminalChildReceiptV1, ...],
+        values: tuple[CanonicalValue, ...],
+    ) -> TerminalEgressRequestV1:
+        """Hand the sink the exact pins this terminal kind's law traverses."""
+
+        bound_pin: ArtifactPin | None = None
+        mandate_pin: ArtifactPin | None = None
+        mandate_basis: tuple[str, ...] = ()
+        if isinstance(node, CaptureEgressNodeV3):
+            bound_pin = self._pin(
+                node.capture_contract,
+                label=f"emit_capture {node.node_id!r} CaptureContract",
+            )
+        elif isinstance(node, MandateSettlementNodeV3):
+            bound_pin = self._pin(
+                node.target_law,
+                label=f"mandate_settlement {node.node_id!r} target law",
+            )
+            mandate_pin = self._pin(
+                node.mandate,
+                label=f"mandate_settlement {node.node_id!r} mandate",
+            )
+            mandate_basis = rung.mandate_basis_digests
+        return TerminalEgressRequestV1(
+            kind=node.kind,
+            run_id=admission.run_id,
+            node_id=node.node_id,
+            accepted_coordinate=admission.accepted_coordinate,
+            procedure_identity=admission.procedure_identity,
+            procedure_artifact_digest=admission.procedure_artifact_digest,
+            admission_binding_digest=admission.admission_binding_digest,
+            effective_rung=rung.effective_rung,
+            required_rung=TERMINAL_REQUIRED_RUNGS[node.kind],
+            limiting_term=rung.limiting_term,
+            granted_operation=rung.granted_operation(node.kind),
+            bound_artifact_pin=bound_pin,
+            mandate_pin=mandate_pin,
+            mandate_basis_digests=mandate_basis,
+            actor_context=admission.actor_context,
+            items=tuple(
+                TerminalEgressItemV1(
+                    child_index=child.child_index,
+                    item_key=child.item_key,
+                    manifest_digest=child.manifest_digest,
+                    value=value,
+                )
+                for child, value in zip(children, values, strict=True)
+            ),
+            prepared_at=self.clock.now(),
+        )
+
     def _record_terminal_items(
         self,
         node: CaptureEgressNodeV3
@@ -1559,7 +1734,7 @@ class ProcedureExecutor:
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         records: list[StoredProcedureJournalRecordV1],
-    ) -> tuple[TerminalChildReceiptV1, ...]:
+    ) -> tuple[tuple[TerminalChildReceiptV1, ...], tuple[CanonicalValue, ...]]:
         """Derive one manifest per terminal item from the exact closure it consumed."""
 
         declared = _terminal_item_templates(node)
@@ -1612,7 +1787,7 @@ class ProcedureExecutor:
                     sequence=stored.record.sequence,
                 )
             )
-        return tuple(receipts)
+        return tuple(receipts), tuple(values)
 
     def _run_provider(
         self,
@@ -1680,6 +1855,13 @@ class ProcedureExecutor:
                     "input_digest": run_value_digest("provider-input", payload),
                 },
             )
+            refusal = effect_dispatch_refusal(
+                invocation_origin=admission.invocation_origin,
+                actor_context=admission.actor_context,
+                declared_effect_grants=self.declared_effect_grants,
+            )
+            if refusal is not None:
+                raise _RunRefusal(*refusal, node_id=node.node_id)
         result = self.provider_executor.execute_provider(
             provider=provider,
             environment=environment,

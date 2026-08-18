@@ -339,6 +339,8 @@ def accepted_procedure(
     name: str = "orders-triage",
     nodes: tuple[ProcedureNodeV3, ...] | None = None,
     returns: str = "picked",
+    terminal_capability: Literal[1, 2, 3] = 1,
+    extra_pins: tuple[ArtifactPin, ...] = (),
 ) -> AcceptedProcedureV1:
     definition = ProcedureDefinitionV3(
         name=name,
@@ -356,7 +358,7 @@ def accepted_procedure(
         ),
         budget=_budget(),
         hard_caps=_hard_caps(),
-        terminal_capability=1,
+        terminal_capability=terminal_capability,
     )
     pins = tuple(
         sorted(
@@ -368,6 +370,7 @@ def accepted_procedure(
                 REDUCER_PIN,
                 CAPTURE_PIN,
                 PROVIDER_PIN,
+                *extra_pins,
             },
             key=lambda item: (item.role, item.target.qualified, item.artifact_digest),
         )
@@ -421,6 +424,8 @@ def accepted_line(
     policy: SourceAcquisitionPolicyV1,
     *,
     epsilon: str = "0.1",
+    requested_terminal_rung: Literal[1, 2, 3] = 1,
+    max_provider_calls: int = 0,
 ) -> AcceptedLineSpecV1:
     procedure_pin = pin(
         "procedure",
@@ -449,11 +454,11 @@ def accepted_line(
         slot_bindings=(LineSlotBindingV1(slot_name="query", artifact_pin=QUERY_PIN),),
         trigger_policy=cadence,
         acquisition_policy=policy_pin,
-        requested_terminal_rung=1,
+        requested_terminal_rung=requested_terminal_rung,
         budgets={
             "max_capture_bytes": 65_536,
             "max_items": 100,
-            "max_provider_calls": 0,
+            "max_provider_calls": max_provider_calls,
             "max_wall_clock_microseconds": 5_000_000,
         },
         epsilon={"$decimal": epsilon},
@@ -520,10 +525,17 @@ def build_fixture(
     accepted: AcceptedProcedureV1 | None = None,
     policy: SourceAcquisitionPolicyV1 | None = None,
     seed_source: bool = True,
+    requested_terminal_rung: Literal[1, 2, 3] = 1,
+    max_provider_calls: int = 0,
 ) -> LineRuntimeFixture:
     accepted = accepted or accepted_procedure()
     policy = policy or acquisition_policy()
-    line = accepted_line(accepted, policy)
+    line = accepted_line(
+        accepted,
+        policy,
+        requested_terminal_rung=requested_terminal_rung,
+        max_provider_calls=max_provider_calls,
+    )
 
     journal_root = tmp_path / "journal"
     journal_root.mkdir(mode=0o700, parents=True)
