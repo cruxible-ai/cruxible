@@ -16,12 +16,19 @@ from cruxible_core.playbill.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import ArtifactDigest, canonical_bytes, typed_digest
+from cruxible_core.playbill.canonical import (
+    ArtifactDigest,
+    Sha256Value,
+    canonical_bytes,
+    typed_digest,
+)
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
 from cruxible_core.playbill.errors import SubjectFormatError
 from cruxible_core.playbill.governance import PermissionTier
 from cruxible_core.playbill.principals import PrincipalRegistrySnapshot
 from cruxible_core.playbill.semantic import SemanticAddress
+
+SUBJECT_REUSE_SIGNATURE_DOMAIN = "playbill-subject-reuse-signature-v1"
 
 _SUBJECT_KIND_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*$")
 _SUBJECT_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -138,6 +145,20 @@ SUBJECT_DIGEST_FUNCTIONS: dict[str, Callable[[SubjectShell], ArtifactDigest]] = 
 
 def subject_digest(shell: SubjectShell) -> ArtifactDigest:
     return SUBJECT_DIGEST_FUNCTIONS[shell.artifact_format](shell)
+
+
+def subject_reuse_signature(identity: ArtifactIdentity) -> str:
+    """Return the Subject signature shared by write-time reuse and read-time discovery.
+
+    Subject-kind similarity is not evidence that two instances are duplicates, so
+    the signature commits the stable identity rather than the shape.
+    """
+
+    return typed_digest(
+        Sha256Value,
+        SUBJECT_REUSE_SIGNATURE_DOMAIN,
+        {"identity": identity.qualified},
+    ).tagged
 
 
 class AcceptedSubject(_StrictSubjectModel):
@@ -340,6 +361,7 @@ def evaluate_subject_law(
 __all__ = [
     "AcceptedSubject",
     "SUBJECT_DIGEST_FUNCTIONS",
+    "SUBJECT_REUSE_SIGNATURE_DOMAIN",
     "SubjectLawResult",
     "SubjectShell",
     "evaluate_subject_law",
@@ -347,5 +369,6 @@ __all__ = [
     "render_subject",
     "subject_digest",
     "subject_path",
+    "subject_reuse_signature",
     "validate_subject_path",
 ]

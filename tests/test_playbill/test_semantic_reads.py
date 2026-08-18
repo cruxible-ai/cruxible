@@ -15,7 +15,7 @@ from cruxible_core.playbill.source_references import OpenSourceRequestV1
 from cruxible_core.service.playbill_claims import (
     service_expand_playbill_semantic,
     service_explain_playbill_claim,
-    service_open_playbill_claim_source,
+    service_open_playbill_source,
     service_propose_playbill_claim,
 )
 from tests.test_playbill._support import initialize_local
@@ -68,13 +68,13 @@ def test_expand_is_coordinate_bound_and_open_source_enforces_access_and_budget(
         instance,
         identity=proposed.claim_identity,
     ).source_handles[0]
-    denied = service_open_playbill_claim_source(
+    denied = service_open_playbill_source(
         instance,
         request=OpenSourceRequestV1(source_handle=handle, resource_budget_bytes=4096),
         access=BodyAccessContext(principal_id="reader", can_read_body=False),
     )
     assert denied.status == "denied"
-    truncated = service_open_playbill_claim_source(
+    truncated = service_open_playbill_source(
         instance,
         request=OpenSourceRequestV1(source_handle=handle, resource_budget_bytes=1),
         access=BodyAccessContext(principal_id="owner", can_read_body=True),

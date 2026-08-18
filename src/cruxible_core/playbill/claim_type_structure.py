@@ -8,9 +8,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
 from cruxible_core.playbill.errors import CanonicalEncodingError
+
+CLAIM_TYPE_STRUCTURAL_SIGNATURE_DOMAIN = "playbill-claim-type-structural-signature-v1"
 
 ClaimRole = Literal["normative", "observation", "environment_binding", "derivation"]
 ClaimObjectKind = Literal["literal", "subject", "exact_content"]
@@ -145,6 +147,20 @@ class ClaimTypeStructuralCheck(_StrictClaimTypeStructureModel):
         return self
 
 
+def claim_type_structural_signature(structure: ClaimTypeStructure) -> str:
+    """Return the shape-only signature two ClaimTypes share when they mean the same.
+
+    Write-time reuse checking and read-time discovery must agree on structural
+    identity, so both derive it here instead of from private local copies.
+    """
+
+    return typed_digest(
+        Sha256Value,
+        CLAIM_TYPE_STRUCTURAL_SIGNATURE_DOMAIN,
+        structure.model_dump(mode="json"),
+    ).tagged
+
+
 def check_claim_type_structure(value: object) -> ClaimTypeStructuralCheck:
     """Validate a local draft without registering, digesting, or accepting it."""
 
@@ -171,6 +187,7 @@ def check_claim_type_structure(value: object) -> ClaimTypeStructuralCheck:
 
 
 __all__ = [
+    "CLAIM_TYPE_STRUCTURAL_SIGNATURE_DOMAIN",
     "ClaimCardinality",
     "ClaimObjectKind",
     "ClaimRole",
@@ -178,4 +195,5 @@ __all__ = [
     "ClaimTypeStructure",
     "ReferentSensitivity",
     "check_claim_type_structure",
+    "claim_type_structural_signature",
 ]

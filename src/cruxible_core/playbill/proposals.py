@@ -78,6 +78,7 @@ from cruxible_core.playbill.captures import (
 from cruxible_core.playbill.claim_attestations import (
     accepted_referent_coordinates_from_tree,
 )
+from cruxible_core.playbill.claim_type_structure import claim_type_structural_signature
 from cruxible_core.playbill.claim_types import (
     AcceptedClaimType,
     ClaimType,
@@ -193,6 +194,7 @@ from cruxible_core.playbill.subjects import (
     evaluate_subject_law,
     parse_subject,
     subject_digest,
+    subject_reuse_signature,
 )
 from cruxible_core.playbill.types import GitObjectFormat
 
@@ -925,11 +927,7 @@ def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterface
             claim_type = parse_claim_type(content, path=path)
             if claim_type.lifecycle.state != "live":
                 continue
-            signature = typed_digest(
-                Sha256Value,
-                "playbill-claim-type-structural-signature-v1",
-                claim_type.structure.model_dump(mode="json"),
-            ).tagged
+            signature = claim_type_structural_signature(claim_type.structure)
             tokens = tuple(
                 sorted(
                     {
@@ -961,13 +959,7 @@ def _reuse_interfaces(tree: Mapping[str, bytes]) -> tuple[SemanticReuseInterface
             subject = parse_subject(content, path=path)
             if subject.lifecycle.state != "live":
                 continue
-            # Subject-kind similarity is not evidence that two instances are
-            # duplicates. Include the stable identity in the signature.
-            signature = typed_digest(
-                Sha256Value,
-                "playbill-subject-reuse-signature-v1",
-                {"identity": subject.identity.qualified},
-            ).tagged
+            signature = subject_reuse_signature(subject.identity)
             descriptors = terms_for(SemanticAddress.whole_artifact(path))
             interfaces.append(
                 SemanticReuseInterfaceV1(
@@ -997,12 +989,7 @@ def _claim_type_reuse_evidence(
     candidate_scope: tuple[str, ...],
     current: AcceptedProjectionCoordinate,
 ) -> dict[str, object]:
-    structure = claim_type.structure
-    signature = typed_digest(
-        Sha256Value,
-        "playbill-claim-type-structural-signature-v1",
-        structure.model_dump(mode="json"),
-    ).tagged
+    signature = claim_type_structural_signature(claim_type.structure)
     predicate = claim_type.predicate
     proposal = ProposedSemanticInterfaceV1(
         address=SemanticAddress.whole_artifact(path),

@@ -37,6 +37,17 @@ ReuseMatchBasis = Literal[
     "source_label",
     "proposer_hint",
 ]
+DiscoveryMatchBasis = Literal[
+    "exact_address",
+    "exact_alias",
+    "structural_signature",
+    "tag",
+    "lexical",
+    "named_entrypoint",
+    "dependency_walk",
+]
+"""The closed v1 discovery match bases; ranking may reorder, never extend."""
+
 DescriptorAuthorityFloor = Literal[
     "target_namespace_authority",
     "recall_only",
@@ -74,6 +85,28 @@ def _ordered_terms(values: tuple[str, ...], *, label: str) -> tuple[str, ...]:
 
 def _normalized_match_term(value: str) -> str:
     return " ".join(unicodedata.normalize("NFC", value).casefold().split())
+
+
+def normalize_discovery_term(value: str) -> str:
+    """Normalize one match term deterministically; never a similarity score.
+
+    This is the single normalization vocabulary shared by write-time reuse
+    checking and read-time exact/lexical discovery.
+    """
+
+    return _normalized_match_term(value)
+
+
+def reject_locator_or_secret(value: str, *, label: str) -> str:
+    """Refuse rendered or indexed text that carries a locator, secret, or lure.
+
+    Discovery output is read by agents, so the exclusion vocabulary that keeps
+    proposal hints clean also governs every index and capsule this layer emits.
+    """
+
+    if _FORBIDDEN_HINT_RE.search(value):
+        raise ValueError(f"{label} contains forbidden locator, secret, task, or instruction text")
+    return value
 
 
 class DiscoveryHintsV1(_StrictDiscoveryModel):
@@ -585,15 +618,7 @@ class ExpansionBudgetV1(_StrictDiscoveryModel):
 
 
 class DiscoveryMatchBasisV1(_StrictDiscoveryModel):
-    basis: Literal[
-        "exact_address",
-        "exact_alias",
-        "structural_signature",
-        "tag",
-        "lexical",
-        "named_entrypoint",
-        "dependency_walk",
-    ]
+    basis: DiscoveryMatchBasis
     matched_text: str | None = None
 
 
@@ -727,6 +752,7 @@ __all__ = [
     "DiscoveryBudgetV1",
     "DiscoveryHintsV1",
     "DiscoveryHitV1",
+    "DiscoveryMatchBasis",
     "DiscoveryMatchBasisV1",
     "DiscoveryPageV1",
     "DiscoveryRequestV1",
@@ -741,4 +767,6 @@ __all__ = [
     "VocabularyReuseRequestV1",
     "evaluate_descriptor_authority",
     "evaluate_vocabulary_reuse",
+    "normalize_discovery_term",
+    "reject_locator_or_secret",
 ]

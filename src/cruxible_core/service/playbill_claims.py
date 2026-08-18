@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -46,6 +45,10 @@ from cruxible_core.playbill.claims import (
     parse_claim,
     render_claim,
 )
+from cruxible_core.playbill.dereference import (
+    ExternalSelectionReaderProtocol,
+    dereference_source_handle,
+)
 from cruxible_core.playbill.diagnostics import GovernedOperationReference
 from cruxible_core.playbill.discovery import ContextCapsuleV1, ExpandRequestV1
 from cruxible_core.playbill.errors import (
@@ -61,6 +64,10 @@ from cruxible_core.playbill.policies import (
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_claims import ClaimProjectionView
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.playbill.query.definitions import (
+    parse_query_definition,
+    query_definition_digest,
+)
 from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
@@ -68,8 +75,8 @@ from cruxible_core.playbill.service.documents import (
 )
 from cruxible_core.playbill.settlement import ChangeSetRecordV2
 from cruxible_core.playbill.source_references import (
-    BodyAccessResultV1,
     CoverageDescriptorV1,
+    ExternalSourceReferenceV1,
     OpenSourceRequestV1,
     SourceDereferenceResultV1,
     SourceHandleV1,
@@ -1118,8 +1125,39 @@ def service_expand_playbill_semantic(
             ),
             "resolution_policy": claim_type.resolution_policy.model_dump(mode="json"),
         }
+    elif path.startswith("query-definitions/"):
+        # A named entrypoint advertises its contract before any row is read: the
+        # compact interface is the canonical summary, not a separate capsule slot.
+        if request.address.selector.scheme != "artifact-v1":
+            raise ProposalIntegrityError(
+                "QueryDefinition expansion requires whole-artifact identity"
+            )
+        definition = parse_query_definition(content, path=path)
+        kind = "query_definition"
+        canonical_summary = {
+            "artifact_digest": query_definition_digest(definition).tagged,
+            "default_budgets": definition.default_budgets.model_dump(mode="json"),
+            "description": definition.description,
+            "entrypoint_name": definition.identity.name,
+            "evaluation_policy": definition.evaluation_policy.model_dump(mode="json"),
+            "identity": definition.identity.qualified,
+            "parameters": [item.model_dump(mode="json") for item in definition.parameters],
+            "referenced_predicates": list(definition.referenced_predicates),
+            "result_cardinality": definition.result_cardinality,
+            "result_shape": definition.result_shape,
+            "subject_kinds": list(definition.subject_kinds),
+        }
+        governance = {
+            "authority": definition.authority.model_dump(mode="json"),
+            "lifecycle": definition.lifecycle.model_dump(mode="json"),
+        }
+        provenance = {"pins": [item.model_dump(mode="json") for item in definition.pins]}
     else:
-        raise ProposalIntegrityError("PC-B expand supports Claim, Subject, and ClaimType only")
+        # Procedure and LineSpec expansion needs their full pin closure rendered;
+        # discovery already returns their handles, and PC-G lands the expansion.
+        raise ProposalIntegrityError(
+            "expand supports Claim, Subject, ClaimType, and QueryDefinition"
+        )
 
     all_relations = _expand_subject_relations(tree, request.address)
     relations = all_relations[: request.budget.max_relations]
@@ -1245,70 +1283,56 @@ def service_expand_playbill_semantic(
     )
 
 
-def service_open_playbill_claim_source(
+class _InstanceSourceMaterialResolver:
+    """Bind the shared dereference engine to one accepted coordinate's retained bytes."""
+
+    def __init__(
+        self,
+        instance: PlaybillInstance,
+        *,
+        coordinate: AcceptedProjectionCoordinate,
+        external_reader: ExternalSelectionReaderProtocol | None,
+    ) -> None:
+        self._instance = instance
+        self._coordinate = coordinate
+        self._external_reader = external_reader
+
+    def read_ledger(self, artifact_path: str) -> bytes | None:
+        return self._instance.tree_at(self._coordinate.git_oid).get(artifact_path)
+
+    def read_cas(self, content_digest: str, *, access: BodyAccessContext) -> bytes | None:
+        if not self._instance.body_store().verify(content_digest):
+            return None
+        return self._instance.body_store().read(content_digest, access=access)
+
+    def read_external(self, source: ExternalSourceReferenceV1) -> object | None:
+        if self._external_reader is None:
+            return None
+        return self._external_reader.read_external_selection(source)
+
+
+def service_open_playbill_source(
     instance: PlaybillInstance,
     *,
     request: OpenSourceRequestV1,
     access: BodyAccessContext,
+    at: PlaybillAcceptedCoordinate | None = None,
+    external_reader: ExternalSelectionReaderProtocol | None = None,
 ) -> SourceDereferenceResultV1:
-    """Dereference only the coordinate-bound handle; never mutate or refresh a source."""
+    """Dereference only the coordinate-bound handle; never mutate or refresh a source.
 
-    handle = request.source_handle
-    if handle.source.kind != "cas":
-        return SourceDereferenceResultV1(
-            source_handle_digest=source_handle_digest(handle),
-            status=(
-                "attested_only"
-                if getattr(handle.source, "replayability", None) == "attested_only"
-                else "unavailable"
-            ),
-            commitment_verified=False,
-            material_kind="metadata_only",
-            coverage=CoverageDescriptorV1(
-                requested_facets=("source_material",),
-                reason_codes=("external_reader_deferred",),
-            ),
-        )
-    if not access.can_read_body:
-        return SourceDereferenceResultV1(
-            source_handle_digest=source_handle_digest(handle),
-            status="denied",
-            commitment_verified=False,
-            material_kind="metadata_only",
-            coverage=CoverageDescriptorV1(
-                requested_facets=("source_material",),
-                omitted_for_access=("source_material",),
-            ),
-        )
-    content = instance.body_store().read(handle.source.content_digest, access=access)
-    if len(content) + request.structural_context_bytes > request.resource_budget_bytes:
-        return SourceDereferenceResultV1(
-            source_handle_digest=source_handle_digest(handle),
-            status="unavailable",
-            commitment_verified=False,
-            material_kind="metadata_only",
-            coverage=CoverageDescriptorV1(
-                requested_facets=("source_material",),
-                truncated_facets=("source_material",),
-                reason_codes=("resource_budget_exceeded",),
-            ),
-        )
-    verified = handle.commitment.digest == handle.source.content_digest
-    return SourceDereferenceResultV1(
-        source_handle_digest=source_handle_digest(handle),
-        status="verified" if verified else "drifted",
-        commitment_verified=verified,
-        observed_commitment_digest=handle.source.content_digest,
-        material_kind="bytes",
-        body_access=BodyAccessResultV1(
-            status="available",
-            content_digest=handle.source.content_digest,
-            byte_length=len(content),
-            body_base64=base64.b64encode(content).decode("ascii"),
-        ),
-        coverage=CoverageDescriptorV1(
-            requested_facets=("source_material",),
-            available_facets=("source_material",),
+    Ledger, CAS, and external selections all resolve through one engine, so the
+    coverage, budget, and access laws cannot drift apart by source kind.
+    """
+
+    coordinate = _resolve_coordinate(instance, at)
+    return dereference_source_handle(
+        request,
+        access=access,
+        resolver=_InstanceSourceMaterialResolver(
+            instance,
+            coordinate=coordinate,
+            external_reader=external_reader,
         ),
     )
 
@@ -1328,7 +1352,7 @@ __all__ = [
     "service_explain_playbill_claim",
     "service_get_playbill_claim",
     "service_list_playbill_claims",
-    "service_open_playbill_claim_source",
+    "service_open_playbill_source",
     "service_playbill_claim_history",
     "service_propose_playbill_claim",
     "service_query_playbill_claims",

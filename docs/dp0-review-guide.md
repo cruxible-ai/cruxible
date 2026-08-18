@@ -246,6 +246,7 @@ tests/goldens/playbill/attestation-v1.json
 tests/goldens/playbill/candidate-v1.json
 tests/goldens/playbill/capture-claim-v1.json
 tests/goldens/playbill/claim-type-v1.json
+tests/goldens/playbill/discovery-index-v1.json
 tests/goldens/playbill/oracles-v1.json
 tests/goldens/playbill/projection-v1.json
 tests/goldens/playbill/query-definition-v1.json
@@ -270,6 +271,11 @@ source identity and remote-state refusal behavior.
 `tests/goldens/playbill/query-definition-v1.json` preserves the canonical
 Claim-native QueryDefinition v1 wire, its verdict/conflict policy and budget
 declarations, and its envelope digest.
+
+`tests/goldens/playbill/discovery-index-v1.json` preserves the disposable
+grep-friendly discovery index rendered from the materialized Subject view: its
+`INDEX.md` and `discovery.jsonl` bytes plus the rebuild manifest a deletion and
+rebuild must reproduce.
 
 `tests/goldens/playbill/oracles-v1.json` pins the Family-1 oracle at
 `e3fe35b360d098f14a5d59bf770ffee401224f0c` and the Procedure graph-program

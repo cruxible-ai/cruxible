@@ -42,7 +42,7 @@ from cruxible_core.service.playbill_claims import (
     service_explain_playbill_claim,
     service_get_playbill_claim,
     service_list_playbill_claims,
-    service_open_playbill_claim_source,
+    service_open_playbill_source,
     service_playbill_claim_history,
     service_propose_playbill_claim,
     service_query_playbill_claims,
@@ -325,7 +325,7 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
     assert explanation.law_evidence.initial_verdict == "supported"
     assert explanation.approval_coverage == "containing_change_set"
     assert len(explanation.source_handles) == 1
-    opened = service_open_playbill_claim_source(
+    opened = service_open_playbill_source(
         instance,
         request=OpenSourceRequestV1(
             source_handle=explanation.source_handles[0],
@@ -452,7 +452,7 @@ def test_one_claim_from_exact_cas_span_does_not_require_document_artifact(
     explanation = service_explain_playbill_claim(instance, identity=proposed.claim_identity)
     selected = next(handle for handle in explanation.source_handles if handle.source.kind == "cas")
     assert selected.exact_spans == (selection.span,)
-    opened = service_open_playbill_claim_source(
+    opened = service_open_playbill_source(
         instance,
         request=OpenSourceRequestV1(
             source_handle=selected,
@@ -504,7 +504,7 @@ def test_typed_external_selection_is_retained_as_attested_metadata(
         },
         "source_selector_type": "relation-primary-key-v1",
     }
-    opened = service_open_playbill_claim_source(
+    opened = service_open_playbill_source(
         instance,
         request=OpenSourceRequestV1(
             source_handle=external,
@@ -513,7 +513,7 @@ def test_typed_external_selection_is_retained_as_attested_metadata(
         access=BodyAccessContext(principal_id="owner", can_read_body=True),
     )
     assert opened.status == "attested_only"
-    assert opened.coverage.reason_codes == ("external_reader_deferred",)
+    assert opened.coverage.reason_codes == ("external_attested_only",)
 
 
 def test_competing_claims_require_handoffs_report_conflict_and_preserve_lineage(
