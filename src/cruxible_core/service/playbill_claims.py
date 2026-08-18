@@ -21,6 +21,7 @@ from cruxible_core.playbill.captures import (
 )
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_attestations import VerifiedClaimAttestationV1
+from cruxible_core.playbill.claim_type_structure import claim_type_structural_signature
 from cruxible_core.playbill.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -64,10 +65,18 @@ from cruxible_core.playbill.policies import (
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_claims import ClaimProjectionView
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.playbill.query.cards import (
+    ClaimTypeUsageRowV1,
+    SemanticRelationV1,
+    build_claim_type_card,
+    build_subject_profile,
+)
 from cruxible_core.playbill.query.definitions import (
     parse_query_definition,
     query_definition_digest,
 )
+from cruxible_core.playbill.query.grammar import byte_sorted
+from cruxible_core.playbill.query.semantic_discovery import DiscoveryEntryV1
 from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
@@ -88,6 +97,7 @@ from cruxible_core.playbill.subjects import (
     render_subject,
     subject_digest,
     subject_path,
+    subject_reuse_signature,
 )
 
 
@@ -967,6 +977,60 @@ def _expand_subject_relations(
     return tuple(relations)
 
 
+def _interface_vocabulary(
+    relations: tuple[dict[str, object], ...],
+    address: SemanticAddress,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[SemanticRelationV1, ...]]:
+    """Split the accepted descriptor Claims of one address into card vocabulary.
+
+    An alias or a tag belongs to the address the Claim states it about, while a
+    typed relation is indexed from both ends and marked inbound on the end that
+    did not author it.
+    """
+
+    owner = address.model_dump(mode="json")
+    aliases: set[str] = set()
+    tags: set[str] = set()
+    edges: dict[bytes, SemanticRelationV1] = {}
+    for row in relations:
+        predicate = row["predicate"]
+        subject_value = row["subject"]
+        object_value = row["object"]
+        if not isinstance(object_value, dict):
+            continue
+        if predicate in {"semantic.alias", "semantic.tag"} and subject_value == owner:
+            value = object_value.get("value")
+            if object_value.get("kind") == "literal" and isinstance(value, str):
+                (aliases if predicate == "semantic.alias" else tags).add(value)
+        elif predicate in {"semantic.distinct_from", "semantic.related_to"}:
+            if object_value.get("kind") != "subject":
+                continue
+            inbound = subject_value != owner
+            target = subject_value if inbound else object_value["address"]
+            edge = SemanticRelationV1(
+                predicate=predicate,  # type: ignore[arg-type]
+                target=SemanticAddress.model_validate(target),
+                inbound=inbound,
+            )
+            edges[canonical_bytes(edge.model_dump(mode="json"))] = edge
+    return (
+        byte_sorted(tuple(aliases)),
+        byte_sorted(tuple(tags)),
+        tuple(edges[key] for key in sorted(edges)),
+    )
+
+
+def _subject_identity(tree: dict[str, bytes], path: str) -> str | None:
+    """Return one accepted Subject's identity, or None when it is absent.
+
+    An accepted Claim pins the Subject it is about, so the absent case is
+    defensive rather than reachable.
+    """
+
+    content = tree.get(path)
+    return None if content is None else parse_subject(content, path=path).identity.qualified
+
+
 def _claim_source_handles(
     instance: PlaybillInstance,
     *,
@@ -1006,6 +1070,10 @@ def service_expand_playbill_semantic(
     content = tree.get(path)
     if content is None:
         raise ClaimNotFoundError(path)
+
+    all_relations = _expand_subject_relations(tree, request.address)
+    aliases, tags, relation_edges = _interface_vocabulary(all_relations, request.address)
+    at = PlaybillAcceptedCoordinate.from_internal(coordinate)
 
     canonical_summary: object
     governance: object
@@ -1088,20 +1156,40 @@ def service_expand_playbill_semantic(
         provenance = {"pins": [item.model_dump(mode="json") for item in subject.pins]}
         claims = service_list_playbill_claims(
             instance,
-            at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            at=at,
             subject=request.address,
         ).claims
-        predicates: dict[str, int] = {}
-        for view in claims:
-            predicate = _claim_from_view(view).statement.predicate
-            predicates[predicate] = predicates.get(predicate, 0) + 1
-        subject_profile = {
-            "claim_count": len(claims),
-            "predicates": [
-                {"claim_count": predicates[predicate], "predicate": predicate}
-                for predicate in sorted(predicates, key=lambda item: item.encode("utf-8"))
-            ],
-        }
+        artifacts = tuple(_claim_from_view(view) for view in claims)
+        cardinalities: dict[str, str] = {}
+        for artifact in artifacts:
+            contract_path = claim_type_path(artifact.statement.predicate)
+            contract_content = tree.get(contract_path)
+            if contract_content is not None:
+                cardinalities[artifact.statement.predicate] = parse_claim_type(
+                    contract_content,
+                    path=contract_path,
+                ).cardinality
+        # The profile is taken without an evaluation time: it is coordinate-pure
+        # accepted structure, and the verdict-bearing read stays claim_context.
+        subject_profile = build_subject_profile(
+            at=at,
+            entry=DiscoveryEntryV1(
+                kind="Subject",
+                address=request.address,
+                identity=subject.identity.qualified,
+                label=subject.identity.qualified,
+                aliases=aliases,
+                tags=tags,
+                lexical_terms=byte_sorted((subject.subject_id, subject.subject_kind)),
+                structural_signature_digest=subject_reuse_signature(subject.identity),
+            ),
+            subject_kind=subject.subject_kind,
+            subject_id=subject.subject_id,
+            artifact_digest=subject_digest(subject).tagged,
+            claims=artifacts,
+            cardinalities=cardinalities,
+            relations=relation_edges,
+        ).model_dump(mode="json")
     elif path.startswith("claim-types/"):
         if request.address.selector.scheme != "artifact-v1":
             raise ProposalIntegrityError("ClaimType expansion requires whole-artifact identity")
@@ -1118,13 +1206,44 @@ def service_expand_playbill_semantic(
             "lifecycle": claim_type.lifecycle.model_dump(mode="json"),
         }
         provenance = {"pins": [item.model_dump(mode="json") for item in claim_type.pins]}
-        claim_type_card = {
-            "admission_policy": claim_type.admission_policy.model_dump(mode="json"),
-            "evidence_admission_policy": claim_type.evidence_admission_policy.model_dump(
-                mode="json"
+        usage_rows: list[ClaimTypeUsageRowV1] = []
+        for view in service_list_playbill_claims(
+            instance,
+            at=at,
+            predicate=claim_type.predicate,
+        ).claims:
+            statement_subject = _claim_from_view(view).statement.subject.artifact_path
+            subject_identity = _subject_identity(tree, statement_subject)
+            if subject_identity is None:
+                continue
+            usage_rows.append(
+                ClaimTypeUsageRowV1(
+                    subject_path=statement_subject,
+                    subject_identity=subject_identity,
+                )
+            )
+        claim_type_card = build_claim_type_card(
+            claim_type,
+            at=at,
+            entry=DiscoveryEntryV1(
+                kind="ClaimType",
+                address=request.address,
+                identity=claim_type.identity.qualified,
+                label=claim_type.predicate,
+                aliases=aliases,
+                tags=tags,
+                lexical_terms=byte_sorted(
+                    (
+                        claim_type.predicate,
+                        claim_type.predicate.rpartition(".")[2],
+                        *claim_type.allowed_subject_kinds,
+                    )
+                ),
+                structural_signature_digest=claim_type_structural_signature(claim_type.structure),
             ),
-            "resolution_policy": claim_type.resolution_policy.model_dump(mode="json"),
-        }
+            usage_rows=tuple(usage_rows),
+            relations=relation_edges,
+        ).model_dump(mode="json")
     elif path.startswith("query-definitions/"):
         # A named entrypoint advertises its contract before any row is read: the
         # compact interface is the canonical summary, not a separate capsule slot.
@@ -1159,7 +1278,6 @@ def service_expand_playbill_semantic(
             "expand supports Claim, Subject, ClaimType, and QueryDefinition"
         )
 
-    all_relations = _expand_subject_relations(tree, request.address)
     relations = all_relations[: request.budget.max_relations]
     relation_budget_truncated = len(all_relations) > len(relations)
     requested = set(request.facets)

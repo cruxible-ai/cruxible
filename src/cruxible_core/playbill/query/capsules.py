@@ -9,7 +9,8 @@ identifiers, block content is canonical bytes, and the framing header is
 rendered outside every fence -- so a discovered string cannot reach an
 instruction channel by being worded like one.
 
-V1 performs no proactive injection: :func:`build_discovery_context_capsule` and
+V1 performs no proactive injection: :func:`build_discovery_context_capsule`,
+:func:`build_interface_context_capsule`, and
 :func:`build_expansion_context_capsule` always leave ``instruction_blocks``
 empty. Capsules also inherit F2's truncation law: dropping a block is always
 stated in coverage, so a silently shortened capsule is unrepresentable.
@@ -31,6 +32,7 @@ from cruxible_core.playbill.discovery import (
     reject_locator_or_secret,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.query.cards import InterfaceDiscoveryPageV1
 from cruxible_core.playbill.query.grammar import byte_sorted
 from cruxible_core.playbill.query.semantic_discovery import DiscoveryError
 from cruxible_core.playbill.source_references import (
@@ -237,6 +239,62 @@ def build_discovery_context_capsule(
     )
 
 
+def build_interface_context_capsule(
+    page: InterfaceDiscoveryPageV1,
+    *,
+    budget: ContextCapsuleBudgetV1 = ContextCapsuleBudgetV1(),
+) -> BoundedContextCapsuleV1:
+    """Render one interface discovery page as bounded, quoted, untrusted data.
+
+    Cards and coordinate-pure profiles are accepted structure, so the capsule
+    stays non-verdict-relative; a profile built at an explicit evaluation time
+    makes the whole capsule verdict-relative, because one time-relative block is
+    enough to make the rendering time-relative.
+    """
+
+    if page.page.at is None:
+        raise DiscoveryError("a context capsule requires the exact read coordinate")
+    at = page.page.at
+    blocks = (
+        *(
+            _block(
+                label="claim-type-card",
+                subject=item.address,
+                at=at,
+                payload=item.model_dump(mode="json"),
+            )
+            for item in page.cards
+        ),
+        *(
+            _block(
+                label="subject-profile",
+                subject=item.address,
+                at=at,
+                payload=item.model_dump(mode="json"),
+            )
+            for item in page.profiles
+        ),
+        *(
+            _block(
+                label="discovery-handle",
+                subject=address,
+                at=at,
+                payload=address.model_dump(mode="json"),
+            )
+            for address in page.handle_addresses
+        ),
+    )
+    return _finish(
+        at=at,
+        evaluation_time=page.page.evaluation_time,
+        verdict_relative=any(item.verdict_relative for item in page.profiles),
+        budget=budget,
+        blocks=blocks,
+        requested_facets=("claim-type-card", "discovery-handle", "subject-profile"),
+        reason_codes=page.coverage.reason_codes,
+    )
+
+
 def build_expansion_context_capsule(
     capsule: ContextCapsuleV1,
     *,
@@ -342,5 +400,6 @@ __all__ = [
     "ContextCapsuleBudgetV1",
     "build_discovery_context_capsule",
     "build_expansion_context_capsule",
+    "build_interface_context_capsule",
     "render_bounded_context_capsule",
 ]

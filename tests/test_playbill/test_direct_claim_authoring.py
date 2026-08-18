@@ -364,10 +364,17 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
             facets=("governance", "profile", "relations", "summary"),
         ),
     )
-    assert subject_capsule.subject_profile == {
-        "claim_count": 1,
-        "predicates": [{"claim_count": 1, "predicate": "project.work_item.status"}],
-    }
+    # PC-F formalized the ad-hoc profile dict as the SubjectProfileV1 projection:
+    # coordinate-pure structure, one row per predicate, no verdict without a time.
+    profile = subject_capsule.subject_profile
+    assert isinstance(profile, dict)
+    assert profile["tag"] == "playbill-subject-profile-v1"
+    assert profile["verdict_relative"] is False
+    assert profile["evaluation_time"] is None
+    assert [row["predicate"] for row in profile["predicates"]] == ["project.work_item.status"]
+    assert profile["predicates"][0]["claim_count"] == 1
+    assert profile["predicates"][0]["resolution"] == "single"
+    assert profile["predicates"][0]["verdict"] is None
     claim_type_capsule = service_expand_playbill_semantic(
         instance,
         request=ExpandRequestV1(
@@ -377,7 +384,17 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
             facets=("claim_type_card", "governance", "summary"),
         ),
     )
-    assert claim_type_capsule.claim_type_card is not None
+    card = claim_type_capsule.claim_type_card
+    assert isinstance(card, dict)
+    assert card["tag"] == "playbill-claim-type-card-v1"
+    assert card["predicate"] == "project.work_item.status"
+    assert card["usage"]["claim_count"] == 1
+    # Policies travel as digests plus one-line facts, never as policy bodies.
+    assert [item["policy"] for item in card["policies"]] == [
+        "admission",
+        "evidence_admission",
+        "resolution",
+    ]
 
 
 def test_non_materialized_direct_source_stays_attested_only(tmp_path: Path) -> None:

@@ -80,6 +80,25 @@ MATCH_BASIS_PRIORITY: Mapping[str, int] = {
 an exact address or an accepted alias, and no opaque score participates at all.
 """
 
+MATCH_BASIS_RESOLVES_EQUIVALENCE: Mapping[str, bool] = {
+    "exact_address": True,
+    "named_entrypoint": True,
+    "exact_alias": True,
+    "structural_signature": False,
+    "dependency_walk": False,
+    "tag": False,
+    "lexical": False,
+}
+"""Which bases may resolve an expression to the exact target.
+
+This is the §6.3.1 law made structural rather than conventional. An alias is
+admitted under the target namespace's own authority, so it may resolve; a tag
+and a lexical token are recall-only and can only add or rank candidates. A
+shared structural signature is a blocking near candidate for review, never a
+proof of equivalence -- two ClaimTypes can have the same shape and mean
+different things.
+"""
+
 _DESCRIPTOR_LITERAL_PREDICATES = frozenset({"semantic.alias", "semantic.tag"})
 _DESCRIPTOR_RELATION_PREDICATES = frozenset({"semantic.distinct_from", "semantic.related_to"})
 _TOKEN_SPLIT_RE = re.compile(r"[^0-9a-z]+")
@@ -685,10 +704,28 @@ def discover(
     )
 
 
+def resolved_equivalence_address(page: DiscoveryPageV1) -> SemanticAddress | None:
+    """Return the one address an equivalence-grade basis resolved, or None.
+
+    A page whose only hits came from tags, lexical tokens, structural signatures,
+    or a dependency walk resolves nothing: those bases broaden recall and are
+    rendered for review. An ambiguous alias resolves nothing either, because
+    choosing between two validly named targets is not the server's call.
+    """
+
+    resolved = byte_sorted_addresses(
+        hit.address
+        for hit in page.hits
+        if any(MATCH_BASIS_RESOLVES_EQUIVALENCE[item.basis] for item in hit.match_basis)
+    )
+    return resolved[0] if len(resolved) == 1 else None
+
+
 __all__ = [
     "DISCOVERY_ENTRY_KINDS",
     "DISCOVERY_PROFILE_KINDS",
     "MATCH_BASIS_PRIORITY",
+    "MATCH_BASIS_RESOLVES_EQUIVALENCE",
     "PAGE_RECEIPT_DIGEST_DOMAIN",
     "SELECTION_BASIS_DIGEST_DOMAIN",
     "VOCABULARY_DIGEST_DOMAIN",
@@ -700,4 +737,5 @@ __all__ = [
     "discover",
     "discovery_tokens",
     "discovery_vocabulary_digest",
+    "resolved_equivalence_address",
 ]
