@@ -34,7 +34,11 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.temporal import ensure_utc, format_datetime
 
 PROCEDURE_EXHAUST_JOURNAL_FAMILY = "procedure-exhaust-v1"
-REGISTERED_JOURNAL_FAMILIES: tuple[str, ...] = (PROCEDURE_EXHAUST_JOURNAL_FAMILY,)
+QUERY_RECEIPT_JOURNAL_FAMILY = "query-receipt-v1"
+REGISTERED_JOURNAL_FAMILIES: tuple[str, ...] = (
+    PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+    QUERY_RECEIPT_JOURNAL_FAMILY,
+)
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")
 _PARTITION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -58,7 +62,17 @@ JournalEventKindV1 = Literal[
     "resolution",
     "resolution_disposition",
     "procedure_reading",
+    "query_executed",
 ]
+
+QUERY_RECEIPT_EVENT_KIND: JournalEventKindV1 = "query_executed"
+"""A canonical query execution is the one journalled event with no Procedure.
+
+Every other kind names a step of a Procedure run, so none of them could carry a
+QueryDefinition execution without misnaming its subject. The event therefore
+lives in its own journal family, keeping query receipts out of a run's causal
+chain while reusing the same fenced, hash-chained writer.
+"""
 
 
 class _StrictJournalModel(BaseModel):
@@ -77,6 +91,41 @@ def _digest(value: str, *, label: str) -> str:
     except ValueError as exc:
         raise ValueError(f"{label} must be tagged lowercase SHA-256") from exc
     return value
+
+
+def _validate_event_family(
+    *,
+    journal_family: str,
+    event_kind: JournalEventKindV1,
+    procedure_artifact_digest: str | None,
+    run_id: str | None,
+    line_spec_digest: str | None,
+    occurrence_id: str | None,
+    attempt: int | None,
+    admission_binding_digest: str | None,
+) -> None:
+    """Bind each event kind to the one family whose coordinates it can honestly fill."""
+
+    if event_kind == QUERY_RECEIPT_EVENT_KIND:
+        if journal_family != QUERY_RECEIPT_JOURNAL_FAMILY:
+            raise ValueError("query execution receipts require the query-receipt journal family")
+        if any(
+            item is not None
+            for item in (
+                procedure_artifact_digest,
+                run_id,
+                line_spec_digest,
+                occurrence_id,
+                attempt,
+                admission_binding_digest,
+            )
+        ):
+            raise ValueError("a query execution receipt carries no Procedure run coordinates")
+        return
+    if journal_family != PROCEDURE_EXHAUST_JOURNAL_FAMILY:
+        raise ValueError("Procedure journal records require the Procedure exhaust family")
+    if procedure_artifact_digest is None:
+        raise ValueError("a Procedure exhaust record must name its exact Procedure artifact")
 
 
 class JournalStreamIdentityV1(_StrictJournalModel):
@@ -294,7 +343,7 @@ class ProcedureJournalRecordDraftV1(_StrictJournalModel):
     partition_id: str
     event_kind: JournalEventKindV1
     accepted_coordinate: AcceptedCoordinate
-    procedure_artifact_digest: str
+    procedure_artifact_digest: str | None = None
     definition_digest: str
     run_id: str | None = None
     line_spec_digest: str | None = None
@@ -341,8 +390,16 @@ class ProcedureJournalRecordDraftV1(_StrictJournalModel):
 
     @model_validator(mode="after")
     def _family(self) -> "ProcedureJournalRecordDraftV1":
-        if self.stream.journal_family != PROCEDURE_EXHAUST_JOURNAL_FAMILY:
-            raise ValueError("Procedure journal records require the Procedure exhaust family")
+        _validate_event_family(
+            journal_family=self.stream.journal_family,
+            event_kind=self.event_kind,
+            procedure_artifact_digest=self.procedure_artifact_digest,
+            run_id=self.run_id,
+            line_spec_digest=self.line_spec_digest,
+            occurrence_id=self.occurrence_id,
+            attempt=self.attempt,
+            admission_binding_digest=self.admission_binding_digest,
+        )
         return self
 
 
@@ -356,7 +413,7 @@ class ProcedureJournalRecordV1(_StrictJournalModel):
     previous_record_digest: str
     event_kind: JournalEventKindV1
     accepted_coordinate: AcceptedCoordinate
-    procedure_artifact_digest: str
+    procedure_artifact_digest: str | None = None
     definition_digest: str
     run_id: str | None = None
     line_spec_digest: str | None = None
@@ -404,13 +461,31 @@ class ProcedureJournalRecordV1(_StrictJournalModel):
 
     @model_validator(mode="after")
     def _family(self) -> "ProcedureJournalRecordV1":
-        if self.stream.journal_family != PROCEDURE_EXHAUST_JOURNAL_FAMILY:
-            raise ValueError("Procedure journal records require the Procedure exhaust family")
+        _validate_event_family(
+            journal_family=self.stream.journal_family,
+            event_kind=self.event_kind,
+            procedure_artifact_digest=self.procedure_artifact_digest,
+            run_id=self.run_id,
+            line_spec_digest=self.line_spec_digest,
+            occurrence_id=self.occurrence_id,
+            attempt=self.attempt,
+            admission_binding_digest=self.admission_binding_digest,
+        )
         if self.sequence == 1 and self.previous_record_digest != journal_genesis_digest(
             self.stream, self.partition_id
         ):
             raise ValueError("first journal record must commit the partition genesis digest")
         return self
+
+    @property
+    def procedure_artifact(self) -> str:
+        """Return the Procedure artifact digest a Procedure exhaust record always names."""
+
+        if self.procedure_artifact_digest is None:
+            raise PlaybillJournalError(
+                "this journal record is a query receipt and names no Procedure artifact"
+            )
+        return self.procedure_artifact_digest
 
     @classmethod
     def bind(
@@ -555,6 +630,8 @@ __all__ = [
     "PROCEDURE_EXHAUST_JOURNAL_FAMILY",
     "ProcedureJournalRecordDraftV1",
     "ProcedureJournalRecordV1",
+    "QUERY_RECEIPT_EVENT_KIND",
+    "QUERY_RECEIPT_JOURNAL_FAMILY",
     "REGISTERED_JOURNAL_FAMILIES",
     "StoredProcedureJournalRecordV1",
     "build_journal_head_manifest",

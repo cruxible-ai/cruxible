@@ -1,4 +1,10 @@
-"""Shared durable appender for non-run Procedure exhaust records."""
+"""Shared durable appender for fenced operational journal records.
+
+The record shape is per-kind: Procedure exhaust events name their exact
+Procedure artifact, while a query execution receipt names only its accepted
+QueryDefinition. Both take the same fence, the same hash chain, and the same
+CAS-addressed payload, so there is exactly one durable append path.
+"""
 
 from __future__ import annotations
 
@@ -38,11 +44,11 @@ class ProcedureExhaustWriter:
         partition_id: str,
         event_kind: JournalEventKindV1,
         accepted_coordinate: AcceptedCoordinate,
-        procedure_artifact_digest: str,
         definition_digest: str,
         actor_context: GovernedActorContext,
         recorded_at: datetime,
         payload: object,
+        procedure_artifact_digest: str | None = None,
         run_id: str | None = None,
         admission_binding_digest: str | None = None,
         line_spec_digest: str | None = None,

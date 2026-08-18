@@ -671,7 +671,7 @@ class JournalExhaustTapReader:
                 payload=parse_journal_payload(
                     self.bodies.read(stored.record.payload_digest, access=self.access)
                 ),
-                procedure_artifact_digest=stored.record.procedure_artifact_digest,
+                procedure_artifact_digest=stored.record.procedure_artifact,
                 definition_digest=stored.record.definition_digest,
                 run_id=stored.record.run_id,
                 occurrence_id=stored.record.occurrence_id,

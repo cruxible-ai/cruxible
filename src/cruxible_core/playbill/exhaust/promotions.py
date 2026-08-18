@@ -385,7 +385,7 @@ def evaluate_exhaust_promotion_law(
     if reducer.reducer_digest != promotion.reducer_digest:
         return _refused("promotion.reducer_mismatch", "Promotion reducer digest differs.")
     observed_procedure_digests = tuple(
-        sorted({stored.record.procedure_artifact_digest for stored in records})
+        sorted({stored.record.procedure_artifact for stored in records})
     )
     pinned_procedure_digests = tuple(
         sorted(
@@ -412,7 +412,7 @@ def evaluate_exhaust_promotion_law(
                 payload=parse_journal_payload(
                     bodies.read(stored.record.payload_digest, access=access)
                 ),
-                procedure_artifact_digest=stored.record.procedure_artifact_digest,
+                procedure_artifact_digest=stored.record.procedure_artifact,
                 definition_digest=stored.record.definition_digest,
                 run_id=stored.record.run_id,
                 occurrence_id=stored.record.occurrence_id,
