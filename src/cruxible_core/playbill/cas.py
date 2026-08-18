@@ -34,9 +34,11 @@ class CasObjectMetadata(_StrictCasModel):
 
 
 class BodyProjectionProtocol(Protocol):
-    """Compiler-only metadata seam; public reads still require explicit access."""
+    """Compiler-only CAS seam; every byte read still requires explicit access."""
 
     def verify(self, digest: str) -> bool: ...
+
+    def read(self, digest: str, *, access: BodyAccessContext) -> bytes: ...
 
     def metadata(
         self,

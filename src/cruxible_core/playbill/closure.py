@@ -46,6 +46,11 @@ from cruxible_core.playbill.documents import (
     parse_document,
 )
 from cruxible_core.playbill.errors import DocumentFormatError, SubjectFormatError
+from cruxible_core.playbill.exhaust.promotions import (
+    ExhaustPromotionError,
+    exhaust_promotion_digest,
+    parse_exhaust_promotion,
+)
 from cruxible_core.playbill.procedures.artifacts import (
     ProcedureFormatError,
     parse_procedure,
@@ -86,6 +91,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "claim",
         "procedure",
         "line",
+        "exhaust-promotion",
     ]
     artifact_tag: str
     identity: ArtifactIdentity
@@ -226,6 +232,17 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
                 pins=line.pins,
                 lifecycle=line.lifecycle,
             )
+        if path.startswith("exhaust-promotions/"):
+            promotion = parse_exhaust_promotion(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="exhaust-promotion",
+                artifact_tag=promotion.artifact_format,
+                identity=promotion.identity,
+                artifact_digest=exhaust_promotion_digest(promotion),
+                pins=promotion.pins,
+                lifecycle=promotion.lifecycle,
+            )
     except (
         CaptureFormatError,
         ClaimFormatError,
@@ -237,6 +254,7 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
         ClaimTypeFormatError,
         ProcedureFormatError,
         LineSpecFormatError,
+        ExhaustPromotionError,
     ):
         raise
     return None
@@ -344,18 +362,20 @@ def _unresolved_pins(
         if source.path not in source_paths:
             continue
         for pin in source.pins:
-            # These component families are exact compiler/policy-registry pins
-            # until PC-F gives QueryDefinition and Contract ledger artifacts.
-            # Their family law verifies the role-named digest; this exception
-            # is never a name lookup and never permits a missing Playbill
-            # artifact kind such as Procedure, ClaimType, or Provider.
+            # These component families are exact compiler/policy-registry pins,
+            # or content-addressed receipt manifests, until PC-F gives them
+            # ledger artifact envelopes. Their owning law verifies the role-named
+            # digest; this exception is never a name lookup and never permits a
+            # missing Playbill artifact kind such as Procedure, ClaimType, or Provider.
             if pin.target.kind in {
                 "Contract",
                 "EffectPolicy",
                 "EnvironmentManifest",
+                "ExhaustReducer",
                 "LandingFilter",
                 "Policy",
                 "QueryDefinition",
+                "ReceiptSetManifest",
                 "Reducer",
             }:
                 continue

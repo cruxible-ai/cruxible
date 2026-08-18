@@ -295,7 +295,7 @@ class ProcedureJournalRecordDraftV1(_StrictJournalModel):
     accepted_coordinate: AcceptedCoordinate
     procedure_artifact_digest: str
     definition_digest: str
-    run_id: str
+    run_id: str | None = None
     line_spec_digest: str | None = None
     occurrence_id: str | None = None
     attempt: int | None = Field(default=None, ge=1)
@@ -357,7 +357,7 @@ class ProcedureJournalRecordV1(_StrictJournalModel):
     accepted_coordinate: AcceptedCoordinate
     procedure_artifact_digest: str
     definition_digest: str
-    run_id: str
+    run_id: str | None = None
     line_spec_digest: str | None = None
     occurrence_id: str | None = None
     attempt: int | None = Field(default=None, ge=1)

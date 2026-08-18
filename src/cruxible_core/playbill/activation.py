@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol
@@ -11,7 +12,11 @@ from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCras
 from cruxible_core.playbill.cas import BodyProjectionProtocol
 from cruxible_core.playbill.errors import SettlementIntegrityError
 from cruxible_core.playbill.git import GitLedger
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate, AssemblerResult
+from cruxible_core.playbill.projection import (
+    AcceptedCoordinate,
+    AcceptedProjectionCoordinate,
+    AssemblerResult,
+)
 from cruxible_core.playbill.serving import (
     publish_serving_manifest,
     remove_exact_projection_build,
@@ -66,11 +71,13 @@ class ActivationPublisher:
         publication_directory: Path,
         bodies: BodyProjectionProtocol,
         witness: WitnessSink | None = None,
+        accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
     ) -> None:
         self.ledger = ledger
         self.publication_directory = publication_directory.resolve(strict=True)
         self.bodies = bodies
         self.witness = witness
+        self.accepted_coordinates_by_sequence = dict(accepted_coordinates_by_sequence or {})
 
     def prebuild(
         self,
@@ -80,11 +87,19 @@ class ActivationPublisher:
         crash_hook: ProjectionCrashHook | None = None,
     ) -> AssemblerResult:
         coordinate = bundle.projection_coordinate(base=base)
+        accepted_coordinates = dict(self.accepted_coordinates_by_sequence)
+        accepted_coordinates[bundle.record.sequence] = AcceptedCoordinate(
+            git_oid=coordinate.git_oid,
+            semantic_root=coordinate.semantic_root,
+            generation_root=coordinate.generation_root,
+            compiler_digest=coordinate.compiler.rule_digest,
+        )
         assembler = ProjectionAssembler(
             self.ledger,
             accepted=coordinate,
             publication_directory=self.publication_directory,
             bodies=self.bodies,
+            accepted_coordinates_by_sequence=accepted_coordinates,
         )
         stage = self.publication_directory / f".stage-{secrets.token_hex(12)}"
         return assembler.assemble(

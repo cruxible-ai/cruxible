@@ -34,6 +34,7 @@ from cruxible_core.playbill.principals import (
     principal_registry_from_tree,
 )
 from cruxible_core.playbill.projection import (
+    AcceptedCoordinate,
     AcceptedProjectionCoordinate,
     AssemblerResult,
     BuildInstrumentation,
@@ -42,6 +43,7 @@ from cruxible_core.playbill.projection import (
     projection_piece_name,
 )
 from cruxible_core.playbill.proposals import (
+    ExhaustPromotionVerifierProtocol,
     claim_type_expansions_from_candidate,
     evaluate_proposal_tree,
 )
@@ -139,6 +141,7 @@ def _verify_successor(
     compiler: CompilerCoordinate,
     bodies: BodyProjectionProtocol,
     laws: AcceptanceLawRegistry,
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None,
 ) -> RecoveredGeneration:
     if ledger.parent_of(oid) != parent.oid:
         raise SettlementIntegrityError("generation parent differs from accepted predecessor")
@@ -191,6 +194,7 @@ def _verify_successor(
         rebased=False,
         actor_id=record.actor_binding.actor_id,
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
+        promotion_verifier=promotion_verifier,
     )
     if reevaluated.candidate != candidate or reevaluated.diagnostics:
         raise SettlementIntegrityError("generation candidate law/closure evidence diverged")
@@ -251,6 +255,7 @@ def _projection_for_head(
     ledger: GitLedger,
     *,
     coordinate: AcceptedProjectionCoordinate,
+    history: tuple[RecoveredGeneration, ...],
     publication_directory: Path,
     bodies: BodyProjectionProtocol,
 ) -> AssemblerResult:
@@ -259,6 +264,15 @@ def _projection_for_head(
         accepted=coordinate,
         publication_directory=publication_directory,
         bodies=bodies,
+        accepted_coordinates_by_sequence={
+            generation.sequence: AcceptedCoordinate(
+                git_oid=generation.oid,
+                semantic_root=generation.semantic_root.tagged,
+                generation_root=generation.generation_root.tagged,
+                compiler_digest=coordinate.compiler.rule_digest,
+            )
+            for generation in history
+        },
     )
     request = assembler.request(
         output_staging_directory=publication_directory / f".stage-{secrets.token_hex(12)}"
@@ -348,6 +362,7 @@ def _clean_unaccepted_generations(
     compiler: CompilerCoordinate,
     bodies: BodyProjectionProtocol,
     laws: AcceptanceLawRegistry,
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None,
 ) -> None:
     """Collect exact replay-valid generation commits that never settled on main."""
 
@@ -368,6 +383,7 @@ def _clean_unaccepted_generations(
                 compiler=compiler,
                 bodies=bodies,
                 laws=laws,
+                promotion_verifier=promotion_verifier,
             )
             ledger.collect_unreachable_generation(oid)
         except PlaybillError:
@@ -464,6 +480,7 @@ def recover_instance(
     bodies: BodyProjectionProtocol,
     witness: WitnessSink | None = None,
     laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
 ) -> RecoveredInstanceState:
     """Replay accepted history and repair only deterministic post-CAS publication."""
 
@@ -498,6 +515,7 @@ def recover_instance(
                 compiler=compiler,
                 bodies=bodies,
                 laws=laws,
+                promotion_verifier=promotion_verifier,
             )
         )
     head = history[-1]
@@ -511,6 +529,7 @@ def recover_instance(
         compiler=compiler,
         bodies=bodies,
         laws=laws,
+        promotion_verifier=promotion_verifier,
     )
     _clean_unaccepted_publications(
         ledger,
@@ -541,6 +560,7 @@ def recover_instance(
         projection = _projection_for_head(
             ledger,
             coordinate=coordinate,
+            history=recovered_history,
             publication_directory=publication_directory,
             bodies=bodies,
         )

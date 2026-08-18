@@ -35,7 +35,10 @@ from cruxible_core.playbill.procedures.artifacts import (
     procedure_artifact_digest,
 )
 from cruxible_core.playbill.procedures.graph import analyze_procedure_v3
-from cruxible_core.playbill.procedures.input_planes import AcceptedStateRunInputV1
+from cruxible_core.playbill.procedures.input_planes import (
+    AcceptedStateRunInputV1,
+    validate_run_input_vector,
+)
 from cruxible_core.playbill.procedures.models import (
     CaptureEgressNodeV3,
     ExhaustTapNodeV3,
@@ -214,6 +217,10 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
             raise ValueError("Procedure run admission requires a Procedure identity")
         if self.journal_stream.instance_id != self.instance_id:
             raise ValueError("Procedure run and journal stream instance identities differ")
+        validate_run_input_vector(
+            self.accepted_state_inputs,
+            expected_accepted=self.accepted_coordinate,
+        )
         if (
             any(
                 value is not None
@@ -312,6 +319,14 @@ class ProcedureRunResultV1(_StrictExecutionModel):
         if (self.status == "refused") != (self.refusal is not None):
             raise ValueError("only a refused Procedure run carries a typed refusal")
         return self
+
+
+def procedure_run_receipt_digest(receipt: ProcedureRunReceiptV1) -> str:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-procedure-run-receipt-v1",
+        {"receipt": receipt.model_dump(mode="json")},
+    ).tagged
 
 
 class ProviderInvocationResultV1(_StrictExecutionModel):
@@ -440,6 +455,12 @@ def _node_pin_sets(accepted: AcceptedProcedureV1) -> tuple[ProcedureNodePinSetV1
             )
         )
     return tuple(sorted(result, key=lambda item: item.node_id.encode("utf-8")))
+
+
+def accepted_procedure_pin_set_digest(accepted: AcceptedProcedureV1) -> str:
+    """Reproduce the direct-runtime pin commitment for one accepted Procedure."""
+
+    return procedure_pin_set_digest(accepted.procedure.pins, _node_pin_sets(accepted))
 
 
 def prepare_direct_procedure_run(
@@ -651,6 +672,17 @@ class ProcedureExecutor:
         refusal: ProcedureRunRefusalV1 | None = None
         failure_message: str | None = None
         try:
+            input_contract = _exact_pin(
+                accepted.procedure.definition.contract_in,
+                label="Procedure contract_in",
+            )
+            state.input_payload = normalize_canonical(
+                self.contract_validator.validate_contract(
+                    contract=input_contract,
+                    payload=state.input_payload,
+                    direction="input",
+                )
+            )
             output = self._walk(
                 accepted,
                 admission=admission,
@@ -705,10 +737,33 @@ class ProcedureExecutor:
             or procedure.identity != admission.procedure_identity
             or procedure.activation_policy != admission.activation_policy
             or procedure.pins != admission.full_pins
+            or procedure.definition.budget != admission.budget
+            or procedure.definition.hard_caps != admission.hard_caps
         ):
             raise PlaybillExecutionError("Procedure admission and accepted artifact differ")
         if _node_pin_sets(accepted) != admission.node_pin_sets:
             raise PlaybillExecutionError("Procedure node pins changed after admission")
+        expected_state_inputs = {
+            node.as_: (
+                _exact_pin(node.query, label=f"state_tap {node.node_id!r}"),
+                run_value_digest("state-parameters", normalize_canonical(node.parameters)),
+            )
+            for node in procedure.definition.nodes
+            if isinstance(node, StateTapNodeV3)
+        }
+        actual_state_inputs = {item.input_name: item for item in admission.accepted_state_inputs}
+        if set(actual_state_inputs) != set(expected_state_inputs):
+            raise PlaybillExecutionError("Procedure admission state_tap input set differs")
+        for name, (query, parameters_digest) in expected_state_inputs.items():
+            actual = actual_state_inputs[name]
+            if (
+                actual.query_definition_digest != query.artifact_digest
+                or actual.parameters_digest != parameters_digest
+                or actual.read_coordinate != admission.accepted_coordinate
+            ):
+                raise PlaybillExecutionError(
+                    f"Procedure admission state_tap input {name!r} differs"
+                )
 
     def _require_current(self, admission: ProcedureRunAdmissionV1) -> None:
         current = self.activation_authority.current_procedure_digest(
@@ -768,6 +823,7 @@ class ProcedureExecutor:
                     records=records,
                     started_ns=started_ns,
                 )
+                self._check_budget(admission, state, started_ns=started_ns)
                 self._append_event(
                     admission,
                     records,
@@ -849,7 +905,15 @@ class ProcedureExecutor:
                 input_payload=state.input_payload,
                 outputs=state.outputs,
             )
-            value = _apply_transform(node.transform_kind, resolved)
+            contract_in = _exact_pin(node.contract_in, label=f"transform {node.node_id!r} input")
+            validated_input = normalize_canonical(
+                self.contract_validator.validate_contract(
+                    contract=contract_in,
+                    payload=resolved,
+                    direction="input",
+                )
+            )
+            value = _apply_transform(node.transform_kind, validated_input)
             contract = _exact_pin(node.contract_out, label=f"transform {node.node_id!r} output")
             state.outputs[node.as_] = normalize_canonical(
                 self.contract_validator.validate_contract(
@@ -958,6 +1022,8 @@ class ProcedureExecutor:
                 direction="input",
             )
         )
+        if state.provider_calls >= admission.budget.max_provider_calls:
+            raise _BudgetExceeded("Procedure provider-call budget exhausted")
         state.provider_calls += 1
         effect_policy = node.effect_policy
         effectful = effect_policy is not None
@@ -1086,7 +1152,22 @@ class ProcedureExecutor:
             _resolve_template(body.spec, input_payload=state.input_payload, outputs=combined)
         )
         if body.operation == "transform":
-            local_outputs[body.as_] = spec
+            contract_in = _exact_pin(body.contract_in, label=f"repeat {body.node_id!r} input")
+            contract_out = _exact_pin(body.contract_out, label=f"repeat {body.node_id!r} output")
+            validated = normalize_canonical(
+                self.contract_validator.validate_contract(
+                    contract=contract_in,
+                    payload=spec,
+                    direction="input",
+                )
+            )
+            local_outputs[body.as_] = normalize_canonical(
+                self.contract_validator.validate_contract(
+                    contract=contract_out,
+                    payload=validated,
+                    direction="output",
+                )
+            )
             return
         if self.provider_executor is None or body.provider is None or body.environment is None:
             raise _RunRefusal(
@@ -1098,16 +1179,31 @@ class ProcedureExecutor:
         environment = _exact_pin(body.environment, label=f"repeat {body.node_id!r} environment")
         contract_in = _exact_pin(body.contract_in, label=f"repeat {body.node_id!r} input")
         contract_out = _exact_pin(body.contract_out, label=f"repeat {body.node_id!r} output")
+        if state.provider_calls >= admission.budget.max_provider_calls:
+            raise _BudgetExceeded("Procedure provider-call budget exhausted")
         state.provider_calls += 1
+        validated_input = normalize_canonical(
+            self.contract_validator.validate_contract(
+                contract=contract_in,
+                payload=spec,
+                direction="input",
+            )
+        )
         result = self.provider_executor.execute_provider(
             provider=provider,
             environment=environment,
             contract_in=contract_in,
             contract_out=contract_out,
-            payload=spec,
+            payload=validated_input,
             actor_context=admission.actor_context,
         )
-        local_outputs[body.as_] = normalize_canonical(result.output)
+        local_outputs[body.as_] = normalize_canonical(
+            self.contract_validator.validate_contract(
+                contract=contract_out,
+                payload=normalize_canonical(result.output),
+                direction="output",
+            )
+        )
 
     def _append_event(
         self,
@@ -1529,8 +1625,10 @@ __all__ = [
     "ProviderInvocationResultV1",
     "StateTapReaderProtocol",
     "SystemProcedureClock",
+    "accepted_procedure_pin_set_digest",
     "prepare_direct_procedure_run",
     "procedure_admission_digest",
     "procedure_pin_set_digest",
+    "procedure_run_receipt_digest",
     "run_value_digest",
 ]

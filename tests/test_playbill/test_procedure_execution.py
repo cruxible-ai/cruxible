@@ -196,7 +196,12 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
 
-def _provider_procedure(*, effectful: bool, activation_policy: str = "epoch-check"):
+def _provider_procedure(
+    *,
+    effectful: bool,
+    activation_policy: str = "epoch-check",
+    max_provider_calls: int = 1,
+):
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
     provider = _pin("provider", "Provider", "calculator")
@@ -219,7 +224,7 @@ def _provider_procedure(*, effectful: bool, activation_policy: str = "epoch-chec
             ),
         ),
         returns="result",
-        budget=_budget(providers=1),
+        budget=_budget(providers=max_provider_calls),
         hard_caps=_hard_caps(providers=1),
         terminal_capability=1,
     )
@@ -434,6 +439,27 @@ def test_effect_intent_is_durable_before_dispatch_and_result_follows(tmp_path) -
     assert provider.calls == 1
     kinds = [item.record.event_kind for item in fixture.journal.all_records(fixture.stream, "runs")]
     assert kinds.index("effect_intent") < kinds.index("effect_result")
+
+
+def test_provider_budget_refuses_before_effect_intent_or_dispatch(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _provider_procedure(effectful=True, max_provider_calls=0)
+    provider = _Provider(fixture.journal, fixture.stream)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_executor=provider,
+    ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
+
+    assert result.status == "budget_exhausted"
+    assert provider.calls == 0
+    assert "effect_intent" not in {
+        item.record.event_kind for item in fixture.journal.all_records(fixture.stream, "runs")
+    }
 
 
 def test_epoch_check_refuses_superseded_effect_before_intent(tmp_path) -> None:

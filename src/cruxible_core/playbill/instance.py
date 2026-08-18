@@ -38,11 +38,16 @@ from cruxible_core.playbill.keys import (
     raw_public_key_hex_from_openssh,
 )
 from cruxible_core.playbill.projection import (
+    AcceptedCoordinate,
     AcceptedProjectionCoordinate,
     AssemblerResult,
     projection_manifest_name,
 )
-from cruxible_core.playbill.proposals import ProposalEvidenceStore, ProposalService
+from cruxible_core.playbill.proposals import (
+    ExhaustPromotionVerifierProtocol,
+    ProposalEvidenceStore,
+    ProposalService,
+)
 from cruxible_core.playbill.recovery import (
     RecoveredGeneration,
     RecoveredInstanceState,
@@ -143,6 +148,7 @@ class PlaybillInstance:
         ledger: GitLedger,
         verified_genesis: VerifiedGenesis,
         recovered: RecoveredInstanceState,
+        promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     ) -> None:
         self.root = root
         self.descriptor = descriptor
@@ -150,6 +156,7 @@ class PlaybillInstance:
         self._ledger = ledger
         self._verified_genesis = verified_genesis
         self._recovered = recovered
+        self._promotion_verifier = promotion_verifier
 
     @classmethod
     def initialize(
@@ -162,6 +169,7 @@ class PlaybillInstance:
         git_object_format: GitObjectFormat = "sha256",
         operating_profile: OperatingProfile = "local",
         timestamp: str | None = None,
+        promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     ) -> "PlaybillInstance":
         """Create and reopen one managed instance from explicit bootstrap inputs."""
 
@@ -241,7 +249,11 @@ class PlaybillInstance:
                 canonical_bytes(descriptor.model_dump(mode="json")) + b"\n",
             )
             _fsync_directory(managed_root)
-            return cls.open(managed_root, trust_root=trust_root)
+            return cls.open(
+                managed_root,
+                trust_root=trust_root,
+                promotion_verifier=promotion_verifier,
+            )
         except BaseException:
             # `managed_root` was proven absent and created by this invocation.
             # Removing this exact incomplete target cannot affect prior user data.
@@ -255,6 +267,7 @@ class PlaybillInstance:
         *,
         trust_root: PlaybillTrustRoot,
         witness: WitnessSink | None = None,
+        promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     ) -> "PlaybillInstance":
         """Reopen only after replaying descriptor, key, signature, and both roots."""
 
@@ -362,8 +375,17 @@ class PlaybillInstance:
             publication_directory=paths["projections"],
             bodies=ContentAddressedBodyStore(paths["cas"]),
             witness=witness,
+            promotion_verifier=promotion_verifier,
         )
-        return cls(managed_root, descriptor, trust_root, ledger, verified, recovered)
+        return cls(
+            managed_root,
+            descriptor,
+            trust_root,
+            ledger,
+            verified,
+            recovered,
+            promotion_verifier,
+        )
 
     @staticmethod
     def _validated_paths(root: Path, layout: StorageLayout) -> dict[str, Path]:
@@ -422,6 +444,20 @@ class PlaybillInstance:
 
         return self._recovered.coordinate
 
+    def _accepted_coordinates_by_sequence(self) -> dict[int, AcceptedCoordinate]:
+        """Return replay-proven historical coordinates for stable derived activations."""
+
+        compiler_digest = self.descriptor.compiler.rule_digest
+        return {
+            generation.sequence: AcceptedCoordinate(
+                git_oid=generation.oid,
+                semantic_root=generation.semantic_root.tagged,
+                generation_root=generation.generation_root.tagged,
+                compiler_digest=compiler_digest,
+            )
+            for generation in self._recovered.history
+        }
+
     def projection_assembler(self) -> ProjectionAssembler:
         """Bind PB-B's internal assembler to this already-verified generation."""
 
@@ -431,6 +467,7 @@ class PlaybillInstance:
             accepted=self.accepted_coordinate(),
             publication_directory=paths["projections"],
             bodies=ContentAddressedBodyStore(paths["cas"]),
+            accepted_coordinates_by_sequence=self._accepted_coordinates_by_sequence(),
         )
 
     def body_store(self) -> ContentAddressedBodyStore:
@@ -454,6 +491,7 @@ class PlaybillInstance:
             bodies=ContentAddressedBodyStore(paths["cas"]),
             evidence=ProposalEvidenceStore(paths["exhaust"]),
             current_coordinate=self.accepted_coordinate,
+            promotion_verifier=self._promotion_verifier,
         )
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
@@ -551,6 +589,7 @@ class PlaybillInstance:
             accepted=verified,
             publication_directory=paths["projections"],
             bodies=ContentAddressedBodyStore(paths["cas"]),
+            accepted_coordinates_by_sequence=self._accepted_coordinates_by_sequence(),
         )
         request = assembler.request(
             output_staging_directory=paths["projections"] / ".historical-bind"
@@ -571,6 +610,7 @@ class PlaybillInstance:
             publication_directory=paths["projections"],
             bodies=ContentAddressedBodyStore(paths["cas"]),
             witness=witness,
+            promotion_verifier=self._promotion_verifier,
         )
         return self.accepted_coordinate()
 
@@ -587,6 +627,7 @@ class PlaybillInstance:
             publication_directory=paths["projections"],
             bodies=ContentAddressedBodyStore(paths["cas"]),
             witness=witness,
+            accepted_coordinates_by_sequence=self._accepted_coordinates_by_sequence(),
         )
 
     def prepare_generation(
@@ -610,6 +651,7 @@ class PlaybillInstance:
             bodies=self.body_store(),
             actor_binding=actor_binding,
             sequence=sequence,
+            promotion_verifier=self._promotion_verifier,
         )
 
     def assemble_projection(

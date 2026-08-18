@@ -125,6 +125,15 @@ from cruxible_core.playbill.errors import (
     ProposalIntegrityError,
     SubjectFormatError,
 )
+from cruxible_core.playbill.exhaust.promotions import (
+    AcceptedExhaustPromotionV1,
+    ExhaustPromotionError,
+    ExhaustPromotionLawResultV1,
+    ExhaustPromotionV1,
+    evaluate_exhaust_promotion_acceptance,
+    exhaust_promotion_digest,
+    parse_exhaust_promotion,
+)
 from cruxible_core.playbill.governance import (
     ActivationPolicy,
     ApprovalRequirement,
@@ -202,12 +211,22 @@ _STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,2
 _CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$")
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.yaml$")
+_EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _LFS_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
 
 
 class _StrictProposalModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ExhaustPromotionVerifierProtocol(Protocol):
+    """Operational verification seam shared by proposal, settlement, and recovery."""
+
+    def verify_promotion(
+        self,
+        promotion: ExhaustPromotionV1,
+    ) -> ExhaustPromotionLawResultV1: ...
 
 
 class AuthenticatedActor(_StrictProposalModel):
@@ -676,6 +695,7 @@ def validate_proposal_tree(
             or _CLAIM_PATH_RE.fullmatch(path)
             or _PROCEDURE_PATH_RE.fullmatch(path)
             or _LINE_PATH_RE.fullmatch(path)
+            or _EXHAUST_PROMOTION_PATH_RE.fullmatch(path)
         )
         if not authorable and base.get(path) != content:
             raise ProposalAdmissionError(
@@ -702,6 +722,7 @@ def validate_proposal_tree(
             or _CLAIM_PATH_RE.fullmatch(path)
             or _PROCEDURE_PATH_RE.fullmatch(path)
             or _LINE_PATH_RE.fullmatch(path)
+            or _EXHAUST_PROMOTION_PATH_RE.fullmatch(path)
         )
         if not authorable and path not in result:
             raise ProposalAdmissionError(
@@ -1305,6 +1326,7 @@ def _evaluate_v2_proposal_tree(
     actor_id: str | None,
     rebased: bool,
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...],
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None,
 ) -> CandidateEvaluation:
     for path in scope:
         proposed_bytes = candidate_tree.get(path)
@@ -1324,6 +1346,7 @@ def _evaluate_v2_proposal_tree(
                     _CLAIM_PATH_RE,
                     _PROCEDURE_PATH_RE,
                     _LINE_PATH_RE,
+                    _EXHAUST_PROMOTION_PATH_RE,
                 )
             ):
                 dependency_artifacts({path: proposed_bytes})
@@ -1338,6 +1361,7 @@ def _evaluate_v2_proposal_tree(
             ClaimTypeFormatError,
             ProcedureFormatError,
             LineSpecFormatError,
+            ExhaustPromotionError,
         ) as exc:
             return CandidateEvaluation(
                 candidate_tree,
@@ -1559,6 +1583,72 @@ def _evaluate_v2_proposal_tree(
                     },
                     (),
                     procedure.lifecycle.state == "retired",
+                )
+            )
+            continue
+        if _EXHAUST_PROMOTION_PATH_RE.fullmatch(path):
+            promotion = parse_exhaust_promotion(proposed_bytes, path=path)
+            predecessor_promotion: AcceptedExhaustPromotionV1 | None = None
+            if parent_state is not None:
+                previous_promotion = parse_exhaust_promotion(current_tree[path], path=path)
+                predecessor_promotion = AcceptedExhaustPromotionV1(
+                    path=path,
+                    promotion=previous_promotion,
+                    artifact_digest=exhaust_promotion_digest(previous_promotion),
+                    accepted_coordinate=AcceptedCoordinate.from_internal(current),
+                )
+            if promotion_verifier is None:
+                diagnostics.append(
+                    _diagnostic(
+                        "playbill.promotion.verifier_unavailable",
+                        "ExhaustPromotion evaluation requires the exact journal/reducer verifier.",
+                        path,
+                    )
+                )
+                continue
+            promotion_law = evaluate_exhaust_promotion_acceptance(
+                promotion,
+                path=path,
+                actor_roles=actor_roles,
+                predecessor=predecessor_promotion,
+                operational_result=promotion_verifier.verify_promotion(promotion),
+            )
+            if promotion_law.verdict == "refused":
+                diagnostics.append(
+                    _diagnostic(
+                        promotion_law.refusal_code or "playbill.promotion.refused",
+                        promotion_law.message or "ExhaustPromotion law refused.",
+                        path,
+                    )
+                )
+                continue
+            if (
+                promotion_law.artifact_digest is None
+                or promotion_law.required_tier is None
+                or promotion_law.activation_policy is None
+            ):
+                raise ProposalIntegrityError("accepted ExhaustPromotion law result is incomplete")
+            installed = PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+                artifact_tag=promotion.artifact_format
+            )
+            member_inputs.append(
+                (
+                    path,
+                    installed.artifact_kind,
+                    (
+                        None
+                        if predecessor_promotion is None
+                        else predecessor_promotion.artifact_digest
+                    ),
+                    promotion_law.artifact_digest,
+                    promotion_law.required_tier,
+                    promotion_law.approval_scope,
+                    promotion_law.activation_policy,
+                    installed.coordinate.identifier,
+                    installed.coordinate.digest,
+                    promotion_law.model_dump(mode="json"),
+                    (),
+                    promotion.lifecycle.state == "retired",
                 )
             )
             continue
@@ -2242,6 +2332,7 @@ def evaluate_proposal_tree(
     rebased: bool,
     actor_id: str | None = None,
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...] = (),
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
 ) -> CandidateEvaluation:
     candidate_tree = dict(proposed_tree)
     if rebased:
@@ -2258,6 +2349,7 @@ def evaluate_proposal_tree(
                     _CLAIM_PATH_RE,
                     _PROCEDURE_PATH_RE,
                     _LINE_PATH_RE,
+                    _EXHAUST_PROMOTION_PATH_RE,
                 )
             )
             for path in original_scope
@@ -2309,6 +2401,7 @@ def evaluate_proposal_tree(
                 _CLAIM_PATH_RE,
                 _PROCEDURE_PATH_RE,
                 _LINE_PATH_RE,
+                _EXHAUST_PROMOTION_PATH_RE,
             )
         )
         for path in scope
@@ -2324,6 +2417,7 @@ def evaluate_proposal_tree(
             actor_id=actor_id,
             rebased=rebased,
             claim_type_expansions=claim_type_expansions,
+            promotion_verifier=promotion_verifier,
         )
     if len(scope) != 1:
         return CandidateEvaluation(
@@ -2582,6 +2676,7 @@ class ProposalService:
         evidence: ProposalEvidenceStore,
         receive_limits: ProposalReceiveLimits = ProposalReceiveLimits(),
         current_coordinate: Callable[[], AcceptedProjectionCoordinate] | None = None,
+        promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -2589,6 +2684,7 @@ class ProposalService:
         self.evidence = evidence
         self.receive_limits = receive_limits
         self._current_coordinate = current_coordinate or (lambda: accepted)
+        self.promotion_verifier = promotion_verifier
 
     def submit(
         self,
@@ -2670,6 +2766,7 @@ class ProposalService:
             rebased=is_rebase,
             actor_id=actor.actor_id,
             claim_type_expansions=request.claim_type_expansions,
+            promotion_verifier=self.promotion_verifier,
         )
 
         evaluated_tree_oid: str | None = tree_oid
@@ -2716,6 +2813,7 @@ __all__ = [
     "ProposalResult",
     "ProposalService",
     "ProposalTransportProtocol",
+    "ExhaustPromotionVerifierProtocol",
     "claim_type_expansions_from_candidate",
     "deterministic_rebase",
     "deterministic_rebase_v2",

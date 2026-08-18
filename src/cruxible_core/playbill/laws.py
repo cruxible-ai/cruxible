@@ -17,6 +17,7 @@ SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v
 STANDING_MANDATE_LAW_IDENTIFIER = "playbill.standing-mandate.v1"
 PROCEDURE_LAW_IDENTIFIER = "playbill.procedure.v1"
 LINE_LAW_IDENTIFIER = "playbill.line.v1"
+EXHAUST_PROMOTION_LAW_IDENTIFIER = "playbill.exhaust-promotion.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
 SUBJECT_LAW_IDENTIFIER = "playbill.subject.v1"
 
@@ -163,6 +164,10 @@ STANDING_MANDATE_LAW = _artifact_law_coordinate(
 )
 PROCEDURE_LAW = _artifact_law_coordinate(PROCEDURE_LAW_IDENTIFIER, "playbill-procedure-v1")
 LINE_LAW = _artifact_law_coordinate(LINE_LAW_IDENTIFIER, "playbill-line-v1")
+EXHAUST_PROMOTION_LAW = _artifact_law_coordinate(
+    EXHAUST_PROMOTION_LAW_IDENTIFIER,
+    "playbill-exhaust-promotion-v1",
+)
 
 
 @dataclass(frozen=True)
@@ -270,12 +275,18 @@ LINE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="line",
     artifact_tag="playbill-line-v1",
 )
+EXHAUST_PROMOTION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=EXHAUST_PROMOTION_LAW,
+    artifact_kind="exhaust-promotion",
+    artifact_tag="playbill-exhaust-promotion-v1",
+)
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
+        EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
         PROCEDURE_ACCEPTANCE_LAW,
         LINE_ACCEPTANCE_LAW,
@@ -301,6 +312,9 @@ __all__ = [
     "DOCUMENT_ACCEPTANCE_LAW",
     "DOCUMENT_LAW",
     "DOCUMENT_LAW_IDENTIFIER",
+    "EXHAUST_PROMOTION_ACCEPTANCE_LAW",
+    "EXHAUST_PROMOTION_LAW",
+    "EXHAUST_PROMOTION_LAW_IDENTIFIER",
     "InstalledAcceptanceLaw",
     "LINE_ACCEPTANCE_LAW",
     "LINE_LAW",

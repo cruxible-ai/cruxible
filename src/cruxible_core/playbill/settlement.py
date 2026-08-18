@@ -69,6 +69,7 @@ from cruxible_core.playbill.projection import (
     CandidateGenerationProjectionCoordinate,
 )
 from cruxible_core.playbill.proposals import (
+    ExhaustPromotionVerifierProtocol,
     claim_type_expansions_from_candidate,
     evaluate_proposal_tree,
 )
@@ -493,6 +494,7 @@ def prepare_generation(
     laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     mandate_digest: str | None = None,
     crash_hook: SettlementCrashHook | None = None,
+    promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
@@ -511,6 +513,7 @@ def prepare_generation(
         rebased=False,
         actor_id=actor_binding.actor_id,
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
+        promotion_verifier=promotion_verifier,
     )
     if reevaluated.candidate is None or reevaluated.diagnostics:
         raise SettlementIntegrityError("candidate no longer passes its accepted laws")

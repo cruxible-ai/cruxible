@@ -13,6 +13,7 @@ from cruxible_core.playbill.projection_extensions import (
     playbill_extension_registry,
     playbill_governance_extension_registry,
     playbill_procedure_extension_registry,
+    playbill_runtime_extension_registry,
     playbill_subject_extension_registry,
 )
 from cruxible_core.playbill.types import CompilerCoordinate
@@ -38,6 +39,7 @@ PC_A2_COMPILER = _coordinate(projection_content="claims-procedures-claim-type-v1
 PC_B_COMPILER = _coordinate(projection_content="claims-procedures-claim-v1")
 PC_C_COMPILER = _coordinate(projection_content="claims-procedures-evidence-v1")
 PC_D_COMPILER = _coordinate(projection_content="claims-procedures-procedure-v1")
+PC_E1_COMPILER = _coordinate(projection_content="claims-procedures-runtime-v1")
 SUPPORTED_COMPILERS = (
     PB_B_COMPILER,
     PB_C_COMPILER,
@@ -47,11 +49,12 @@ SUPPORTED_COMPILERS = (
     PC_B_COMPILER,
     PC_C_COMPILER,
     PC_D_COMPILER,
+    PC_E1_COMPILER,
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return PC_D_COMPILER
+    return PC_E1_COMPILER
 
 
 def projection_registry_for_compiler(
@@ -73,6 +76,8 @@ def projection_registry_for_compiler(
         return playbill_evidence_extension_registry()
     if compiler == PC_D_COMPILER:
         return playbill_procedure_extension_registry()
+    if compiler == PC_E1_COMPILER:
+        return playbill_runtime_extension_registry()
     raise PlaybillFormatError("compiler coordinate has no installed deterministic registry")
 
 
@@ -85,6 +90,7 @@ __all__ = [
     "PC_B_COMPILER",
     "PC_C_COMPILER",
     "PC_D_COMPILER",
+    "PC_E1_COMPILER",
     "SUPPORTED_COMPILERS",
     "current_compiler_coordinate",
     "projection_registry_for_compiler",

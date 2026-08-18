@@ -6,7 +6,8 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, cast
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Literal, Mapping, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -17,7 +18,12 @@ from cruxible_core.playbill.artifacts import (
     ArtifactPathKind,
 )
 from cruxible_core.playbill.bootstrap import render_principal
-from cruxible_core.playbill.canonical import ArtifactDigest, canonical_bytes, file_digest
+from cruxible_core.playbill.canonical import (
+    ArtifactDigest,
+    canonical_bytes,
+    file_digest,
+    normalize_canonical,
+)
 from cruxible_core.playbill.cas import BodyAccessContext, BodyProjectionProtocol
 from cruxible_core.playbill.claim_types import (
     ClaimTypeFormatError,
@@ -51,6 +57,7 @@ from cruxible_core.playbill.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.types import PrincipalRecord
 
 if TYPE_CHECKING:
+    from cruxible_core.playbill.projection import AcceptedCoordinate
     from cruxible_core.playbill.settlement import ChangeSetRecord, ChangeSetRecordV2
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -107,6 +114,10 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
             re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
         ),
         ArtifactPathKind(
+            "exhaust-promotion",
+            re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
+        ),
+        ArtifactPathKind(
             "fixture",
             re.compile(r"^artifacts/fixtures/[a-z][a-z0-9_.-]{0,255}\.yaml$"),
         ),
@@ -132,6 +143,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-claim-v1",
                 "playbill-accepted-state-run-input-v1",
                 "playbill-exhaust-run-input-v1",
+                "playbill-exhaust-promotion-v1",
                 "playbill-landed-capture-run-input-v1",
                 "playbill-line-slot-binding-v1",
                 "playbill-line-v1",
@@ -149,6 +161,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-capture-envelope-v1",
             "playbill-claim-v1",
             "playbill-exhaust-run-input-v1",
+            "playbill-exhaust-promotion-v1",
             "playbill-landed-capture-run-input-v1",
             "playbill-line-slot-binding-v1",
             "playbill-line-v1",
@@ -168,6 +181,7 @@ RegisteredPathKind = Literal[
     "claim",
     "claim-type",
     "document",
+    "exhaust-promotion",
     "fixture",
     "line",
     "presentation",
@@ -338,6 +352,46 @@ def _projected_revision(
     return len(history) + 1
 
 
+def _accepted_artifact_timestamp(
+    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    *,
+    path: str,
+    artifact_digest: str,
+) -> datetime | None:
+    """Return the signed C_s time of the change set that accepted this exact revision."""
+
+    for _record_path, record in reversed(records):
+        if not any(
+            member.path == path
+            and getattr(member, "candidate_artifact_digest", None) == artifact_digest
+            for member in record.members
+        ):
+            continue
+        return datetime.strptime(record.candidate.timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+            tzinfo=timezone.utc
+        )
+    return None
+
+
+def _accepted_artifact_coordinate(
+    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    *,
+    path: str,
+    artifact_digest: str,
+    coordinates_by_sequence: Mapping[int, AcceptedCoordinate],
+) -> AcceptedCoordinate | None:
+    """Resolve the immutable generation that accepted one exact artifact revision."""
+
+    for _record_path, record in reversed(records):
+        if any(
+            member.path == path
+            and getattr(member, "candidate_artifact_digest", None) == artifact_digest
+            for member in record.members
+        ):
+            return coordinates_by_sequence.get(record.sequence)
+    return None
+
+
 def _current_member_law_result(
     records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
     *,
@@ -429,6 +483,7 @@ def parse_projection_tree(
     registry: ProjectionExtensionRegistry,
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
+    accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
 
@@ -445,6 +500,7 @@ def parse_projection_tree(
         claim_statement_digest,
         parse_claim,
     )
+    from cruxible_core.playbill.projection import AcceptedCoordinate
     from cruxible_core.playbill.settlement import (
         parse_change_set_record,
     )
@@ -475,6 +531,18 @@ def parse_projection_tree(
     if [record.sequence for _path, record in change_sets] != list(range(1, len(change_sets) + 1)):
         raise ProjectionFormatError("change-set history must be contiguous from sequence one")
     accepted_change_sets = tuple(change_sets)
+    accepted_coordinates = dict(accepted_coordinates_by_sequence or {})
+    if coordinate is not None and change_sets:
+        latest_sequence = change_sets[-1][1].sequence
+        accepted_coordinates.setdefault(
+            latest_sequence,
+            AcceptedCoordinate(
+                git_oid=coordinate.git_oid,
+                semantic_root=coordinate.semantic_root,
+                generation_root=coordinate.generation_root,
+                compiler_digest=coordinate.compiler_digest,
+            ),
+        )
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
         content = blobs[path]
@@ -1137,6 +1205,53 @@ def parse_projection_tree(
                     )
                 )
                 if coordinate is not None and registry.supports(
+                    "playbill.procedure.resolution_activation",
+                    1,
+                    classification="semantic",
+                ):
+                    from cruxible_core.playbill.procedures.artifacts import (
+                        AcceptedProcedureV1,
+                    )
+                    from cruxible_core.playbill.procedures.resolution import (
+                        derive_resolution_activations,
+                    )
+
+                    activated_at = _accepted_artifact_timestamp(
+                        accepted_change_sets,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                    )
+                    accepting_coordinate = _accepted_artifact_coordinate(
+                        accepted_change_sets,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        coordinates_by_sequence=accepted_coordinates,
+                    )
+                    if activated_at is not None and accepting_coordinate is not None:
+                        activations = derive_resolution_activations(
+                            AcceptedProcedureV1(
+                                path=path,
+                                procedure=procedure,
+                                artifact_digest=artifact_digest,
+                            ),
+                            accepted_coordinate=accepting_coordinate,
+                            activated_at=activated_at,
+                        )
+                        semantic_facts.extend(
+                            ProjectionFact(
+                                schema_id="playbill.procedure.resolution_activation",
+                                schema_version=1,
+                                subject_identity=identity,
+                                fact_key=activation.measurement_name,
+                                value=activation.model_dump(mode="json"),
+                            )
+                            for activation in activations
+                        )
+                    elif procedure.definition.measurements:
+                        raise ProjectionFormatError(
+                            "Procedure measurement activation lacks its accepting coordinate"
+                        )
+                if coordinate is not None and registry.supports(
                     "playbill.procedure.attestation_coverage",
                     1,
                     classification="semantic",
@@ -1235,6 +1350,107 @@ def parse_projection_tree(
                             predecessor_digest=line.lifecycle.predecessor_digest,
                             records=accepted_change_sets,
                             coordinate=coordinate,
+                        )
+                    )
+                continue
+            if kind == "exhaust-promotion":
+                from cruxible_core.playbill.exhaust.promotions import (
+                    AcceptedExhaustPromotionV1,
+                    exhaust_promotion_digest,
+                    parse_exhaust_promotion,
+                    procedure_track_record_facts,
+                )
+
+                promotion = parse_exhaust_promotion(content, path=path)
+                identity = promotion.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = exhaust_promotion_digest(promotion)
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="exhaust-promotion",
+                        format_tag=promotion.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=promotion.lifecycle.predecessor_digest,
+                        revision=_projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                if promotion.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in promotion.pins
+                )
+                semantic_facts.append(
+                    ProjectionFact(
+                        schema_id="playbill.exhaust_promotion.basis",
+                        schema_version=1,
+                        subject_identity=identity,
+                        fact_key="verified_range",
+                        value={
+                            "artifact_digest": {"$digest": artifact_digest},
+                            "input_digest": {"$digest": input_digest},
+                            "promotion": promotion.model_dump(mode="json"),
+                        },
+                    )
+                )
+                if coordinate is not None and registry.supports(
+                    "playbill.procedure.track_record",
+                    1,
+                    classification="semantic",
+                ):
+                    if bodies is None:
+                        raise ProjectionFormatError(
+                            "ExhaustPromotion projection requires its canonical output CAS object"
+                        )
+                    accepted_coordinate = _accepted_artifact_coordinate(
+                        accepted_change_sets,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        coordinates_by_sequence=accepted_coordinates,
+                    )
+                    if accepted_coordinate is None:
+                        raise ProjectionFormatError(
+                            "ExhaustPromotion projection lacks its accepting coordinate"
+                        )
+                    try:
+                        output = normalize_canonical(
+                            json.loads(
+                                bodies.read(
+                                    promotion.output_digest,
+                                    access=BodyAccessContext(
+                                        principal_id="playbill-projection",
+                                        can_read_body=True,
+                                    ),
+                                )
+                            )
+                        )
+                    except (PlaybillCasError, UnicodeDecodeError, ValueError) as exc:
+                        raise ProjectionFormatError(
+                            "ExhaustPromotion canonical output is missing or malformed"
+                        ) from exc
+                    semantic_facts.extend(
+                        procedure_track_record_facts(
+                            AcceptedExhaustPromotionV1(
+                                path=path,
+                                promotion=promotion,
+                                artifact_digest=artifact_digest,
+                                accepted_coordinate=accepted_coordinate,
+                            ),
+                            output=output,
                         )
                     )
                 continue

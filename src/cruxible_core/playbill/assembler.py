@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final, Protocol, TypeVar
 
@@ -16,6 +16,7 @@ from cruxible_core.playbill.errors import (
     ProjectionPublicationError,
 )
 from cruxible_core.playbill.projection import (
+    AcceptedCoordinate,
     AcceptedProjectionCoordinate,
     AssemblerRequest,
     AssemblerResult,
@@ -150,6 +151,7 @@ class ProjectionAssembler:
         publication_directory: Path,
         registry: ProjectionExtensionRegistry | None = None,
         bodies: BodyProjectionProtocol | None = None,
+        accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
     ) -> None:
         if publication_directory.is_symlink() or not publication_directory.is_dir():
             raise ProjectionPublicationError(
@@ -160,6 +162,7 @@ class ProjectionAssembler:
         self.publication_directory = publication_directory.resolve(strict=True)
         self.registry = registry or projection_registry_for_compiler(accepted.compiler)
         self.bodies = bodies
+        self.accepted_coordinates_by_sequence = dict(accepted_coordinates_by_sequence or {})
 
     def request(self, *, output_staging_directory: Path) -> AssemblerRequest:
         """Create the exact serializable request for this verified coordinate."""
@@ -273,6 +276,7 @@ class ProjectionAssembler:
                 registry=self.registry,
                 bodies=self.bodies,
                 coordinate=request,
+                accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,
             ),
         )
         parsed = _timed(timings, "sort", lambda: _sorted_projection_tree(parsed))

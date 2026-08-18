@@ -101,6 +101,8 @@ class ProcedureRunIndex:
         payload: CanonicalValue,
     ) -> None:
         record = stored.record
+        if record.run_id is None:
+            raise PlaybillExecutionError("Procedure run exhaust record lacks a run_id")
         admission = record.admission_binding_digest
         if admission is None:
             raise PlaybillExecutionError("Procedure exhaust record lacks an admission binding")

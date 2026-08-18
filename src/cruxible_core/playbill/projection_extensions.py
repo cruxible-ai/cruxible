@@ -523,6 +523,28 @@ def playbill_procedure_extension_registry() -> ProjectionExtensionRegistry:
     )
 
 
+def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
+    """Return PC-E1's additive activation, promotion, and track-record schemas."""
+
+    prior = playbill_procedure_extension_registry()
+    runtime = tuple(
+        ProjectionFactDeclaration(
+            schema_id=schema_id,
+            schema_version=1,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        )
+        for schema_id in (
+            "playbill.exhaust_promotion.basis",
+            "playbill.procedure.resolution_activation",
+            "playbill.procedure.track_record",
+        )
+    )
+    return ProjectionExtensionRegistry(
+        (*prior.declarations("semantic"), *runtime, *prior.declarations("presentation"))
+    )
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -533,6 +555,7 @@ __all__ = [
     "playbill_claim_extension_registry",
     "playbill_evidence_extension_registry",
     "playbill_procedure_extension_registry",
+    "playbill_runtime_extension_registry",
     "playbill_claim_type_extension_registry",
     "playbill_extension_registry",
     "playbill_governance_extension_registry",
