@@ -180,9 +180,12 @@ was removed or rewritten around the surviving Playbill surface.
 
 PC-D subsequently deleted the `cruxible_core.group` and `cruxible_core.kits`
 packages, workflow proposal/apply modules, and the old Procedure persistence
-lifecycle. The frozen Procedure graph-format-v1/v2 readers remain as a PC-E2
-proof oracle, but importing them no longer initializes any retired governance
-or storage path.
+lifecycle. The frozen Procedure graph-format-v1/v2 readers remain as a PC-H
+corpus verifier — PC-H settles whether they become a permanent non-donor
+verifier package — while the workflow query-oracle spine and the provider
+contract/trace donor now leave at PC-F and the un-transplanted provider readers
+at PC-G. Importing any of them no longer initializes a retired governance or
+storage path.
 
 PC-E1 deleted the ReceiptStore and ResolutionContractStore packages, protocols,
 runtime accessors, SQLite initialization, receipt-derived history/trace reads,
@@ -200,14 +203,14 @@ adapter. Every row has an owning removal batch.
 
 | Donor module prefix | Removal batch | Why retained | Adapter |
 |---|---:|---|---|
-| `cruxible_core.procedure` | PC-E2 | Frozen definition/digest/static-law plus measurement oracle | — |
-| `cruxible_core.workflow` | PC-E2 | Compiler, contract, transform, and pure receipt-tree oracle | — |
+| `cruxible_core.procedure` | PC-H | Frozen graph-format v1/v2 corpus verifier; PC-H settles whether it becomes a permanent non-donor verifier package | — |
+| `cruxible_core.workflow` | PC-F | Query-oracle spine for PC-F parity; `ReceiptBuilder`/`Receipt` rehome required first | — |
 | `cruxible_core.config.schema` | PC-F | Selected step, query, provider, and contract schema donor | — |
 | `cruxible_core.predicate` | PC-F | Typed comparison and coercion donor | — |
 | `cruxible_core.query` | PC-F | Traversal, filtering, and projection donor | — |
 | `cruxible_core.graph` | PC-F | Query-oracle types and `EvidenceRef` behavior | — |
-| `cruxible_core.provider` | PC-E2 | Provider contract, registry, and trace donor | — |
-| `cruxible_core.providers` | PC-E2 | Provider implementation donor | — |
+| `cruxible_core.provider` | PC-F | Provider contract/trace donor; last consumers are workflow and service types | — |
+| `cruxible_core.providers` | PC-G | Un-transplanted tabular/document/identity readers; native source connectors land with the vertical slice | — |
 | `cruxible_core.runtime.instance` | PC-F | Temporary donor-parity harness | — |
 | `cruxible_core.storage.sqlite` | PC-F | Temporary donor-parity storage harness | — |
 | `cruxible_core.instance_protocol` | PC-F | Temporary interface, metadata, and integrity harness | — |

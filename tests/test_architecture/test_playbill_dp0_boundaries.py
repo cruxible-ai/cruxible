@@ -30,14 +30,14 @@ ORACLE_COMMITS = {
 }
 
 RATIFIED_DONOR_REMOVAL_BATCHES = {
-    "cruxible_core.procedure": "PC-E2",
-    "cruxible_core.workflow": "PC-E2",
+    "cruxible_core.procedure": "PC-H",
+    "cruxible_core.workflow": "PC-F",
     "cruxible_core.config.schema": "PC-F",
     "cruxible_core.predicate": "PC-F",
     "cruxible_core.query": "PC-F",
     "cruxible_core.graph": "PC-F",
-    "cruxible_core.provider": "PC-E2",
-    "cruxible_core.providers": "PC-E2",
+    "cruxible_core.provider": "PC-F",
+    "cruxible_core.providers": "PC-G",
     "cruxible_core.runtime.instance": "PC-F",
     "cruxible_core.storage.sqlite": "PC-F",
     "cruxible_core.instance_protocol": "PC-F",

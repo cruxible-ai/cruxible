@@ -18,13 +18,14 @@ DONOR_MANIFEST_VERSION = "playbill-donor-manifest-v1"
 DONOR_MANIFEST: tuple[DonorEntry, ...] = (
     DonorEntry(
         "cruxible_core.procedure",
-        "PC-E2",
-        "frozen definition/digest/static-law plus measurement oracle",
+        "PC-H",
+        "frozen graph-format v1/v2 corpus verifier; PC-H settles whether it becomes a "
+        "permanent non-donor verifier package",
     ),
     DonorEntry(
         "cruxible_core.workflow",
-        "PC-E2",
-        "compiler, contract, transform, and pure receipt-tree oracle through runtime parity",
+        "PC-F",
+        "query-oracle spine for PC-F parity; ReceiptBuilder/Receipt rehome required first",
     ),
     DonorEntry(
         "cruxible_core.config.schema",
@@ -48,13 +49,14 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
     ),
     DonorEntry(
         "cruxible_core.provider",
-        "PC-E2",
-        "provider contract, registry, and trace donor through line runtime parity",
+        "PC-F",
+        "provider contract/trace donor; last consumers are workflow and service types",
     ),
     DonorEntry(
         "cruxible_core.providers",
-        "PC-E2",
-        "provider implementations retained through line runtime parity",
+        "PC-G",
+        "un-transplanted tabular/document/identity readers; native source connectors "
+        "land with the vertical slice",
     ),
     DonorEntry(
         "cruxible_core.runtime.instance",
