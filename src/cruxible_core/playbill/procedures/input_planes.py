@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cruxible_core.playbill.canonical import ArtifactDigest, Sha256Value
+from cruxible_core.playbill.canonical import ArtifactDigest, Sha256Value, typed_digest
 from cruxible_core.playbill.procedures.models import (
     ExhaustTapNodeV3,
     SourceNodeV3,
@@ -102,6 +102,44 @@ ProcedureRunInputV1 = Annotated[
 ]
 
 
+_PLANE_FOR_NODE: dict[str, str] = {
+    "state_tap": "accepted_state",
+    "source": "landed_capture",
+    "exhaust_tap": "exhaust",
+}
+
+_PLANE_DIGEST_DOMAINS: dict[str, str] = {
+    "accepted_state": "playbill-accepted-state-run-input-v1",
+    "landed_capture": "playbill-landed-capture-run-input-v1",
+    "exhaust": "playbill-exhaust-run-input-v1",
+}
+
+
+def run_input_digest(run_input: ProcedureRunInputV1) -> str:
+    """Address one admitted input by its exact plane record, never by its value."""
+
+    payload = run_input.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        _PLANE_DIGEST_DOMAINS[run_input.kind],
+        payload,
+    ).tagged
+
+
+def merge_run_input_vector(
+    *vectors: tuple[ProcedureRunInputV1, ...],
+) -> tuple[ProcedureRunInputV1, ...]:
+    """Return one sorted, name-unique discriminated union across the three planes."""
+
+    merged = [item for vector in vectors for item in vector]
+    ordered = tuple(sorted(merged, key=lambda item: item.input_name.encode("utf-8")))
+    names = tuple(item.input_name for item in ordered)
+    if len(set(names)) != len(names):
+        raise ValueError("Procedure run inputs must not reuse one input_name across planes")
+    return ordered
+
+
 def validate_run_input_vector(
     inputs: tuple[ProcedureRunInputV1, ...],
     *,
@@ -135,15 +173,17 @@ def validate_node_input_plane(
 ) -> None:
     """Refuse any attempt to relabel evidence between the three input planes."""
 
-    expected = {
-        "state_tap": "accepted_state",
-        "source": "landed_capture",
-        "exhaust_tap": "exhaust",
-    }[node.kind]
+    expected = _PLANE_FOR_NODE[node.kind]
     if run_input.kind != expected:
         raise ValueError(
             f"Procedure node {node.node_id!r} requires {expected!r}, got {run_input.kind!r}"
         )
+
+
+def node_input_plane(node: StateTapNodeV3 | SourceNodeV3 | ExhaustTapNodeV3) -> str:
+    """Return the one plane a v3 input node may ever read."""
+
+    return _PLANE_FOR_NODE[node.kind]
 
 
 __all__ = [
@@ -151,6 +191,9 @@ __all__ = [
     "ExhaustRunInputV1",
     "LandedCaptureRunInputV1",
     "ProcedureRunInputV1",
+    "merge_run_input_vector",
+    "node_input_plane",
+    "run_input_digest",
     "validate_node_input_plane",
     "validate_run_input_vector",
 ]

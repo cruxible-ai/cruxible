@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_core.playbill.acquisition_policies import (
+    AcquisitionInputDecisionV1,
+    InputAcquisitionRuleV1,
+    SourceAcquisitionPolicyV1,
+)
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_core.playbill.canonical import (
@@ -30,6 +37,12 @@ from cruxible_core.playbill.exhaust import (
     journal_payload_bytes,
     parse_journal_payload,
 )
+from cruxible_core.playbill.procedures.acquisition import (
+    ProcedureCaptureMaterialV1,
+    ProcedureSourceAcquirerProtocol,
+    ProcedureSourceAcquisitionResultV1,
+    apply_acquisition_result,
+)
 from cruxible_core.playbill.procedures.artifacts import (
     AcceptedProcedureV1,
     procedure_artifact_digest,
@@ -37,6 +50,12 @@ from cruxible_core.playbill.procedures.artifacts import (
 from cruxible_core.playbill.procedures.graph import analyze_procedure_v3
 from cruxible_core.playbill.procedures.input_planes import (
     AcceptedStateRunInputV1,
+    ExhaustRunInputV1,
+    LandedCaptureRunInputV1,
+    ProcedureRunInputV1,
+    merge_run_input_vector,
+    run_input_digest,
+    validate_node_input_plane,
     validate_run_input_vector,
 )
 from cruxible_core.playbill.procedures.models import (
@@ -61,8 +80,29 @@ from cruxible_core.playbill.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
+from cruxible_core.playbill.procedures.terminal_dependencies import (
+    TAINT_ACCEPTED_STATE,
+    TAINT_CONSERVATIVE_DEFAULT,
+    TAINT_OMITTED_OPTIONAL,
+    TAINT_UNPROMOTED_EXHAUST,
+    AcquisitionInputOutcomeV1,
+    AliasProvenanceV1,
+    DependencyEvidenceFactsV1,
+    DependencyToken,
+    TerminalChildReceiptV1,
+    accepted_state_token,
+    admitted_capture_token,
+    build_terminal_item_manifest,
+    derive_terminal_item_facts,
+    exhaust_token,
+    policy_token,
+    produced_capture_token,
+    receipt_token,
+    terminal_item_key,
+    terminal_item_manifest_digest,
+)
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.temporal import ensure_utc, utc_now
+from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
 
 ProcedureRunStatusV1 = Literal["succeeded", "refused", "failed", "budget_exhausted"]
 
@@ -131,7 +171,13 @@ class AcceptedStateRunMaterialV1(_StrictExecutionModel):
 
 
 class ProcedureRunAdmissionV1(_StrictExecutionModel):
-    """The complete direct-invocation binding fixed before any result is visible."""
+    """The complete run binding fixed before any result is visible.
+
+    A direct actor invocation binds the accepted-state plane alone.  A Line run
+    additionally binds the occurrence, deployment snapshot, acquisition policy,
+    mandate and calibration coordinates, sensitivity policy, and epsilon
+    membership, and may bind the landed-Capture and exhaust planes.
+    """
 
     tag: Literal["playbill-procedure-run-admission-v1"] = "playbill-procedure-run-admission-v1"
     instance_id: str
@@ -148,18 +194,23 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
     pin_set_digest: str
     invocation_input: object
     accepted_state_inputs: tuple[AcceptedStateRunInputV1, ...]
+    landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = ()
+    exhaust_inputs: tuple[ExhaustRunInputV1, ...] = ()
     budget: ProcedureBudgetV3
     hard_caps: ProcedureHardCapsV3
     actor_context: GovernedActorContext
-    invocation_origin: Literal["actor"] = "actor"
+    invocation_origin: Literal["actor", "line"] = "actor"
     journal_stream: JournalStreamIdentityV1
     journal_partition_id: str
     line_spec_digest: str | None = None
     occurrence_id: str | None = None
     deployment_snapshot_digest: str | None = None
     acquisition_policy_digest: str | None = None
+    selection_receipt_digest: str | None = None
+    sensitivity_policy_digest: str | None = None
     mandate_coordinate_digest: str | None = None
     calibration_coordinate_digest: str | None = None
+    taint_labels: tuple[str, ...] = ()
     epsilon_member: bool = False
     admitted_at: datetime
     admission_binding_digest: str
@@ -176,6 +227,8 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
         "line_spec_digest",
         "deployment_snapshot_digest",
         "acquisition_policy_digest",
+        "selection_receipt_digest",
+        "sensitivity_policy_digest",
         "mandate_coordinate_digest",
         "calibration_coordinate_digest",
         "admission_binding_digest",
@@ -211,31 +264,59 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
             raise ValueError("Procedure node pin sets must be sorted and unique")
         return value
 
+    @field_validator("taint_labels")
+    @classmethod
+    def _taint(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("admitted taint labels must be sorted and unique")
+        return value
+
+    @property
+    def run_inputs(self) -> tuple[ProcedureRunInputV1, ...]:
+        """Return the complete discriminated union bound before any result is visible."""
+
+        return merge_run_input_vector(
+            self.accepted_state_inputs,
+            self.landed_capture_inputs,
+            self.exhaust_inputs,
+        )
+
     @model_validator(mode="after")
-    def _direct_e1_shape(self) -> "ProcedureRunAdmissionV1":
+    def _admission_shape(self) -> "ProcedureRunAdmissionV1":
         if self.procedure_identity.kind != "Procedure":
             raise ValueError("Procedure run admission requires a Procedure identity")
         if self.journal_stream.instance_id != self.instance_id:
             raise ValueError("Procedure run and journal stream instance identities differ")
         validate_run_input_vector(
-            self.accepted_state_inputs,
+            self.run_inputs,
             expected_accepted=self.accepted_coordinate,
         )
-        if (
-            any(
-                value is not None
-                for value in (
-                    self.line_spec_digest,
-                    self.occurrence_id,
-                    self.deployment_snapshot_digest,
-                    self.acquisition_policy_digest,
-                    self.mandate_coordinate_digest,
-                    self.calibration_coordinate_digest,
-                )
+        line_state = (
+            self.line_spec_digest,
+            self.occurrence_id,
+            self.deployment_snapshot_digest,
+            self.acquisition_policy_digest,
+            self.mandate_coordinate_digest,
+            self.calibration_coordinate_digest,
+        )
+        if self.invocation_origin == "actor":
+            if any(value is not None for value in line_state) or self.epsilon_member:
+                raise ValueError("PC-E1 direct admission cannot claim Line/deployment policy state")
+            if (
+                self.landed_capture_inputs
+                or self.exhaust_inputs
+                or self.selection_receipt_digest is not None
+                or self.sensitivity_policy_digest is not None
+                or self.taint_labels
+            ):
+                raise ValueError("direct admission binds only the accepted-state input plane")
+        elif any(value is None for value in line_state):
+            raise ValueError(
+                "Line run admission must bind LineSpec, occurrence, deployment snapshot, "
+                "acquisition policy, mandate, and calibration coordinates together"
             )
-            or self.epsilon_member
-        ):
-            raise ValueError("PC-E1 direct admission cannot claim Line/deployment policy state")
+        elif self.sensitivity_policy_digest is None:
+            raise ValueError("Line run admission must bind its sensitivity policy")
         expected_pin_digest = procedure_pin_set_digest(self.full_pins, self.node_pin_sets)
         if self.pin_set_digest != expected_pin_digest:
             raise ValueError("Procedure run pin_set_digest does not reproduce")
@@ -245,16 +326,66 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
         return self
 
 
+class LandedCaptureRunMaterialV1(_StrictExecutionModel):
+    """One admitted landed Capture and the exact envelope its digest reproduces."""
+
+    tag: Literal["playbill-landed-capture-run-material-v1"] = (
+        "playbill-landed-capture-run-material-v1"
+    )
+    input: LandedCaptureRunInputV1
+    material: ProcedureCaptureMaterialV1
+
+    @model_validator(mode="after")
+    def _binding(self) -> "LandedCaptureRunMaterialV1":
+        if self.material.capture_digest != self.input.capture_digest:
+            raise ValueError("landed Capture material differs from its admitted input")
+        if self.material.capture_contract_digest != self.input.capture_contract_digest:
+            raise ValueError("landed Capture material names another CaptureContract")
+        return self
+
+
+class ExhaustRunMaterialV1(_StrictExecutionModel):
+    """One admitted exhaust range result; the range and reducer are already bound."""
+
+    tag: Literal["playbill-exhaust-run-material-v1"] = "playbill-exhaust-run-material-v1"
+    input: ExhaustRunInputV1
+    value: object
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _digest(self) -> "ExhaustRunMaterialV1":
+        if self.input.result_digest != run_value_digest("exhaust-result", self.value):
+            raise ValueError("exhaust material does not reproduce its result digest")
+        return self
+
+
 class PreparedProcedureRunV1(_StrictExecutionModel):
     tag: Literal["playbill-prepared-procedure-run-v1"] = "playbill-prepared-procedure-run-v1"
     admission: ProcedureRunAdmissionV1
     accepted_state_materials: tuple[AcceptedStateRunMaterialV1, ...]
+    landed_capture_materials: tuple[LandedCaptureRunMaterialV1, ...] = ()
+    exhaust_materials: tuple[ExhaustRunMaterialV1, ...] = ()
+    acquisition_outcomes: tuple[AcquisitionInputOutcomeV1, ...] = ()
 
     @model_validator(mode="after")
     def _materials(self) -> "PreparedProcedureRunV1":
-        inputs = self.admission.accepted_state_inputs
-        if tuple(item.input for item in self.accepted_state_materials) != inputs:
+        if tuple(item.input for item in self.accepted_state_materials) != (
+            self.admission.accepted_state_inputs
+        ):
             raise ValueError("prepared run materials must exactly match admitted state inputs")
+        if tuple(item.input for item in self.landed_capture_materials) != (
+            self.admission.landed_capture_inputs
+        ):
+            raise ValueError("prepared run materials must exactly match admitted landed Captures")
+        if tuple(item.input for item in self.exhaust_materials) != self.admission.exhaust_inputs:
+            raise ValueError("prepared run materials must exactly match admitted exhaust inputs")
+        names = tuple(item.input_name for item in self.acquisition_outcomes)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("prepared acquisition outcomes must be sorted and unique")
         return self
 
 
@@ -424,21 +555,37 @@ def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
     ).tagged
 
 
-def _exact_pin(binding: ArtifactPin | ProcedurePinSlotRefV1, *, label: str) -> ArtifactPin:
+def _exact_pin(
+    binding: ArtifactPin | ProcedurePinSlotRefV1,
+    *,
+    label: str,
+    slot_pins: Mapping[str, ArtifactPin] | None = None,
+) -> ArtifactPin:
+    """Resolve one binding to an exact pin, using the LineSpec closure when bound."""
+
     if isinstance(binding, ProcedurePinSlotRefV1):
-        raise PlaybillExecutionError(f"line_binding_required: {label} uses a LineSpec pin slot")
+        bound = None if slot_pins is None else slot_pins.get(binding.slot_name)
+        if bound is None:
+            raise PlaybillExecutionError(f"line_binding_required: {label} uses a LineSpec pin slot")
+        return bound
     return binding
 
 
-def _node_pin_sets(accepted: AcceptedProcedureV1) -> tuple[ProcedureNodePinSetV1, ...]:
+def _node_pin_sets(
+    accepted: AcceptedProcedureV1,
+    slot_pins: Mapping[str, ArtifactPin] | None = None,
+) -> tuple[ProcedureNodePinSetV1, ...]:
     result: list[ProcedureNodePinSetV1] = []
     for node in accepted.procedure.definition.nodes:
         bindings = iter_pin_bindings(node)
-        if any(isinstance(item, ProcedurePinSlotRefV1) for item in bindings):
-            raise PlaybillExecutionError(
-                f"line_binding_required: Procedure node {node.node_id!r} uses a LineSpec pin slot"
+        pins = tuple(
+            _exact_pin(
+                item,
+                label=f"Procedure node {node.node_id!r}",
+                slot_pins=slot_pins,
             )
-        pins = tuple(item for item in bindings if isinstance(item, ArtifactPin))
+            for item in bindings
+        )
         result.append(
             ProcedureNodePinSetV1(
                 node_id=node.node_id,
@@ -455,6 +602,26 @@ def _node_pin_sets(accepted: AcceptedProcedureV1) -> tuple[ProcedureNodePinSetV1
             )
         )
     return tuple(sorted(result, key=lambda item: item.node_id.encode("utf-8")))
+
+
+def resolve_procedure_pin(
+    binding: ArtifactPin | ProcedurePinSlotRefV1,
+    *,
+    label: str,
+    slot_pins: Mapping[str, ArtifactPin] | None = None,
+) -> ArtifactPin:
+    """Public seam for resolving one v3 binding under an accepted LineSpec closure."""
+
+    return _exact_pin(binding, label=label, slot_pins=slot_pins)
+
+
+def procedure_node_pin_sets(
+    accepted: AcceptedProcedureV1,
+    slot_pins: Mapping[str, ArtifactPin] | None = None,
+) -> tuple[ProcedureNodePinSetV1, ...]:
+    """Public seam for the exact per-node pin commitment one run must reproduce."""
+
+    return _node_pin_sets(accepted, slot_pins)
 
 
 def accepted_procedure_pin_set_digest(accepted: AcceptedProcedureV1) -> str:
@@ -588,8 +755,24 @@ class _RunState:
     outputs: dict[str, CanonicalValue]
     input_payload: CanonicalValue
     parameters: CanonicalValue
+    provenance: dict[str, AliasProvenanceV1] = dataclass_field(default_factory=dict)
+    facts: dict[str, DependencyEvidenceFactsV1] = dataclass_field(default_factory=dict)
+    outcomes: dict[str, AcquisitionInputOutcomeV1] = dataclass_field(default_factory=dict)
+    control: frozenset[DependencyToken] = frozenset()
     provider_calls: int = 0
     capture_bytes: int = 0
+
+    def alias_tokens(self, aliases: frozenset[str]) -> frozenset[DependencyToken]:
+        tokens: frozenset[DependencyToken] = frozenset()
+        for alias in sorted(aliases):
+            found = self.provenance.get(alias)
+            if found is not None:
+                tokens |= found.whole
+        return tokens
+
+    def item_tokens(self, alias: str, index: int) -> frozenset[DependencyToken]:
+        found = self.provenance.get(alias)
+        return frozenset() if found is None else found.item(index)
 
 
 class ProcedureExecutor:
@@ -605,6 +788,10 @@ class ProcedureExecutor:
         activation_authority: ProcedureActivationAuthorityProtocol,
         contract_validator: ContractValidatorProtocol,
         provider_executor: ProviderExecutorProtocol | None = None,
+        source_acquirer: ProcedureSourceAcquirerProtocol | None = None,
+        acquisition_policy: SourceAcquisitionPolicyV1 | None = None,
+        default_authorizations: tuple[str, ...] = (),
+        slot_pins: Mapping[str, ArtifactPin] | None = None,
         clock: ProcedureClockProtocol | None = None,
     ) -> None:
         self.journal = journal
@@ -614,7 +801,21 @@ class ProcedureExecutor:
         self.activation_authority = activation_authority
         self.contract_validator = contract_validator
         self.provider_executor = provider_executor
+        self.source_acquirer = source_acquirer
+        self.acquisition_policy = acquisition_policy
+        self.default_authorizations = default_authorizations
+        self.slot_pins: Mapping[str, ArtifactPin] = slot_pins or {}
         self.clock = clock or SystemProcedureClock()
+
+    def _pin(
+        self,
+        binding: ArtifactPin | ProcedurePinSlotRefV1,
+        *,
+        label: str,
+    ) -> ArtifactPin:
+        """Resolve one node binding through this run's accepted LineSpec closure."""
+
+        return _exact_pin(binding, label=label, slot_pins=self.slot_pins)
 
     def execute(
         self,
@@ -659,20 +860,13 @@ class ProcedureExecutor:
             admission.model_dump(mode="json"),
         )
 
-        state = _RunState(
-            outputs={
-                item.input.input_name: normalize_canonical(item.value)
-                for item in prepared.accepted_state_materials
-            },
-            input_payload=normalize_canonical(admission.invocation_input),
-            parameters={},
-        )
+        state = self._seed_state(prepared)
         status: ProcedureRunStatusV1
         output: CanonicalValue | None = None
         refusal: ProcedureRunRefusalV1 | None = None
         failure_message: str | None = None
         try:
-            input_contract = _exact_pin(
+            input_contract = self._pin(
                 accepted.procedure.definition.contract_in,
                 label="Procedure contract_in",
             )
@@ -724,6 +918,70 @@ class ProcedureExecutor:
             receipt=receipt,
         )
 
+    def _seed_state(self, prepared: PreparedProcedureRunV1) -> _RunState:
+        """Bind every admitted plane's material and its provenance before node one."""
+
+        admission = prepared.admission
+        state = _RunState(
+            outputs={},
+            input_payload=normalize_canonical(admission.invocation_input),
+            parameters={},
+            outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
+        )
+        for accepted_state in prepared.accepted_state_materials:
+            digest = run_input_digest(accepted_state.input)
+            name = accepted_state.input.input_name
+            state.outputs[name] = normalize_canonical(accepted_state.value)
+            state.provenance[name] = AliasProvenanceV1(
+                whole=frozenset(
+                    {
+                        accepted_state_token(digest),
+                        policy_token(accepted_state.input.query_definition_digest),
+                    }
+                )
+            )
+            state.facts[digest] = DependencyEvidenceFactsV1(
+                epistemic_grade="observed",
+                provenance_grade="self-asserted",
+                taint_labels=(TAINT_ACCEPTED_STATE,),
+            )
+        for landed in prepared.landed_capture_materials:
+            name = landed.input.input_name
+            state.outputs[name] = normalize_canonical(landed.material.value)
+            tokens = {
+                admitted_capture_token(landed.input.capture_digest),
+                policy_token(landed.input.capture_contract_digest),
+            }
+            if admission.acquisition_policy_digest is not None:
+                tokens.add(policy_token(admission.acquisition_policy_digest))
+            if admission.selection_receipt_digest is not None:
+                tokens.add(receipt_token(admission.selection_receipt_digest))
+            tokens.add(receipt_token(landed.material.envelope.run_receipt_digest))
+            state.provenance[name] = AliasProvenanceV1(whole=frozenset(tokens))
+            state.facts[landed.input.capture_digest] = DependencyEvidenceFactsV1(
+                epistemic_grade=landed.material.epistemic_grade,
+                provenance_grade=landed.material.provenance_grade,
+                acquisition_input_name=name,
+            )
+        for exhaust in prepared.exhaust_materials:
+            digest = run_input_digest(exhaust.input)
+            name = exhaust.input.input_name
+            state.outputs[name] = normalize_canonical(exhaust.value)
+            state.provenance[name] = AliasProvenanceV1(
+                whole=frozenset(
+                    {
+                        exhaust_token(digest),
+                        policy_token(exhaust.input.reducer_or_query_digest),
+                    }
+                )
+            )
+            state.facts[digest] = DependencyEvidenceFactsV1(
+                epistemic_grade="derived",
+                provenance_grade="self-asserted",
+                taint_labels=(TAINT_UNPROMOTED_EXHAUST,),
+            )
+        return state
+
     def _verify_correspondence(
         self,
         admission: ProcedureRunAdmissionV1,
@@ -736,16 +994,36 @@ class ProcedureExecutor:
             or procedure.definition_digest != admission.definition_digest
             or procedure.identity != admission.procedure_identity
             or procedure.activation_policy != admission.activation_policy
-            or procedure.pins != admission.full_pins
-            or procedure.definition.budget != admission.budget
             or procedure.definition.hard_caps != admission.hard_caps
         ):
             raise PlaybillExecutionError("Procedure admission and accepted artifact differ")
-        if _node_pin_sets(accepted) != admission.node_pin_sets:
+        if admission.invocation_origin == "actor":
+            if procedure.pins != admission.full_pins:
+                raise PlaybillExecutionError("Procedure admission and accepted artifact differ")
+        elif not set(procedure.pins).issubset(set(admission.full_pins)) or not set(
+            self.slot_pins.values()
+        ).issubset(set(admission.full_pins)):
+            raise PlaybillExecutionError(
+                "Line run pins must close the accepted Procedure pins exactly"
+            )
+        if admission.invocation_origin == "actor":
+            if procedure.definition.budget != admission.budget:
+                raise PlaybillExecutionError("Procedure admission and accepted artifact differ")
+        else:
+            caps = procedure.definition.hard_caps
+            if (
+                admission.budget.wall_clock.microseconds > caps.max_wall_clock.microseconds
+                or admission.budget.max_provider_calls > caps.max_provider_calls
+                or admission.budget.max_capture_bytes > caps.max_capture_bytes
+                or admission.budget.max_items > caps.max_items
+            ):
+                raise PlaybillExecutionError("Line run budget exceeds the Procedure hard caps")
+        if _node_pin_sets(accepted, self.slot_pins) != admission.node_pin_sets:
             raise PlaybillExecutionError("Procedure node pins changed after admission")
+        self._verify_input_planes(admission, accepted)
         expected_state_inputs = {
             node.as_: (
-                _exact_pin(node.query, label=f"state_tap {node.node_id!r}"),
+                self._pin(node.query, label=f"state_tap {node.node_id!r}"),
                 run_value_digest("state-parameters", normalize_canonical(node.parameters)),
             )
             for node in procedure.definition.nodes
@@ -763,6 +1041,53 @@ class ProcedureExecutor:
             ):
                 raise PlaybillExecutionError(
                     f"Procedure admission state_tap input {name!r} differs"
+                )
+
+    def _verify_input_planes(
+        self,
+        admission: ProcedureRunAdmissionV1,
+        accepted: AcceptedProcedureV1,
+    ) -> None:
+        """Refuse every cross-plane relabel before the first node can observe a value."""
+
+        nodes = {
+            node.as_: node
+            for node in accepted.procedure.definition.nodes
+            if isinstance(node, StateTapNodeV3 | SourceNodeV3 | ExhaustTapNodeV3)
+        }
+        for run_input in admission.run_inputs:
+            node = nodes.get(run_input.input_name)
+            if node is None:
+                raise PlaybillExecutionError(
+                    f"admitted input {run_input.input_name!r} names no v3 input node"
+                )
+            try:
+                validate_node_input_plane(node, run_input)
+            except ValueError as exc:
+                raise PlaybillExecutionError(f"input_plane_relabelled: {exc}") from exc
+        expected_exhaust = {
+            node.as_
+            for node in accepted.procedure.definition.nodes
+            if isinstance(node, ExhaustTapNodeV3)
+        }
+        if {item.input_name for item in admission.exhaust_inputs} != expected_exhaust and (
+            admission.invocation_origin == "line"
+        ):
+            raise PlaybillExecutionError("Line admission exhaust_tap input set differs")
+        for exhaust in admission.exhaust_inputs:
+            node = nodes[exhaust.input_name]
+            if not isinstance(node, ExhaustTapNodeV3):  # pragma: no cover - plane law covers it
+                raise PlaybillExecutionError("exhaust input names a non-exhaust node")
+            reducer = self._pin(
+                node.reducer_or_query,
+                label=f"exhaust_tap {node.node_id!r}",
+            )
+            if (
+                exhaust.reducer_or_query_digest != reducer.artifact_digest
+                or exhaust.journal_identity != node.journal_identity
+            ):
+                raise PlaybillExecutionError(
+                    f"Procedure admission exhaust input {exhaust.input_name!r} differs"
                 )
 
     def _require_current(self, admission: ProcedureRunAdmissionV1) -> None:
@@ -884,13 +1209,20 @@ class ProcedureExecutor:
         if isinstance(node, StateTapNodeV3):
             if node.as_ not in state.outputs:
                 raise PlaybillExecutionError("admitted state_tap material is absent")
+            self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
             return None
-        if isinstance(node, SourceNodeV3 | ExhaustTapNodeV3):
-            raise _RunRefusal(
-                "line_binding_required",
-                "Source acquisition and exhaust inputs require a Line binding in PC-E2.",
-                node_id=node.node_id,
-            )
+        if isinstance(node, SourceNodeV3):
+            self._run_source(node, admission=admission, state=state, records=records)
+            return None
+        if isinstance(node, ExhaustTapNodeV3):
+            if node.as_ not in state.outputs:
+                raise _RunRefusal(
+                    "line_binding_required",
+                    "An exhaust_tap input is admitted only under a Line binding.",
+                    node_id=node.node_id,
+                )
+            self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
+            return None
         if isinstance(node, ProviderNodeV3):
             self._run_provider(
                 node,
@@ -905,7 +1237,7 @@ class ProcedureExecutor:
                 input_payload=state.input_payload,
                 outputs=state.outputs,
             )
-            contract_in = _exact_pin(node.contract_in, label=f"transform {node.node_id!r} input")
+            contract_in = self._pin(node.contract_in, label=f"transform {node.node_id!r} input")
             validated_input = normalize_canonical(
                 self.contract_validator.validate_contract(
                     contract=contract_in,
@@ -913,14 +1245,20 @@ class ProcedureExecutor:
                     direction="input",
                 )
             )
-            value = _apply_transform(node.transform_kind, validated_input)
-            contract = _exact_pin(node.contract_out, label=f"transform {node.node_id!r} output")
+            value, lineage = _apply_transform(node.transform_kind, validated_input)
+            contract = self._pin(node.contract_out, label=f"transform {node.node_id!r} output")
             state.outputs[node.as_] = normalize_canonical(
                 self.contract_validator.validate_contract(
                     contract=contract,
                     payload=value,
                     direction="output",
                 )
+            )
+            state.provenance[node.as_] = _transform_provenance(
+                node,
+                state=state,
+                lineage=lineage,
+                base=_base_tokens(node, state, node.spec),
             )
             return None
         if isinstance(node, ProjectNodeV3):
@@ -929,13 +1267,19 @@ class ProcedureExecutor:
                 input_payload=state.input_payload,
                 outputs=state.outputs,
             )
-            contract = _exact_pin(node.contract_out, label=f"project {node.node_id!r} output")
+            contract = self._pin(node.contract_out, label=f"project {node.node_id!r} output")
             state.outputs[node.as_] = normalize_canonical(
                 self.contract_validator.validate_contract(
                     contract=contract,
                     payload=value,
                     direction="output",
                 )
+            )
+            state.provenance[node.as_] = _projected_provenance(
+                node.fields,
+                state=state,
+                base=_base_tokens(node, state, node.fields),
+                value=state.outputs[node.as_],
             )
             return None
         if isinstance(node, GuardNodeV3):
@@ -944,6 +1288,11 @@ class ProcedureExecutor:
                 input_payload=state.input_payload,
                 outputs=state.outputs,
                 parameters=state.parameters,
+            )
+            state.control = (
+                state.control
+                | _node_policy_tokens(node)
+                | state.alias_tokens(frozenset(node.predicate.step_aliases()))
             )
             self._append_event(
                 admission,
@@ -965,6 +1314,9 @@ class ProcedureExecutor:
                 records=records,
                 started_ns=started_ns,
             )
+            state.provenance[node.as_] = AliasProvenanceV1(
+                whole=_base_tokens(node, state, tuple(body.spec for body in node.body))
+            )
             return None
         if isinstance(
             node,
@@ -973,6 +1325,12 @@ class ProcedureExecutor:
             | ProposeChangeSetNodeV3
             | MandateSettlementNodeV3,
         ):
+            children = self._record_terminal_items(
+                node,
+                admission=admission,
+                state=state,
+                records=records,
+            )
             self._append_event(
                 admission,
                 records,
@@ -980,15 +1338,281 @@ class ProcedureExecutor:
                 {
                     "node_id": node.node_id,
                     "kind": node.kind,
-                    "verdict": "not_available_in_pc_e1",
+                    "verdict": "dependencies_bound_egress_pending",
+                    "children": [item.model_dump(mode="json") for item in children],
                 },
             )
             raise _RunRefusal(
                 "terminal_not_available",
-                "Governed terminal rungs are implemented with Line runtime in PC-E2.",
+                "Governed terminal egress lands with the effective-rung cap; "
+                "this run bound its per-item dependency closure only.",
                 node_id=node.node_id,
             )
         raise PlaybillExecutionError(f"unsupported graph-v3 node {type(node).__name__}")
+
+    @staticmethod
+    def _extend_alias(
+        state: _RunState,
+        alias: str,
+        extra: frozenset[DependencyToken],
+    ) -> None:
+        current = state.provenance.get(alias)
+        state.provenance[alias] = (
+            AliasProvenanceV1(whole=extra) if current is None else current.merged(extra)
+        )
+
+    def _run_source(
+        self,
+        node: SourceNodeV3,
+        *,
+        admission: ProcedureRunAdmissionV1,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> None:
+        """Consume an admitted landed Capture, or really acquire one now."""
+
+        if node.as_ in state.outputs:
+            self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
+            return
+        if admission.invocation_origin != "line":
+            raise _RunRefusal(
+                "line_binding_required",
+                "Source acquisition requires a Line binding and an acquisition policy.",
+                node_id=node.node_id,
+            )
+        rule = self._acquisition_rule(node.as_)
+        if self.source_acquirer is None or rule is None:
+            raise _RunRefusal(
+                "source_acquisition_unavailable",
+                "No acquirer or declared acquisition rule serves this source node.",
+                node_id=node.node_id,
+            )
+        capture_contract = self._pin(node.capture_contract, label=f"source {node.node_id!r}")
+        provider = self._pin(node.provider, label=f"source {node.node_id!r} provider")
+        request = _resolve_template(
+            node.request,
+            input_payload=state.input_payload,
+            outputs=state.outputs,
+        )
+        result = self.source_acquirer.acquire(
+            node_id=node.node_id,
+            input_name=node.as_,
+            capture_contract=capture_contract,
+            provider=provider,
+            request=request,
+            run_id=admission.run_id,
+            bound_generation=admission.accepted_coordinate.generation_root,
+            observed_at=self.clock.now(),
+        )
+        decision = apply_acquisition_result(
+            rule,
+            result,
+            default_authorized=rule.input_name in self.default_authorizations,
+        )
+        self._append_event(
+            admission,
+            records,
+            "source_acquisition",
+            {
+                "tag": "playbill-procedure-source-acquisition-v1",
+                "node_id": node.node_id,
+                "input_name": node.as_,
+                "result": result.model_dump(mode="json", exclude={"acquisition"}),
+                "decision": decision.model_dump(mode="json"),
+                "audit": {
+                    "deployment_digest": admission.deployment_snapshot_digest,
+                    "recorded_at": format_datetime(self.clock.now()),
+                },
+            },
+        )
+        self._bind_acquisition(
+            node,
+            admission=admission,
+            state=state,
+            records=records,
+            rule=rule,
+            result=result,
+            decision=decision,
+        )
+
+    def _acquisition_rule(self, input_name: str) -> InputAcquisitionRuleV1 | None:
+        if self.acquisition_policy is None:
+            return None
+        for rule in self.acquisition_policy.inputs:
+            if rule.input_name == input_name:
+                return rule
+        return None
+
+    def _bind_acquisition(
+        self,
+        node: SourceNodeV3,
+        *,
+        admission: ProcedureRunAdmissionV1,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+        rule: InputAcquisitionRuleV1,
+        result: ProcedureSourceAcquisitionResultV1,
+        decision: AcquisitionInputDecisionV1,
+    ) -> None:
+        base = _node_policy_tokens(node) | state.control
+        if admission.acquisition_policy_digest is not None:
+            base = base | {policy_token(admission.acquisition_policy_digest)}
+        if decision.disposition == "refused":
+            state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
+                input_name=rule.input_name,
+                disposition="refused",
+            )
+            raise _RunRefusal(
+                decision.reason_codes[0]
+                if decision.reason_codes
+                else "playbill.acquisition.refused",
+                "The declared acquisition rule refuses this typed source result.",
+                node_id=node.node_id,
+            )
+        if decision.disposition == "omitted":
+            marker = _decision_digest(admission.run_id, decision)
+            state.facts[marker] = DependencyEvidenceFactsV1(
+                epistemic_grade="predicted",
+                provenance_grade="self-asserted",
+                taint_labels=(TAINT_OMITTED_OPTIONAL,),
+                acquisition_input_name=rule.input_name,
+            )
+            state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
+                input_name=rule.input_name,
+                disposition="omitted",
+            )
+            state.control = state.control | {receipt_token(marker)}
+            return
+        if decision.disposition == "defaulted":
+            marker = _decision_digest(admission.run_id, decision)
+            state.outputs[node.as_] = normalize_canonical(decision.default_value)
+            state.facts[marker] = DependencyEvidenceFactsV1(
+                epistemic_grade="predicted",
+                provenance_grade="self-asserted",
+                taint_labels=(TAINT_CONSERVATIVE_DEFAULT,),
+                acquisition_input_name=rule.input_name,
+            )
+            state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
+                input_name=rule.input_name,
+                disposition="defaulted",
+            )
+            state.provenance[node.as_] = AliasProvenanceV1(whole=base | {receipt_token(marker)})
+            return
+        acquisition = result.acquisition
+        if acquisition is None:  # pragma: no cover - typed-result invariant
+            raise PlaybillExecutionError("selected acquisition carries no Capture")
+        material = acquisition.canonical_material
+        if material is None:
+            raise _RunRefusal(
+                "source_material_unavailable",
+                "This acquisition mode produced no canonical material for the run.",
+                node_id=node.node_id,
+            )
+        state.capture_bytes += len(canonical_bytes(normalize_canonical(material)))
+        state.outputs[node.as_] = normalize_canonical(material)
+        state.facts[acquisition.capture_digest] = DependencyEvidenceFactsV1(
+            epistemic_grade=acquisition.epistemic_grade,
+            provenance_grade=acquisition.provenance_grade,
+            acquisition_input_name=rule.input_name,
+        )
+        state.outcomes[rule.input_name] = AcquisitionInputOutcomeV1(
+            input_name=rule.input_name,
+            disposition="acquired",
+            capture_digests=(acquisition.capture_digest,),
+        )
+        state.provenance[node.as_] = AliasProvenanceV1(
+            whole=base
+            | {
+                produced_capture_token(acquisition.capture_digest),
+                receipt_token(acquisition.receipt.digest),
+                policy_token(acquisition.envelope.capture_contract_digest),
+            }
+        )
+        self._append_event(
+            admission,
+            records,
+            "produced_capture",
+            {
+                "tag": "playbill-procedure-produced-capture-v1",
+                "node_id": node.node_id,
+                "input_name": rule.input_name,
+                "capture_digest": acquisition.capture_digest,
+                "capture_contract_digest": acquisition.envelope.capture_contract_digest,
+                "acquisition_receipt_digest": acquisition.receipt.digest,
+                "observed_at": format_datetime(acquisition.envelope.observed_at),
+                "epistemic_grade": acquisition.epistemic_grade,
+                "provenance_grade": acquisition.provenance_grade,
+                "audit": {
+                    "deployment_digest": admission.deployment_snapshot_digest,
+                    "recorded_at": format_datetime(self.clock.now()),
+                },
+            },
+        )
+
+    def _record_terminal_items(
+        self,
+        node: CaptureEgressNodeV3
+        | InboxEgressNodeV3
+        | ProposeChangeSetNodeV3
+        | MandateSettlementNodeV3,
+        *,
+        admission: ProcedureRunAdmissionV1,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> tuple[TerminalChildReceiptV1, ...]:
+        """Derive one manifest per terminal item from the exact closure it consumed."""
+
+        declared = _terminal_item_templates(node)
+        base = _node_policy_tokens(node) | state.control
+        values, item_tokens = _terminal_items(declared, state=state)
+        outcomes = tuple(
+            sorted(state.outcomes.values(), key=lambda item: item.input_name.encode("utf-8"))
+        )
+        receipts: list[TerminalChildReceiptV1] = []
+        for index, value in enumerate(values):
+            tokens = base | item_tokens[index]
+            item_key = terminal_item_key(
+                terminal_node_id=node.node_id,
+                child_index=index,
+                item=value,
+            )
+            manifest = build_terminal_item_manifest(
+                tokens,
+                run_id=admission.run_id,
+                terminal_node_id=node.node_id,
+                item_key=item_key,
+            )
+            derived = derive_terminal_item_facts(
+                tokens,
+                manifest=manifest,
+                child_index=index,
+                facts=state.facts,
+                outcomes=outcomes,
+            )
+            stored = self._append_event(
+                admission,
+                records,
+                "item_dependencies",
+                {
+                    "tag": "playbill-procedure-item-dependencies-v1",
+                    "manifest": manifest.model_dump(mode="json"),
+                    "derived": derived.model_dump(mode="json"),
+                    "audit": {
+                        "deployment_digest": admission.deployment_snapshot_digest,
+                        "recorded_at": format_datetime(self.clock.now()),
+                    },
+                },
+            )
+            receipts.append(
+                TerminalChildReceiptV1(
+                    child_index=index,
+                    item_key=item_key,
+                    manifest_digest=terminal_item_manifest_digest(manifest),
+                    record_digest=stored.record_digest,
+                    sequence=stored.record.sequence,
+                )
+            )
+        return tuple(receipts)
 
     def _run_provider(
         self,
@@ -1004,10 +1628,10 @@ class ProcedureExecutor:
                 "No Provider executor is registered for this Procedure runtime.",
                 node_id=node.node_id,
             )
-        provider = _exact_pin(node.provider, label=f"provider {node.node_id!r}")
-        environment = _exact_pin(node.environment, label=f"provider {node.node_id!r} environment")
-        contract_in = _exact_pin(node.contract_in, label=f"provider {node.node_id!r} input")
-        contract_out = _exact_pin(node.contract_out, label=f"provider {node.node_id!r} output")
+        provider = self._pin(node.provider, label=f"provider {node.node_id!r}")
+        environment = self._pin(node.environment, label=f"provider {node.node_id!r} environment")
+        contract_in = self._pin(node.contract_in, label=f"provider {node.node_id!r} input")
+        contract_out = self._pin(node.contract_out, label=f"provider {node.node_id!r} output")
         resolved = normalize_canonical(
             _resolve_template(
                 node.input,
@@ -1049,7 +1673,7 @@ class ProcedureExecutor:
                     "node_id": node.node_id,
                     "provider": provider.model_dump(mode="json"),
                     "environment": environment.model_dump(mode="json"),
-                    "effect_policy": _exact_pin(
+                    "effect_policy": self._pin(
                         effect_policy,
                         label=f"provider {node.node_id!r} effect policy",
                     ).model_dump(mode="json"),
@@ -1072,6 +1696,7 @@ class ProcedureExecutor:
             )
         )
         state.outputs[node.as_] = output
+        state.provenance[node.as_] = AliasProvenanceV1(whole=_base_tokens(node, state, node.input))
         if effectful:
             self._append_event(
                 admission,
@@ -1152,8 +1777,8 @@ class ProcedureExecutor:
             _resolve_template(body.spec, input_payload=state.input_payload, outputs=combined)
         )
         if body.operation == "transform":
-            contract_in = _exact_pin(body.contract_in, label=f"repeat {body.node_id!r} input")
-            contract_out = _exact_pin(body.contract_out, label=f"repeat {body.node_id!r} output")
+            contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
+            contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
             validated = normalize_canonical(
                 self.contract_validator.validate_contract(
                     contract=contract_in,
@@ -1175,10 +1800,10 @@ class ProcedureExecutor:
                 "Repeat provider operation has no registered executor.",
                 node_id=body.node_id,
             )
-        provider = _exact_pin(body.provider, label=f"repeat {body.node_id!r} provider")
-        environment = _exact_pin(body.environment, label=f"repeat {body.node_id!r} environment")
-        contract_in = _exact_pin(body.contract_in, label=f"repeat {body.node_id!r} input")
-        contract_out = _exact_pin(body.contract_out, label=f"repeat {body.node_id!r} output")
+        provider = self._pin(body.provider, label=f"repeat {body.node_id!r} provider")
+        environment = self._pin(body.environment, label=f"repeat {body.node_id!r} environment")
+        contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
+        contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
         if state.provider_calls >= admission.budget.max_provider_calls:
             raise _BudgetExceeded("Procedure provider-call budget exhausted")
         state.provider_calls += 1
@@ -1298,6 +1923,165 @@ class ProcedureExecutor:
         )
 
 
+_STEP_PREFIX = "$steps."
+
+_ITEM_SLOTS: tuple[str, ...] = ("items", "left_items", "right_items")
+
+
+def _node_policy_tokens(node: object) -> frozenset[DependencyToken]:
+    """Return the exact laws and policies one node's own pins commit it to."""
+
+    return frozenset(
+        policy_token(binding.artifact_digest)
+        for binding in iter_pin_bindings(node)
+        if isinstance(binding, ArtifactPin)
+    )
+
+
+def _referenced_aliases(value: object) -> frozenset[str]:
+    """Return every step alias a declared template actually reads."""
+
+    found: set[str] = set()
+
+    def visit(item: object) -> None:
+        if isinstance(item, str):
+            if item.startswith(_STEP_PREFIX):
+                found.add(item[len(_STEP_PREFIX) :].split(".")[0])
+            return
+        if isinstance(item, list | tuple):
+            for member in item:
+                visit(member)
+            return
+        if isinstance(item, dict):
+            for member in item.values():
+                visit(member)
+
+    visit(value)
+    return frozenset(found)
+
+
+def _template_alias(value: object) -> str | None:
+    if isinstance(value, str) and value.startswith(_STEP_PREFIX):
+        return value[len(_STEP_PREFIX) :].split(".")[0]
+    return None
+
+
+def _base_tokens(
+    node: object,
+    state: _RunState,
+    template: object,
+) -> frozenset[DependencyToken]:
+    return (
+        _node_policy_tokens(node)
+        | state.control
+        | state.alias_tokens(_referenced_aliases(template))
+    )
+
+
+def _transform_provenance(
+    node: TransformNodeV3,
+    *,
+    state: _RunState,
+    lineage: tuple[tuple[tuple[str, int], ...], ...] | None,
+    base: frozenset[DependencyToken],
+) -> AliasProvenanceV1:
+    if lineage is None:
+        return AliasProvenanceV1(whole=base)
+    spec = node.spec if isinstance(node.spec, dict) else {}
+    slot_aliases = {slot: _template_alias(spec.get(slot)) for slot in _ITEM_SLOTS}
+    items: list[frozenset[DependencyToken]] = []
+    for refs in lineage:
+        tokens: frozenset[DependencyToken] = frozenset()
+        for slot, index in refs:
+            alias = slot_aliases.get(slot)
+            if alias is not None:
+                tokens = tokens | state.item_tokens(alias, index)
+        items.append(tokens)
+    return AliasProvenanceV1(whole=base, items=tuple(items))
+
+
+def _projected_provenance(
+    fields: object,
+    *,
+    state: _RunState,
+    base: frozenset[DependencyToken],
+    value: CanonicalValue,
+) -> AliasProvenanceV1:
+    template = fields.get("items") if isinstance(fields, dict) else None
+    if template is None or not isinstance(value, dict):
+        return AliasProvenanceV1(whole=base)
+    projected = value.get("items")
+    if not isinstance(projected, list):
+        return AliasProvenanceV1(whole=base)
+    alias = _template_alias(template)
+    if alias is None:
+        return AliasProvenanceV1(whole=base)
+    return AliasProvenanceV1(
+        whole=base,
+        items=tuple(state.item_tokens(alias, index) for index in range(len(projected))),
+    )
+
+
+def _terminal_item_templates(
+    node: CaptureEgressNodeV3
+    | InboxEgressNodeV3
+    | ProposeChangeSetNodeV3
+    | MandateSettlementNodeV3,
+) -> object:
+    if isinstance(node, ProposeChangeSetNodeV3):
+        return list(node.candidate_templates)
+    return node.input
+
+
+def _terminal_items(
+    declared: object,
+    *,
+    state: _RunState,
+) -> tuple[list[CanonicalValue], tuple[frozenset[DependencyToken], ...]]:
+    """Fan one terminal node out into deterministic children with exact provenance."""
+
+    resolved = _resolve_template(
+        declared,
+        input_payload=state.input_payload,
+        outputs=state.outputs,
+    )
+    if isinstance(declared, list | tuple):
+        values = list(resolved) if isinstance(resolved, list) else [resolved]
+        tokens = tuple(
+            state.alias_tokens(_referenced_aliases(member)) for member in declared[: len(values)]
+        )
+        return values, tokens + tuple(frozenset() for _ in range(len(values) - len(tokens)))
+    if isinstance(declared, dict) and "items" in declared:
+        template = declared["items"]
+        shared = state.alias_tokens(
+            _referenced_aliases({key: item for key, item in declared.items() if key != "items"})
+        )
+    else:
+        template = declared
+        shared = frozenset()
+    source = resolved.get("items") if isinstance(resolved, dict) else resolved
+    nested = source.get("items") if isinstance(source, dict) else None
+    if isinstance(source, list):
+        values = [normalize_canonical(item) for item in source]
+    elif isinstance(nested, list):
+        values = [normalize_canonical(item) for item in nested]
+    else:
+        return [resolved], (state.alias_tokens(_referenced_aliases(declared)),)
+    alias = _template_alias(template)
+    if alias is None:
+        fallback = shared | state.alias_tokens(_referenced_aliases(template))
+        return values, tuple(fallback for _ in values)
+    return values, tuple(shared | state.item_tokens(alias, index) for index in range(len(values)))
+
+
+def _decision_digest(run_id: str, decision: AcquisitionInputDecisionV1) -> str:
+    return typed_digest(
+        Sha256Value,
+        "playbill-procedure-acquisition-decision-v1",
+        {"decision": decision.model_dump(mode="json"), "run_id": run_id},
+    ).tagged
+
+
 def _resolve_path(value: object, path: tuple[str, ...], *, reference: str) -> object:
     current = value
     for member in path:
@@ -1396,9 +2180,14 @@ def _extract_items(value: object, *, label: str) -> list[CanonicalValue]:
     raise PlaybillExecutionError(f"{label} requires a list or object with an items list")
 
 
-def _apply_transform(kind: str, spec: CanonicalValue) -> CanonicalValue:
+_ItemLineage = tuple[tuple[tuple[str, int], ...], ...]
+
+
+def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _ItemLineage | None]:
+    """Apply one deterministic transform and report which input item fed each output."""
+
     if kind == "adapter":
-        return spec
+        return spec, None
     if not isinstance(spec, dict):
         raise PlaybillExecutionError(f"transform {kind!r} requires an object spec")
     if kind == "shape_items":
@@ -1419,20 +2208,27 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> CanonicalValue:
                     item=item,
                 )
             shaped.append(normalize_canonical(base))
-        return {"items": shaped, "input_count": len(items), "output_count": len(shaped)}
+        return (
+            {"items": shaped, "input_count": len(items), "output_count": len(shaped)},
+            tuple((("items", index),) for index in range(len(shaped))),
+        )
     if kind == "filter_items":
         items = _extract_items(spec.get("items"), label=kind)
         where = spec.get("where", {})
         if not isinstance(where, dict):
             raise PlaybillExecutionError("filter_items where must be an object")
-        kept = [
-            item
-            for item in items
+        kept_indices = [
+            index
+            for index, item in enumerate(items)
             if isinstance(item, dict)
             and all(item.get(key) == value for key, value in where.items())
         ]
-        return normalize_canonical(
-            {"items": kept, "input_count": len(items), "output_count": len(kept)}
+        kept = [items[index] for index in kept_indices]
+        return (
+            normalize_canonical(
+                {"items": kept, "input_count": len(items), "output_count": len(kept)}
+            ),
+            tuple((("items", index),) for index in kept_indices),
         )
     if kind == "dedupe_items":
         items = _extract_items(spec.get("items"), label=kind)
@@ -1442,7 +2238,8 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> CanonicalValue:
         key_names = [str(item) for item in keys]
         seen: set[bytes] = set()
         output: list[CanonicalValue] = []
-        for item in items:
+        deduped_indices: list[int] = []
+        for index, item in enumerate(items):
             identity = canonical_bytes(
                 [item.get(key) for key in key_names] if isinstance(item, dict) else item
             )
@@ -1450,8 +2247,12 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> CanonicalValue:
                 continue
             seen.add(identity)
             output.append(item)
-        return normalize_canonical(
-            {"items": output, "input_count": len(items), "output_count": len(output)}
+            deduped_indices.append(index)
+        return (
+            normalize_canonical(
+                {"items": output, "input_count": len(items), "output_count": len(output)}
+            ),
+            tuple((("items", index),) for index in deduped_indices),
         )
     if kind == "join_items":
         left = _extract_items(spec.get("left_items"), label=kind)
@@ -1466,8 +2267,9 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> CanonicalValue:
         ):
             raise PlaybillExecutionError("join_items keys and fields are malformed")
         joined_output: list[CanonicalValue] = []
-        for left_item in left:
-            for right_item in right:
+        joined_lineage: list[tuple[tuple[str, int], ...]] = []
+        for left_index, left_item in enumerate(left):
+            for right_index, right_item in enumerate(right):
                 if not isinstance(left_item, dict) or not isinstance(right_item, dict):
                     continue
                 if left_item.get(left_key) != right_item.get(right_key):
@@ -1484,10 +2286,14 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> CanonicalValue:
                         for name, template in fields.items()
                     }
                 )
-        return normalize_canonical({"items": joined_output, "output_count": len(joined_output)})
+                joined_lineage.append((("left_items", left_index), ("right_items", right_index)))
+        return (
+            normalize_canonical({"items": joined_output, "output_count": len(joined_output)}),
+            tuple(joined_lineage),
+        )
     if kind == "aggregate_items":
         items = _extract_items(spec.get("items"), label=kind)
-        return normalize_canonical({"count": len(items)})
+        return normalize_canonical({"count": len(items)}), None
     raise PlaybillExecutionError(f"unsupported deterministic transform {kind!r}")
 
 
@@ -1611,6 +2417,8 @@ def _evaluate_predicate(
 __all__ = [
     "AcceptedStateRunMaterialV1",
     "ContractValidatorProtocol",
+    "ExhaustRunMaterialV1",
+    "LandedCaptureRunMaterialV1",
     "PreparedProcedureRunV1",
     "ProcedureActivationAuthorityProtocol",
     "ProcedureClockProtocol",
@@ -1626,9 +2434,11 @@ __all__ = [
     "StateTapReaderProtocol",
     "SystemProcedureClock",
     "accepted_procedure_pin_set_digest",
+    "procedure_node_pin_sets",
     "prepare_direct_procedure_run",
     "procedure_admission_digest",
     "procedure_pin_set_digest",
+    "resolve_procedure_pin",
     "procedure_run_receipt_digest",
     "run_value_digest",
 ]
