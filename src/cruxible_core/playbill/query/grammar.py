@@ -47,11 +47,16 @@ def _nfc(value: str, *, label: str) -> str:
     return value
 
 
+def byte_sorted(value: tuple[str, ...]) -> tuple[str, ...]:
+    """Return the canonical unsigned UTF-8 byte ordering of a string tuple, deduplicated."""
+
+    return tuple(sorted(set(value), key=lambda item: item.encode("utf-8")))
+
+
 def sorted_unique(value: tuple[str, ...], *, label: str) -> tuple[str, ...]:
     """Require one canonical byte-ordered, duplicate-free identifier tuple."""
 
-    ordered = tuple(sorted(set(value), key=lambda item: item.encode("utf-8")))
-    if value != ordered:
+    if value != byte_sorted(value):
         raise ValueError(f"{label} must be sorted by unsigned UTF-8 bytes and unique")
     return value
 
@@ -622,6 +627,7 @@ __all__ = [
     "QueryValueRefV1",
     "QueryValueTypeV1",
     "binding_name",
+    "byte_sorted",
     "sorted_unique",
     "validate_ordering_keys",
     "predicate_name",

@@ -12,22 +12,13 @@ never re-implements adjudication. Every budget that clips a result is named in
 the result's truncation accounting, so a silently narrowed answer is
 unrepresentable.
 
-The PC-F backend slice replaces :class:`DirectClaimFactIndex` with a
-materialized backend. Parity is measured against exactly five primitives:
-
-``subjects(kinds, subject_id=...)``
-    the canonically ordered accepted Subject paths of the declared kinds.
-``subject(artifact_path)``
-    one accepted Subject row by its exact ledger path.
-``claims_on(artifact_path, predicate)``
-    the visible Claim rows whose statement subject is that Subject.
-``claims_to(artifact_path, predicate)``
-    the visible Claim rows whose Subject-typed object is that Subject.
-``visibility(row)``
-    one Claim row's verdict and currency at the explicit evaluation time.
-
-A backend that reproduces those five, in the same canonical order and under the
-same verdict computation, reproduces this evaluator's results byte for byte.
+The evaluator reads accepted state only through the five primitives of
+:class:`~cruxible_core.playbill.query.backends.ClaimQueryBackendV1`, and it
+binds the coordinate the backend was materialized at rather than trusting the
+one the caller names. Relation traversal is derived here from those primitives,
+so a backend can never contribute an edge the Claim facts do not carry, and a
+backend that reproduces the five in the same canonical order under the same
+verdict computation reproduces these results byte for byte.
 """
 
 from __future__ import annotations
@@ -47,18 +38,18 @@ from cruxible_core.playbill.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_core.playbill.claim_attestations import VerifiedClaimAttestationV1
-from cruxible_core.playbill.claim_verdicts import (
-    CaptureVerdictEvidenceV1,
-    ClaimAdjudicationRuleV1,
-    EvidenceCurrency,
-    EvidenceRelativeClaimVerdict,
-    evaluate_claim_verdict,
-)
-from cruxible_core.playbill.claims import AcceptedClaim, SubjectClaimObject
+from cruxible_core.playbill.claims import SubjectClaimObject
 from cruxible_core.playbill.errors import PlaybillError
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.providers import ProviderV1
+from cruxible_core.playbill.query.backends import (
+    ClaimFactRowV1,
+    ClaimQueryBackendFactoryV1,
+    ClaimQueryBackendV1,
+    ClaimQueryFactsV1,
+    DirectClaimFactIndex,
+    QueryClaimVisibilityV1,
+    VisibleClaimRow,
+)
 from cruxible_core.playbill.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDedupeV1,
@@ -84,8 +75,8 @@ from cruxible_core.playbill.query.grammar import (
     QueryTraversalDirectionV1,
     QueryValueRefV1,
     QueryValueTypeV1,
+    byte_sorted,
 )
-from cruxible_core.playbill.subjects import AcceptedSubject
 
 QueryClippedBudgetV1 = Literal[
     "include_max_items",
@@ -117,80 +108,7 @@ class _StrictQueryEngineModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-def _byte_sorted(values: tuple[str, ...]) -> tuple[str, ...]:
-    return tuple(sorted(set(values), key=lambda item: item.encode("utf-8")))
-
-
-# -- accepted evaluation facts -------------------------------------------
-
-
-class ClaimFactRowV1(_StrictQueryEngineModel):
-    """One accepted Claim with the exact inputs its verdict needs at any time."""
-
-    tag: Literal["playbill-query-claim-fact-v1"] = "playbill-query-claim-fact-v1"
-    accepted: AcceptedClaim
-    rule: ClaimAdjudicationRuleV1
-    captures: tuple[CaptureVerdictEvidenceV1, ...] = ()
-    attestations: tuple[VerifiedClaimAttestationV1, ...] = ()
-    referent_current: bool = True
-    resolved_authority_basis: tuple[str, ...] = ()
-
-    @field_validator("resolved_authority_basis")
-    @classmethod
-    def _authority_basis(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value))):
-            raise ValueError("Claim authority basis must be sorted and unique")
-        return value
-
-
-class ClaimQueryFactsV1(_StrictQueryEngineModel):
-    """The accepted Subject/Claim facts one evaluation is permitted to read."""
-
-    tag: Literal["playbill-query-facts-v1"] = "playbill-query-facts-v1"
-    coordinate: AcceptedProjectionCoordinate
-    subjects: tuple[AcceptedSubject, ...] = ()
-    claims: tuple[ClaimFactRowV1, ...] = ()
-    providers: tuple[ProviderV1, ...] = ()
-
-    @field_validator("subjects")
-    @classmethod
-    def _subjects(cls, value: tuple[AcceptedSubject, ...]) -> tuple[AcceptedSubject, ...]:
-        paths = tuple(item.path for item in value)
-        if paths != _byte_sorted(paths):
-            raise ValueError("accepted query Subject facts must be sorted and unique by path")
-        return value
-
-    @field_validator("claims")
-    @classmethod
-    def _claims(cls, value: tuple[ClaimFactRowV1, ...]) -> tuple[ClaimFactRowV1, ...]:
-        paths = tuple(item.accepted.path for item in value)
-        if paths != _byte_sorted(paths):
-            raise ValueError("accepted query Claim facts must be sorted and unique by path")
-        return value
-
-    @field_validator("providers")
-    @classmethod
-    def _providers(cls, value: tuple[ProviderV1, ...]) -> tuple[ProviderV1, ...]:
-        names = tuple(item.identity.qualified for item in value)
-        if names != _byte_sorted(names):
-            raise ValueError("accepted query Provider facts must be sorted and unique by identity")
-        return value
-
-
 # -- result surface -------------------------------------------------------
-
-
-class QueryClaimVisibilityV1(_StrictQueryEngineModel):
-    """Why one Claim row is present: its verdict and currency at the read time."""
-
-    tag: Literal["playbill-query-claim-visibility-v1"] = "playbill-query-claim-visibility-v1"
-    claim_path: str
-    statement_digest: str
-    artifact_digest: str
-    predicate: str
-    subject_identity: str
-    verdict: EvidenceRelativeClaimVerdict
-    currency: EvidenceCurrency
 
 
 class QueryConflictV1(_StrictQueryEngineModel):
@@ -337,14 +255,14 @@ class QueryTruncationV1(_StrictQueryEngineModel):
     @field_validator("clipped_budgets")
     @classmethod
     def _clipped(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != _byte_sorted(value):
+        if value != byte_sorted(value):
             raise ValueError("clipped query budgets must be sorted and unique")
         return value
 
     @field_validator("truncated_includes")
     @classmethod
     def _includes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != _byte_sorted(value):
+        if value != byte_sorted(value):
             raise ValueError("truncated query includes must be sorted and unique")
         return value
 
@@ -575,163 +493,50 @@ def _refuse(
         QueryRefusalV1(
             code=code,
             message=message,
-            statement_digests=_byte_sorted(statement_digests),
-            subject_identities=_byte_sorted(subject_identities),
+            statement_digests=byte_sorted(statement_digests),
+            subject_identities=byte_sorted(subject_identities),
         )
     )
 
 
-# -- direct fact index ----------------------------------------------------
+# -- derived relation traversal -------------------------------------------
 
 
-@dataclass(frozen=True)
-class VisibleClaimRow:
-    """One accepted Claim admitted by the owning query's verdict policy."""
+def relation_edges(
+    backend: ClaimQueryBackendV1,
+    artifact_path: str,
+    predicate: str,
+    direction: QueryTraversalDirectionV1,
+) -> tuple[tuple[VisibleClaimRow, str], ...]:
+    """Return the visible relation-Claim edges leaving one bound Subject.
 
-    row: ClaimFactRowV1
-    visibility: QueryClaimVisibilityV1
-
-    @property
-    def subject_path(self) -> str:
-        return self.row.accepted.claim.statement.subject.artifact_path
-
-    @property
-    def object_subject_path(self) -> str | None:
-        item = self.row.accepted.claim.statement.object
-        return item.address.artifact_path if isinstance(item, SubjectClaimObject) else None
-
-
-class DirectClaimFactIndex:
-    """Direct accepted-projection reads under one query's verdict policy.
-
-    This is the evaluation primitive surface a PC-F query backend must
-    reproduce for parity: identical rows in identical canonical order, under an
-    identical verdict computation at the same explicit evaluation time.
+    Traversal is derived from the backend primitives rather than stored, so no
+    backend can answer with an edge its Claim rows do not carry.
     """
 
-    def __init__(
-        self,
-        facts: ClaimQueryFactsV1,
-        *,
-        definition: QueryDefinitionV1,
-        evaluation_time: datetime,
-    ) -> None:
-        self._facts = facts
-        self._definition = definition
-        self._evaluation_time = evaluation_time
-        self._providers: dict[str, ProviderV1] = {
-            provider.identity.qualified: provider for provider in facts.providers
-        }
-        self._subjects: dict[str, AcceptedSubject] = {
-            subject.path: subject for subject in facts.subjects
-        }
-        self._by_subject: dict[tuple[str, str], list[VisibleClaimRow]] = {}
-        self._by_object: dict[tuple[str, str], list[VisibleClaimRow]] = {}
-        for row in facts.claims:
-            visible = self.visibility(row)
-            if visible is None:
-                continue
-            statement = row.accepted.claim.statement
-            key = (statement.subject.artifact_path, statement.predicate)
-            self._by_subject.setdefault(key, []).append(visible)
-            target = visible.object_subject_path
-            if target is not None:
-                self._by_object.setdefault((target, statement.predicate), []).append(visible)
-
-    def visibility(self, row: ClaimFactRowV1) -> VisibleClaimRow | None:
-        """Return the Claim row's visibility, or None when the policy hides it."""
-
-        statement = row.accepted.claim.statement
-        subject = self._subjects.get(statement.subject.artifact_path)
-        if subject is None:
-            return None
-        verdict = evaluate_claim_verdict(
-            claim_statement_digest=row.accepted.statement_digest,
-            rule=row.rule,
-            evaluation_time=self._evaluation_time,
-            captures=row.captures,
-            attestations=row.attestations,
-            providers=self._providers,
-            claim_effective_from=statement.effective_from,
-            claim_effective_until=statement.effective_until,
-            referent_current=row.referent_current,
-            resolved_authority_basis=row.resolved_authority_basis,
-        )
-        policy = self._definition.evaluation_policy
-        if verdict.verdict not in policy.visible_verdicts:
-            return None
-        if verdict.currency not in policy.visible_currency:
-            return None
-        return VisibleClaimRow(
-            row=row,
-            visibility=QueryClaimVisibilityV1(
-                claim_path=row.accepted.path,
-                statement_digest=row.accepted.statement_digest,
-                artifact_digest=row.accepted.artifact_digest,
-                predicate=statement.predicate,
-                subject_identity=subject.shell.identity.qualified,
-                verdict=verdict.verdict,
-                currency=verdict.currency,
-            ),
-        )
-
-    def subjects(self, kinds: tuple[str, ...], *, subject_id: str | None = None) -> tuple[str, ...]:
-        """Return the canonically ordered Subject paths of the declared kinds."""
-
-        admitted = set(kinds)
-        return tuple(
-            subject.path
-            for subject in self._facts.subjects
-            if subject.shell.subject_kind in admitted
-            and (subject_id is None or subject.shell.subject_id == subject_id)
-        )
-
-    def subject(self, artifact_path: str) -> AcceptedSubject | None:
-        """Return one accepted Subject row by its exact ledger path."""
-
-        return self._subjects.get(artifact_path)
-
-    def claims_on(self, artifact_path: str, predicate: str) -> tuple[VisibleClaimRow, ...]:
-        """Return the visible Claims whose statement subject is that Subject."""
-
-        return tuple(self._by_subject.get((artifact_path, predicate), ()))
-
-    def claims_to(self, artifact_path: str, predicate: str) -> tuple[VisibleClaimRow, ...]:
-        """Return the visible Claims whose Subject-typed object is that Subject."""
-
-        return tuple(self._by_object.get((artifact_path, predicate), ()))
-
-    def relations(
-        self,
-        artifact_path: str,
-        predicate: str,
-        direction: QueryTraversalDirectionV1,
-    ) -> tuple[tuple[VisibleClaimRow, str], ...]:
-        """Return the visible relation-Claim edges leaving one bound Subject."""
-
-        edges: list[tuple[VisibleClaimRow, str]] = []
-        if direction == "forward":
-            for claim in self.claims_on(artifact_path, predicate):
-                target = claim.object_subject_path
-                if target is None:
-                    raise _refuse(
-                        TRAVERSAL_OBJECT_NOT_SUBJECT,
-                        "A traversed Claim does not carry a Subject-typed object.",
-                        statement_digests=(claim.visibility.statement_digest,),
-                    )
-                edges.append((claim, target))
-        else:
-            edges.extend(
-                (claim, claim.subject_path) for claim in self.claims_to(artifact_path, predicate)
-            )
-        for claim, target in edges:
-            if self.subject(target) is None:
+    edges: list[tuple[VisibleClaimRow, str]] = []
+    if direction == "forward":
+        for claim in backend.claims_on(artifact_path, predicate):
+            target = claim.object_subject_path
+            if target is None:
                 raise _refuse(
-                    SUBJECT_UNRESOLVED,
-                    "A traversed Claim names a Subject absent at the accepted coordinate.",
+                    TRAVERSAL_OBJECT_NOT_SUBJECT,
+                    "A traversed Claim does not carry a Subject-typed object.",
                     statement_digests=(claim.visibility.statement_digest,),
                 )
-        return tuple(edges)
+            edges.append((claim, target))
+    else:
+        edges.extend(
+            (claim, claim.subject_path) for claim in backend.claims_to(artifact_path, predicate)
+        )
+    for claim, target in edges:
+        if backend.subject(target) is None:
+            raise _refuse(
+                SUBJECT_UNRESOLVED,
+                "A traversed Claim names a Subject absent at the accepted coordinate.",
+                statement_digests=(claim.visibility.statement_digest,),
+            )
+    return tuple(edges)
 
 
 # -- evaluation state -----------------------------------------------------
@@ -802,12 +607,12 @@ class _Evaluator:
         self,
         definition: QueryDefinitionV1,
         *,
-        index: DirectClaimFactIndex,
+        backend: ClaimQueryBackendV1,
         parameters: Mapping[str, object],
         evaluation_time: datetime,
     ) -> None:
         self._definition = definition
-        self._index = index
+        self._backend = backend
         self._parameters = parameters
         self._evaluation_time = evaluation_time
 
@@ -815,7 +620,7 @@ class _Evaluator:
         subject_path = row.bindings.get(binding)
         if subject_path is None:
             return _ABSENT
-        claims = self._index.claims_on(subject_path, predicate)
+        claims = self._backend.claims_on(subject_path, predicate)
         if not claims:
             return _ABSENT
         distinct: dict[bytes, object] = {}
@@ -823,7 +628,7 @@ class _Evaluator:
             row.record(claim.visibility)
             item = claim.row.accepted.claim.statement.object
             if isinstance(item, SubjectClaimObject):
-                target = self._index.subject(item.address.artifact_path)
+                target = self._backend.subject(item.address.artifact_path)
                 if target is None:
                     raise _refuse(
                         SUBJECT_UNRESOLVED,
@@ -836,9 +641,9 @@ class _Evaluator:
             distinct[canonical_bytes(value)] = value
         if len(distinct) == 1:
             return _Value(state="present", value=next(iter(distinct.values())))
-        subject = self._index.subject(subject_path)
+        subject = self._backend.subject(subject_path)
         assert subject is not None
-        digests = _byte_sorted(tuple(claim.visibility.statement_digest for claim in claims))
+        digests = byte_sorted(tuple(claim.visibility.statement_digest for claim in claims))
         if self._definition.evaluation_policy.conflict_behavior == "refuse_on_conflict":
             raise _refuse(
                 CLAIM_CONFLICT,
@@ -877,7 +682,7 @@ class _Evaluator:
                     SUBJECT_FIELD_UNAVAILABLE,
                     "A Subject field was read through a binding that carries no Subject.",
                 )
-            subject = self._index.subject(subject_path)
+            subject = self._backend.subject(subject_path)
             assert subject is not None
             return _Value(
                 state="present",
@@ -921,7 +726,7 @@ class _Evaluator:
             subject_path = row.bindings.get(filter_.binding)
             present = False
             if subject_path is not None:
-                claims = self._index.claims_on(subject_path, filter_.predicate)
+                claims = self._backend.claims_on(subject_path, filter_.predicate)
                 for claim in claims:
                     row.record(claim.visibility)
                 present = bool(claims)
@@ -998,7 +803,7 @@ def resolve_query_parameters(
 
     supplied = dict(parameters or {})
     declared = {item.name: item for item in definition.parameters}
-    unknown = _byte_sorted(tuple(set(supplied) - set(declared)))
+    unknown = byte_sorted(tuple(set(supplied) - set(declared)))
     if unknown:
         raise _refuse(
             PARAMETER_UNDECLARED,
@@ -1049,10 +854,14 @@ def _expiry(definition: QueryDefinitionV1, evaluation_time: datetime) -> datetim
     return evaluation_time + timedelta(microseconds=expiry.microseconds)
 
 
-def _binding_row(index: DirectClaimFactIndex, binding: str, path: str | None) -> QueryRowBindingV1:
+def _binding_row(
+    backend: ClaimQueryBackendV1,
+    binding: str,
+    path: str | None,
+) -> QueryRowBindingV1:
     if path is None:
         return QueryRowBindingV1(binding=binding)
-    subject = index.subject(path)
+    subject = backend.subject(path)
     assert subject is not None
     return QueryRowBindingV1(
         binding=binding,
@@ -1079,11 +888,14 @@ def evaluate_claim_query(
     evaluation_time: datetime,
     parameters: Mapping[str, object] | None = None,
     budgets: QueryBudgetsV1 | None = None,
+    backend_factory: ClaimQueryBackendFactoryV1 = DirectClaimFactIndex,
 ) -> ClaimQueryResultV1:
     """Evaluate one accepted QueryDefinition against accepted Claim facts.
 
     The result is a pure function of the definition digest, the resolved
-    parameters, the accepted coordinate, and the explicit evaluation time.
+    parameters, the accepted coordinate, and the explicit evaluation time. The
+    backend is materialized from those accepted facts inside the evaluation, so
+    a caller can choose how state is stored but never what it says.
     """
 
     query = definition.query
@@ -1108,6 +920,7 @@ def evaluate_claim_query(
             evaluation_time=evaluation_time,
             bindings=bindings,
             budgets=_effective_budgets(query, budgets),
+            backend_factory=backend_factory,
         )
     except _RefusalSignal as signal:
         return ClaimQueryResultV1(
@@ -1130,7 +943,7 @@ def evaluate_claim_query(
 
 def _entry_rows(
     query: QueryDefinitionV1,
-    index: DirectClaimFactIndex,
+    backend: ClaimQueryBackendV1,
     parameters: Mapping[str, object],
 ) -> list[_Row]:
     subject_id: str | None = None
@@ -1144,14 +957,14 @@ def _entry_rows(
         subject_id = supplied
     return [
         _Row(bindings={query.entry.binding: path})
-        for path in index.subjects(query.entry.subject_kinds, subject_id=subject_id)
+        for path in backend.subjects(query.entry.subject_kinds, subject_id=subject_id)
     ]
 
 
 def _traverse(
     query: QueryDefinitionV1,
     evaluator: _Evaluator,
-    index: DirectClaimFactIndex,
+    backend: ClaimQueryBackendV1,
     rows: list[_Row],
     budgets: QueryBudgetsV1,
     clipped: set[QueryClippedBudgetV1],
@@ -1162,8 +975,10 @@ def _traverse(
             source = row.bindings.get(step.from_binding)
             matched = False
             if source is not None:
-                for claim, target in index.relations(source, step.predicate, step.direction):
-                    subject = index.subject(target)
+                for claim, target in relation_edges(
+                    backend, source, step.predicate, step.direction
+                ):
+                    subject = backend.subject(target)
                     assert subject is not None
                     if (
                         step.target_subject_kinds
@@ -1192,7 +1007,7 @@ def _traverse(
 
 def _hydrate(
     evaluator: _Evaluator,
-    index: DirectClaimFactIndex,
+    backend: ClaimQueryBackendV1,
     row: _Row,
     include: QueryIncludeV1,
 ) -> QueryIncludeResultV1:
@@ -1202,11 +1017,12 @@ def _hydrate(
         if include.direction == "forward":
             pairs = [
                 (claim, claim.object_subject_path)
-                for claim in index.claims_on(source, include.predicate)
+                for claim in backend.claims_on(source, include.predicate)
             ]
         else:
             pairs = [
-                (claim, claim.subject_path) for claim in index.claims_to(source, include.predicate)
+                (claim, claim.subject_path)
+                for claim in backend.claims_to(source, include.predicate)
             ]
     scoped: list[_Row] = []
     candidates: list[tuple[VisibleClaimRow, str | None]] = []
@@ -1239,7 +1055,7 @@ def _hydrate(
                     None
                     if candidates[position][1] is None
                     else _binding_row(
-                        index, include.binding, candidates[position][1]
+                        backend, include.binding, candidates[position][1]
                     ).subject_identity
                 ),
                 visibility=candidates[position][0].visibility,
@@ -1253,14 +1069,14 @@ def _hydrate(
 
 
 def _result_subject_identities(
-    index: DirectClaimFactIndex,
+    backend: ClaimQueryBackendV1,
     query: QueryDefinitionV1,
     rows: Sequence[_Row],
 ) -> tuple[str, ...]:
-    return _byte_sorted(
+    return byte_sorted(
         tuple(
             _binding_row(
-                index, query.result_binding, row.bindings.get(query.result_binding)
+                backend, query.result_binding, row.bindings.get(query.result_binding)
             ).subject_identity
             or ""
             for row in rows
@@ -1276,13 +1092,21 @@ def _evaluate(
     evaluation_time: datetime,
     bindings: tuple[QueryParameterBindingV1, ...],
     budgets: QueryBudgetsV1,
+    backend_factory: ClaimQueryBackendFactoryV1,
 ) -> ClaimQueryResultV1:
     query = definition.query
-    index = DirectClaimFactIndex(facts, definition=query, evaluation_time=evaluation_time)
+    backend = backend_factory(facts, definition=query, evaluation_time=evaluation_time)
+    if canonical_bytes(backend.coordinate.model_dump(mode="json")) != canonical_bytes(
+        coordinate.model_dump(mode="json")
+    ):
+        raise _refuse(
+            COORDINATE_MISMATCH,
+            "The backend was materialized at a different accepted coordinate.",
+        )
     parameters = {item.name: item.value for item in bindings if item.value is not None}
     evaluator = _Evaluator(
         query,
-        index=index,
+        backend=backend,
         parameters=parameters,
         evaluation_time=evaluation_time,
     )
@@ -1291,8 +1115,8 @@ def _evaluate(
     rows = _traverse(
         query,
         evaluator,
-        index,
-        _entry_rows(query, index, parameters),
+        backend,
+        _entry_rows(query, backend, parameters),
         budgets,
         clipped,
     )
@@ -1313,7 +1137,7 @@ def _evaluate(
 
     truncated_includes: set[str] = set()
     for row in rows:
-        row.includes = tuple(_hydrate(evaluator, index, row, item) for item in query.includes)
+        row.includes = tuple(_hydrate(evaluator, backend, row, item) for item in query.includes)
         truncated_includes.update(item.name for item in row.includes if item.truncated)
     if truncated_includes:
         clipped.add("include_max_items")
@@ -1336,7 +1160,7 @@ def _evaluate(
     candidate_result_count = len(rows)
     conflicts: dict[bytes, QueryConflictV1] = {}
     if query.result_cardinality == "one" and candidate_result_count > 1:
-        identities = _result_subject_identities(index, query, rows)
+        identities = _result_subject_identities(backend, query, rows)
         if query.evaluation_policy.conflict_behavior == "refuse_on_conflict":
             raise _refuse(
                 RESULT_CONFLICT,
@@ -1370,11 +1194,11 @@ def _evaluate(
         result_rows.append(
             QueryResultRowV1(
                 bindings=tuple(
-                    _binding_row(index, binding, row.bindings.get(binding))
+                    _binding_row(backend, binding, row.bindings.get(binding))
                     for binding in query.row_bindings
                 ),
                 result_subject_identity=_binding_row(
-                    index, query.result_binding, row.bindings.get(query.result_binding)
+                    backend, query.result_binding, row.bindings.get(query.result_binding)
                 ).subject_identity,
                 path=tuple(item for _, item in row.edges),
                 relation_claim=relation if query.result_shape == "relation_claim" else None,
@@ -1406,7 +1230,7 @@ def _evaluate(
         conflicts=tuple(conflicts[key] for key in sorted(conflicts)),
         truncation=QueryTruncationV1(
             clipped_budgets=ordered_budgets,
-            truncated_includes=_byte_sorted(tuple(truncated_includes)),
+            truncated_includes=byte_sorted(tuple(truncated_includes)),
             candidate_result_count=candidate_result_count,
             returned_result_count=len(result_rows),
             evaluated_path_count=evaluated_path_count,
@@ -1438,6 +1262,8 @@ __all__ = [
     "TRAVERSAL_OBJECT_NOT_SUBJECT",
     "VALUE_TYPE_MISMATCH",
     "ClaimFactRowV1",
+    "ClaimQueryBackendFactoryV1",
+    "ClaimQueryBackendV1",
     "ClaimQueryError",
     "ClaimQueryFactsV1",
     "ClaimQueryResultV1",
@@ -1458,6 +1284,7 @@ __all__ = [
     "VisibleClaimRow",
     "claim_query_result_digest",
     "evaluate_claim_query",
+    "relation_edges",
     "query_execution_receipt",
     "query_parameter_digest",
     "resolve_query_parameters",

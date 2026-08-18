@@ -291,7 +291,7 @@ transplant. DP-0 intentionally retains:
 | `cruxible-client` | Reduced Playbill HTTP client shipped with the core |
 | `pydantic` | Active Playbill/client contracts and donor validation models |
 | `packaging` | Requirement parsing in the architecture dependency audit |
-| `networkx` | Graph/query parity oracle through PC-F |
+| `networkx` | Active local Claim-query backend (`playbill/query/networkx_backend.py`) plus the graph/query parity oracle through PC-F |
 | `polars` | Tabular provider/workflow parity through PC-F/PC-G |
 | `pyyaml` | Active source-catalog CLI plus config/workflow donors |
 | `structlog` | Active daemon audit/request logging and service donors |
