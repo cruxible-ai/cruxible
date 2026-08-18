@@ -189,9 +189,7 @@ def diff_state(before: Mapping[str, Any], after: Mapping[str, Any]) -> JsonObjec
         summary["relationships_added"] = len(relationships.get("added", []))
         summary["relationships_removed"] = len(relationships.get("removed", []))
         summary["relationships_changed"] = len(relationships.get("changed", []))
-    for section, id_key in (
-        ("snapshots", "snapshot_id"),
-    ):
+    for section, id_key in (("snapshots", "snapshot_id"),):
         section_diff = _diff_item_list(
             before.get(section),
             after.get(section),

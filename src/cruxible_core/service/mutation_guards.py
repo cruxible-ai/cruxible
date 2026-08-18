@@ -45,6 +45,7 @@ names addresses the mutated entity; ``edge`` and ``result`` do not name entity
 properties and are left alone.
 """
 
+
 @dataclass(frozen=True)
 class _GuardEntityContext:
     current: EntityInstance | None
@@ -324,9 +325,7 @@ def evaluate_mutation_guards(
                 context = _guard_transition_context(config, guard, entity, current, proposed)
                 if context is None:
                     continue
-                if not _guard_scope_matches(
-                    config, guard, proposed, proposed_graph
-                ):
+                if not _guard_scope_matches(config, guard, proposed, proposed_graph):
                     continue
                 outcome.refusals.append(
                     GuardRefusal(
