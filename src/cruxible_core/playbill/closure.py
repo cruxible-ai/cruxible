@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from functools import lru_cache
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -21,8 +22,11 @@ from cruxible_core.playbill.artifacts import (
 from cruxible_core.playbill.candidates import DependencyProofReferenceV1
 from cruxible_core.playbill.canonical import (
     ArtifactDigest,
+    CanonicalValue,
+    DependencyEdgeRoot,
     Sha256Value,
     canonical_bytes,
+    canonical_digest,
     normalize_manifest_paths,
     typed_digest,
 )
@@ -51,6 +55,13 @@ from cruxible_core.playbill.exhaust.promotions import (
     ExhaustPromotionError,
     exhaust_promotion_digest,
     parse_exhaust_promotion,
+)
+from cruxible_core.playbill.merkle import (
+    DEPENDENCY_EDGE_DOMAINS,
+    MerkleTree,
+    build_merkle_tree,
+    update_merkle_tree,
+    verify_merkle_tree,
 )
 from cruxible_core.playbill.procedures.artifacts import (
     ProcedureFormatError,
@@ -344,6 +355,121 @@ class MemberDependencyProofsV1(_StrictClosureModel):
     proof_refs: tuple[DependencyProofReferenceV1, ...]
 
 
+DEPENDENCY_EDGE_SET_DOMAIN: Final = "playbill-depgraph-edges-v1"
+
+
+def _edge_sort_key(edge: DependencyProofReferenceV1) -> bytes:
+    return canonical_bytes(edge.model_dump(mode="json"))
+
+
+def dependency_edge_members(
+    edges: Sequence[DependencyProofReferenceV1],
+) -> dict[str, str]:
+    """Group edges by source member and digest each member's outgoing edge set.
+
+    Only members that actually have outgoing edges become leaves, which is what
+    keeps the tree proportional to the dependency structure rather than to the
+    instance. Ordering inside a member is canonical and duplicates are preserved
+    exactly as the flat `playbill-dependency-graph-v2` edge list preserved them,
+    so the two commitments read the same edge set and only its shape differs.
+
+    The source path is not repeated inside the member digest: every edge already
+    carries `source_path`, and the trie leaf binds the path itself, exactly as
+    the manifest merkle binds a member's path at its leaf rather than inside its
+    content digest.
+    """
+
+    grouped: dict[str, list[CanonicalValue]] = {}
+    for edge in sorted(edges, key=_edge_sort_key):
+        grouped.setdefault(edge.source_path, []).append(edge.model_dump(mode="json"))
+    return {
+        path: canonical_digest(DEPENDENCY_EDGE_SET_DOMAIN, {"edges": entries})
+        for path, entries in grouped.items()
+    }
+
+
+def build_dependency_edge_tree(
+    edges: Sequence[DependencyProofReferenceV1],
+) -> MerkleTree[DependencyEdgeRoot]:
+    """Build the `playbill-dependency-graph-v3` trie over one tree's edge set."""
+
+    return build_merkle_tree(dependency_edge_members(edges), domains=DEPENDENCY_EDGE_DOMAINS)
+
+
+def update_dependency_edge_tree(
+    tree: MerkleTree[DependencyEdgeRoot],
+    *,
+    updated: Mapping[str, Sequence[DependencyProofReferenceV1]] | None = None,
+    removed: Sequence[str] | None = None,
+) -> MerkleTree[DependencyEdgeRoot]:
+    """Re-digest only the named members' edge sets and the nodes above them.
+
+    `updated` maps a member path to its complete new outgoing edge set, and
+    `removed` names members that left the tree entirely. A member with no
+    outgoing edges has no leaf, so updating one to an empty edge set drops its
+    leaf, and doing so to a member that never had one is the no-op it describes
+    -- unlike `removed`, which still refuses to name a member that is not there.
+    The result is the tree `build_dependency_edge_tree` would have built from the
+    whole post-change edge set.
+    """
+
+    members: dict[str, str] = {}
+    dropped = list(removed or ())
+    for path, member_edges in (updated or {}).items():
+        digests = dependency_edge_members(member_edges)
+        if not digests:
+            existing = tree.nodes.get(path)
+            if existing is not None and existing.is_leaf:
+                dropped.append(path)
+            continue
+        if set(digests) != {path}:
+            raise ValueError(f"dependency edge update names edges outside {path!r}")
+        members[path] = digests[path]
+    return update_merkle_tree(tree, updated=members, removed=dropped)
+
+
+def dependency_edge_root(
+    edges: Sequence[DependencyProofReferenceV1],
+) -> DependencyEdgeRoot:
+    """Return the tagged v3 edge-set root, defined even for an edgeless tree."""
+
+    return build_dependency_edge_tree(edges).root
+
+
+def verify_dependency_edge_root(
+    edges: Sequence[DependencyProofReferenceV1],
+    *,
+    claimed_root: str,
+) -> MerkleTree[DependencyEdgeRoot]:
+    """Rebuild the edge trie and refuse unless the claimed root reproduces."""
+
+    return verify_merkle_tree(
+        dependency_edge_members(edges),
+        claimed_root=claimed_root,
+        domains=DEPENDENCY_EDGE_DOMAINS,
+    )
+
+
+def _verify_closure_shape(evaluation: "ClosureEvaluationV2 | ClosureEvaluationV3") -> None:
+    """Check the verdict/evidence/scope agreement both closure versions share."""
+
+    refused = bool(evaluation.missing_dependents or evaluation.unresolved_pins)
+    if (evaluation.verdict == "refused") != refused:
+        raise ValueError("closure verdict must agree with exact refusal evidence")
+    if tuple(item.path for item in evaluation.member_dependency_proofs) != evaluation.paths:
+        raise ValueError("closure member proof paths differ from complete scope")
+
+
+def _proofs_for(
+    member_dependency_proofs: tuple[MemberDependencyProofsV1, ...],
+    path: str,
+) -> tuple[DependencyProofReferenceV1, ...]:
+    for item in member_dependency_proofs:
+        if item.path == path:
+            return item.proof_refs
+    raise KeyError(path)
+
+
 class ClosureEvaluationV2(_StrictClosureModel):
     tag: Literal["playbill-closure-evaluation-v2"] = "playbill-closure-evaluation-v2"
     verdict: Literal["complete", "refused"]
@@ -355,18 +481,42 @@ class ClosureEvaluationV2(_StrictClosureModel):
 
     @model_validator(mode="after")
     def _shape(self) -> "ClosureEvaluationV2":
-        refused = bool(self.missing_dependents or self.unresolved_pins)
-        if (self.verdict == "refused") != refused:
-            raise ValueError("closure verdict must agree with exact refusal evidence")
-        if tuple(item.path for item in self.member_dependency_proofs) != self.paths:
-            raise ValueError("closure member proof paths differ from complete scope")
+        _verify_closure_shape(self)
         return self
 
     def proofs_for(self, path: str) -> tuple[DependencyProofReferenceV1, ...]:
-        for item in self.member_dependency_proofs:
-            if item.path == path:
-                return item.proof_refs
-        raise KeyError(path)
+        return _proofs_for(self.member_dependency_proofs, path)
+
+
+class ClosureEvaluationV3(_StrictClosureModel):
+    """The v2 closure evaluation with the incrementally maintainable edge root.
+
+    Verdict, scope, per-member proofs, and both refusal shapes are unchanged:
+    only the graph commitment moves, from a digest over both trees' full edge
+    lists to a merkle root over the candidate tree's edge set.
+    """
+
+    tag: Literal["playbill-closure-evaluation-v3"] = "playbill-closure-evaluation-v3"
+    verdict: Literal["complete", "refused"]
+    paths: tuple[str, ...]
+    dependency_edge_root: str
+    member_dependency_proofs: tuple[MemberDependencyProofsV1, ...]
+    missing_dependents: tuple[IncompleteClosureItemV1, ...] = ()
+    unresolved_pins: tuple[UnresolvedArtifactPinV1, ...] = ()
+
+    @field_validator("dependency_edge_root")
+    @classmethod
+    def _edge_root(cls, value: str) -> str:
+        DependencyEdgeRoot.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ClosureEvaluationV3":
+        _verify_closure_shape(self)
+        return self
+
+    def proofs_for(self, path: str) -> tuple[DependencyProofReferenceV1, ...]:
+        return _proofs_for(self.member_dependency_proofs, path)
 
 
 def _edges(
@@ -450,13 +600,35 @@ def _unresolved_pins(
     return tuple(sorted(missing, key=lambda item: canonical_bytes(item.model_dump(mode="json"))))
 
 
-def evaluate_dependency_closure(
+@dataclass(frozen=True)
+class _ClosureFacts:
+    """Everything one closure evaluation determines, before any version speaks.
+
+    The reverse-dependency walk, the pin resolution, and the per-member proof
+    assembly are one algorithm; v2 and v3 differ only in how they commit to the
+    edges it read. Keeping the facts in one place is what makes the succession a
+    change of commitment rather than a second closure implementation.
+    """
+
+    scope: tuple[str, ...]
+    parent_edges: tuple[DependencyProofReferenceV1, ...]
+    candidate_edges: tuple[DependencyProofReferenceV1, ...]
+    missing_dependents: tuple[IncompleteClosureItemV1, ...]
+    unresolved_pins: tuple[UnresolvedArtifactPinV1, ...]
+    member_dependency_proofs: tuple[MemberDependencyProofsV1, ...]
+
+    @property
+    def verdict(self) -> Literal["complete", "refused"]:
+        return "refused" if self.missing_dependents or self.unresolved_pins else "complete"
+
+
+def _closure_facts(
     *,
     parent_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
     scope: tuple[str, ...],
-) -> ClosureEvaluationV2:
-    """Compute exact reverse dependencies and refuse every omitted live dependent."""
+) -> _ClosureFacts:
+    """Compute exact reverse dependencies and every omitted live dependent."""
 
     if tuple(normalize_manifest_paths(scope)) != scope or not scope:
         raise ValueError("closure scope must be nonempty, sorted, and unique")
@@ -492,14 +664,6 @@ def evaluate_dependency_closure(
         sorted(missing, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
     )
     unresolved = _unresolved_pins(candidate, source_paths=scope_set)
-    graph_digest = typed_digest(
-        Sha256Value,
-        "playbill-dependency-graph-v2",
-        {
-            "parent_edges": [item.model_dump(mode="json") for item in parent_edges],
-            "candidate_edges": [item.model_dump(mode="json") for item in candidate_edges],
-        },
-    ).tagged
     proofs: list[MemberDependencyProofsV1] = []
     all_edges = tuple(
         sorted(
@@ -512,23 +676,89 @@ def evaluate_dependency_closure(
             edge for edge in all_edges if edge.source_path == path or edge.target_path == path
         )
         proofs.append(MemberDependencyProofsV1(path=path, proof_refs=related))
-    return ClosureEvaluationV2(
-        verdict="refused" if missing_tuple or unresolved else "complete",
-        paths=scope,
-        dependency_graph_digest=graph_digest,
-        member_dependency_proofs=tuple(proofs),
+    return _ClosureFacts(
+        scope=scope,
+        parent_edges=parent_edges,
+        candidate_edges=candidate_edges,
         missing_dependents=missing_tuple,
         unresolved_pins=unresolved,
+        member_dependency_proofs=tuple(proofs),
+    )
+
+
+def evaluate_dependency_closure(
+    *,
+    parent_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    scope: tuple[str, ...],
+) -> ClosureEvaluationV2:
+    """Evaluate closure and commit to both trees' full edge lists in one digest."""
+
+    facts = _closure_facts(
+        parent_tree=parent_tree,
+        candidate_tree=candidate_tree,
+        scope=scope,
+    )
+    graph_digest = typed_digest(
+        Sha256Value,
+        "playbill-dependency-graph-v2",
+        {
+            "parent_edges": [item.model_dump(mode="json") for item in facts.parent_edges],
+            "candidate_edges": [item.model_dump(mode="json") for item in facts.candidate_edges],
+        },
+    ).tagged
+    return ClosureEvaluationV2(
+        verdict=facts.verdict,
+        paths=facts.scope,
+        dependency_graph_digest=graph_digest,
+        member_dependency_proofs=facts.member_dependency_proofs,
+        missing_dependents=facts.missing_dependents,
+        unresolved_pins=facts.unresolved_pins,
+    )
+
+
+def evaluate_dependency_closure_v3(
+    *,
+    parent_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    scope: tuple[str, ...],
+) -> ClosureEvaluationV3:
+    """Evaluate the same closure and commit to the candidate tree's edge root.
+
+    Nothing calls this yet: the v3 format and its verifier land before any
+    producer adopts them.
+    """
+
+    facts = _closure_facts(
+        parent_tree=parent_tree,
+        candidate_tree=candidate_tree,
+        scope=scope,
+    )
+    return ClosureEvaluationV3(
+        verdict=facts.verdict,
+        paths=facts.scope,
+        dependency_edge_root=dependency_edge_root(facts.candidate_edges).tagged,
+        member_dependency_proofs=facts.member_dependency_proofs,
+        missing_dependents=facts.missing_dependents,
+        unresolved_pins=facts.unresolved_pins,
     )
 
 
 __all__ = [
     "ArtifactDependencyStateV1",
     "ClosureEvaluationV2",
+    "ClosureEvaluationV3",
+    "DEPENDENCY_EDGE_SET_DOMAIN",
     "IncompleteClosureItemV1",
     "MemberDependencyProofsV1",
     "UnresolvedArtifactPinV1",
+    "build_dependency_edge_tree",
     "dependency_artifacts",
+    "dependency_edge_members",
+    "dependency_edge_root",
     "evaluate_dependency_closure",
+    "evaluate_dependency_closure_v3",
     "parse_dependency_artifact",
+    "update_dependency_edge_tree",
+    "verify_dependency_edge_root",
 ]

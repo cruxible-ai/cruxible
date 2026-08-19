@@ -68,7 +68,7 @@ from cruxible_core.playbill.settlement import (
     ChangeSetRecord,
     ChangeSetRecordV2,
     compute_semantic_root,
-    parse_change_set_record,
+    parse_producible_change_set_record,
     render_generation_descriptor,
 )
 from cruxible_core.playbill.types import (
@@ -287,7 +287,11 @@ def _verify_successor(
     if len(added) != 1:
         raise SettlementIntegrityError("generation must add exactly one change-set record")
     record_path = added[0]
-    record = parse_change_set_record(current_change_sets[record_path], path=record_path)
+    record = parse_producible_change_set_record(
+        current_change_sets[record_path],
+        path=record_path,
+        operation="replay",
+    )
     if record.sequence != parent.sequence + 1:
         raise SettlementIntegrityError("change-set sequence is not contiguous")
     expected_path = f"changesets/cs-{record.sequence:020d}.json"

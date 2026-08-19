@@ -445,8 +445,11 @@ tests/goldens/kev/reference_build_state.json
 tests/goldens/kev/relationship_state_visibility.json
 tests/goldens/playbill/attestation-v1.json
 tests/goldens/playbill/candidate-v1.json
+tests/goldens/playbill/candidate-v2.json
 tests/goldens/playbill/capture-claim-v1.json
+tests/goldens/playbill/changeset-v3.json
 tests/goldens/playbill/claim-type-v1.json
+tests/goldens/playbill/depgraph-v3.json
 tests/goldens/playbill/discovery-index-v1.json
 tests/goldens/playbill/merkle-manifest-v1.json
 tests/goldens/playbill/oracles-v1.json
@@ -455,12 +458,14 @@ tests/goldens/playbill/query-definition-v1.json
 tests/goldens/playbill/semantic-genesis-v1.json
 tests/goldens/playbill/served-surface-dp0b-v1.json
 tests/goldens/playbill/settlement-roots-v1.json
+tests/goldens/playbill/sroot-v2.json
 tests/goldens/playbill/source-reference-v1.json
 tests/goldens/playbill/subject-v1.json
 tests/goldens/state_cross_section/car_parts_state_diff.json
 ```
 
-PC-F left this inventory byte-identical. `tests/goldens/state_cross_section/`
+PC-F added four goldens for the dark half of the coordinated wire succession and
+left every pre-existing entry byte-identical. `tests/goldens/state_cross_section/`
 and `tests/goldens/kev/` are frozen records whose readers left in earlier
 batches; a frozen golden is deleted deliberately by the batch that retires the
 contract it pins, never as a side effect of deleting its last reader.
@@ -490,6 +495,38 @@ node digest, and the incremental change set that must reproduce the same root as
 a from-scratch build. The `merkle-sha256:` root prefix is deliberately disjoint
 from the flat `sha256:` manifest root so the two structures can never be read for
 one another. No wire record carries this root yet.
+
+### The coordinated wire succession (dark)
+
+Four goldens pin the succession's formats before any producer moves to them.
+Nothing in the source tree constructs these versions outside the three modules
+that define them, and acceptance, settlement, replay, and accepted projection
+each refuse a `playbill-changeset-v3` receipt with `UnproducibleWireVersionError`
+— recognized by shared parsing, acted on by nothing.
+
+`tests/goldens/playbill/candidate-v2.json` pins the `playbill-candidate-v2`
+preimage and digest. The candidate carries a `merkle-sha256:` manifest root in
+place of the flat one, never both, and the digest domain moves with the version,
+so the flat-rooted v1 sibling recorded beside it hashes to a different value.
+
+`tests/goldens/playbill/sroot-v2.json` pins the `playbill-sroot-v2` derivation.
+Its preimage hashes every input in its full tagged spelling, restoring the domain
+separation v1 destroyed by hashing bare hex, and adds `parent_derivation` naming
+the derivation that produced the parent. The vectors include the succession
+boundary — the first v2 generation, whose parent is the last v1 semantic root —
+beside the steady-state vector over the same parent value, which must differ.
+
+`tests/goldens/playbill/depgraph-v3.json` pins the `playbill-dependency-graph-v3`
+edge-set commitment: the defined empty root, the per-member edge-set preimage,
+the leaf and root preimages, every trie node digest, and an incremental change
+set that must reproduce the from-scratch root. The trie is the same one
+implementation as the manifest merkle under a second domain family, and its
+`depgraph-sha256:` root prefix is disjoint from both `sha256:` and
+`merkle-sha256:`.
+
+`tests/goldens/playbill/changeset-v3.json` pins the `playbill-changeset-v3`
+receipt that carries the other two: a v2 candidate and a v3 closure proof, with
+member evidence, law evidence, approvals, and actor binding unchanged from v2.
 
 `tests/goldens/playbill/oracles-v1.json` pins the Family-1 oracle at
 `e3fe35b360d098f14a5d59bf770ffee401224f0c` and the Procedure graph-program

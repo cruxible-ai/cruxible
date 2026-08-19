@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol
+from typing import Final, Literal, NoReturn, Protocol
 
 from pydantic import (
     BaseModel,
@@ -25,10 +25,14 @@ from cruxible_core.playbill.candidates import (
     CandidateMemberEvidence,
     CandidateMemberLawEvidenceV2,
     CandidateRecord,
+    CandidateRecordAnyVersion,
     CandidateRecordV2,
+    CandidateRecordV3,
     ClosureProofV2,
+    ClosureProofV3,
     MemberLawEvaluationV2,
     SemanticCandidate,
+    SemanticCandidateV2,
     candidate_digest,
 )
 from cruxible_core.playbill.canonical import (
@@ -37,6 +41,7 @@ from cruxible_core.playbill.canonical import (
     ChangeSetDigest,
     GenerationRoot,
     SemanticManifestRoot,
+    SemanticMerkleRoot,
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
@@ -46,7 +51,10 @@ from cruxible_core.playbill.canonical import (
     typed_digest,
 )
 from cruxible_core.playbill.documents import BodyVerifierProtocol
-from cruxible_core.playbill.errors import SettlementIntegrityError
+from cruxible_core.playbill.errors import (
+    SettlementIntegrityError,
+    UnproducibleWireVersionError,
+)
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.governance import (
     ActivationPolicy,
@@ -242,12 +250,7 @@ class ChangeSetRecordV2(_StrictSettlementModel):
     @field_validator("law_digests")
     @classmethod
     def _law_digests(cls, value: dict[str, str]) -> dict[str, str]:
-        if not value or list(value) != sorted(value, key=lambda item: item.encode("utf-8")):
-            raise ValueError("v2 change-set acceptance-law mapping must be nonempty and sorted")
-        for identifier, digest in value.items():
-            governance_identifier(identifier, label="v2 change-set acceptance-law identifier")
-            Sha256Value.from_tagged(digest)
-        return value
+        return _validated_change_set_law_digests(value, label="v2 change-set")
 
     @field_validator("changeset_digest")
     @classmethod
@@ -269,35 +272,163 @@ class ChangeSetRecordV2(_StrictSettlementModel):
             law_digests=self.law_digests,
             compiler_digest=self.compiler_digest,
         )
-        if candidate_digest(self.candidate).tagged != self.candidate_digest:
-            raise ValueError("v2 change-set candidate digest does not reproduce")
-        paths = tuple(member.path for member in self.members)
-        if paths != self.candidate.scope or self.closure_proof.paths != self.candidate.scope:
-            raise ValueError("v2 change-set member/closure paths differ from C_s.scope")
-        if tuple(item.path for item in self.law_evidence) != paths:
-            raise ValueError("v2 change-set law evidence differs from members")
-        if {item.law_identifier for item in self.members} != set(self.law_digests):
-            raise ValueError("v2 change-set members and acceptance-law mapping differ")
-        if change_set_digest(self).tagged != self.changeset_digest:
-            raise ValueError("v2 change-set self digest does not reproduce")
+        _verify_multi_member_change_set(self, label="v2 change-set")
         return self
 
 
-def change_set_digest(record: ChangeSetRecord | ChangeSetRecordV2) -> ChangeSetDigest:
+class ChangeSetRecordV3(_StrictSettlementModel):
+    """The v2 receipt carrying a v2 `C_s` and a v3 closure proof.
+
+    This is the wire form of the coordinated succession: the candidate signs a
+    merkle manifest root, and the closure proof commits to an incrementally
+    maintainable edge root. Nothing else about the receipt moves -- members, law
+    evidence, approvals, actor binding, and mandate are the v2 shapes.
+
+    A v3 receipt is structurally inert. Shared parsing recognizes it, so a
+    reader can say what it is instead of calling it corrupt, and every path that
+    could act on it -- production, acceptance/settlement, replay, and accepted
+    projection -- refuses it with `UnproducibleWireVersionError`.
+    """
+
+    tag: Literal["playbill-changeset-v3"] = "playbill-changeset-v3"
+    sequence: int = Field(ge=1)
+    members: tuple[CandidateMemberLawEvidenceV2, ...]
+    closure_proof: ClosureProofV3
+    law_evidence: tuple[MemberLawEvaluationV2, ...]
+    required_tier: PermissionTier
+    approval_requirements: tuple[ApprovalRequirement, ...]
+    activation_policy: ActivationPolicy
+    candidate: SemanticCandidateV2
+    candidate_digest: str
+    law_digests: dict[str, str]
+    compiler_digest: str
+    approvals: tuple[ApprovalSubmission, ...]
+    actor_binding: ChangeActorBinding
+    mandate_digest: str | None = None
+    changeset_digest: str
+
+    @field_validator("candidate_digest")
+    @classmethod
+    def _candidate_digest(cls, value: str) -> str:
+        CandidateDigest.from_tagged(value)
+        return value
+
+    @field_validator("compiler_digest", "mandate_digest")
+    @classmethod
+    def _generic_digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("law_digests")
+    @classmethod
+    def _law_digests(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validated_change_set_law_digests(value, label="v3 change-set")
+
+    @field_validator("changeset_digest")
+    @classmethod
+    def _changeset_digest(cls, value: str) -> str:
+        ChangeSetDigest.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _complete_correspondence(self) -> "ChangeSetRecordV3":
+        CandidateRecordV3(
+            candidate=self.candidate,
+            candidate_digest=self.candidate_digest,
+            required_tier=self.required_tier,
+            approval_requirements=self.approval_requirements,
+            activation_policy=self.activation_policy,
+            closure_proof=self.closure_proof,
+            members=self.members,
+            law_evidence=self.law_evidence,
+            law_digests=self.law_digests,
+            compiler_digest=self.compiler_digest,
+        )
+        _verify_multi_member_change_set(self, label="v3 change-set")
+        return self
+
+
+ChangeSetRecordAnyVersion = ChangeSetRecord | ChangeSetRecordV2 | ChangeSetRecordV3
+
+
+def _validated_change_set_law_digests(value: dict[str, str], *, label: str) -> dict[str, str]:
+    if not value or list(value) != sorted(value, key=lambda item: item.encode("utf-8")):
+        raise ValueError(f"{label} acceptance-law mapping must be nonempty and sorted")
+    for identifier, digest in value.items():
+        governance_identifier(identifier, label=f"{label} acceptance-law identifier")
+        Sha256Value.from_tagged(digest)
+    return value
+
+
+def _verify_multi_member_change_set(
+    record: "ChangeSetRecordV2 | ChangeSetRecordV3",
+    *,
+    label: str,
+) -> None:
+    """Close the receipt-side correspondence shared by the v2 and v3 receipts."""
+
+    if candidate_digest(record.candidate).tagged != record.candidate_digest:
+        raise ValueError(f"{label} candidate digest does not reproduce")
+    paths = tuple(member.path for member in record.members)
+    if paths != record.candidate.scope or record.closure_proof.paths != record.candidate.scope:
+        raise ValueError(f"{label} member/closure paths differ from C_s.scope")
+    if tuple(item.path for item in record.law_evidence) != paths:
+        raise ValueError(f"{label} law evidence differs from members")
+    if {item.law_identifier for item in record.members} != set(record.law_digests):
+        raise ValueError(f"{label} members and acceptance-law mapping differ")
+    if change_set_digest(record).tagged != record.changeset_digest:
+        raise ValueError(f"{label} self digest does not reproduce")
+
+
+def change_set_digest(record: ChangeSetRecordAnyVersion) -> ChangeSetDigest:
     payload = record.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("changeset_digest")
     return typed_digest(ChangeSetDigest, record.tag, payload)
 
 
+def _refuse_unproducible(tag: str, *, operation: str) -> NoReturn:
+    """State the inert gate's refusal once, naming the version and the caller."""
+
+    raise UnproducibleWireVersionError(
+        f"{tag} is recognized but not yet producible: {operation} refuses it"
+    )
+
+
+def require_producible_candidate(
+    candidate: CandidateRecordAnyVersion,
+    *,
+    operation: str,
+) -> CandidateRecord | CandidateRecordV2:
+    """Refuse a recognized candidate version this build cannot yet produce."""
+
+    if isinstance(candidate, CandidateRecordV3):
+        _refuse_unproducible(candidate.tag, operation=operation)
+    return candidate
+
+
+def require_producible_change_set(
+    record: ChangeSetRecordAnyVersion,
+    *,
+    operation: str,
+) -> ChangeSetRecord | ChangeSetRecordV2:
+    """Refuse a recognized change-set version this build cannot yet act on."""
+
+    if isinstance(record, ChangeSetRecordV3):
+        _refuse_unproducible(record.tag, operation=operation)
+    return record
+
+
 def build_change_set_record(
-    candidate: CandidateRecord | CandidateRecordV2,
+    candidate: CandidateRecordAnyVersion,
     *,
     sequence: int,
     approvals: tuple[ApprovalSubmission, ...],
     actor_binding: ChangeActorBinding,
     mandate_digest: str | None = None,
 ) -> ChangeSetRecord | ChangeSetRecordV2:
+    candidate = require_producible_candidate(candidate, operation="change-set construction")
     if isinstance(candidate, CandidateRecordV2):
         v2_values = {
             "sequence": sequence,
@@ -355,19 +486,24 @@ def _json_values(values: dict[str, object]) -> dict[str, object]:
     return normalized
 
 
-def change_set_path(record: ChangeSetRecord | ChangeSetRecordV2) -> str:
+def change_set_path(record: ChangeSetRecordAnyVersion) -> str:
     return f"changesets/cs-{record.sequence:020d}.json"
 
 
-def render_change_set(record: ChangeSetRecord | ChangeSetRecordV2) -> bytes:
+def render_change_set(record: ChangeSetRecordAnyVersion) -> bytes:
     return canonical_bytes(record.model_dump(mode="json")) + b"\n"
 
 
-def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecord | ChangeSetRecordV2:
-    """Parse either installed change-set version and verify exact canonical bytes."""
+def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecordAnyVersion:
+    """Parse any recognized change-set version and verify exact canonical bytes.
 
-    adapter: TypeAdapter[ChangeSetRecord | ChangeSetRecordV2] = TypeAdapter(
-        ChangeSetRecord | ChangeSetRecordV2
+    Recognition is deliberately wider than acceptance. A v3 receipt parses here
+    so a reader can name the version it is looking at; every consumer that would
+    act on it passes the result through `require_producible_change_set` first.
+    """
+
+    adapter: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(
+        ChangeSetRecord | ChangeSetRecordV2 | ChangeSetRecordV3
     )
     try:
         record = adapter.validate_json(content)
@@ -376,6 +512,26 @@ def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecord | C
     if render_change_set(record) != content:
         raise SettlementIntegrityError(f"generation change-set record is not canonical: {path}")
     return record
+
+
+def parse_producible_change_set_record(
+    content: bytes,
+    *,
+    path: str,
+    operation: str,
+) -> ChangeSetRecord | ChangeSetRecordV2:
+    """Parse a stored receipt and refuse any version this build cannot act on.
+
+    This is the one seam through which accepted change-set bytes enter replay,
+    checkpoint re-derivation, and accepted projection, so the inert gate on a
+    recognized-but-unproducible version is stated once and cannot drift apart
+    between them.
+    """
+
+    return require_producible_change_set(
+        parse_change_set_record(content, path=path),
+        operation=operation,
+    )
 
 
 def render_generation_descriptor(descriptor: GenerationDescriptor) -> bytes:
@@ -403,6 +559,67 @@ def compute_semantic_root(
             "changeset_digest": changeset.value,
             "approval_digests": [approval.value for approval in parsed_approvals],
             "parent_semantic_root": parent.value,
+        },
+    )
+
+
+SemanticRootDerivation = Literal["playbill-sroot-v1", "playbill-sroot-v2"]
+
+SEMANTIC_ROOT_V2_DOMAIN: Final = "playbill-sroot-v2"
+
+
+def compute_semantic_root_v2(
+    *,
+    manifest_root_value: str,
+    changeset_digest_value: str,
+    approval_digests: tuple[str, ...],
+    parent_semantic_root: str,
+    parent_derivation: SemanticRootDerivation,
+) -> SemanticRoot:
+    """Derive a semantic root from tagged inputs and an explicit parent derivation.
+
+    v1 hashed every input as bare hex, which threw away exactly the domain
+    separation the tagged spellings exist to carry: two structurally different
+    32-byte values entered its preimage identically. v2 hashes each input in its
+    full tagged spelling, so a merkle manifest root can never be read as a flat
+    one inside the preimage any more than it can on the wire.
+
+    The preimage is exactly, and only:
+
+    - `tag`: `"playbill-sroot-v2"`, this derivation's own name, supplied by the
+      canonical digest domain and thus present in every preimage byte string;
+    - `manifest_root`: the candidate manifest root's tagged spelling, which is a
+      `merkle-sha256:` merkle root -- a flat root is refused;
+    - `changeset_digest`: the change-set digest's tagged spelling;
+    - `approval_digests`: the sorted, unique approval digests, each tagged;
+    - `parent_semantic_root`: the parent semantic root's tagged spelling;
+    - `parent_derivation`: the name of the derivation that produced the parent.
+
+    The last field is the succession chain rule. A v1 and a v2 semantic root are
+    both `SemanticRoot` values with the same `sha256:` spelling, so the parent's
+    spelling alone cannot say which derivation produced it. The first v2
+    generation's parent is the last v1 semantic root, and it enters as
+    `parent_derivation="playbill-sroot-v1"`; every later generation's parent
+    enters as `"playbill-sroot-v2"`. The same 32-byte parent value therefore
+    yields two different children under the two claims, so a chain cannot be
+    re-narrated across the succession boundary after the fact.
+    """
+
+    manifest = SemanticMerkleRoot.from_tagged(manifest_root_value)
+    changeset = ChangeSetDigest.from_tagged(changeset_digest_value)
+    parent = SemanticRoot.from_tagged(parent_semantic_root)
+    parsed_approvals = tuple(ApprovalDigest.from_tagged(value) for value in approval_digests)
+    if approval_digests != tuple(sorted(set(approval_digests))):
+        raise SettlementIntegrityError("semantic-root approval digests must be sorted and unique")
+    return typed_digest(
+        SemanticRoot,
+        SEMANTIC_ROOT_V2_DOMAIN,
+        {
+            "manifest_root": manifest.tagged,
+            "changeset_digest": changeset.tagged,
+            "approval_digests": [approval.tagged for approval in parsed_approvals],
+            "parent_semantic_root": parent.tagged,
+            "parent_derivation": parent_derivation,
         },
     )
 
@@ -486,7 +703,7 @@ def prepare_generation(
     *,
     base: AcceptedProjectionCoordinate,
     candidate_tree: dict[str, bytes],
-    candidate: CandidateRecord | CandidateRecordV2,
+    candidate: CandidateRecordAnyVersion,
     approval_submissions: tuple[ApprovalSubmission, ...],
     bodies: BodyVerifierProtocol,
     actor_binding: ChangeActorBinding,
@@ -498,6 +715,9 @@ def prepare_generation(
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
+    # Refused before the ledger is touched: an unproducible version must never
+    # reach a read, a signature, or a commit.
+    candidate = require_producible_candidate(candidate, operation="settlement")
     if ledger.object_format() != base.git_object_format:
         raise SettlementIntegrityError("settlement base object format differs from ledger")
     if ledger.read_main() != base.git_oid:
@@ -612,11 +832,15 @@ def prepare_generation(
 
 
 __all__ = [
+    "SEMANTIC_ROOT_V2_DOMAIN",
     "ChangeActorBinding",
     "ChangeSetRecord",
+    "ChangeSetRecordAnyVersion",
     "ChangeSetRecordV2",
+    "ChangeSetRecordV3",
     "ClosureProof",
     "GENERATION_CONSTRUCTION",
+    "SemanticRootDerivation",
     "SettlementBinding",
     "SettlementCrashHook",
     "VerifiedGenerationBundle",
@@ -624,8 +848,12 @@ __all__ = [
     "change_set_digest",
     "change_set_path",
     "compute_semantic_root",
+    "compute_semantic_root_v2",
     "prepare_generation",
     "parse_change_set_record",
+    "parse_producible_change_set_record",
     "render_change_set",
     "render_generation_descriptor",
+    "require_producible_candidate",
+    "require_producible_change_set",
 ]

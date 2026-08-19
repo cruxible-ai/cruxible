@@ -178,6 +178,26 @@ class SemanticMerkleRoot(Sha256Value):
     kind = "semantic merkle root"
 
 
+class DependencyEdgeRoot(Sha256Value):
+    """Merkle root over the accepted dependency edge set, spelled to stand alone.
+
+    `playbill-dependency-graph-v2` committed to the full edge lists of both trees
+    in one preimage, so a change touching five members re-hashed every edge in
+    the instance. This root commits to the same edges as a path-segment trie
+    keyed by each edge's source member, so only the touched members' edge sets
+    and the interior nodes above them are re-hashed.
+
+    Its algorithm tag is disjoint from both `sha256:` and the manifest merkle's
+    `merkle-sha256:`. The two tries are also domain-separated at every node (see
+    `merkle.DEPENDENCY_EDGE_DOMAINS`), so the separation holds in the digests as
+    well as in the spellings: a dependency edge root can neither parse nor hash
+    as a manifest root, and vice versa.
+    """
+
+    algorithm = "depgraph-sha256"
+    kind = "dependency edge root"
+
+
 class SemanticRoot(Sha256Value):
     kind = "semantic root"
 
@@ -400,6 +420,7 @@ __all__ = [
     "CanonicalDigester",
     "CasDigest",
     "ChangeSetDigest",
+    "DependencyEdgeRoot",
     "GenerationRoot",
     "LogicalDigest",
     "MerkleNodeDigest",

@@ -37,6 +37,7 @@ from cruxible_core.playbill.errors import (
     ProjectionFormatError,
     SettlementIntegrityError,
     SubjectFormatError,
+    UnproducibleWireVersionError,
 )
 from cruxible_core.playbill.explanation import (
     ProjectionCoordinateContext,
@@ -509,7 +510,7 @@ def parse_projection_tree(
     )
     from cruxible_core.playbill.projection import AcceptedCoordinate
     from cruxible_core.playbill.settlement import (
-        parse_change_set_record,
+        parse_producible_change_set_record,
     )
 
     envelopes: list[ArtifactEnvelopeRow] = []
@@ -526,7 +527,15 @@ def parse_projection_tree(
         content = blobs[path]
         payload = _load_object(content, path=path)
         try:
-            record = parse_change_set_record(content, path=path)
+            record = parse_producible_change_set_record(
+                content,
+                path=path,
+                operation="accepted projection",
+            )
+        except UnproducibleWireVersionError:
+            # A recognized but unproducible version is not a malformed record,
+            # and its typed refusal must survive to the caller intact.
+            raise
         except SettlementIntegrityError as exc:
             raise ProjectionFormatError(
                 f"change-set record failed strict validation: {path}"

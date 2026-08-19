@@ -97,7 +97,7 @@ from cruxible_core.playbill.settlement import (
     ChangeSetRecord,
     ChangeSetRecordV2,
     compute_semantic_root,
-    parse_change_set_record,
+    parse_producible_change_set_record,
 )
 from cruxible_core.playbill.types import (
     CompilerCoordinate,
@@ -384,7 +384,11 @@ def _prefix_records(
             raise ReplayCheckpointError(
                 f"checkpoint coordinate is missing an accepted change-set record: {path}"
             )
-        record = parse_change_set_record(content, path=path)
+        record = parse_producible_change_set_record(
+            content,
+            path=path,
+            operation="checkpoint prefix replay",
+        )
         if record.sequence != index:
             raise ReplayCheckpointError("accepted change-set record sequence differs from its path")
         records.append(record)

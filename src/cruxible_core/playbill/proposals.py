@@ -49,6 +49,7 @@ from cruxible_core.playbill.candidates import (
     MemberLawEvaluationV2,
     SemanticCandidate,
     candidate_digest,
+    candidate_member_evidence_digest,
     member_law_evidence_digest,
     render_candidate_record,
     validate_candidate_timestamp,
@@ -2352,11 +2353,7 @@ def _evaluate_v2_proposal_tree(
                 dependency_proof_refs=proofs,
             )
         )
-    member_evidence_digest = typed_digest(
-        Sha256Value,
-        "playbill-candidate-member-evidence-v2",
-        {"members": [item.model_dump(mode="json") for item in members]},
-    ).tagged
+    member_evidence_digest = candidate_member_evidence_digest(tuple(members))
     requirements = tuple(
         ApprovalRequirement(role=role)
         for role in sorted(

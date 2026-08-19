@@ -11,9 +11,11 @@ from cruxible_core.playbill.canonical import (
     AcceptanceLawDigest,
     ArtifactDigest,
     CandidateDigest,
+    DependencyEdgeRoot,
     GenerationRoot,
     SemanticDiffDigest,
     SemanticManifestRoot,
+    SemanticMerkleRoot,
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
@@ -58,6 +60,15 @@ def validate_candidate_timestamp(value: str) -> str:
     return value
 
 
+def _validated_candidate_scope(value: tuple[str, ...]) -> tuple[str, ...]:
+    if not value:
+        raise ValueError("candidate scope must not be empty")
+    normalized = tuple(normalize_manifest_paths(value))
+    if value != normalized:
+        raise ValueError("candidate scope must be normalized, sorted, and unique")
+    return value
+
+
 class SemanticCandidate(_StrictCandidateModel):
     """The complete locator-free object signed by reviewers in PB-D."""
 
@@ -89,12 +100,7 @@ class SemanticCandidate(_StrictCandidateModel):
     @field_validator("scope")
     @classmethod
     def _scope(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value:
-            raise ValueError("candidate scope must not be empty")
-        normalized = tuple(normalize_manifest_paths(value))
-        if value != normalized:
-            raise ValueError("candidate scope must be normalized, sorted, and unique")
-        return value
+        return _validated_candidate_scope(value)
 
     @field_validator("timestamp")
     @classmethod
@@ -102,12 +108,68 @@ class SemanticCandidate(_StrictCandidateModel):
         return validate_candidate_timestamp(value)
 
 
-def candidate_digest(candidate: SemanticCandidate) -> CandidateDigest:
-    """Hash exactly the five C_s fields under the frozen candidate domain."""
+class SemanticCandidateV2(_StrictCandidateModel):
+    """The same five C_s fields, with the manifest root carried as a merkle root.
+
+    The merkle root *replaces* the flat root; a v2 candidate never carries both,
+    and the two spellings are disjoint, so the version of a candidate and the
+    structure of the commitment it signs can never disagree. A flat root is
+    refused here exactly as a merkle root is refused by v1: the validator asks
+    for its own root type and nothing else parses.
+
+    Nothing produces a v2 candidate yet. The format and its verifier land first.
+    """
+
+    tag: Literal["playbill-candidate-v2"] = "playbill-candidate-v2"
+    parent_semantic_root: str
+    candidate_manifest_root: str
+    semantic_diff_digest: str
+    scope: tuple[str, ...]
+    timestamp: str
+
+    @field_validator("parent_semantic_root")
+    @classmethod
+    def _parent_semantic_root(cls, value: str) -> str:
+        SemanticRoot.from_tagged(value)
+        return value
+
+    @field_validator("candidate_manifest_root")
+    @classmethod
+    def _candidate_manifest_root(cls, value: str) -> str:
+        SemanticMerkleRoot.from_tagged(value)
+        return value
+
+    @field_validator("semantic_diff_digest")
+    @classmethod
+    def _semantic_diff_digest(cls, value: str) -> str:
+        SemanticDiffDigest.from_tagged(value)
+        return value
+
+    @field_validator("scope")
+    @classmethod
+    def _scope(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validated_candidate_scope(value)
+
+    @field_validator("timestamp")
+    @classmethod
+    def _timestamp(cls, value: str) -> str:
+        return validate_candidate_timestamp(value)
+
+
+SemanticCandidateLike = SemanticCandidate | SemanticCandidateV2
+
+
+def candidate_digest(candidate: SemanticCandidateLike) -> CandidateDigest:
+    """Hash exactly the five C_s fields under the candidate's own version domain.
+
+    The domain is read off the object's own frozen `tag`, so v1 hashes under
+    `playbill-candidate-v1` byte-for-byte as it always has and a v2 candidate can
+    never collide with the v1 candidate that carries the same five values.
+    """
 
     payload = candidate.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(CandidateDigest, "playbill-candidate-v1", payload)
+    domain = str(payload.pop("tag"))
+    return typed_digest(CandidateDigest, domain, payload)
 
 
 class CandidateRecord(_StrictCandidateModel):
@@ -435,6 +497,12 @@ class CandidateMemberLawEvidenceV2(_StrictCandidateModel):
         return self
 
 
+def _validated_closure_proof_paths(value: tuple[str, ...]) -> tuple[str, ...]:
+    if not value or tuple(normalize_manifest_paths(value)) != value:
+        raise ValueError("closure proof paths must be nonempty, sorted, and unique")
+    return value
+
+
 class ClosureProofV2(_StrictCandidateModel):
     tag: Literal["playbill-closure-proof-v2"] = "playbill-closure-proof-v2"
     strategy: Literal["dependency-closure-v2"] = "dependency-closure-v2"
@@ -445,15 +513,130 @@ class ClosureProofV2(_StrictCandidateModel):
     @field_validator("paths")
     @classmethod
     def _paths(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value or tuple(normalize_manifest_paths(value)) != value:
-            raise ValueError("closure proof paths must be nonempty, sorted, and unique")
-        return value
+        return _validated_closure_proof_paths(value)
 
     @field_validator("dependency_graph_digest", "member_evidence_digest")
     @classmethod
     def _digest(cls, value: str) -> str:
         Sha256Value.from_tagged(value)
         return value
+
+
+class ClosureProofV3(_StrictCandidateModel):
+    """The v2 closure proof with an incrementally maintainable edge commitment.
+
+    `dependency_graph_digest` hashed the full edge lists of both trees, so it
+    could only ever be recomputed in full. `dependency_edge_root` commits to the
+    same candidate-tree edges through a per-source-member merkle trie, so a
+    change touching a handful of members re-hashes a handful of edge sets. The
+    parent tree's edge root is not restated here: the parent is byte-determined
+    by `C_s.parent_semantic_root`, so its root is derived, never asserted.
+
+    Everything else -- the closure paths and the member-evidence digest, which
+    still covers the unchanged `playbill-candidate-member-evidence-v2` member
+    shape -- is the v2 proof unchanged.
+    """
+
+    tag: Literal["playbill-closure-proof-v3"] = "playbill-closure-proof-v3"
+    strategy: Literal["dependency-closure-v3"] = "dependency-closure-v3"
+    paths: tuple[str, ...]
+    dependency_edge_root: str
+    member_evidence_digest: str
+
+    @field_validator("paths")
+    @classmethod
+    def _paths(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        return _validated_closure_proof_paths(value)
+
+    @field_validator("dependency_edge_root")
+    @classmethod
+    def _edge_root(cls, value: str) -> str:
+        DependencyEdgeRoot.from_tagged(value)
+        return value
+
+    @field_validator("member_evidence_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+ClosureProofLike = ClosureProofV2 | ClosureProofV3
+
+
+def candidate_member_evidence_digest(
+    members: tuple[CandidateMemberLawEvidenceV2, ...],
+) -> str:
+    """Hash the ordered member evidence under its own unchanged frozen domain."""
+
+    return typed_digest(
+        Sha256Value,
+        "playbill-candidate-member-evidence-v2",
+        {"members": [item.model_dump(mode="json") for item in members]},
+    ).tagged
+
+
+def _verify_multi_member_binding(
+    *,
+    candidate: SemanticCandidateLike,
+    candidate_digest_value: str,
+    closure_proof: ClosureProofLike,
+    members: tuple[CandidateMemberLawEvidenceV2, ...],
+    law_evidence: tuple[MemberLawEvaluationV2, ...],
+    law_digests: dict[str, str],
+    label: str,
+) -> None:
+    """Check the closed candidate/member/law correspondence shared by v2 and v3.
+
+    The two record versions differ only in which candidate and closure-proof
+    versions they embed; the correspondence they must both close is one rule, so
+    it is written once and reported under the caller's own version label.
+    """
+
+    if candidate_digest(candidate).tagged != candidate_digest_value:
+        raise ValueError(f"{label} candidate digest does not reproduce")
+    paths = tuple(member.path for member in members)
+    if paths != candidate.scope or closure_proof.paths != candidate.scope:
+        raise ValueError(f"{label} member/closure paths differ from C_s.scope")
+    if tuple(item.path for item in law_evidence) != paths:
+        raise ValueError(f"{label} structured law evidence differs from member paths")
+    if {item.law_identifier for item in members} != set(law_digests):
+        raise ValueError(f"{label} members and law mapping differ")
+    for member, evidence in zip(members, law_evidence, strict=True):
+        if (
+            member.law_identifier != evidence.law_identifier
+            or member.law_digest != evidence.law_digest
+            or law_digests[member.law_identifier] != member.law_digest
+            or member.dependency_proof_refs != evidence.dependency_proof_refs
+            or member.law_evidence_digest != member_law_evidence_digest(evidence)
+        ):
+            raise ValueError(f"{label} member does not reproduce its structured law evidence")
+    if candidate_member_evidence_digest(members) != closure_proof.member_evidence_digest:
+        raise ValueError(f"{label} closure member-evidence digest does not reproduce")
+
+
+def _validated_multi_member_approval_requirements(
+    value: tuple[ApprovalRequirement, ...],
+    *,
+    label: str,
+) -> tuple[ApprovalRequirement, ...]:
+    identities = tuple((item.role, item.minimum_distinct_signers) for item in value)
+    if identities != tuple(sorted(set(identities), key=lambda item: item[0].encode("utf-8"))):
+        raise ValueError(f"{label} approval requirements must be sorted and unique")
+    return value
+
+
+def _validated_multi_member_law_digests(
+    value: dict[str, str],
+    *,
+    label: str,
+) -> dict[str, str]:
+    if not value or list(value) != sorted(value, key=lambda item: item.encode("utf-8")):
+        raise ValueError(f"{label} acceptance-law mapping must be nonempty and sorted")
+    for identifier, digest in value.items():
+        governance_identifier(identifier, label=f"{label} acceptance-law identifier")
+        AcceptanceLawDigest.from_tagged(digest)
+    return value
 
 
 class CandidateRecordV2(_StrictCandidateModel):
@@ -482,20 +665,12 @@ class CandidateRecordV2(_StrictCandidateModel):
     def _approval_requirements(
         cls, value: tuple[ApprovalRequirement, ...]
     ) -> tuple[ApprovalRequirement, ...]:
-        identities = tuple((item.role, item.minimum_distinct_signers) for item in value)
-        if identities != tuple(sorted(set(identities), key=lambda item: item[0].encode("utf-8"))):
-            raise ValueError("v2 approval requirements must be sorted and unique")
-        return value
+        return _validated_multi_member_approval_requirements(value, label="v2")
 
     @field_validator("law_digests")
     @classmethod
     def _law_digests(cls, value: dict[str, str]) -> dict[str, str]:
-        if not value or list(value) != sorted(value, key=lambda item: item.encode("utf-8")):
-            raise ValueError("v2 acceptance-law mapping must be nonempty and sorted")
-        for identifier, digest in value.items():
-            governance_identifier(identifier, label="v2 acceptance-law identifier")
-            AcceptanceLawDigest.from_tagged(digest)
-        return value
+        return _validated_multi_member_law_digests(value, label="v2")
 
     @field_validator("compiler_digest")
     @classmethod
@@ -505,55 +680,105 @@ class CandidateRecordV2(_StrictCandidateModel):
 
     @model_validator(mode="after")
     def _complete_binding(self) -> "CandidateRecordV2":
-        if candidate_digest(self.candidate).tagged != self.candidate_digest:
-            raise ValueError("v2 candidate digest does not reproduce")
-        paths = tuple(member.path for member in self.members)
-        if paths != self.candidate.scope or self.closure_proof.paths != self.candidate.scope:
-            raise ValueError("v2 member/closure paths differ from C_s.scope")
-        evidence_paths = tuple(item.path for item in self.law_evidence)
-        if evidence_paths != paths:
-            raise ValueError("v2 structured law evidence differs from member paths")
-        if {item.law_identifier for item in self.members} != set(self.law_digests):
-            raise ValueError("v2 members and law mapping differ")
-        for member, evidence in zip(self.members, self.law_evidence, strict=True):
-            if (
-                member.law_identifier != evidence.law_identifier
-                or member.law_digest != evidence.law_digest
-                or self.law_digests[member.law_identifier] != member.law_digest
-                or member.dependency_proof_refs != evidence.dependency_proof_refs
-                or member.law_evidence_digest != member_law_evidence_digest(evidence)
-            ):
-                raise ValueError("v2 member does not reproduce its structured law evidence")
-        member_payload = [item.model_dump(mode="json") for item in self.members]
-        expected_member_digest = typed_digest(
-            Sha256Value,
-            "playbill-candidate-member-evidence-v2",
-            {"members": member_payload},
-        ).tagged
-        if expected_member_digest != self.closure_proof.member_evidence_digest:
-            raise ValueError("v2 closure member-evidence digest does not reproduce")
+        _verify_multi_member_binding(
+            candidate=self.candidate,
+            candidate_digest_value=self.candidate_digest,
+            closure_proof=self.closure_proof,
+            members=self.members,
+            law_evidence=self.law_evidence,
+            law_digests=self.law_digests,
+            label="v2",
+        )
+        return self
+
+
+class CandidateRecordV3(_StrictCandidateModel):
+    """The v2 validated candidate carrying a v2 C_s and a v3 closure proof.
+
+    Only the two embedded wire versions move. Member evidence, structured law
+    evidence, tier, approval requirements, and activation policy are the v2
+    shapes unchanged, and the correspondence between them is the same rule.
+
+    Nothing produces one of these: settlement, acceptance, and replay refuse it.
+    """
+
+    tag: Literal["playbill-validated-candidate-v3"] = "playbill-validated-candidate-v3"
+    candidate: SemanticCandidateV2
+    candidate_digest: str
+    required_tier: PermissionTier
+    approval_requirements: tuple[ApprovalRequirement, ...]
+    activation_policy: ActivationPolicy
+    closure_proof: ClosureProofV3
+    members: tuple[CandidateMemberLawEvidenceV2, ...]
+    law_evidence: tuple[MemberLawEvaluationV2, ...]
+    law_digests: dict[str, str]
+    compiler_digest: str
+
+    @field_validator("candidate_digest")
+    @classmethod
+    def _candidate_digest(cls, value: str) -> str:
+        CandidateDigest.from_tagged(value)
+        return value
+
+    @field_validator("approval_requirements")
+    @classmethod
+    def _approval_requirements(
+        cls, value: tuple[ApprovalRequirement, ...]
+    ) -> tuple[ApprovalRequirement, ...]:
+        return _validated_multi_member_approval_requirements(value, label="v3")
+
+    @field_validator("law_digests")
+    @classmethod
+    def _law_digests(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validated_multi_member_law_digests(value, label="v3")
+
+    @field_validator("compiler_digest")
+    @classmethod
+    def _compiler_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _complete_binding(self) -> "CandidateRecordV3":
+        _verify_multi_member_binding(
+            candidate=self.candidate,
+            candidate_digest_value=self.candidate_digest,
+            closure_proof=self.closure_proof,
+            members=self.members,
+            law_evidence=self.law_evidence,
+            law_digests=self.law_digests,
+            label="v3",
+        )
         return self
 
 
 CandidateRecordLike = CandidateRecord | CandidateRecordV2
+CandidateRecordAnyVersion = CandidateRecord | CandidateRecordV2 | CandidateRecordV3
 
 
-def render_candidate_record(record: CandidateRecord | CandidateRecordV2) -> bytes:
+def render_candidate_record(record: CandidateRecordAnyVersion) -> bytes:
     return canonical_bytes(record.model_dump(mode="json")) + b"\n"
 
 
 __all__ = [
     "CandidateMemberLawEvidenceV2",
     "CandidateRecord",
+    "CandidateRecordAnyVersion",
     "CandidateRecordLike",
     "CandidateRecordV2",
+    "CandidateRecordV3",
     "CandidateMemberEvidence",
+    "ClosureProofLike",
     "ClosureProofV2",
+    "ClosureProofV3",
     "DependencyProofReferenceV1",
     "LawEvaluationCoordinateV1",
     "MemberLawEvaluationV2",
     "SemanticCandidate",
+    "SemanticCandidateLike",
+    "SemanticCandidateV2",
     "candidate_digest",
+    "candidate_member_evidence_digest",
     "canonical_candidate_timestamp",
     "render_candidate_record",
     "member_law_evidence_digest",

@@ -85,6 +85,18 @@ class SettlementIntegrityError(PlaybillError):
     """A candidate, change set, generation, or root correspondence failed."""
 
 
+class UnproducibleWireVersionError(SettlementIntegrityError):
+    """A recognized wire version this build refuses to produce, accept, or replay.
+
+    A wire succession lands its formats and verifiers before any producer moves
+    to them. In that interval the new version is *recognized* -- shared parsing
+    identifies it rather than reporting corruption -- and refused everywhere it
+    could otherwise be mistaken for accepted material. It is a settlement
+    integrity refusal so every acceptance and replay handler already fails
+    closed on it.
+    """
+
+
 class ReplayCheckpointError(PlaybillError):
     """A local replay checkpoint is missing, stale, or does not reproduce the ledger."""
 
@@ -135,4 +147,5 @@ __all__ = [
     "SettlementIntegrityError",
     "SubjectFormatError",
     "SubjectNotFoundError",
+    "UnproducibleWireVersionError",
 ]
