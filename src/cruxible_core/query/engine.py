@@ -82,8 +82,8 @@ from cruxible_core.query.types import (
     QueryRow,
     dump_query_row,
 )
+from cruxible_core.receipt_tree.builder import ReceiptBuilder
 from cruxible_core.temporal import is_expired
-from cruxible_core.workflow.receipt_builder import ReceiptBuilder
 
 if TYPE_CHECKING:
     from cruxible_core.config.schema import (

@@ -335,7 +335,17 @@ def test_dp0c_deleted_products_are_absent() -> None:
         "generate_kit_docs.py",
     ):
         assert not (ROOT / "scripts" / script).exists()
-    assert (ROOT / "tests" / "data" / "config_donors" / "agent-operation" / "config.yaml").is_file()
+    # DP-0C deleted the kit bundles "after copying only semantic parity fixtures
+    # needed by PC-F/PC-G into test data". These three are those fixtures, and
+    # the PC-F donor purge must not take them with the donors: the parity oracle
+    # keeps reading them after cruxible_core.config and cruxible_core.query are
+    # gone.
+    donors = ROOT / "tests" / "data" / "config_donors"
+    for domain in ("agent-operation", "project-domain", "supply-chain-blast-radius"):
+        assert (donors / domain / "config.yaml").is_file()
+    assert (
+        ROOT / "tests" / "data" / "playbill_parity" / "modeling-parity-oracle-v1.json"
+    ).is_file()
     assert (ROOT / "tests" / "data" / "procedure_digest_corpus").is_dir()
 
 

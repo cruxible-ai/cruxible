@@ -33,7 +33,7 @@ from cruxible_core.query.predicates import (
     entity_matches_predicates,
     entity_matches_related_predicates,
 )
-from cruxible_core.workflow.receipt_builder import ReceiptBuilder
+from cruxible_core.receipt_tree.builder import ReceiptBuilder
 
 _MISSING = object()
 

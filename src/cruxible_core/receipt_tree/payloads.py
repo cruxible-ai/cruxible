@@ -1,4 +1,4 @@
-"""Pure mutation-payload oracle retained with the PC-E2 workflow donor.
+"""Pure mutation-payload retention, rehomed out of the workflow donor in PC-F.
 
 Mirrors the provider trace payload retention machinery
 (:mod:`cruxible_core.provider.trace_payloads`, introduced for execution

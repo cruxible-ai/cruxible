@@ -9,7 +9,7 @@ to reconstruct the proposal from.
 These helpers build one JSON-safe representation of the submitted proposal
 (properties, metadata, evidence, endpoints, every batch member) plus the flat
 list of subject coordinates it touches. Call sites hand both to
-:meth:`cruxible_core.workflow.receipt_builder.ReceiptBuilder.record_proposal` as the
+:meth:`cruxible_core.receipt_tree.builder.ReceiptBuilder.record_proposal` as the
 first act inside the receipt boundary, so the body is on the receipt no matter
 which layer refuses — guard, validator, or the guard evaluator itself erroring.
 

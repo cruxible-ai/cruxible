@@ -7,7 +7,7 @@ import hashlib
 import pytest
 
 from cruxible_core.primitives import canonical_json
-from cruxible_core.workflow.mutation_payloads import (
+from cruxible_core.receipt_tree.payloads import (
     MutationPayloadMetadata,
     compute_payload_digest,
     retain_mutation_payload,

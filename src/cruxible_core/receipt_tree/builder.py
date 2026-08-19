@@ -13,12 +13,12 @@ from typing import Any
 
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import new_id
-from cruxible_core.workflow.mutation_payloads import (
+from cruxible_core.receipt_tree.payloads import (
     MAX_RETAINED_PAYLOAD_BYTES,
     MutationPayloadRetention,
     retain_mutation_payload,
 )
-from cruxible_core.workflow.receipt_types import (
+from cruxible_core.receipt_tree.types import (
     EdgeType,
     EvidenceEdge,
     OperationType,

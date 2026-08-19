@@ -25,7 +25,8 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
     DonorEntry(
         "cruxible_core.workflow",
         "PC-F",
-        "query-oracle spine for PC-F parity; ReceiptBuilder/Receipt rehome required first",
+        "query-oracle spine for PC-F parity; the ReceiptBuilder/Receipt tree rehomed to "
+        "cruxible_core.receipt_tree, so nothing outliving PC-F is left behind here",
     ),
     DonorEntry(
         "cruxible_core.config.schema",

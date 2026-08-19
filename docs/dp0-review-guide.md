@@ -190,8 +190,10 @@ storage path.
 PC-E1 deleted the ReceiptStore and ResolutionContractStore packages, protocols,
 runtime accessors, SQLite initialization, receipt-derived history/trace reads,
 and the old workflow executor/service path. It rehomed only the pure receipt
-tree under `workflow/` and the storage-free resolution oracle under
-`procedure/`. Procedure journals and promoted exhaust are now the sole durable
+tree — moved again in PC-F, out of `workflow/` and into the donor-free
+`receipt_tree/` package it now outlives — and the storage-free resolution
+oracle under `procedure/`. Procedure journals and promoted exhaust are now the
+sole durable
 operational-evidence path; retained graph mutation fixtures use a transaction
 wrapper that cannot emit a receipt or write a replacement audit store.
 
@@ -204,7 +206,7 @@ adapter. Every row has an owning removal batch.
 | Donor module prefix | Removal batch | Why retained | Adapter |
 |---|---:|---|---|
 | `cruxible_core.procedure` | PC-H | Frozen graph-format v1/v2 corpus verifier; PC-H settles whether it becomes a permanent non-donor verifier package | — |
-| `cruxible_core.workflow` | PC-F | Query-oracle spine for PC-F parity; `ReceiptBuilder`/`Receipt` rehome required first | — |
+| `cruxible_core.workflow` | PC-F | Query-oracle spine for PC-F parity; the `ReceiptBuilder`/`Receipt` tree rehomed to `cruxible_core.receipt_tree`, so nothing outliving PC-F is left behind here | — |
 | `cruxible_core.config.schema` | PC-F | Selected step, query, provider, and contract schema donor | — |
 | `cruxible_core.predicate` | PC-F | Typed comparison and coercion donor | — |
 | `cruxible_core.query` | PC-F | Traversal, filtering, and projection donor | — |
@@ -294,6 +296,16 @@ Other deliberately frozen donor inputs are the 48-file
 `test_definition_digest_corpus.py`) and the byte-preserved
 `tests/data/config_donors/agent-operation/config.yaml` plus
 `cruxible-kit.yaml`. They remain verification fixtures, not distributed kits.
+
+PC-F added two more, under the same DP-0C allowance to copy "only semantic
+parity fixtures needed by PC-F/PC-G into test data":
+`tests/data/config_donors/project-domain/` and
+`tests/data/config_donors/supply-chain-blast-radius/` are trimmed parity slices
+of the kit configs deleted in `b36b2a1b`, carrying only the vocabulary and the
+verbatim named queries the modeling-parity cases read. They and
+`tests/data/playbill_parity/modeling-parity-oracle-v1.json` — the pinned record
+of what each surface answers — outlive the donor purge and are asserted present
+by the DP-0 boundary test.
 
 ## Intentionally retained package dependencies
 

@@ -1,0 +1,371 @@
+{
+  "format": "playbill-modeling-parity-oracle-v1",
+  "purpose": "PC-F semantic parity pin. Each case records what the LEGACY query surface answers over a donor world and what the Claim-native surface answers over the same world restated as Subjects and Claims. Rows are query MEANING -- selected values or result identity -- never wire receipts, paths, or provenance. While the donor island stands, tests/test_playbill/test_modeling_parity_donors.py re-derives every donor_rows entry from the legacy engine, so these are recordings and not guesses. After PC-F slice F8 purges the donors, tests/test_playbill/test_modeling_parity.py keeps asserting the Claim-native side against these same rows.",
+  "donor_archive_commit": "b36b2a1b",
+  "donor_archive_note": "kits/ bundles were deleted in b36b2a1b. tests/data/config_donors/ holds the PC-F parity slices of kits/project-domain and kits/supply-chain-blast-radius at b36b2a1b^, alongside the agent-operation config copied in DP-0C.",
+  "evaluation_time": "2026-08-16T12:00:00Z",
+  "cases": [
+    {
+      "case_id": "ao.work_queue",
+      "claim": "parity",
+      "donor_domain": "agent-operation",
+      "donor_query": "work_queue",
+      "playbill_query": "parity.agent_operation.work_queue",
+      "semantics": "Collection entry over one Subject kind, membership filter on a single-valued property, five-field projection, explicit result budget.",
+      "donor_rows": [
+        {
+          "work_item_id": "wi-1",
+          "title": "Land the Claim-native query engine",
+          "priority": "high",
+          "type": "feature",
+          "summary": "PC-F slice work"
+        },
+        {
+          "work_item_id": "wi-3",
+          "title": "Retire the donor island",
+          "priority": "medium",
+          "type": "cleanup",
+          "summary": "purge prep"
+        }
+      ],
+      "playbill_rows": [
+        {
+          "priority": "high",
+          "summary": "PC-F slice work",
+          "title": "Land the Claim-native query engine",
+          "type": "feature",
+          "work_item_id": "wi-1"
+        },
+        {
+          "priority": "medium",
+          "summary": "purge prep",
+          "title": "Retire the donor island",
+          "type": "cleanup",
+          "work_item_id": "wi-3"
+        }
+      ]
+    },
+    {
+      "case_id": "ao.work_item_scratchpad",
+      "claim": "parity",
+      "donor_domain": "agent-operation",
+      "donor_query": "work_item_scratchpad",
+      "playbill_query": "parity.agent_operation.work_item_scratchpad",
+      "semantics": "Reverse one-hop traversal from a parameter-bound entry Subject, equality filter on the traversed Subject, ascending timestamp ordering.",
+      "donor_rows": [{ "id": "sn-3" }, { "id": "sn-4" }],
+      "playbill_rows": [{ "id": "sn-3" }, { "id": "sn-4" }]
+    },
+    {
+      "case_id": "ao.state_notes_for_work_item",
+      "claim": "parity",
+      "donor_domain": "agent-operation",
+      "donor_query": "state_notes_for_work_item",
+      "playbill_query": "parity.agent_operation.state_notes_for_work_item",
+      "semantics": "Same traversal under a NEGATED membership filter and descending timestamp ordering -- the curated complement of the scratchpad read.",
+      "donor_rows": [{ "id": "sn-2" }, { "id": "sn-1" }],
+      "playbill_rows": [{ "id": "sn-2" }, { "id": "sn-1" }]
+    },
+    {
+      "case_id": "pd.work_items_for_area",
+      "claim": "parity",
+      "donor_domain": "project-domain",
+      "donor_query": "work_items_for_area",
+      "playbill_query": "parity.project_domain.work_items_for_area",
+      "semantics": "Unfiltered reverse traversal with entity/Subject result shape and entity/Subject dedupe -- the flat area work queue.",
+      "donor_rows": [{ "id": "wi-a" }, { "id": "wi-b" }],
+      "playbill_rows": [{ "id": "wi-a" }, { "id": "wi-b" }]
+    },
+    {
+      "case_id": "sc.incident_work_items",
+      "claim": "parity",
+      "donor_domain": "supply-chain-blast-radius",
+      "donor_query": "incident_work_items",
+      "playbill_query": "parity.supply_chain.incident_work_items",
+      "semantics": "Business-domain reverse traversal with a negated membership filter on the traversed Subject and a five-field projection.",
+      "donor_rows": [
+        {
+          "work_item_id": "wi-s1",
+          "title": "Qualify alternate supplier",
+          "status": "active",
+          "priority": "critical",
+          "type": "operations"
+        },
+        {
+          "work_item_id": "wi-s3",
+          "title": "Expedite inventory",
+          "status": "blocked",
+          "priority": "high",
+          "type": "operations"
+        }
+      ],
+      "playbill_rows": [
+        {
+          "priority": "critical",
+          "status": "active",
+          "title": "Qualify alternate supplier",
+          "type": "operations",
+          "work_item_id": "wi-s1"
+        },
+        {
+          "priority": "high",
+          "status": "blocked",
+          "title": "Expedite inventory",
+          "type": "operations",
+          "work_item_id": "wi-s3"
+        }
+      ]
+    },
+    {
+      "case_id": "ao.single_valued_conflict",
+      "claim": "supersession",
+      "donor_domain": "agent-operation",
+      "donor_query": "work_queue",
+      "playbill_query": "parity.agent_operation.work_item_status",
+      "semantics": "Two competing observations of one single-valued property. Spec v3 s10.3: single-valued projection selects by the accepted ClaimType policy or emits a typed conflict, and never picks last row wins.",
+      "donor_rows": [
+        {
+          "work_item_id": "wi-3",
+          "title": "Retire the donor island",
+          "priority": "medium",
+          "type": "cleanup",
+          "summary": "purge prep"
+        }
+      ],
+      "playbill_rows": [{ "status": "<conflict>" }],
+      "playbill_refusal_code": "playbill.query.claim_conflict",
+      "divergence": {
+        "kind": "single_valued_conflict",
+        "donor": "The property store holds one value per field, so the second write replaced the first. wi-1 silently left the active work queue and no read can recover that a disagreement existed.",
+        "playbill": "Both Claims stand accepted. A refuse_on_conflict policy refuses with playbill.query.claim_conflict; a surface_conflicts policy returns the row with the field in the conflict state and names both competing statement digests.",
+        "deliberate": true
+      }
+    },
+    {
+      "case_id": "ao.evaluation_time_axis",
+      "claim": "supersession",
+      "donor_domain": "agent-operation",
+      "donor_query": "work_queue",
+      "playbill_query": "parity.agent_operation.work_queue",
+      "semantics": "One declaration read at two instants. Spec v3 s10.2: every canonical query binds an accepted coordinate and an explicit evaluation time.",
+      "donor_rows": [
+        {
+          "work_item_id": "wi-1",
+          "title": "Land the Claim-native query engine",
+          "priority": "high",
+          "type": "feature",
+          "summary": "PC-F slice work"
+        },
+        {
+          "work_item_id": "wi-3",
+          "title": "Retire the donor island",
+          "priority": "medium",
+          "type": "cleanup",
+          "summary": "purge prep"
+        }
+      ],
+      "playbill_rows": [
+        {
+          "priority": "high",
+          "summary": "PC-F slice work",
+          "title": "Land the Claim-native query engine",
+          "type": "feature",
+          "work_item_id": "wi-1"
+        }
+      ],
+      "playbill_rows_before_expiry": [
+        {
+          "priority": "high",
+          "summary": "PC-F slice work",
+          "title": "Land the Claim-native query engine",
+          "type": "feature",
+          "work_item_id": "wi-1"
+        },
+        {
+          "priority": "medium",
+          "summary": "purge prep",
+          "title": "Retire the donor island",
+          "type": "cleanup",
+          "work_item_id": "wi-3"
+        }
+      ],
+      "playbill_earlier_evaluation_time": "2026-08-15T12:00:00Z",
+      "divergence": {
+        "kind": "evaluation_time_axis",
+        "donor": "execute_query takes no evaluation time and NamedQuerySchema declares no effective interval. A property is whatever the last write left there, read at an unstated now.",
+        "playbill": "wi-3's status Claim carries effective_until. At the earlier instant the claim is supported and wi-3 is in the queue; at the declared evaluation time the same unmodified Claim is stale and the queue is shorter.",
+        "deliberate": true
+      }
+    },
+    {
+      "case_id": "sc.open_incidents_by_severity",
+      "claim": "divergence",
+      "donor_domain": "supply-chain-blast-radius",
+      "donor_query": "open_incidents_by_severity",
+      "playbill_query": "parity.supply_chain.open_incidents_by_severity",
+      "semantics": "Ordering an operational queue by a declared severity ordinal. Identical result SET, different sequence.",
+      "donor_rows": [
+        {
+          "incident_id": "inc-1",
+          "title": "Fab fire at tier-2 supplier",
+          "severity": "critical"
+        },
+        { "incident_id": "inc-2", "title": "Port congestion", "severity": "medium" }
+      ],
+      "playbill_rows": [
+        { "incident_id": "inc-2", "severity": "medium", "title": "Port congestion" },
+        {
+          "incident_id": "inc-1",
+          "severity": "critical",
+          "title": "Fab fire at tier-2 supplier"
+        }
+      ],
+      "divergence": {
+        "kind": "ordering_basis",
+        "donor": "order by the DECLARED ORDINAL of the incident_severity enum (low_to_high), descending: critical outranks medium.",
+        "playbill": "QueryValueTypeV1 has no enum member, so the nearest declarable key is the severity string. Descending lexicographic UTF-8 puts medium above critical.",
+        "same_result_set": true,
+        "deliberate": false,
+        "deferred_feature": "enum_ordinal_ordering"
+      }
+    }
+  ],
+  "deferred_donor_features": [
+    {
+      "feature": "where_related",
+      "donor_symbol": "cruxible_core.config.schema.RelatedPredicateSpec on TraversalStep.where_related / .where_not_related",
+      "expresses": "Keep a traversal candidate only when a SEPARATE one-hop edge exists (or does not exist) off that candidate, optionally constrained on the related edge and on both of its endpoints, with the outer entry/current/candidate scopes still bound so the check can join back to the query entry. Existential: the related Subject is never returned.",
+      "donor_example": {
+        "domain": "agent-operation",
+        "entry_point": "WorkItem",
+        "traverse": "state_note_about_work_item incoming",
+        "relationship": "state_note_about_review_request",
+        "direction": "outgoing",
+        "target": { "properties.status": { "eq": "requested" } }
+      },
+      "donor_control_rows": [
+        { "id": "sn-1" },
+        { "id": "sn-2" },
+        { "id": "sn-3" },
+        { "id": "sn-4" }
+      ],
+      "donor_semi_join_rows": [{ "id": "sn-2" }],
+      "donor_anti_join_rows": [{ "id": "sn-1" }, { "id": "sn-3" }, { "id": "sn-4" }],
+      "playbill_status": "partially expressible",
+      "playbill_equivalent": "The semi-join is a second required traversal step plus Subject dedupe (parity.agent_operation.notes_on_open_review reproduces donor_semi_join_rows exactly). The bare anti-join is a negated Claim-presence filter, because a relation edge IS a Claim on the source Subject (parity.agent_operation.notes_without_review reproduces donor_anti_join_rows exactly).",
+      "residual_gap": "An anti-join CONSTRAINED ON THE FAR ENDPOINT -- 'notes with no edge to a review that is approved'. Claim presence never reaches the related Subject's own Claims, and there is no negated traversal step. The semi-join also costs a binding and forces dedupe, so the row shape is wider than the donor's.",
+      "loss_if_dropped": "Both common forms survive the purge with no new grammar. The uncovered form is the narrow one: negative existence qualified by the related Subject's state.",
+      "recommendation": "defer-to-PC-G"
+    },
+    {
+      "feature": "constraint_dsl_step",
+      "donor_symbol": "cruxible_core.config.schema.TraversalStep.constraint, parsed by cruxible_core.query.engine._CONSTRAINT_RE",
+      "expresses": "A string mini-language comparing one traversal candidate property against a query parameter or literal: 'target.<property> <op> $<param>', with ==, !=, >, >=, <, <=, before, on_or_before, after, on_or_after.",
+      "donor_example": {
+        "domain": "agent-operation",
+        "entry_point": "WorkItem",
+        "traverse": "state_note_about_work_item incoming",
+        "constraint": "target.kind == $kind",
+        "constraint_value_type": "string",
+        "params": { "work_item_id": "wi-1", "kind": "scratchpad" }
+      },
+      "donor_rows": [{ "id": "sn-3" }, { "id": "sn-4" }],
+      "playbill_query": "parity.agent_operation.notes_of_kind",
+      "playbill_status": "already expressible",
+      "playbill_equivalent": "QueryComparisonFilterV1(left=QueryClaimValueRefV1(...), operator='eq', right=QueryParameterRefV1(...), value_type='string') on the traversal step's where. Typed at declaration instead of guessed at run time, and unparseable input refuses instead of silently passing every candidate.",
+      "residual_gap": "None for the query grammar. The donor form parses target. only; source. raises, and an unparseable rule returns True and filters nothing.",
+      "loss_if_dropped": "Nothing. The behavior is already ported and the ported form is stricter.",
+      "recommendation": "drop-with-evidence"
+    },
+    {
+      "feature": "constraint_dsl_graph",
+      "donor_symbol": "cruxible_core.config.schema.ConstraintSchema.rule, parsed by cruxible_core.config.constraint_rules.parse_constraint_rule, evaluated by cruxible_core.query.evaluate.evaluate_graph",
+      "expresses": "A STANDING whole-graph invariant with a severity: 'REL.FROM.<property> <op> REL.TO.<property>'. Every stored edge of that relationship is checked and each breach becomes a finding. It filters no query row.",
+      "donor_example": {
+        "domain": "project-domain",
+        "rule": "work_item_targets_area.FROM.title == work_item_targets_area.TO.name",
+        "severity": "warning"
+      },
+      "donor_violation_count": 2,
+      "playbill_status": "not a query concept",
+      "playbill_equivalent": "The per-edge value comparison itself is declarable -- a comparison filter whose two sides are QueryClaimValueRefV1 on two different bindings. What has no query form is the standing part: a named invariant, a severity, and a findings report produced without anyone running a query.",
+      "residual_gap": "The invariant role. In Playbill that belongs to ClaimType admission and resolution policy and to the acceptance laws, not to a canonical read.",
+      "loss_if_dropped": "No query capability. The invariant capability must be shown to already live in ClaimAdmissionPolicy/ClaimResolutionPolicy before this is called a clean drop.",
+      "recommendation": "drop-with-evidence"
+    },
+    {
+      "feature": "enum_ordinal_ordering",
+      "donor_symbol": "cruxible_core.config.schema.QueryOrderSpec.enum_ref, resolved by cruxible_core.query.projection.coerce_query_order_value",
+      "expresses": "Order by an enum member's DECLARED position in an ordered config enum, so critical outranks high outranks medium outranks low.",
+      "donor_example": {
+        "domain": "supply-chain-blast-radius",
+        "query": "open_incidents_by_severity",
+        "order": "severity desc ^incident_severity",
+        "enum": ["low", "medium", "high", "critical"]
+      },
+      "playbill_status": "not expressible",
+      "playbill_equivalent": "None. QueryValueTypeV1 is string, integer, boolean, decimal, timestamp, subject_reference. Ordering a severity or priority falls back to lexicographic string order, which is wrong and silently so.",
+      "residual_gap": "Every ordered enum in every domain: priority, severity, criticality, lifecycle rank.",
+      "loss_if_dropped": "Priority and severity queues are the most-run operational read in all three donor domains and they come out in the wrong order. See case sc.open_incidents_by_severity for the pinned evidence.",
+      "recommendation": "keep-by-porting"
+    },
+    {
+      "feature": "select_counts",
+      "donor_symbol": "cruxible_core.config.compact select counts:/items:, lowered to QueryIncludeSpec plus $include.<name>.count",
+      "expresses": "A per-row cardinality over an adjacent relationship without returning the adjacent rows: how many notes, how many blockers, how many dependents.",
+      "donor_example": {
+        "domain": "agent-operation",
+        "query": "recent_state_notes",
+        "count_key": "work_item_count",
+        "relationship": "state_note_about_work_item"
+      },
+      "donor_counts": { "sn-2": 1, "sn-1": 1 },
+      "playbill_status": "not expressible",
+      "playbill_equivalent": "QueryIncludeV1 returns a bounded item list under a required max_items, and the result reports whether the include truncated. There is no aggregate value reference and no unbounded count.",
+      "residual_gap": "A true cardinality. An include capped at max_items cannot say 'and there are 4,000 more' with a number.",
+      "loss_if_dropped": "Rollup reads lose their headline number. Callers must page every adjacent row to count it, which is exactly the row-by-row expansion the compact-card SLO exists to avoid.",
+      "recommendation": "defer-to-PC-G"
+    },
+    {
+      "feature": "substring_operators",
+      "donor_symbol": "cruxible_core.config.predicates.PredicateOperator contains / icontains",
+      "expresses": "Case-sensitive and case-folded substring containment on a string property.",
+      "donor_example": {
+        "domain": "agent-operation",
+        "operator": "icontains",
+        "path": "result.properties.title",
+        "value": "DONOR"
+      },
+      "donor_rows": [{ "work_item_id": "wi-3", "title": "Retire the donor island" }],
+      "playbill_status": "not expressible",
+      "playbill_equivalent": "None inside the canonical query grammar: QueryComparisonOperatorV1 is eq, ne, gt, gte, lt, lte, and membership is exact. Section 11 exact/lexical discovery is where inexact matching lives, and it deliberately never resolves equivalence.",
+      "residual_gap": "Substring filtering inside a governed canonical read.",
+      "loss_if_dropped": "Free-text narrowing of a canonical query. The discovery layer already covers find-by-name, and an unindexable substring scan inside a budgeted canonical read is the thing the budgets exist to prevent.",
+      "recommendation": "drop-with-evidence"
+    },
+    {
+      "feature": "variable_depth_union_traversal",
+      "donor_symbol": "cruxible_core.config.schema.TraversalStep.relationship as a list plus TraversalStep.max_depth",
+      "expresses": "One declared step that walks a UNION of several relationship types and repeats itself up to a declared depth -- reachability, not a fixed shape.",
+      "donor_example": {
+        "domain": "project-domain",
+        "query": "area_work_items",
+        "relationship_count": 5,
+        "max_depth": 3
+      },
+      "donor_rows": [
+        {
+          "work_item_id": "wi-a",
+          "title": "Port the traversal semantics",
+          "status": "active",
+          "priority": "high",
+          "type": "feature"
+        }
+      ],
+      "playbill_status": "not expressible",
+      "playbill_equivalent": "A QueryTraversalStepV1 names exactly one predicate, one direction, one hop. Depth is a BUDGET (max_traversal_depth) that bounds the declared steps; it never repeats one. A fixed-depth union can be unrolled into steps and any_of filters, but the row shape multiplies and unbounded reachability cannot be declared at all.",
+      "residual_gap": "Transitive closure: descendants, lineage, upstream dependency chains.",
+      "loss_if_dropped": "agent-operation's work_item_rollup_context and work_item_lineage_context and project-domain's area_work_items are all reachability reads. Losing them costs the caller a hand-rolled loop over repeated single-hop queries with no budget accounting.",
+      "recommendation": "keep-by-porting"
+    }
+  ]
+}

@@ -1,8 +1,12 @@
-"""Pure receipt-tree oracle retained with the PC-E2 workflow donor.
+"""Pure receipt-tree shapes, rehomed out of the workflow donor in PC-F.
 
 A receipt is a structured proof — not a log, not a trace. It records which
 entities were consulted, which edges were traversed, which filters/constraints
 passed or failed, and what produced the final result.
+
+The shapes are unchanged by the rehome. ``OperationType`` still carries the
+full legacy operation vocabulary, including literals for products deleted in
+DP-0C, because persisted receipts written by shipped instances still name them.
 """
 
 from __future__ import annotations
@@ -14,8 +18,8 @@ from pydantic import BaseModel, Field
 
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.primitives import new_id
+from cruxible_core.receipt_tree.payloads import MutationPayloadMetadata
 from cruxible_core.temporal import utc_now
-from cruxible_core.workflow.mutation_payloads import MutationPayloadMetadata
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 OperationType = Literal[

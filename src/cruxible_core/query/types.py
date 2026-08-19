@@ -14,7 +14,7 @@ from cruxible_core.query.enums import (
     QueryVisibilityState,
 )
 from cruxible_core.query.profiles import ReadProfile, profile_query_item
-from cruxible_core.workflow.receipt_types import Receipt
+from cruxible_core.receipt_tree.types import Receipt
 
 
 class QueryPathSegment(RelationshipInstance):

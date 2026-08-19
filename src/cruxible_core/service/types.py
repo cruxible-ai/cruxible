@@ -39,7 +39,7 @@ from cruxible_core.query.enums import (
 )
 from cruxible_core.query.evaluate import EvaluationReport
 from cruxible_core.query.types import QueryRow
-from cruxible_core.workflow.receipt_types import Receipt
+from cruxible_core.receipt_tree.types import Receipt
 from cruxible_core.workflow.types import CompiledPlan
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 

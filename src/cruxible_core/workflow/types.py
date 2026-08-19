@@ -34,8 +34,8 @@ from cruxible_core.procedure.guards import GuardSpec
 from cruxible_core.procedure.proposal import ProcedureProposeGroupSpec
 from cruxible_core.procedure.types import ProcedureRunFiredNode, ProjectSpec
 from cruxible_core.provider.types import ExecutionTrace, ProviderRuntime
+from cruxible_core.receipt_tree.types import Receipt
 from cruxible_core.temporal import utc_now
-from cruxible_core.workflow.receipt_types import Receipt
 from cruxible_core.workflow_execution_types import WorkflowResultMode
 
 
