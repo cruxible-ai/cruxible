@@ -159,6 +159,25 @@ class SemanticManifestRoot(Sha256Value):
     kind = "semantic manifest root"
 
 
+class MerkleNodeDigest(Sha256Value):
+    kind = "merkle node digest"
+
+
+class SemanticMerkleRoot(Sha256Value):
+    """Merkle-structured manifest root, spelled so it can never read as flat.
+
+    The flat `SemanticManifestRoot` commits to every member in one preimage; this
+    root commits to a path-segment trie whose interior nodes are recomputed only
+    along the changed paths. Both are 32-byte SHA-256 values, so the tagged
+    spellings are deliberately disjoint: a flat root never parses as a merkle
+    root and a merkle root never parses as a flat root, and no field can silently
+    accept the wrong structure.
+    """
+
+    algorithm = "merkle-sha256"
+    kind = "semantic merkle root"
+
+
 class SemanticRoot(Sha256Value):
     kind = "semantic root"
 
@@ -319,8 +338,10 @@ __all__ = [
     "ChangeSetDigest",
     "GenerationRoot",
     "LogicalDigest",
+    "MerkleNodeDigest",
     "ProposalDigest",
     "SemanticManifestRoot",
+    "SemanticMerkleRoot",
     "SemanticDiffDigest",
     "SemanticRoot",
     "Sha256Value",

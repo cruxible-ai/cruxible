@@ -13,6 +13,10 @@ class CanonicalEncodingError(PlaybillError):
     """A value has no representation in the frozen canonical encoding."""
 
 
+class MerkleIntegrityError(PlaybillError):
+    """A merkle manifest does not reproduce its claimed root or node digests."""
+
+
 class PlaybillFormatError(PlaybillError):
     """A descriptor or stored artifact declares an unsupported format."""
 

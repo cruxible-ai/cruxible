@@ -247,6 +247,7 @@ tests/goldens/playbill/candidate-v1.json
 tests/goldens/playbill/capture-claim-v1.json
 tests/goldens/playbill/claim-type-v1.json
 tests/goldens/playbill/discovery-index-v1.json
+tests/goldens/playbill/merkle-manifest-v1.json
 tests/goldens/playbill/oracles-v1.json
 tests/goldens/playbill/projection-v1.json
 tests/goldens/playbill/query-definition-v1.json
@@ -276,6 +277,13 @@ declarations, and its envelope digest.
 grep-friendly discovery index rendered from the materialized Subject view: its
 `INDEX.md` and `discovery.jsonl` bytes plus the rebuild manifest a deletion and
 rebuild must reproduce.
+
+`tests/goldens/playbill/merkle-manifest-v1.json` pins the merkle manifest
+primitive: the defined empty root, the leaf/interior/root preimages, every trie
+node digest, and the incremental change set that must reproduce the same root as
+a from-scratch build. The `merkle-sha256:` root prefix is deliberately disjoint
+from the flat `sha256:` manifest root so the two structures can never be read for
+one another. No wire record carries this root yet.
 
 `tests/goldens/playbill/oracles-v1.json` pins the Family-1 oracle at
 `e3fe35b360d098f14a5d59bf770ffee401224f0c` and the Procedure graph-program
