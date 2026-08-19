@@ -2992,7 +2992,7 @@ def evaluate_proposal_tree(
             (
                 _diagnostic(
                     "playbill.proposal.non_singleton_scope",
-                    "PB-D proposals must change exactly one registered semantic member.",
+                    "The proposal changes no registered semantic member.",
                 ),
             ),
             rebased,

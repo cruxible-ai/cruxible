@@ -273,7 +273,7 @@ moved, and the batch that owns them owns their deletion:
 | Residue | New batch | Why it could not leave in PC-F |
 |---|---:|---|
 | `cruxible_core.config` (whole package) | PC-H | The Procedure definition digest is computed over these schemas. The package is labelled whole rather than carving `schema.py` out of it, because carving risks moving that frozen digest. |
-| `cruxible_core.predicate` | PC-H | 100% of its remaining consumers are `procedure/guards.py`, `procedure/analysis.py`, and the config schema/validator. |
+| `cruxible_core.predicate` | PC-H | Every remaining consumer is itself PC-H residue: `procedure/guards.py`, `procedure/analysis.py`, `config/{schema, validator, constraint_rules}.py`, and `query/predicates.py`. |
 | `cruxible_core.query.{enums, predicates, types, profiles, relationship_state}` | PC-H | The verified deferred-validator chain: `config/schema.py` imports `query.enums` eagerly and `query.predicates` inside `_validate_top_level_query_predicate_scopes`; `predicates` pulls `types` and `relationship_state`, and `types` pulls `profiles`. |
 | `cruxible_core.graph.{types, entity_graph, assertion_state, provenance}` | PC-H | The same chain: `query.predicates` imports `graph.entity_graph`, and `query.types` imports `graph.types`, which imports `assertion_state` and `provenance`. |
 | `cruxible_core.graph.evidence` | PC-H | `EvidenceRef` is a field type on `procedure/types.py`, `procedure/resolution_oracle.py`, and `graph/types.py`. |
@@ -366,7 +366,7 @@ adapter. Every row has an owning removal batch.
 |---|---:|---|---|
 | `cruxible_core.procedure` | PC-H | Frozen graph-format v1/v2 corpus verifier; PC-H settles whether it becomes a permanent non-donor verifier package | — |
 | `cruxible_core.config` | PC-H | Step, query, provider, and contract schema donor pinned by the Procedure definition digest; the whole package is labelled rather than `schema.py` alone because carving a module out of it risks moving that frozen digest | — |
-| `cruxible_core.predicate` | PC-H | Typed comparison and coercion donor; 100% of its remaining consumers are the Procedure guard grammar and the config schema it validates | — |
+| `cruxible_core.predicate` | PC-H | Typed comparison and coercion donor; every remaining consumer is itself PC-H residue — the Procedure guard grammar, the config schema/validator/constraint rules it validates, and the residual `query.predicates` vocabulary | — |
 | `cruxible_core.query` | PC-H | Residual query vocabulary the config schema reaches when validating a named query — `enums`, `predicates`, `types`, `profiles`, `relationship_state`; the engine, evaluation, filter, projection, continuation, layout, and read-surface donors left in PC-F | — |
 | `cruxible_core.graph` | PC-H | Residual graph vocabulary reached through the same validator chain — `types`, `entity_graph`, `assertion_state`, `provenance` — plus the `EvidenceRef` behavior the Procedure and workflow lock types depend on; the mutable graph operations, diff, and identity donors left in PC-F | — |
 | `cruxible_core.workflow` | PC-H | Residual lock/plan types only: `procedure/pins.py` describes what a pin records in terms of `WorkflowLock`, `LockedProvider`, and `LockedArtifact`, so the module leaves with the Procedure donor; the compiler and the rest of the query-oracle spine left in PC-F and the `Receipt` tree was already rehomed to `cruxible_core.receipt_tree` | — |
