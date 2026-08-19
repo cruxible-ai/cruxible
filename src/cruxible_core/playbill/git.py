@@ -524,25 +524,49 @@ class GitLedger:
         return {entry.path: blobs[entry.oid] for entry in entries}
 
     def list_tree(self, oid: str) -> tuple[GitTreeEntry, ...]:
-        """List an exact commit recursively without reading any blob payload."""
+        """List an exact commit recursively without reading any blob payload.
 
+        Entries carry no `size`: reporting it costs Git one object-size lookup
+        per entry, so only `list_tree_with_sizes` pays for it.
+        """
+
+        return self._list_tree(oid, with_sizes=False)
+
+    def list_tree_with_sizes(self, oid: str) -> tuple[GitTreeEntry, ...]:
+        """List an exact commit recursively, with the size Git reports per entry.
+
+        Reserved for callers that gate on declared sizes before reading blobs.
+        The per-entry size lookup dominates listing cost on a loose-object
+        ledger, so callers that ignore `size` must use `list_tree` instead.
+        """
+
+        return self._list_tree(oid, with_sizes=True)
+
+    def _list_tree(self, oid: str, *, with_sizes: bool) -> tuple[GitTreeEntry, ...]:
         self._validate_oid(oid)
         entries: list[GitTreeEntry] = []
-        listing = self._git(["ls-tree", "-r", "-l", "-z", "--full-tree", oid])
+        size_flag = ["-l"] if with_sizes else []
+        expected_fields = 4 if with_sizes else 3
+        listing = self._git(["ls-tree", "-r", *size_flag, "-z", "--full-tree", oid])
         for row in listing.split(b"\x00"):
             if not row:
                 continue
             try:
                 metadata, raw_path = row.split(b"\t", 1)
-                mode, object_type, object_oid, raw_size = metadata.decode("ascii").split()
+                fields = metadata.decode("ascii").split()
+                if len(fields) != expected_fields:
+                    raise ValueError("unexpected tree metadata field count")
+                mode, object_type, object_oid = fields[0], fields[1], fields[2]
                 path = raw_path.decode("utf-8")
             except (UnicodeDecodeError, ValueError) as exc:
                 raise PlaybillGitError("ledger tree contains malformed metadata") from exc
             self._validate_oid(object_oid)
-            try:
-                size = None if raw_size == "-" else int(raw_size)
-            except ValueError as exc:
-                raise PlaybillGitError("ledger tree contains a malformed object size") from exc
+            size: int | None = None
+            if with_sizes:
+                try:
+                    size = None if fields[3] == "-" else int(fields[3])
+                except ValueError as exc:
+                    raise PlaybillGitError("ledger tree contains a malformed object size") from exc
             entries.append(
                 GitTreeEntry(
                     path=path,

@@ -39,7 +39,7 @@ def read_registered_tree(
 ) -> tuple[GitTreeBlob, ...]:
     """Read regular registered blobs only, with all metadata gates first."""
 
-    entries = repository.list_tree(oid)
+    entries = repository.list_tree_with_sizes(oid)
     if len(entries) > limits.max_files:
         raise ProjectionFormatError(
             f"ledger tree exceeds file-count limit ({len(entries)} > {limits.max_files})"

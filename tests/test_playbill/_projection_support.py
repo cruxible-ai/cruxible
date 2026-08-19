@@ -105,6 +105,12 @@ class MemoryLedger:
         return None
 
     def list_tree(self, oid: str) -> tuple[GitTreeEntry, ...]:
+        return self._list_tree(oid, with_sizes=False)
+
+    def list_tree_with_sizes(self, oid: str) -> tuple[GitTreeEntry, ...]:
+        return self._list_tree(oid, with_sizes=True)
+
+    def _list_tree(self, oid: str, *, with_sizes: bool) -> tuple[GitTreeEntry, ...]:
         assert oid == self._oid
         self.list_calls += 1
         digest = hashlib.sha1 if self._format == "sha1" else hashlib.sha256
@@ -114,7 +120,7 @@ class MemoryLedger:
                 mode=self._modes.get(path, ("100644", "blob"))[0],
                 object_type=self._modes.get(path, ("100644", "blob"))[1],
                 oid=digest(b"blob\0" + content).hexdigest(),
-                size=self._listed_sizes.get(path, len(content)),
+                size=self._listed_sizes.get(path, len(content)) if with_sizes else None,
             )
             for path, content in self._tree.items()
         )
