@@ -72,14 +72,37 @@ from cruxible_core.storage.playbill_projection import (
 
 @dataclass(frozen=True)
 class RecoveredGeneration:
+    """One replay-verified accepted generation, without its artifact payload.
+
+    A generation never carries its tree. The ledger *is* the store: every
+    accepted tree is already content-addressed and deduplicated in Git, so
+    retaining one copy per generation would make recovery cost O(generations x
+    artifacts) of process memory for bytes Git already holds. Consumers that
+    need historical artifact bytes read them back through the ledger.
+    """
+
     sequence: int
     oid: str
-    tree: dict[str, bytes]
     semantic_root: SemanticRoot
     descriptor: GenerationDescriptor
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
     record: ChangeSetRecord | ChangeSetRecordV2 | None
+
+
+@dataclass(frozen=True)
+class _GenerationWindow:
+    """One generation plus its tree, held only for the length of one replay step.
+
+    Replay verifies each successor against exactly its predecessor, so the walk
+    needs a two-generation sliding window and nothing more. This object is the
+    whole parent context a verification step receives; keeping it cohesive lets
+    later incremental (merkle) verification thread additional carried-forward
+    state through the same seam without re-plumbing every call site.
+    """
+
+    generation: RecoveredGeneration
+    tree: dict[str, bytes]
 
 
 @dataclass(frozen=True)
@@ -134,7 +157,7 @@ def _verify_successor(
     ledger: GitLedger,
     oid: str,
     *,
-    parent: RecoveredGeneration,
+    window: _GenerationWindow,
     repository_path: str,
     object_format: GitObjectFormat,
     instance_id: str,
@@ -142,7 +165,11 @@ def _verify_successor(
     bodies: BodyProjectionProtocol,
     laws: AcceptanceLawRegistry,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
-) -> RecoveredGeneration:
+) -> _GenerationWindow:
+    """Verify one successor against its parent window and return the next window."""
+
+    parent = window.generation
+    parent_tree = window.tree
     if ledger.parent_of(oid) != parent.oid:
         raise SettlementIntegrityError("generation parent differs from accepted predecessor")
     daemon = parent.principals.require_active("daemon")
@@ -154,7 +181,7 @@ def _verify_successor(
         raise SettlementIntegrityError("generation daemon signature does not verify")
     tree = ledger.read_tree(oid)
     parent_change_sets = {
-        path: content for path, content in parent.tree.items() if path.startswith("changesets/")
+        path: content for path, content in parent_tree.items() if path.startswith("changesets/")
     }
     current_change_sets = {
         path: content for path, content in tree.items() if path.startswith("changesets/")
@@ -185,8 +212,8 @@ def _verify_successor(
         compiler=compiler,
     )
     reevaluated = evaluate_proposal_tree(
-        base_tree=parent.tree,
-        current_tree=parent.tree,
+        base_tree=parent_tree,
+        current_tree=parent_tree,
         proposed_tree=tree,
         current=parent_coordinate,
         bodies=bodies,
@@ -219,7 +246,7 @@ def _verify_successor(
     manifest = manifest_root(semantic_tree)
     if manifest.tagged != record.candidate.candidate_manifest_root:
         raise SettlementIntegrityError("generation manifest root differs from C_s")
-    diff, scope = semantic_diff(parent.tree, tree)
+    diff, scope = semantic_diff(parent_tree, tree)
     if diff.tagged != record.candidate.semantic_diff_digest or scope != record.candidate.scope:
         raise SettlementIntegrityError("generation semantic diff differs from C_s")
     approval_digests = tuple(sorted(item.digest.tagged for item in verified_approvals))
@@ -239,15 +266,17 @@ def _verify_successor(
     if note is not None and _parse_note(note, oid=oid) != descriptor:
         raise SettlementIntegrityError("generation descriptor note differs from replay")
     principals = principal_registry_from_tree(tree, semantic_root=semantic_root.tagged)
-    return RecoveredGeneration(
-        sequence=record.sequence,
-        oid=oid,
+    return _GenerationWindow(
+        generation=RecoveredGeneration(
+            sequence=record.sequence,
+            oid=oid,
+            semantic_root=semantic_root,
+            descriptor=descriptor,
+            generation_root=computed_generation_root,
+            principals=principals,
+            record=record,
+        ),
         tree=tree,
-        semantic_root=semantic_root,
-        descriptor=descriptor,
-        generation_root=computed_generation_root,
-        principals=principals,
-        record=record,
     )
 
 
@@ -373,10 +402,12 @@ def _clean_unaccepted_generations(
             parent = by_oid.get(parent_oid or "")
             if parent is None:
                 continue
+            # The parent tree is read back from the ledger for exactly this
+            # check and released with the window when the iteration ends.
             _verify_successor(
                 ledger,
                 oid,
-                parent=parent,
+                window=_GenerationWindow(generation=parent, tree=ledger.read_tree(parent.oid)),
                 repository_path=repository_path,
                 object_format=object_format,
                 instance_id=instance_id,
@@ -494,7 +525,6 @@ def recover_instance(
     genesis_generation = RecoveredGeneration(
         sequence=0,
         oid=genesis.oid,
-        tree=genesis.tree,
         semantic_root=genesis.semantic_root,
         descriptor=genesis.descriptor,
         generation_root=genesis.generation_root,
@@ -503,21 +533,25 @@ def recover_instance(
     )
     history: list[RecoveredGeneration] = [genesis_generation]
     repository_path = str(ledger.path.resolve(strict=True))
+    # A two-generation sliding window: rebinding `window` releases the
+    # predecessor's tree, so replay memory stays flat in the history length.
+    window = _GenerationWindow(generation=genesis_generation, tree=genesis.tree)
     for oid in history_oids[1:]:
-        history.append(
-            _verify_successor(
-                ledger,
-                oid,
-                parent=history[-1],
-                repository_path=repository_path,
-                object_format=object_format,
-                instance_id=instance_id,
-                compiler=compiler,
-                bodies=bodies,
-                laws=laws,
-                promotion_verifier=promotion_verifier,
-            )
+        window = _verify_successor(
+            ledger,
+            oid,
+            window=window,
+            repository_path=repository_path,
+            object_format=object_format,
+            instance_id=instance_id,
+            compiler=compiler,
+            bodies=bodies,
+            laws=laws,
+            promotion_verifier=promotion_verifier,
         )
+        history.append(window.generation)
+    # Release the head tree before projection assembly, the peak-memory phase.
+    del window
     head = history[-1]
     recovered_history = tuple(history)
     _clean_unaccepted_generations(

@@ -831,7 +831,7 @@ def service_playbill_claim_history(
         record = generation.record
         if record is None or not any(member.path == path for member in record.members):
             continue
-        content = generation.tree.get(path)
+        content = instance.tree_at(generation.oid).get(path)
         if content is None:
             continue
         claim = parse_claim(content, path=path)
