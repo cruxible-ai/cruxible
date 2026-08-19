@@ -10,7 +10,7 @@ from cruxible_core.playbill.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_core.playbill.candidates import CandidateRecordV2
+from cruxible_core.playbill.candidates import CandidateRecordV3
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import (
     ClaimType,
@@ -123,7 +123,7 @@ def test_multi_kind_candidate_scope_member_and_closure_paths_are_identical(
     )
 
     assert evaluation.diagnostics == ()
-    assert isinstance(evaluation.candidate, CandidateRecordV2)
+    assert isinstance(evaluation.candidate, CandidateRecordV3)
     assert evaluation.candidate.candidate.scope == (
         claim_type_path,
         SUBJECT_PATH,
@@ -260,9 +260,9 @@ def test_multi_member_malformed_artifact_is_a_typed_refusal(tmp_path: Path) -> N
     )
 
     assert evaluation.candidate is None
-    assert [item.code for item in evaluation.diagnostics] == [
-        "playbill.proposal.member_format_invalid"
-    ]
+    # The refusal is the ClaimType kind's own, which the one evaluator now states
+    # for a malformed member wherever it appears -- alone or beside others.
+    assert [item.code for item in evaluation.diagnostics] == ["playbill.claim_type.format_invalid"]
 
 
 def test_claim_type_rebase_reports_exact_conflict_evidence_and_no_candidate(
@@ -336,7 +336,7 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         },
         timestamp=TIMESTAMP,
     )
-    assert isinstance(initial.candidate, CandidateRecordV2)
+    assert isinstance(initial.candidate, CandidateRecordV3)
     initial_approval = _sign(owner, initial.candidate.candidate_digest, base.semantic_root)
     service_submit_playbill_approval(
         instance,
@@ -387,7 +387,7 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         },
         timestamp="2026-08-16T14:01:00.000000Z",
     )
-    assert isinstance(invalidation.candidate, CandidateRecordV2)
+    assert isinstance(invalidation.candidate, CandidateRecordV3)
     review = service_review_playbill_proposal(
         instance,
         proposal_id=invalidation.admission.proposal_id,

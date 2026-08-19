@@ -89,7 +89,7 @@ def test_store_then_propose_creates_complete_candidate_without_changing_main(
     assert result.evaluation.verdict == "candidate"
     assert result.candidate is not None
     assert result.candidate.candidate.model_dump() == {
-        "tag": "playbill-candidate-v1",
+        "tag": "playbill-candidate-v2",
         "parent_semantic_root": before.semantic_root,
         "candidate_manifest_root": result.candidate.candidate.candidate_manifest_root,
         "semantic_diff_digest": result.candidate.candidate.semantic_diff_digest,

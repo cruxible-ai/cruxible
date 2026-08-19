@@ -397,7 +397,7 @@ as a wire change.
 
 | Format | Where it lives | What it is |
 |---|---|---|
-| `playbill-replay-checkpoint-v1`, inside `playbill-replay-checkpoint-file-v1` | `<managed root>/checkpoints/replay-checkpoint-v1.json` | A summary of one already-verified accepted prefix, so a reopen replays only a bounded suffix. |
+| `playbill-replay-checkpoint-v2`, inside `playbill-replay-checkpoint-file-v2` | `<managed root>/checkpoints/replay-checkpoint-v2.json` | A summary of one already-verified accepted prefix, so a reopen replays only a bounded suffix. |
 | `playbill-projection-manifest-v1` and its piece builds | `<managed root>/projections/` | Disposable materialized read state, rebuilt from the accepted tree. |
 | `playbill-serving-manifest-v1` | `<managed root>/projections/serving.json` | The local admission pointer at one exact accepted coordinate. |
 
@@ -416,6 +416,18 @@ as local state rather than as a new surface:
   why replaying only a suffix does not weaken tamper detection for that suffix.
 - Deleting it costs replay time and nothing else. No test and no operator
   procedure may treat its presence as required.
+
+A local format is superseded by rewriting it, never by migrating it. The wire
+succession moved the checkpoint body from v1 to v2 -- it now carries the merkle
+manifest root beside the flat one, because the receipt at its coordinate may sign
+either -- and a v1 file left in the directory is deleted on the next load rather
+than read, translated, or kept. That is the whole upgrade path a rebuildable
+cache is entitled to, and the reopen it would have shortened replays from genesis
+instead. The body carries the trie's *root* and not its nodes: a node map would
+have to be recomputed from the members to be worth trusting, the members are
+already re-derived from the coordinate's own bytes on every load, and rebuilding
+the trie from them costs a hash per path where storing it would cost a node per
+path on disk and prove nothing extra.
 
 Its self-digest kind, `ReplayCheckpointDigest`, is declared in `checkpoints.py`
 rather than beside the wire digest kinds in `canonical.py`, precisely so a later
@@ -464,8 +476,9 @@ tests/goldens/playbill/subject-v1.json
 tests/goldens/state_cross_section/car_parts_state_diff.json
 ```
 
-PC-F added four goldens for the dark half of the coordinated wire succession and
-left every pre-existing entry byte-identical. `tests/goldens/state_cross_section/`
+PC-F added four goldens for the coordinated wire succession and left every
+pre-existing entry byte-identical -- including through the slice that made those
+four versions the ones a proposal produces. `tests/goldens/state_cross_section/`
 and `tests/goldens/kev/` are frozen records whose readers left in earlier
 batches; a frozen golden is deleted deliberately by the batch that retires the
 contract it pins, never as a side effect of deleting its last reader.
@@ -494,15 +507,33 @@ primitive: the defined empty root, the leaf/interior/root preimages, every trie
 node digest, and the incremental change set that must reproduce the same root as
 a from-scratch build. The `merkle-sha256:` root prefix is deliberately disjoint
 from the flat `sha256:` manifest root so the two structures can never be read for
-one another. No wire record carries this root yet.
+one another. `playbill-candidate-v2` signs this root.
 
-### The coordinated wire succession (dark)
+### The coordinated wire succession
 
-Four goldens pin the succession's formats before any producer moves to them.
-Nothing in the source tree constructs these versions outside the three modules
-that define them, and acceptance, settlement, replay, and accepted projection
-each refuse a `playbill-changeset-v3` receipt with `UnproducibleWireVersionError`
-— recognized by shared parsing, acted on by nothing.
+Four goldens pin the succession's formats, and those formats are now what a new
+proposal produces: every candidate this build validates is a
+`playbill-validated-candidate-v3` carrying a `playbill-candidate-v2` and a
+`playbill-closure-proof-v3`, it settles as a `playbill-changeset-v3`, and its
+semantic root is derived by `playbill-sroot-v2`.
+
+The versions they succeed are retained as **verifiers**. An accepted generation
+is re-verified against the object its own receipt carries, so replay asks the one
+evaluator for the wire version the receipt names rather than for the version this
+build would produce today; a v1 candidate is reproduced with its file digests and
+its governance vocabulary, and its acceptance is not retroactively subjected to a
+dependency closure that did not exist when it settled. `PRODUCED_CANDIDATE_VERSION`
+in `candidates.py` is the single place production's version is stated.
+
+Genesis is untouched. Its semantic root is what a `playbill-sroot-v1` chain
+starts from, so the first accepted generation of *every* instance -- including one
+created today on an empty ledger -- is a v3 record whose `sroot-v2` preimage
+names `parent_derivation="playbill-sroot-v1"`. Every ledger therefore states the
+succession boundary at generation one, which is why the boundary is not special
+cased anywhere. `tests/test_playbill/test_wire_succession_boundary.py` builds a
+ledger with a v1/v2 prefix and a v3 suffix and requires genesis-rooted replay, a
+checkpoint seeded at the boundary generation, a checkpoint on the v3 suffix, and
+accepted projection to all accept it.
 
 `tests/goldens/playbill/candidate-v2.json` pins the `playbill-candidate-v2`
 preimage and digest. The candidate carries a `merkle-sha256:` manifest root in
@@ -527,6 +558,14 @@ implementation as the manifest merkle under a second domain family, and its
 `tests/goldens/playbill/changeset-v3.json` pins the `playbill-changeset-v3`
 receipt that carries the other two: a v2 candidate and a v3 closure proof, with
 member evidence, law evidence, approvals, and actor binding unchanged from v2.
+
+No golden was added for the succession's *production* or for the crossed-ledger
+boundary, and none should be. A golden freezes a byte contract other parties
+depend on; what those two need checked is that a value **derives** correctly --
+that the root a candidate signs is the trie over its own members, and that a
+boundary generation's root is `compute_semantic_root_v2` over its recorded
+parent under a v1 `parent_derivation`. Both are asserted against the derivation
+itself, which a recorded byte string could only weaken.
 
 `tests/goldens/playbill/oracles-v1.json` pins the Family-1 oracle at
 `e3fe35b360d098f14a5d59bf770ffee401224f0c` and the Procedure graph-program

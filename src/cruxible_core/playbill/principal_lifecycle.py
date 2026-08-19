@@ -6,21 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from cruxible_core.playbill.candidates import (
-    CandidateMemberEvidence,
-    CandidateRecord,
-    SemanticCandidate,
-    candidate_digest,
-)
-from cruxible_core.playbill.canonical import (
-    file_digest,
-    manifest_root,
-    semantic_diff,
-    semantic_projection,
-)
 from cruxible_core.playbill.errors import PrincipalIntegrityError
-from cruxible_core.playbill.governance import ApprovalRequirement, MutationDisposition
-from cruxible_core.playbill.laws import PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW
 from cruxible_core.playbill.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
@@ -34,13 +20,23 @@ PrincipalLifecycleAction = Literal["register", "rotate", "revoke", "recover"]
 
 @dataclass(frozen=True)
 class PrincipalLifecycleEvaluation:
-    candidate: CandidateRecord | None
+    """One principal transition's law result, in the shape every member law returns.
+
+    This law used to assemble a whole candidate record of its own, which is why
+    a single-member principal change had to bypass the evaluator every other
+    member kind went through. It now answers the same question the other member
+    laws answer -- what happened, what it costs to approve, and what the member's
+    digest is -- and the one evaluator assembles the candidate.
+    """
+
+    action: PrincipalLifecycleAction | None
+    approval_role: PrincipalRole | None = None
     error_code: str | None = None
     error_message: str | None = None
 
 
 def _refused(code: str, message: str) -> PrincipalLifecycleEvaluation:
-    return PrincipalLifecycleEvaluation(None, code, message)
+    return PrincipalLifecycleEvaluation(None, error_code=code, error_message=message)
 
 
 def _actor(
@@ -65,13 +61,13 @@ def _classify(
     proposed: PrincipalRecord,
     *,
     actor: PrincipalRecord,
-) -> tuple[PrincipalLifecycleAction, MutationDisposition] | None:
+) -> PrincipalLifecycleAction | None:
     if previous is None:
         if proposed.status != "active" or "daemon" in proposed.authority_roles:
             return None
         if "owner" not in actor.authority_roles:
             return None
-        return "register", "replacement"
+        return "register"
     if previous.principal_id == "daemon" or proposed.principal_id == "daemon":
         return None
     if previous.authority_roles != proposed.authority_roles:
@@ -80,32 +76,33 @@ def _classify(
         if previous.public_key == proposed.public_key:
             return None
         if actor.principal_id == previous.principal_id:
-            return "rotate", "hand-authored-successor"
+            return "rotate"
         if "recovery" in actor.authority_roles:
-            return "recover", "hand-authored-successor"
+            return "recover"
         return None
     if previous.status == "active" and proposed.status == "revoked":
         if previous.public_key != proposed.public_key:
             return None
         if "owner" in actor.authority_roles or "recovery" in actor.authority_roles:
-            return "revoke", "invalidation"
+            return "revoke"
         return None
     if previous.status == "revoked" and proposed.status == "active":
         if previous.public_key == proposed.public_key:
             return None
         if "recovery" in actor.authority_roles:
-            return "recover", "hand-authored-successor"
+            return "recover"
     return None
 
 
 def evaluate_principal_lifecycle(
     *,
-    current_tree: Mapping[str, bytes],
-    proposed_tree: Mapping[str, bytes],
+    candidate_content: bytes,
+    parent_content: bytes | None,
+    principals: PrincipalRegistrySnapshot,
+    candidate_tree: Mapping[str, bytes],
     current: AcceptedProjectionCoordinate,
     path: str,
     actor_id: str | None,
-    timestamp: str,
 ) -> PrincipalLifecycleEvaluation:
     """Evaluate one control-plane principal mutation under parent-root key state."""
 
@@ -114,22 +111,11 @@ def evaluate_principal_lifecycle(
             "playbill.principal.actor_required",
             "Principal lifecycle evaluation requires an authenticated actor.",
         )
-    content = proposed_tree.get(path)
-    if content is None:
-        return _refused(
-            "playbill.principal.removal_unsupported",
-            "Principal records are revoked, never removed from accepted state.",
-        )
     try:
-        proposed = parse_principal_record(content, path=path)
-        principals = principal_registry_from_tree(
-            current_tree,
-            semantic_root=current.semantic_root,
-        )
-        previous_content = current_tree.get(path)
+        proposed = parse_principal_record(candidate_content, path=path)
         previous = (
-            parse_principal_record(previous_content, path=path)
-            if previous_content is not None
+            parse_principal_record(parent_content, path=path)
+            if parent_content is not None
             else None
         )
     except PrincipalIntegrityError as exc:
@@ -140,17 +126,16 @@ def evaluate_principal_lifecycle(
             "playbill.principal.actor_unauthorized",
             "Principal lifecycle actor is absent, revoked, or daemon-only at the parent root.",
         )
-    classified = _classify(previous, proposed, actor=actor)
-    if classified is None:
+    action = _classify(previous, proposed, actor=actor)
+    if action is None:
         return _refused(
             "playbill.principal.transition_unauthorized",
             "Principal transition is outside registration, self-rotation, "
             "revocation, or recovery policy.",
         )
-    action, disposition = classified
     try:
         proposed_registry = principal_registry_from_tree(
-            proposed_tree,
+            candidate_tree,
             semantic_root=current.semantic_root,
         )
     except PrincipalIntegrityError as exc:
@@ -174,37 +159,7 @@ def evaluate_principal_lifecycle(
             "playbill.principal.last_recovery",
             "A recovery-configured instance must retain an active recovery principal.",
         )
-
-    diff_digest, scope = semantic_diff(current_tree, proposed_tree)
-    semantic_candidate = SemanticCandidate(
-        parent_semantic_root=current.semantic_root,
-        candidate_manifest_root=manifest_root(semantic_projection(proposed_tree)).tagged,
-        semantic_diff_digest=diff_digest.tagged,
-        scope=scope,
-        timestamp=timestamp,
-    )
-    law = PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW
-    record = CandidateRecord(
-        candidate=semantic_candidate,
-        candidate_digest=candidate_digest(semantic_candidate).tagged,
-        required_tier="admin",
-        approval_requirements=(ApprovalRequirement(role=_approval_role(actor)),),
-        activation_policy="snapshot",
-        closure_paths=scope,
-        members=(
-            CandidateMemberEvidence(
-                path=path,
-                artifact_kind=law.artifact_kind,
-                artifact_digest=file_digest(content).tagged,
-                disposition=disposition,
-                law_identifier=law.coordinate.identifier,
-                governance_operation=action,
-            ),
-        ),
-        law_digests={law.coordinate.identifier: law.coordinate.digest},
-        compiler_digest=current.compiler.rule_digest,
-    )
-    return PrincipalLifecycleEvaluation(record)
+    return PrincipalLifecycleEvaluation(action=action, approval_role=_approval_role(actor))
 
 
 __all__ = [

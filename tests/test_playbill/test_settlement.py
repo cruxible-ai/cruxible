@@ -15,7 +15,7 @@ from cruxible_core.playbill.authoring_profiles import (
     ClaimTypeProfileInputV1,
     expand_claim_type_profile,
 )
-from cruxible_core.playbill.candidates import CandidateRecordV2, candidate_digest
+from cruxible_core.playbill.candidates import CandidateRecordV3, candidate_digest
 from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_core.playbill.compiler import current_compiler_coordinate
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -28,7 +28,7 @@ from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissi
 from cruxible_core.playbill.serving import bind_current_projection
 from cruxible_core.playbill.settlement import (
     ChangeActorBinding,
-    ChangeSetRecordV2,
+    ChangeSetRecordV3,
     parse_change_set_record,
     prepare_generation,
     render_change_set,
@@ -80,7 +80,7 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
         candidate_tree=tree,
         timestamp=TIMESTAMP,
     )
-    assert isinstance(proposal.candidate, CandidateRecordV2)
+    assert isinstance(proposal.candidate, CandidateRecordV3)
     candidate = proposal.candidate
     approval = _sign(owner, candidate.candidate_digest, base.semantic_root)
 
@@ -95,7 +95,7 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
         sequence=1,
     )
 
-    assert isinstance(bundle.record, ChangeSetRecordV2)
+    assert isinstance(bundle.record, ChangeSetRecordV3)
     assert candidate_digest(bundle.record.candidate).tagged == candidate.candidate_digest
     assert approval.attestation.payload_digest == candidate.candidate_digest
     assert bundle.record.closure_proof.paths == candidate.candidate.scope
@@ -107,7 +107,7 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
     tampered = bundle.record.model_dump(mode="json")
     tampered["law_evidence"][0]["law_digest"] = "sha256:" + "00" * 32
     with pytest.raises(ValidationError, match="structured law evidence"):
-        ChangeSetRecordV2.model_validate(tampered)
+        ChangeSetRecordV3.model_validate(tampered)
 
 
 def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: Path) -> None:
@@ -127,7 +127,7 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
         candidate_tree=tree,
         timestamp=TIMESTAMP,
     )
-    assert isinstance(evaluated.candidate, CandidateRecordV2)
+    assert isinstance(evaluated.candidate, CandidateRecordV3)
     candidate = evaluated.candidate
     bundle = prepare_generation(
         instance._ledger,
@@ -145,7 +145,7 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
 
     reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
     assert reopened.accepted_coordinate().git_oid == bundle.oid
-    assert isinstance(reopened.accepted_history()[-1].record, ChangeSetRecordV2)
+    assert isinstance(reopened.accepted_history()[-1].record, ChangeSetRecordV3)
     publication = Path(reopened.inspect().storage_directories["projections"])
     with bind_current_projection(publication, expected=reopened.accepted_coordinate()) as handle:
         connection = sqlite3.connect(handle.index_path)
@@ -208,7 +208,7 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
         candidate_tree=tree,
         timestamp=TIMESTAMP,
     )
-    assert isinstance(proposal.candidate, CandidateRecordV2)
+    assert isinstance(proposal.candidate, CandidateRecordV3)
     candidate = proposal.candidate
 
     bundle = prepare_generation(
@@ -222,7 +222,7 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
         sequence=1,
     )
 
-    assert isinstance(bundle.record, ChangeSetRecordV2)
+    assert isinstance(bundle.record, ChangeSetRecordV3)
     assert bundle.record.law_evidence[0].result["authoring_expansion"] == (
         expansion.evidence.model_dump(mode="json")
     )

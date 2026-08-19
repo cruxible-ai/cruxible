@@ -17,7 +17,7 @@ from cruxible_core.playbill.governance import governance_identifier
 from cruxible_core.playbill.projection_extensions import ProjectionFact
 
 if TYPE_CHECKING:
-    from cruxible_core.playbill.settlement import ChangeSetRecord, ChangeSetRecordV2
+    from cruxible_core.playbill.settlement import ChangeSetRecordAnyVersion
 
 AttestationCoverage = Literal[
     "exact_subject",
@@ -190,12 +190,12 @@ class CoverageBinding(_StrictExplanationModel):
 
 
 def _record_for_current_artifact(
-    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     *,
     path: str,
     input_digest: str,
     artifact_digest: str,
-) -> tuple[str, ChangeSetRecord | ChangeSetRecordV2] | None:
+) -> tuple[str, ChangeSetRecordAnyVersion] | None:
     def member_matches(member: object) -> bool:
         candidate_digest = getattr(member, "candidate_artifact_digest", None)
         if isinstance(candidate_digest, str):
@@ -219,7 +219,7 @@ def accepted_artifact_explanation_facts(
     input_digest: str,
     artifact_digest: str,
     predecessor_digest: str | None,
-    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     coordinate: ProjectionCoordinateContext,
 ) -> tuple[ProjectionFact, ...]:
     """Compile explanation facts only when a stored change set binds exact bytes."""
@@ -361,7 +361,7 @@ def accepted_document_explanation_facts(
     input_digest: str,
     artifact_digest: str,
     predecessor_digest: str | None,
-    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     coordinate: ProjectionCoordinateContext,
 ) -> tuple[ProjectionFact, ...]:
     """Retain the frozen Family-1 Document projection shape through an adapter."""

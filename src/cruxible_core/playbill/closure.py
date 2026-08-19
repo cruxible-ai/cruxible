@@ -1,8 +1,19 @@
-"""Deterministic multi-artifact dependency closure and exact refusal evidence."""
+"""Deterministic multi-artifact dependency closure and exact refusal evidence.
+
+Closure is two separable jobs, and this module keeps them separate: *maintaining
+the indexes* one evaluation reads about a tree, and *judging* a scope against a
+pair of them. The judgement is a pure function of the two indexes and the scope,
+so it cannot tell how they were obtained; the indexes can therefore be built
+from scratch over a whole tree, or carried forward from the parent generation
+and updated for only the members that changed, and the verdict, both refusal
+shapes, the per-member proofs, and the committed edge root are identical either
+way. The from-scratch build stays the differential oracle the incremental
+maintenance is tested against, and stays the only path a cold start can take.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Final, Literal
@@ -519,85 +530,308 @@ class ClosureEvaluationV3(_StrictClosureModel):
         return _proofs_for(self.member_dependency_proofs, path)
 
 
+DEFERRED_PIN_TARGET_KINDS: Final = frozenset(
+    {
+        "Contract",
+        "EffectPolicy",
+        "EnvironmentManifest",
+        "ExhaustReducer",
+        "LandingFilter",
+        "Policy",
+        "QueryDefinition",
+        "ReceiptSetManifest",
+        "Reducer",
+    }
+)
+"""Pin target kinds whose referent has no ledger artifact envelope yet.
+
+These component families are exact compiler/policy-registry pins, or
+content-addressed receipt manifests, until a later batch gives them ledger
+artifact envelopes. Their owning law verifies the role-named digest; this
+exception is never a name lookup and never permits a missing Playbill artifact
+kind such as Procedure, ClaimType, or Provider.
+
+A QueryDefinition ledger envelope exists from PC-F slice 1, so a
+QueryDefinition's own ClaimType pins already close exactly here. Referent-side
+resolution of a Procedure/LineSpec role='query' pin stays deferred to the PC-F
+engine slice that re-authors those Procedures against real accepted
+QueryDefinitions; resolving it earlier would only refuse placeholder pins that
+no accepted query yet backs.
+"""
+
+
+def _edge_order(edge: DependencyProofReferenceV1) -> bytes:
+    return canonical_bytes(edge.model_dump(mode="json"))
+
+
+def _sorted_edges(
+    edges: Iterable[DependencyProofReferenceV1],
+) -> tuple[DependencyProofReferenceV1, ...]:
+    return tuple(sorted(edges, key=_edge_order))
+
+
+def _outgoing_edges(
+    source: ArtifactDependencyStateV1,
+    *,
+    states: Mapping[str, ArtifactDependencyStateV1],
+    paths_by_identity: Mapping[str, str],
+) -> tuple[DependencyProofReferenceV1, ...]:
+    """Resolve one member's outgoing edges against the tree it belongs to."""
+
+    edges: list[DependencyProofReferenceV1] = []
+    for pin in source.pins:
+        target_path = paths_by_identity.get(pin.target.qualified)
+        target = None if target_path is None else states[target_path]
+        if target is None or target.artifact_digest != pin.artifact_digest:
+            continue
+        edges.append(
+            DependencyProofReferenceV1(
+                source_path=source.path,
+                source_artifact_digest=source.artifact_digest,
+                target_path=target.path,
+                target_artifact_digest=target.artifact_digest,
+                pin_role=pin.role,
+            )
+        )
+    return _sorted_edges(edges)
+
+
 def _edges(
     artifacts: tuple[ArtifactDependencyStateV1, ...],
 ) -> tuple[DependencyProofReferenceV1, ...]:
-    by_identity = {item.identity.qualified: item for item in artifacts}
-    edges: list[DependencyProofReferenceV1] = []
-    for source in artifacts:
-        for pin in source.pins:
-            target = by_identity.get(pin.target.qualified)
-            if target is None or target.artifact_digest != pin.artifact_digest:
-                continue
-            edges.append(
-                DependencyProofReferenceV1(
+    """Resolve one whole tree's edge set from scratch: the differential oracle."""
+
+    states = {item.path: item for item in artifacts}
+    paths_by_identity = {item.identity.qualified: item.path for item in artifacts}
+    return _sorted_edges(
+        edge
+        for source in artifacts
+        for edge in _outgoing_edges(
+            source,
+            states=states,
+            paths_by_identity=paths_by_identity,
+        )
+    )
+
+
+def _unresolved_pins_for(
+    source: ArtifactDependencyStateV1,
+    *,
+    states: Mapping[str, ArtifactDependencyStateV1],
+    paths_by_identity: Mapping[str, str],
+) -> tuple[UnresolvedArtifactPinV1, ...]:
+    """Classify one scoped member's own pins; reads nothing outside its pin list."""
+
+    missing: list[UnresolvedArtifactPinV1] = []
+    for pin in source.pins:
+        if pin.target.kind in DEFERRED_PIN_TARGET_KINDS:
+            continue
+        target_path = paths_by_identity.get(pin.target.qualified)
+        target = None if target_path is None else states[target_path]
+        reason: Literal["missing_or_digest_mismatch", "live_source_targets_retired"] | None = None
+        if target is None or target.artifact_digest != pin.artifact_digest:
+            reason = "missing_or_digest_mismatch"
+        elif source.lifecycle.state == "live" and target.lifecycle.state == "retired":
+            reason = "live_source_targets_retired"
+        if reason is not None:
+            missing.append(
+                UnresolvedArtifactPinV1(
                     source_path=source.path,
                     source_artifact_digest=source.artifact_digest,
-                    target_path=target.path,
-                    target_artifact_digest=target.artifact_digest,
+                    target_identity=pin.target,
+                    expected_target_digest=pin.artifact_digest,
                     pin_role=pin.role,
+                    reason=reason,
                 )
             )
-    return tuple(sorted(edges, key=lambda item: canonical_bytes(item.model_dump(mode="json"))))
+    return tuple(missing)
 
 
-def _unresolved_pins(
-    artifacts: tuple[ArtifactDependencyStateV1, ...],
+_DUPLICATE_IDENTITY = "candidate tree contains a duplicate semantic artifact identity"
+
+
+@dataclass(frozen=True)
+class DependencyIndexV1:
+    """Everything closure judging reads about one tree, in maintainable form.
+
+    Nothing here is a commitment and nothing here is believed: every field is
+    derived from the exact member bytes of the tree it describes, either by the
+    from-scratch build or by applying one change set to an index that was. The
+    reverse maps exist so that a judgement whose scope names a handful of members
+    reads a handful of entries instead of walking the whole edge set.
+    """
+
+    states: Mapping[str, ArtifactDependencyStateV1]
+    paths_by_identity: Mapping[str, str]
+    sources_by_pinned_identity: Mapping[str, frozenset[str]]
+    edges_by_source: Mapping[str, tuple[DependencyProofReferenceV1, ...]]
+    edges_by_target: Mapping[str, tuple[DependencyProofReferenceV1, ...]]
+    edge_tree: MerkleTree[DependencyEdgeRoot]
+
+    @property
+    def edge_root(self) -> DependencyEdgeRoot:
+        return self.edge_tree.root
+
+    def edges(self) -> tuple[DependencyProofReferenceV1, ...]:
+        """Return the whole edge set, which only the flat v2 digest still needs."""
+
+        return _sorted_edges(edge for edges in self.edges_by_source.values() for edge in edges)
+
+    def touching(self, path: str) -> Iterable[DependencyProofReferenceV1]:
+        return (*self.edges_by_source.get(path, ()), *self.edges_by_target.get(path, ()))
+
+
+def _pin_sources(
+    artifacts: Iterable[ArtifactDependencyStateV1],
+) -> dict[str, set[str]]:
+    sources: dict[str, set[str]] = {}
+    for item in artifacts:
+        for pin in item.pins:
+            sources.setdefault(pin.target.qualified, set()).add(item.path)
+    return sources
+
+
+def _grouped_edges(
+    edges: Iterable[DependencyProofReferenceV1],
     *,
-    source_paths: set[str],
-) -> tuple[UnresolvedArtifactPinV1, ...]:
-    by_identity = {item.identity.qualified: item for item in artifacts}
-    missing: list[UnresolvedArtifactPinV1] = []
-    for source in artifacts:
-        if source.path not in source_paths:
+    key: str,
+) -> dict[str, tuple[DependencyProofReferenceV1, ...]]:
+    grouped: dict[str, list[DependencyProofReferenceV1]] = {}
+    for edge in edges:
+        grouped.setdefault(getattr(edge, key), []).append(edge)
+    return {path: _sorted_edges(items) for path, items in grouped.items()}
+
+
+def build_dependency_index(tree: Mapping[str, bytes]) -> DependencyIndexV1:
+    """Build one tree's complete dependency index by parsing every member.
+
+    This is the cold path, and the oracle every incremental result is compared
+    against. A cold start -- genesis, an ad-hoc replay window, a checkpoint seed,
+    or settlement, which holds no cross-call state at all -- takes it.
+    """
+
+    artifacts = dependency_artifacts(tree)
+    edges = _edges(artifacts)
+    return DependencyIndexV1(
+        states={item.path: item for item in artifacts},
+        paths_by_identity={item.identity.qualified: item.path for item in artifacts},
+        sources_by_pinned_identity={
+            identity: frozenset(paths) for identity, paths in _pin_sources(artifacts).items()
+        },
+        edges_by_source=_grouped_edges(edges, key="source_path"),
+        edges_by_target=_grouped_edges(edges, key="target_path"),
+        edge_tree=build_dependency_edge_tree(edges),
+    )
+
+
+def update_dependency_index(
+    index: DependencyIndexV1,
+    *,
+    tree: Mapping[str, bytes],
+    changed: Iterable[str],
+) -> DependencyIndexV1:
+    """Apply one change set, parsing and re-resolving only what actually moved.
+
+    `changed` names every member whose exact bytes differ from the tree `index`
+    describes, in either direction. Only those members are parsed. An edge is
+    re-resolved when its source's pins changed *or* when the resolution of an
+    identity it reads changed, which the carried reverse map finds without
+    touching an unrelated member. The result is what `build_dependency_index`
+    would have returned for `tree`.
+    """
+
+    touched = sorted(set(changed))
+    states = dict(index.states)
+    paths_by_identity = dict(index.paths_by_identity)
+    pin_sources = {
+        identity: set(paths) for identity, paths in index.sources_by_pinned_identity.items()
+    }
+    touched_identities: set[str] = set()
+
+    for path in touched:
+        previous = states.pop(path, None)
+        if previous is not None:
+            touched_identities.add(previous.identity.qualified)
+            if paths_by_identity.get(previous.identity.qualified) == path:
+                del paths_by_identity[previous.identity.qualified]
+            for pin in previous.pins:
+                holders = pin_sources.get(pin.target.qualified)
+                if holders is not None:
+                    holders.discard(path)
+                    if not holders:
+                        del pin_sources[pin.target.qualified]
+
+    for path in touched:
+        content = tree.get(path)
+        if content is None:
             continue
-        for pin in source.pins:
-            # These component families are exact compiler/policy-registry pins,
-            # or content-addressed receipt manifests, until a later batch gives
-            # them ledger artifact envelopes. Their owning law verifies the
-            # role-named digest; this exception is never a name lookup and never
-            # permits a missing Playbill artifact kind such as Procedure,
-            # ClaimType, or Provider.
-            #
-            # A QueryDefinition ledger envelope exists from PC-F slice 1, so a
-            # QueryDefinition's own ClaimType pins already close exactly here.
-            # Referent-side resolution of a Procedure/LineSpec role='query' pin
-            # stays deferred to the PC-F engine slice that re-authors those
-            # Procedures against real accepted QueryDefinitions; resolving it
-            # earlier would only refuse placeholder pins that no accepted query
-            # yet backs.
-            if pin.target.kind in {
-                "Contract",
-                "EffectPolicy",
-                "EnvironmentManifest",
-                "ExhaustReducer",
-                "LandingFilter",
-                "Policy",
-                "QueryDefinition",
-                "ReceiptSetManifest",
-                "Reducer",
-            }:
-                continue
-            target = by_identity.get(pin.target.qualified)
-            reason: Literal["missing_or_digest_mismatch", "live_source_targets_retired"] | None = (
-                None
+        parsed = parse_dependency_artifact(path, content)
+        if parsed is None:
+            continue
+        identity = parsed.identity.qualified
+        if paths_by_identity.get(identity, path) != path:
+            raise ValueError(_DUPLICATE_IDENTITY)
+        states[path] = parsed
+        paths_by_identity[identity] = path
+        touched_identities.add(identity)
+        for pin in parsed.pins:
+            pin_sources.setdefault(pin.target.qualified, set()).add(path)
+
+    # Every touched member is re-resolved, including one that left the tree: its
+    # own outgoing edges leave with it, and nothing else in the change set is
+    # obliged to mention them.
+    affected = set(touched)
+    for identity in touched_identities:
+        affected.update(index.sources_by_pinned_identity.get(identity, frozenset()))
+        affected.update(pin_sources.get(identity, set()))
+    affected &= set(states) | set(touched)
+
+    edges_by_source = dict(index.edges_by_source)
+    affected_targets: set[str] = set()
+    updates: dict[str, tuple[DependencyProofReferenceV1, ...]] = {}
+    for path in sorted(affected):
+        for edge in edges_by_source.get(path, ()):
+            affected_targets.add(edge.target_path)
+        state = states.get(path)
+        resolved = (
+            ()
+            if state is None
+            else _outgoing_edges(state, states=states, paths_by_identity=paths_by_identity)
+        )
+        for edge in resolved:
+            affected_targets.add(edge.target_path)
+        updates[path] = resolved
+        if resolved:
+            edges_by_source[path] = resolved
+        else:
+            edges_by_source.pop(path, None)
+
+    edges_by_target = dict(index.edges_by_target)
+    for target in sorted(affected_targets):
+        incoming = _sorted_edges(
+            edge
+            for source in pin_sources.get(
+                states[target].identity.qualified if target in states else "",
+                set(),
             )
-            if target is None or target.artifact_digest != pin.artifact_digest:
-                reason = "missing_or_digest_mismatch"
-            elif source.lifecycle.state == "live" and target.lifecycle.state == "retired":
-                reason = "live_source_targets_retired"
-            if reason is not None:
-                missing.append(
-                    UnresolvedArtifactPinV1(
-                        source_path=source.path,
-                        source_artifact_digest=source.artifact_digest,
-                        target_identity=pin.target,
-                        expected_target_digest=pin.artifact_digest,
-                        pin_role=pin.role,
-                        reason=reason,
-                    )
-                )
-    return tuple(sorted(missing, key=lambda item: canonical_bytes(item.model_dump(mode="json"))))
+            for edge in edges_by_source.get(source, ())
+            if edge.target_path == target
+        )
+        if incoming:
+            edges_by_target[target] = incoming
+        else:
+            edges_by_target.pop(target, None)
+
+    return DependencyIndexV1(
+        states=states,
+        paths_by_identity=paths_by_identity,
+        sources_by_pinned_identity={
+            identity: frozenset(paths) for identity, paths in pin_sources.items()
+        },
+        edges_by_source=edges_by_source,
+        edges_by_target=edges_by_target,
+        edge_tree=update_dependency_edge_tree(index.edge_tree, updated=updates),
+    )
 
 
 @dataclass(frozen=True)
@@ -611,8 +845,8 @@ class _ClosureFacts:
     """
 
     scope: tuple[str, ...]
-    parent_edges: tuple[DependencyProofReferenceV1, ...]
-    candidate_edges: tuple[DependencyProofReferenceV1, ...]
+    parent: DependencyIndexV1
+    candidate: DependencyIndexV1
     missing_dependents: tuple[IncompleteClosureItemV1, ...]
     unresolved_pins: tuple[UnresolvedArtifactPinV1, ...]
     member_dependency_proofs: tuple[MemberDependencyProofsV1, ...]
@@ -622,31 +856,32 @@ class _ClosureFacts:
         return "refused" if self.missing_dependents or self.unresolved_pins else "complete"
 
 
-def _closure_facts(
+def judge_dependency_closure(
     *,
-    parent_tree: Mapping[str, bytes],
-    candidate_tree: Mapping[str, bytes],
+    parent: DependencyIndexV1,
+    candidate: DependencyIndexV1,
     scope: tuple[str, ...],
 ) -> _ClosureFacts:
-    """Compute exact reverse dependencies and every omitted live dependent."""
+    """Judge one scope against two indexes; reads only the scope's own neighbourhood.
+
+    This is the whole closure law. It is a pure function of its arguments, so an
+    index carried forward from the parent generation and an index built from
+    scratch over the same tree are indistinguishable to it -- which is exactly
+    what makes the incremental maintenance safe to believe.
+    """
 
     if tuple(normalize_manifest_paths(scope)) != scope or not scope:
         raise ValueError("closure scope must be nonempty, sorted, and unique")
-    parent = dependency_artifacts(parent_tree)
-    candidate = dependency_artifacts(candidate_tree)
-    parent_by_path = {item.path: item for item in parent}
-    parent_edges = _edges(parent)
-    candidate_edges = _edges(candidate)
     scope_set = set(scope)
     missing: list[IncompleteClosureItemV1] = []
     for changed_path in scope:
-        changed = parent_by_path.get(changed_path)
+        changed = parent.states.get(changed_path)
         if changed is None:
             continue
-        for edge in parent_edges:
-            if edge.target_path != changed_path or edge.source_path in scope_set:
+        for edge in parent.edges_by_target.get(changed_path, ()):
+            if edge.source_path in scope_set:
                 continue
-            dependent = parent_by_path[edge.source_path]
+            dependent = parent.states[edge.source_path]
             if dependent.lifecycle.state != "live":
                 continue
             missing.append(
@@ -660,29 +895,50 @@ def _closure_facts(
                     permitted_dispositions=("invalidation", "retire", "successor"),
                 )
             )
-    missing_tuple = tuple(
-        sorted(missing, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
-    )
-    unresolved = _unresolved_pins(candidate, source_paths=scope_set)
+    unresolved: list[UnresolvedArtifactPinV1] = []
     proofs: list[MemberDependencyProofsV1] = []
-    all_edges = tuple(
-        sorted(
-            {*parent_edges, *candidate_edges},
-            key=lambda item: canonical_bytes(item.model_dump(mode="json")),
-        )
-    )
     for path in scope:
-        related = tuple(
-            edge for edge in all_edges if edge.source_path == path or edge.target_path == path
+        source = candidate.states.get(path)
+        if source is not None:
+            unresolved.extend(
+                _unresolved_pins_for(
+                    source,
+                    states=candidate.states,
+                    paths_by_identity=candidate.paths_by_identity,
+                )
+            )
+        proofs.append(
+            MemberDependencyProofsV1(
+                path=path,
+                proof_refs=_sorted_edges({*parent.touching(path), *candidate.touching(path)}),
+            )
         )
-        proofs.append(MemberDependencyProofsV1(path=path, proof_refs=related))
     return _ClosureFacts(
         scope=scope,
-        parent_edges=parent_edges,
-        candidate_edges=candidate_edges,
-        missing_dependents=missing_tuple,
-        unresolved_pins=unresolved,
+        parent=parent,
+        candidate=candidate,
+        missing_dependents=tuple(
+            sorted(missing, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
+        ),
+        unresolved_pins=tuple(
+            sorted(unresolved, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
+        ),
         member_dependency_proofs=tuple(proofs),
+    )
+
+
+def _closure_facts(
+    *,
+    parent_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+    scope: tuple[str, ...],
+) -> _ClosureFacts:
+    """Judge one scope over two indexes built from scratch: the cold path."""
+
+    return judge_dependency_closure(
+        parent=build_dependency_index(parent_tree),
+        candidate=build_dependency_index(candidate_tree),
+        scope=scope,
     )
 
 
@@ -694,17 +950,31 @@ def evaluate_dependency_closure(
 ) -> ClosureEvaluationV2:
     """Evaluate closure and commit to both trees' full edge lists in one digest."""
 
-    facts = _closure_facts(
-        parent_tree=parent_tree,
-        candidate_tree=candidate_tree,
-        scope=scope,
+    return closure_evaluation_v2(
+        _closure_facts(
+            parent_tree=parent_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
+        )
     )
+
+
+def closure_evaluation_v2(facts: _ClosureFacts) -> ClosureEvaluationV2:
+    """Speak one judgement as the v2 evaluation, whole-edge-list digest and all.
+
+    The digest covers both trees' complete edge lists, so this version is
+    inherently O(total) to state however cheaply the judgement itself was
+    reached. That is the defect the succession retires; until every accepted
+    receipt is v3, replaying a v1 or v2 generation still has to pay it, and must
+    pay it byte-identically.
+    """
+
     graph_digest = typed_digest(
         Sha256Value,
         "playbill-dependency-graph-v2",
         {
-            "parent_edges": [item.model_dump(mode="json") for item in facts.parent_edges],
-            "candidate_edges": [item.model_dump(mode="json") for item in facts.candidate_edges],
+            "parent_edges": [item.model_dump(mode="json") for item in facts.parent.edges()],
+            "candidate_edges": [item.model_dump(mode="json") for item in facts.candidate.edges()],
         },
     ).tagged
     return ClosureEvaluationV2(
@@ -717,30 +987,38 @@ def evaluate_dependency_closure(
     )
 
 
+def closure_evaluation_v3(facts: _ClosureFacts) -> ClosureEvaluationV3:
+    """Speak one judgement as the v3 evaluation, committing to the edge root.
+
+    The root is read off the candidate index's own trie, which the incremental
+    maintenance updated for exactly the members that moved, so stating the
+    commitment costs what reaching the judgement cost.
+    """
+
+    return ClosureEvaluationV3(
+        verdict=facts.verdict,
+        paths=facts.scope,
+        dependency_edge_root=facts.candidate.edge_root.tagged,
+        member_dependency_proofs=facts.member_dependency_proofs,
+        missing_dependents=facts.missing_dependents,
+        unresolved_pins=facts.unresolved_pins,
+    )
+
+
 def evaluate_dependency_closure_v3(
     *,
     parent_tree: Mapping[str, bytes],
     candidate_tree: Mapping[str, bytes],
     scope: tuple[str, ...],
 ) -> ClosureEvaluationV3:
-    """Evaluate the same closure and commit to the candidate tree's edge root.
+    """Evaluate the same closure from scratch and commit to the edge root."""
 
-    Nothing calls this yet: the v3 format and its verifier land before any
-    producer adopts them.
-    """
-
-    facts = _closure_facts(
-        parent_tree=parent_tree,
-        candidate_tree=candidate_tree,
-        scope=scope,
-    )
-    return ClosureEvaluationV3(
-        verdict=facts.verdict,
-        paths=facts.scope,
-        dependency_edge_root=dependency_edge_root(facts.candidate_edges).tagged,
-        member_dependency_proofs=facts.member_dependency_proofs,
-        missing_dependents=facts.missing_dependents,
-        unresolved_pins=facts.unresolved_pins,
+    return closure_evaluation_v3(
+        _closure_facts(
+            parent_tree=parent_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
+        )
     )
 
 
@@ -748,17 +1026,24 @@ __all__ = [
     "ArtifactDependencyStateV1",
     "ClosureEvaluationV2",
     "ClosureEvaluationV3",
+    "DEFERRED_PIN_TARGET_KINDS",
     "DEPENDENCY_EDGE_SET_DOMAIN",
+    "DependencyIndexV1",
     "IncompleteClosureItemV1",
     "MemberDependencyProofsV1",
     "UnresolvedArtifactPinV1",
     "build_dependency_edge_tree",
+    "build_dependency_index",
+    "closure_evaluation_v2",
+    "closure_evaluation_v3",
     "dependency_artifacts",
     "dependency_edge_members",
     "dependency_edge_root",
     "evaluate_dependency_closure",
     "evaluate_dependency_closure_v3",
+    "judge_dependency_closure",
     "parse_dependency_artifact",
     "update_dependency_edge_tree",
+    "update_dependency_index",
     "verify_dependency_edge_root",
 ]

@@ -17,7 +17,7 @@ from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.serving import bind_current_projection
 from cruxible_core.playbill.settlement import (
     ChangeActorBinding,
-    ChangeSetRecord,
+    ChangeSetRecordV3,
     prepare_generation,
 )
 from cruxible_core.storage.playbill_projection import bind_projection
@@ -112,7 +112,7 @@ def test_accepted_document_emits_composable_exact_proof_facts_without_body_leaka
     assert proof["accepted_coordinate"]["git_oid"] == coordinate.git_oid
     assert proof["accepted_coordinate"]["semantic_root"]["$digest"] == (coordinate.semantic_root)
     record_path = proof["change_set_path"]["$path"]
-    stored = ChangeSetRecord.model_validate_json(
+    stored = ChangeSetRecordV3.model_validate_json(
         instance._ledger.read_tree(coordinate.git_oid)[record_path]
     )
     assert proof["changeset_digest"]["$digest"] == stored.changeset_digest

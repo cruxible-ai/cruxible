@@ -12,21 +12,20 @@ from pydantic import ValidationError
 from cruxible_core.playbill.assembler import ProjectionAssembler
 from cruxible_core.playbill.attestations import verify_candidate_approvals
 from cruxible_core.playbill.bootstrap import VerifiedGenesis, generation_root
-from cruxible_core.playbill.candidates import CandidateRecord, CandidateRecordV2
+from cruxible_core.playbill.candidates import (
+    CandidateRecord,
+    CandidateRecordAnyVersion,
+    CandidateRecordV2,
+    CandidateRecordV3,
+)
 from cruxible_core.playbill.canonical import (
     GenerationRoot,
-    Manifest,
     SemanticRoot,
     canonical_bytes,
-    manifest_for_tree,
-    manifest_for_tree_carrying,
-    manifest_root_from_members,
-    semantic_diff_from_members,
-    semantic_projection,
 )
 from cruxible_core.playbill.cas import BodyProjectionProtocol
 from cruxible_core.playbill.checkpoints import (
-    ReplayCheckpointBodyV1,
+    ReplayCheckpointBodyV2,
     checkpoint_body,
     load_verified_checkpoint,
     write_checkpoint,
@@ -53,7 +52,9 @@ from cruxible_core.playbill.projection import (
     projection_piece_name,
 )
 from cruxible_core.playbill.proposals import (
+    EvaluatedTreeState,
     ExhaustPromotionVerifierProtocol,
+    build_tree_state,
     claim_type_expansions_from_candidate,
     evaluate_proposal_tree,
 )
@@ -65,11 +66,12 @@ from cruxible_core.playbill.serving import (
     remove_exact_projection_build,
 )
 from cruxible_core.playbill.settlement import (
-    ChangeSetRecord,
+    ChangeSetRecordAnyVersion,
     ChangeSetRecordV2,
-    compute_semantic_root,
-    parse_producible_change_set_record,
+    ChangeSetRecordV3,
+    parse_change_set_record,
     render_generation_descriptor,
+    semantic_root_for_record,
 )
 from cruxible_core.playbill.types import (
     CompilerCoordinate,
@@ -102,7 +104,7 @@ class RecoveredGeneration:
     descriptor: GenerationDescriptor
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
-    record: ChangeSetRecord | ChangeSetRecordV2 | None
+    record: ChangeSetRecordAnyVersion | None
 
 
 @dataclass(frozen=True)
@@ -115,26 +117,21 @@ class _GenerationWindow:
     later incremental (merkle) verification thread additional carried-forward
     state through the same seam without re-plumbing every call site.
 
-    `manifest` is the parent's semantic-projection manifest -- the exact
-    path-to-member-digest map its own verified `manifest_root` committed to. It
-    is carried, not recomputed, so a successor only has to hash the members whose
-    bytes actually changed. It must never be seeded from anything but a manifest
-    this replay computed or verified: see `_semantic_manifest`.
+    `state` is the parent's derived state: its semantic member manifest, the
+    merkle trie over that manifest, and its dependency index. All three are
+    carried rather than recomputed, so a successor hashes only the members whose
+    bytes actually changed and re-resolves only the dependency edges those
+    members can move. Nothing in it is believed: every member digest it carries
+    was computed in this process from bytes Git validated against their own
+    content addresses, and the successor's manifest root, edge root, and law
+    evidence are still checked against what the accepted receipt commits to. It
+    must never be seeded from anything but a state this replay built: see
+    `build_tree_state`, which is the only cold seed.
     """
 
     generation: RecoveredGeneration
     tree: dict[str, bytes]
-    manifest: Manifest
-
-
-def _semantic_manifest(tree: dict[str, bytes]) -> Manifest:
-    """Compute one generation's semantic manifest from scratch, hashing every member.
-
-    This is the cold seed for a replay window: genesis, and every ad-hoc window
-    built outside the sliding walk. Nothing carried can enter here.
-    """
-
-    return manifest_for_tree(semantic_projection(tree))
+    state: EvaluatedTreeState
 
 
 def _materialize_successor_tree(
@@ -213,8 +210,28 @@ def _parse_note(content: bytes, *, oid: str) -> GenerationDescriptor:
 
 
 def _candidate_from_record(
-    record: ChangeSetRecord | ChangeSetRecordV2,
-) -> CandidateRecord | CandidateRecordV2:
+    record: ChangeSetRecordAnyVersion,
+) -> CandidateRecordAnyVersion:
+    """Recover the validated candidate one accepted receipt settled.
+
+    The candidate version travels with the receipt version, so a receipt from
+    either side of the succession boundary rebuilds exactly the candidate its own
+    generation was judged against.
+    """
+
+    if isinstance(record, ChangeSetRecordV3):
+        return CandidateRecordV3(
+            candidate=record.candidate,
+            candidate_digest=record.candidate_digest,
+            required_tier=record.required_tier,
+            approval_requirements=record.approval_requirements,
+            activation_policy=record.activation_policy,
+            closure_proof=record.closure_proof,
+            members=record.members,
+            law_evidence=record.law_evidence,
+            law_digests=record.law_digests,
+            compiler_digest=record.compiler_digest,
+        )
     if isinstance(record, ChangeSetRecordV2):
         return CandidateRecordV2(
             candidate=record.candidate,
@@ -287,11 +304,7 @@ def _verify_successor(
     if len(added) != 1:
         raise SettlementIntegrityError("generation must add exactly one change-set record")
     record_path = added[0]
-    record = parse_producible_change_set_record(
-        current_change_sets[record_path],
-        path=record_path,
-        operation="replay",
-    )
+    record = parse_change_set_record(current_change_sets[record_path], path=record_path)
     if record.sequence != parent.sequence + 1:
         raise SettlementIntegrityError("change-set sequence is not contiguous")
     expected_path = f"changesets/cs-{record.sequence:020d}.json"
@@ -308,6 +321,9 @@ def _verify_successor(
         generation_root=parent.generation_root.tagged,
         compiler=compiler,
     )
+    # The parent's carried state enters here and the successor's comes back out,
+    # so one traversal of the change set serves the law re-evaluation, the
+    # manifest commitment, the semantic diff, and the dependency edge root.
     reevaluated = evaluate_proposal_tree(
         base_tree=parent_tree,
         current_tree=parent_tree,
@@ -319,8 +335,24 @@ def _verify_successor(
         actor_id=record.actor_binding.actor_id,
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
         promotion_verifier=promotion_verifier,
+        parent_state=window.state,
+        wire_version=candidate.tag,
     )
-    if reevaluated.candidate != candidate or reevaluated.diagnostics:
+    reproduced = reevaluated.candidate
+    if reproduced is None or reevaluated.diagnostics or reevaluated.state is None:
+        raise SettlementIntegrityError("generation candidate law/closure evidence diverged")
+    state = reevaluated.state
+    # Named before the whole-object comparison so a tampered manifest or scope is
+    # reported as what it is. Both values were recomputed from this generation's
+    # own member bytes; the comparison is against what its receipt commits to.
+    if reproduced.candidate.candidate_manifest_root != record.candidate.candidate_manifest_root:
+        raise SettlementIntegrityError("generation manifest root differs from C_s")
+    if (
+        reproduced.candidate.semantic_diff_digest != record.candidate.semantic_diff_digest
+        or reproduced.candidate.scope != record.candidate.scope
+    ):
+        raise SettlementIntegrityError("generation semantic diff differs from C_s")
+    if reproduced != candidate:
         raise SettlementIntegrityError("generation candidate law/closure evidence diverged")
     for identifier, digest in record.law_digests.items():
         laws.require_historical(identifier=identifier, digest=digest)
@@ -339,26 +371,12 @@ def _verify_successor(
         raise SettlementIntegrityError(
             "principal lifecycle actor did not cryptographically approve the transition"
         )
-    # Both committed values are functions of the two member manifests alone, so
-    # the successor's manifest is built once -- carrying the parent's digest for
-    # every byte-identical member -- and then serves both.
-    members = manifest_for_tree_carrying(
-        semantic_projection(tree),
-        previous_tree=parent_tree,
-        previous_manifest=window.manifest,
-    )
-    manifest = manifest_root_from_members(members)
-    if manifest.tagged != record.candidate.candidate_manifest_root:
-        raise SettlementIntegrityError("generation manifest root differs from C_s")
-    diff, scope = semantic_diff_from_members(window.manifest, members)
-    if diff.tagged != record.candidate.semantic_diff_digest or scope != record.candidate.scope:
-        raise SettlementIntegrityError("generation semantic diff differs from C_s")
     approval_digests = tuple(sorted(item.digest.tagged for item in verified_approvals))
-    semantic_root = compute_semantic_root(
-        manifest_root_value=manifest.tagged,
-        changeset_digest_value=record.changeset_digest,
+    semantic_root = semantic_root_for_record(
+        record,
         approval_digests=approval_digests,
         parent_semantic_root=parent.semantic_root.tagged,
+        parent_record=parent.record,
     )
     descriptor = GenerationDescriptor(
         semantic_root=semantic_root.value,
@@ -381,7 +399,7 @@ def _verify_successor(
             record=record,
         ),
         tree=tree,
-        manifest=members,
+        state=state,
     )
 
 
@@ -518,7 +536,7 @@ def _clean_unaccepted_generations(
                 window=_GenerationWindow(
                     generation=parent,
                     tree=parent_tree,
-                    manifest=_semantic_manifest(parent_tree),
+                    state=build_tree_state(parent_tree),
                 ),
                 repository_path=repository_path,
                 object_format=object_format,
@@ -675,7 +693,7 @@ def recover_instance(
         window = _GenerationWindow(
             generation=genesis_generation,
             tree=genesis.tree,
-            manifest=_semantic_manifest(genesis.tree),
+            state=build_tree_state(genesis.tree),
         )
     else:
         history = [
@@ -693,7 +711,7 @@ def recover_instance(
         window = _GenerationWindow(
             generation=history[-1],
             tree=seed.tree,
-            manifest=seed.manifest,
+            state=seed.state,
         )
     replayed_from = len(history)
     for oid in history_oids[replayed_from:]:
@@ -711,7 +729,7 @@ def recover_instance(
         )
         history.append(window.generation)
     head = history[-1]
-    checkpoint: ReplayCheckpointBodyV1 | None = None
+    checkpoint: ReplayCheckpointBodyV2 | None = None
     if checkpoint_directory is not None and head.sequence > 0:
         checkpoint = checkpoint_body(
             instance_id=instance_id,
@@ -724,7 +742,7 @@ def recover_instance(
             generation_root=head.generation_root.tagged,
             parent_generation_root=history[-2].generation_root.tagged,
             tree=window.tree,
-            members=window.manifest,
+            members=window.state.members,
         )
     # Release the head tree before projection assembly, the peak-memory phase.
     del window

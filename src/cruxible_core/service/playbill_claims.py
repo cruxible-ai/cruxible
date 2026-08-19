@@ -82,7 +82,7 @@ from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
-from cruxible_core.playbill.settlement import ChangeSetRecordV2
+from cruxible_core.playbill.settlement import ChangeSetRecord
 from cruxible_core.playbill.source_references import (
     CoverageDescriptorV1,
     ExternalSourceReferenceV1,
@@ -732,7 +732,9 @@ def _claim_law_evidence(
         if generation.sequence > target_sequence:
             break
         record = generation.record
-        if not isinstance(record, ChangeSetRecordV2):
+        # The v1 receipt predates structured member law evidence; every later
+        # receipt version carries it in the same shape.
+        if record is None or isinstance(record, ChangeSetRecord):
             continue
         for evidence in record.law_evidence:
             if evidence.path != path:

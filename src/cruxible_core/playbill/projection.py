@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.candidates import SemanticCandidate, candidate_digest
+from cruxible_core.playbill.candidates import (
+    SemanticCandidateLike,
+    SemanticCandidateV2,
+    candidate_digest,
+)
 from cruxible_core.playbill.canonical import (
     CandidateDigest,
     GenerationRoot,
@@ -17,7 +22,11 @@ from cruxible_core.playbill.canonical import (
     Sha256Value,
     canonical_bytes,
     canonical_digest,
+    manifest_root,
+    semantic_projection,
 )
+from cruxible_core.playbill.errors import ProjectionCoordinateError
+from cruxible_core.playbill.merkle import merkle_manifest_root
 from cruxible_core.playbill.projection_tree import TreeReadLimits
 from cruxible_core.playbill.types import CompilerCoordinate, GitObjectFormat
 
@@ -188,7 +197,7 @@ class ProvisionalProjectionCoordinate(_StrictProjectionModel):
         "playbill-provisional-projection-coordinate-v1"
     )
     canonical: AcceptedProjectionCoordinate
-    candidate: SemanticCandidate
+    candidate: SemanticCandidateLike
     candidate_digest: str
 
     @field_validator("candidate_digest")
@@ -204,6 +213,33 @@ class ProvisionalProjectionCoordinate(_StrictProjectionModel):
         if candidate_digest(self.candidate).tagged != self.candidate_digest:
             raise ValueError("provisional candidate digest does not reproduce from C_s")
         return self
+
+
+def verify_provisional_tree(
+    tree: Mapping[str, bytes],
+    *,
+    coordinate: ProvisionalProjectionCoordinate,
+) -> None:
+    """Refuse a provisional tree that is not the one the coordinate's candidate signs.
+
+    The candidate names the structure of its own commitment: a v2 candidate signs
+    a merkle manifest root and a v1 a flat one, and the two spellings are
+    disjoint. The root is therefore recomputed in the candidate's own structure
+    and compared, so a provisional read is bound to the exact tree under review
+    on either side of the succession, and the three artifact-kind readers ask the
+    question once rather than each in its own words.
+    """
+
+    projected = semantic_projection(tree)
+    actual = (
+        merkle_manifest_root(projected).tagged
+        if isinstance(coordinate.candidate, SemanticCandidateV2)
+        else manifest_root(projected).tagged
+    )
+    if actual != coordinate.candidate.candidate_manifest_root:
+        raise ProjectionCoordinateError(
+            "provisional tree differs from the candidate manifest coordinate"
+        )
 
 
 class AssemblerRequest(_StrictProjectionModel):
@@ -448,6 +484,7 @@ __all__ = [
     "ProjectionOrphan",
     "ProjectionPiece",
     "ProvisionalProjectionCoordinate",
+    "verify_provisional_tree",
     "projection_coordinate_key",
     "projection_manifest_name",
     "projection_piece_name",

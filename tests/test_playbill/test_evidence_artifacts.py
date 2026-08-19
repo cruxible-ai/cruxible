@@ -7,7 +7,7 @@ from cruxible_core.playbill.acquisition_policies import (
     render_acquisition_policy,
 )
 from cruxible_core.playbill.assembler import ProjectionAssembler
-from cruxible_core.playbill.candidates import CandidateRecordV2
+from cruxible_core.playbill.candidates import CandidateRecordV3
 from cruxible_core.playbill.captures import capture_contract_path, render_capture_contract
 from cruxible_core.playbill.claim_types import claim_type_path, render_claim_type
 from cruxible_core.playbill.compiler import projection_registry_for_compiler
@@ -58,7 +58,7 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
         candidate_tree=candidate_tree,
         timestamp=TIMESTAMP,
     )
-    assert isinstance(proposed.candidate, CandidateRecordV2)
+    assert isinstance(proposed.candidate, CandidateRecordV3)
     assert {member.artifact_kind for member in proposed.candidate.members} == {
         "capture-contract",
         "claim-type",

@@ -503,8 +503,25 @@ def test_qualified_git_formats_preserve_candidate_changeset_and_semantic_root(
         )
 
     sha1, sha256 = prepared
-    assert candidates[0] == candidates[1]
-    assert sha1.record.changeset_digest == sha256.record.changeset_digest
-    assert sha1.semantic_root == sha256.semantic_root
+    # `C_s` is the locator-free object reviewers sign, and it stays identical
+    # under both Git object formats: the same members, the same diff, the same
+    # merkle manifest root, and therefore the same candidate digest and the same
+    # approval payload. The record *around* it binds the coordinate its member
+    # laws were evaluated at, which is a Git object ID and so differs, and every
+    # value derived from the whole record differs with it.
+    assert candidates[0].candidate == candidates[1].candidate
+    assert candidates[0].candidate_digest == candidates[1].candidate_digest
+    assert [
+        (item.path, item.disposition, item.candidate_artifact_digest)
+        for item in candidates[0].members
+    ] == [
+        (item.path, item.disposition, item.candidate_artifact_digest)
+        for item in candidates[1].members
+    ]
+    assert [item.evaluation_coordinate.git_oid for item in candidates[0].law_evidence] != [
+        item.evaluation_coordinate.git_oid for item in candidates[1].law_evidence
+    ]
+    assert sha1.record.changeset_digest != sha256.record.changeset_digest
+    assert sha1.semantic_root != sha256.semantic_root
     assert sha1.oid != sha256.oid
     assert sha1.generation_root != sha256.generation_root

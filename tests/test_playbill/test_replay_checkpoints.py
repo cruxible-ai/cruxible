@@ -10,8 +10,8 @@ import pytest
 
 from cruxible_core.playbill.checkpoints import (
     CHECKPOINT_DIRECTORY,
-    ReplayCheckpointBodyV1,
-    ReplayCheckpointFileV1,
+    ReplayCheckpointBodyV2,
+    ReplayCheckpointFileV2,
     checkpoint_body,
     checkpoint_digest,
     checkpoint_path,
@@ -75,7 +75,7 @@ def _observable(state: RecoveredInstanceState) -> dict[str, object]:
     }
 
 
-def _place_checkpoint_at(fixture, sequence: int) -> ReplayCheckpointBodyV1:  # type: ignore[no-untyped-def]
+def _place_checkpoint_at(fixture, sequence: int) -> ReplayCheckpointBodyV2:  # type: ignore[no-untyped-def]
     """Summarize an already-replayed coordinate, exactly as activation would."""
 
     instance = _reopen_instance(fixture)
@@ -199,6 +199,10 @@ def test_an_absent_checkpoint_directory_is_legal(tmp_path: Path) -> None:
         ("generation_root", "sha256:" + "cd" * 32),
         ("parent_generation_root", "sha256:" + "ef" * 32),
         ("manifest_root", "sha256:" + "12" * 32),
+        # The trie the suffix updates in place is rebuilt from the coordinate's
+        # own members and its root is required to reproduce, so a forged merkle
+        # root is refused exactly as a forged flat one is.
+        ("merkle_root", "merkle-sha256:" + "12" * 32),
         ("instance_id", "inst_other"),
     ],
 )
@@ -213,7 +217,7 @@ def test_a_tampered_checkpoint_field_is_refused(tmp_path: Path, field: str, valu
     with pytest.raises(ReplayCheckpointError):
         verify_checkpoint(
             fixture.instance._ledger,
-            ReplayCheckpointFileV1(
+            ReplayCheckpointFileV2(
                 body=tampered,
                 checkpoint_digest=checkpoint_digest(tampered).tagged,
                 written_at="2026-01-01T00:00:00.000000Z",
@@ -236,7 +240,7 @@ def test_a_tampered_member_manifest_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ReplayCheckpointError):
         verify_checkpoint(
             fixture.instance._ledger,
-            ReplayCheckpointFileV1(
+            ReplayCheckpointFileV2(
                 body=tampered,
                 checkpoint_digest=checkpoint_digest(tampered).tagged,
                 written_at="2026-01-01T00:00:00.000000Z",
@@ -266,7 +270,7 @@ def test_a_tampered_principal_snapshot_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ReplayCheckpointError):
         verify_checkpoint(
             fixture.instance._ledger,
-            ReplayCheckpointFileV1(
+            ReplayCheckpointFileV2(
                 body=tampered,
                 checkpoint_digest=checkpoint_digest(tampered).tagged,
                 written_at="2026-01-01T00:00:00.000000Z",
@@ -313,7 +317,7 @@ def test_a_checkpoint_off_accepted_main_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ReplayCheckpointError):
         verify_checkpoint(
             fixture.instance._ledger,
-            ReplayCheckpointFileV1(
+            ReplayCheckpointFileV2(
                 body=tampered,
                 checkpoint_digest=checkpoint_digest(tampered).tagged,
                 written_at="2026-01-01T00:00:00.000000Z",
@@ -342,7 +346,7 @@ def test_a_checkpoint_whose_generation_signature_fails_is_refused(tmp_path: Path
         with pytest.raises(ReplayCheckpointError):
             verify_checkpoint(
                 ledger,
-                ReplayCheckpointFileV1(
+                ReplayCheckpointFileV2(
                     body=body,
                     checkpoint_digest=checkpoint_digest(body).tagged,
                     written_at="2026-01-01T00:00:00.000000Z",

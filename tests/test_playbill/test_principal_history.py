@@ -130,7 +130,11 @@ def _settle_transition(
     )
     assert result.candidate is not None, result.evaluation.diagnostics
     candidate = result.candidate
-    assert candidate.members[0].governance_operation in {
+    # The transition the principal law classified travels in its member law
+    # evidence, where every other member kind's law result travels, rather than
+    # in a field only the singleton candidate shape had room for.
+    assert candidate.members[0].artifact_kind == "principal-lifecycle"
+    assert candidate.law_evidence[0].result["governance_operation"] in {
         "register",
         "rotate",
         "revoke",

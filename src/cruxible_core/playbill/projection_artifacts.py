@@ -37,7 +37,6 @@ from cruxible_core.playbill.errors import (
     ProjectionFormatError,
     SettlementIntegrityError,
     SubjectFormatError,
-    UnproducibleWireVersionError,
 )
 from cruxible_core.playbill.explanation import (
     ProjectionCoordinateContext,
@@ -59,7 +58,7 @@ from cruxible_core.playbill.types import PrincipalRecord
 
 if TYPE_CHECKING:
     from cruxible_core.playbill.projection import AcceptedCoordinate
-    from cruxible_core.playbill.settlement import ChangeSetRecord, ChangeSetRecordV2
+    from cruxible_core.playbill.settlement import ChangeSetRecordAnyVersion
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
@@ -336,7 +335,7 @@ def registered_path_kind(path: str) -> RegisteredPathKind:
 
 
 def _projected_revision(
-    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     *,
     path: str,
     input_digest: str,
@@ -361,7 +360,7 @@ def _projected_revision(
 
 
 def _accepted_artifact_timestamp(
-    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     *,
     path: str,
     artifact_digest: str,
@@ -382,7 +381,7 @@ def _accepted_artifact_timestamp(
 
 
 def _accepted_artifact_coordinate(
-    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     *,
     path: str,
     artifact_digest: str,
@@ -401,7 +400,7 @@ def _accepted_artifact_coordinate(
 
 
 def _current_member_law_result(
-    records: tuple[tuple[str, ChangeSetRecord | ChangeSetRecordV2], ...],
+    records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     *,
     path: str,
     artifact_digest: str,
@@ -509,9 +508,7 @@ def parse_projection_tree(
         parse_claim,
     )
     from cruxible_core.playbill.projection import AcceptedCoordinate
-    from cruxible_core.playbill.settlement import (
-        parse_producible_change_set_record,
-    )
+    from cruxible_core.playbill.settlement import parse_change_set_record
 
     envelopes: list[ArtifactEnvelopeRow] = []
     pins: list[PinRow] = []
@@ -519,7 +516,7 @@ def parse_projection_tree(
     semantic_facts: list[ProjectionFact] = []
     presentation_facts: list[ProjectionFact] = []
     identities: dict[str, str] = {}
-    change_sets: list[tuple[str, ChangeSetRecord | ChangeSetRecordV2]] = []
+    change_sets: list[tuple[str, ChangeSetRecordAnyVersion]] = []
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
         if registered_path_kind(path) != "changeset":
@@ -527,15 +524,7 @@ def parse_projection_tree(
         content = blobs[path]
         payload = _load_object(content, path=path)
         try:
-            record = parse_producible_change_set_record(
-                content,
-                path=path,
-                operation="accepted projection",
-            )
-        except UnproducibleWireVersionError:
-            # A recognized but unproducible version is not a malformed record,
-            # and its typed refusal must survive to the caller intact.
-            raise
+            record = parse_change_set_record(content, path=path)
         except SettlementIntegrityError as exc:
             raise ProjectionFormatError(
                 f"change-set record failed strict validation: {path}"

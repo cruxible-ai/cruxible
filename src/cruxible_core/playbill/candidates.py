@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -755,13 +755,33 @@ class CandidateRecordV3(_StrictCandidateModel):
 CandidateRecordLike = CandidateRecord | CandidateRecordV2
 CandidateRecordAnyVersion = CandidateRecord | CandidateRecordV2 | CandidateRecordV3
 
+CandidateWireVersion = Literal[
+    "playbill-validated-candidate-v1",
+    "playbill-validated-candidate-v2",
+    "playbill-validated-candidate-v3",
+]
+"""Which validated-candidate shape an evaluation is asked to produce.
+
+Production only ever asks for the newest, and nothing chooses this by preference.
+Re-verifying an accepted generation asks for the shape that generation actually
+settled in, read off its own receipt, because a candidate is only reproduced in
+order to be compared with the one accepted history recorded -- and a comparison
+between two different wire shapes of the same judgement would be a change of
+verification, not a succession of formats.
+"""
+
+PRODUCED_CANDIDATE_VERSION: Final[CandidateWireVersion] = "playbill-validated-candidate-v3"
+"""The one candidate version this build produces for a new proposal."""
+
 
 def render_candidate_record(record: CandidateRecordAnyVersion) -> bytes:
     return canonical_bytes(record.model_dump(mode="json")) + b"\n"
 
 
 __all__ = [
+    "PRODUCED_CANDIDATE_VERSION",
     "CandidateMemberLawEvidenceV2",
+    "CandidateWireVersion",
     "CandidateRecord",
     "CandidateRecordAnyVersion",
     "CandidateRecordLike",

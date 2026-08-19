@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Final, Literal, NoReturn, Protocol
+from typing import Final, Literal, Protocol
 
 from pydantic import (
     BaseModel,
@@ -45,16 +46,10 @@ from cruxible_core.playbill.canonical import (
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
-    manifest_root,
-    semantic_diff,
-    semantic_projection,
     typed_digest,
 )
 from cruxible_core.playbill.documents import BodyVerifierProtocol
-from cruxible_core.playbill.errors import (
-    SettlementIntegrityError,
-    UnproducibleWireVersionError,
-)
+from cruxible_core.playbill.errors import SettlementIntegrityError
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.governance import (
     ActivationPolicy,
@@ -284,10 +279,10 @@ class ChangeSetRecordV3(_StrictSettlementModel):
     maintainable edge root. Nothing else about the receipt moves -- members, law
     evidence, approvals, actor binding, and mandate are the v2 shapes.
 
-    A v3 receipt is structurally inert. Shared parsing recognizes it, so a
-    reader can say what it is instead of calling it corrupt, and every path that
-    could act on it -- production, acceptance/settlement, replay, and accepted
-    projection -- refuses it with `UnproducibleWireVersionError`.
+    Every generation this build accepts settles as a v3 receipt. A ledger older
+    than the succession keeps the v1 or v2 receipts it settled, unaltered and
+    replayable, so accepted history is a v1/v2 prefix followed by a v3 suffix
+    and the boundary between them is a plain generation edge.
     """
 
     tag: Literal["playbill-changeset-v3"] = "playbill-changeset-v3"
@@ -388,38 +383,6 @@ def change_set_digest(record: ChangeSetRecordAnyVersion) -> ChangeSetDigest:
     return typed_digest(ChangeSetDigest, record.tag, payload)
 
 
-def _refuse_unproducible(tag: str, *, operation: str) -> NoReturn:
-    """State the inert gate's refusal once, naming the version and the caller."""
-
-    raise UnproducibleWireVersionError(
-        f"{tag} is recognized but not yet producible: {operation} refuses it"
-    )
-
-
-def require_producible_candidate(
-    candidate: CandidateRecordAnyVersion,
-    *,
-    operation: str,
-) -> CandidateRecord | CandidateRecordV2:
-    """Refuse a recognized candidate version this build cannot yet produce."""
-
-    if isinstance(candidate, CandidateRecordV3):
-        _refuse_unproducible(candidate.tag, operation=operation)
-    return candidate
-
-
-def require_producible_change_set(
-    record: ChangeSetRecordAnyVersion,
-    *,
-    operation: str,
-) -> ChangeSetRecord | ChangeSetRecordV2:
-    """Refuse a recognized change-set version this build cannot yet act on."""
-
-    if isinstance(record, ChangeSetRecordV3):
-        _refuse_unproducible(record.tag, operation=operation)
-    return record
-
-
 def build_change_set_record(
     candidate: CandidateRecordAnyVersion,
     *,
@@ -427,10 +390,22 @@ def build_change_set_record(
     approvals: tuple[ApprovalSubmission, ...],
     actor_binding: ChangeActorBinding,
     mandate_digest: str | None = None,
-) -> ChangeSetRecord | ChangeSetRecordV2:
-    candidate = require_producible_candidate(candidate, operation="change-set construction")
-    if isinstance(candidate, CandidateRecordV2):
-        v2_values = {
+) -> ChangeSetRecordAnyVersion:
+    """Wrap one validated candidate in the receipt version its evidence demands.
+
+    The receipt version is read off the candidate, never chosen here: a candidate
+    that signs a merkle manifest root and proves closure through an edge root can
+    only travel in a v3 receipt, and a v1 or v2 candidate recovered from accepted
+    history can only travel in the receipt it originally settled in.
+    """
+
+    if isinstance(candidate, CandidateRecordV2 | CandidateRecordV3):
+        tag = (
+            "playbill-changeset-v3"
+            if isinstance(candidate, CandidateRecordV3)
+            else "playbill-changeset-v2"
+        )
+        multi_member_values = {
             "sequence": sequence,
             "members": candidate.members,
             "closure_proof": candidate.closure_proof,
@@ -446,12 +421,11 @@ def build_change_set_record(
             "actor_binding": actor_binding,
             "mandate_digest": mandate_digest,
         }
-        digest = typed_digest(
-            ChangeSetDigest,
-            "playbill-changeset-v2",
-            _json_values(v2_values),
-        )
-        return ChangeSetRecordV2.model_validate({**v2_values, "changeset_digest": digest.tagged})
+        digest = typed_digest(ChangeSetDigest, tag, _json_values(multi_member_values))
+        record = {**multi_member_values, "changeset_digest": digest.tagged}
+        if isinstance(candidate, CandidateRecordV3):
+            return ChangeSetRecordV3.model_validate(record)
+        return ChangeSetRecordV2.model_validate(record)
     values = {
         "sequence": sequence,
         "members": candidate.members,
@@ -495,16 +469,16 @@ def render_change_set(record: ChangeSetRecordAnyVersion) -> bytes:
 
 
 def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecordAnyVersion:
-    """Parse any recognized change-set version and verify exact canonical bytes.
+    """Parse any accepted change-set version and verify exact canonical bytes.
 
-    Recognition is deliberately wider than acceptance. A v3 receipt parses here
-    so a reader can name the version it is looking at; every consumer that would
-    act on it passes the result through `require_producible_change_set` first.
+    This is the one seam through which accepted change-set bytes enter replay,
+    checkpoint re-derivation, and accepted projection. Every version a Playbill
+    instance has ever settled parses here, and each is verified by the derivation
+    it was written under: a ledger that crossed the succession boundary carries a
+    v1 or v2 prefix and a v3 suffix, and replaying it end to end is ordinary.
     """
 
-    adapter: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(
-        ChangeSetRecord | ChangeSetRecordV2 | ChangeSetRecordV3
-    )
+    adapter: TypeAdapter[ChangeSetRecordAnyVersion] = TypeAdapter(ChangeSetRecordAnyVersion)
     try:
         record = adapter.validate_json(content)
     except (ValueError, ValidationError) as exc:
@@ -512,26 +486,6 @@ def parse_change_set_record(content: bytes, *, path: str) -> ChangeSetRecordAnyV
     if render_change_set(record) != content:
         raise SettlementIntegrityError(f"generation change-set record is not canonical: {path}")
     return record
-
-
-def parse_producible_change_set_record(
-    content: bytes,
-    *,
-    path: str,
-    operation: str,
-) -> ChangeSetRecord | ChangeSetRecordV2:
-    """Parse a stored receipt and refuse any version this build cannot act on.
-
-    This is the one seam through which accepted change-set bytes enter replay,
-    checkpoint re-derivation, and accepted projection, so the inert gate on a
-    recognized-but-unproducible version is stated once and cannot drift apart
-    between them.
-    """
-
-    return require_producible_change_set(
-        parse_change_set_record(content, path=path),
-        operation=operation,
-    )
 
 
 def render_generation_descriptor(descriptor: GenerationDescriptor) -> bytes:
@@ -624,10 +578,81 @@ def compute_semantic_root_v2(
     )
 
 
+def record_semantic_root_derivation(
+    record: ChangeSetRecordAnyVersion | None,
+) -> SemanticRootDerivation:
+    """Name the derivation that produced one accepted generation's semantic root.
+
+    The name is read off the generation's own receipt, never asserted beside it:
+    a v3 receipt's root was derived by `playbill-sroot-v2` and any earlier
+    receipt's by `playbill-sroot-v1`. Genesis has no receipt, and its root is
+    what a v1 chain starts from, so it answers `playbill-sroot-v1` -- which makes
+    the first accepted generation of every instance, old or new, a v3 record
+    whose preimage names a v1 parent. Every ledger therefore states the
+    succession boundary from generation one rather than hiding it.
+    """
+
+    return SEMANTIC_ROOT_V2_DOMAIN if isinstance(record, ChangeSetRecordV3) else "playbill-sroot-v1"
+
+
+def semantic_root_for_record(
+    record: ChangeSetRecordAnyVersion,
+    *,
+    approval_digests: tuple[str, ...],
+    parent_semantic_root: str,
+    parent_record: ChangeSetRecordAnyVersion | None,
+) -> SemanticRoot:
+    """Derive one accepted generation's semantic root under its own derivation.
+
+    Settlement, replay, and checkpoint prefix re-derivation all ask this one
+    question, so they ask it in one place: three copies of a version dispatch
+    over a succession boundary is three chances to disagree about which side of
+    it a generation is on. The manifest root enters from the receipt the caller
+    has already reproduced from member bytes, so nothing here is believed that
+    was not first recomputed.
+    """
+
+    if isinstance(record, ChangeSetRecordV3):
+        return compute_semantic_root_v2(
+            manifest_root_value=record.candidate.candidate_manifest_root,
+            changeset_digest_value=record.changeset_digest,
+            approval_digests=approval_digests,
+            parent_semantic_root=parent_semantic_root,
+            parent_derivation=record_semantic_root_derivation(parent_record),
+        )
+    return compute_semantic_root(
+        manifest_root_value=record.candidate.candidate_manifest_root,
+        changeset_digest_value=record.changeset_digest,
+        approval_digests=approval_digests,
+        parent_semantic_root=parent_semantic_root,
+    )
+
+
+def parent_change_set_record(
+    parent_tree: Mapping[str, bytes],
+    *,
+    sequence: int,
+) -> ChangeSetRecordAnyVersion | None:
+    """Read the receipt of the generation a new one succeeds, or None for genesis.
+
+    `changesets/` is append-only in accepted history, so the parent's own receipt
+    is present in the parent's daemon-signed tree and its version is a fact about
+    that tree rather than a claim the new generation makes about its parent.
+    """
+
+    if sequence <= 1:
+        return None
+    path = f"changesets/cs-{sequence - 1:020d}.json"
+    content = parent_tree.get(path)
+    if content is None:
+        raise SettlementIntegrityError("settlement base is missing its own change-set record")
+    return parse_change_set_record(content, path=path)
+
+
 @dataclass(frozen=True)
 class VerifiedGenerationBundle:
     settlement: SettlementBinding
-    record: ChangeSetRecord | ChangeSetRecordV2
+    record: ChangeSetRecordAnyVersion
     record_path: str
     tree: dict[str, bytes]
     oid: str
@@ -657,12 +682,12 @@ class VerifiedGenerationBundle:
 
 
 def _verify_claim_admission_constraints(
-    candidate: CandidateRecord | CandidateRecordV2,
+    candidate: CandidateRecordAnyVersion,
     approvals: tuple[VerifiedApproval, ...],
 ) -> None:
     """Recheck candidate-emitted Claim signer law against verified approvals."""
 
-    if not isinstance(candidate, CandidateRecordV2):
+    if isinstance(candidate, CandidateRecord):
         return
     policy_signers = tuple(
         VerifiedPolicySignerV1(
@@ -715,9 +740,6 @@ def prepare_generation(
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
-    # Refused before the ledger is touched: an unproducible version must never
-    # reach a read, a signature, or a commit.
-    candidate = require_producible_candidate(candidate, operation="settlement")
     if ledger.object_format() != base.git_object_format:
         raise SettlementIntegrityError("settlement base object format differs from ledger")
     if ledger.read_main() != base.git_oid:
@@ -734,10 +756,22 @@ def prepare_generation(
         actor_id=actor_binding.actor_id,
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
         promotion_verifier=promotion_verifier,
+        wire_version=candidate.tag,
     )
-    if reevaluated.candidate is None or reevaluated.diagnostics:
+    if reevaluated.candidate is None or reevaluated.diagnostics or reevaluated.state is None:
         raise SettlementIntegrityError("candidate no longer passes its accepted laws")
-    if reevaluated.candidate != candidate:
+    reproduced = reevaluated.candidate
+    # The re-evaluation already hashed every member of the candidate tree exactly
+    # once, in the structure this candidate's own version signs, so the manifest
+    # and diff checks read what it derived instead of deriving them a second time.
+    if reproduced.candidate.candidate_manifest_root != candidate.candidate.candidate_manifest_root:
+        raise SettlementIntegrityError("generation semantic projection differs from C_s")
+    if (
+        reproduced.candidate.semantic_diff_digest != candidate.candidate.semantic_diff_digest
+        or reproduced.candidate.scope != candidate.candidate.scope
+    ):
+        raise SettlementIntegrityError("generation semantic diff differs from C_s")
+    if reproduced != candidate:
         raise SettlementIntegrityError("candidate law/closure evidence cannot be reproduced")
     for identifier, digest in candidate.law_digests.items():
         laws.require_historical(identifier=identifier, digest=digest)
@@ -778,17 +812,6 @@ def prepare_generation(
         raise SettlementIntegrityError("candidate tree collides with daemon change-set path")
     generation_tree = {**candidate_tree, record_path: render_change_set(record)}
 
-    semantic_tree = semantic_projection(generation_tree)
-    candidate_manifest = manifest_root(semantic_tree)
-    if candidate_manifest.tagged != candidate.candidate.candidate_manifest_root:
-        raise SettlementIntegrityError("generation semantic projection differs from C_s")
-    diff, scope = semantic_diff(base_tree, generation_tree)
-    if (
-        diff.tagged != candidate.candidate.semantic_diff_digest
-        or scope != candidate.candidate.scope
-    ):
-        raise SettlementIntegrityError("generation semantic diff differs from C_s")
-
     _checkpoint("before", crash_hook)
     oid = ledger.create_signed_generation(
         generation_tree,
@@ -803,11 +826,11 @@ def prepare_generation(
         raise SettlementIntegrityError("stored generation tree differs from verified payload")
 
     approval_digests = tuple(sorted(item.digest.tagged for item in verified_approvals))
-    semantic_root = compute_semantic_root(
-        manifest_root_value=candidate_manifest.tagged,
-        changeset_digest_value=record.changeset_digest,
+    semantic_root = semantic_root_for_record(
+        record,
         approval_digests=approval_digests,
         parent_semantic_root=base.semantic_root,
+        parent_record=parent_change_set_record(base_tree, sequence=sequence),
     )
     parent_generation = GenerationRoot.from_tagged(base.generation_root)
     descriptor = GenerationDescriptor(
@@ -850,10 +873,10 @@ __all__ = [
     "compute_semantic_root",
     "compute_semantic_root_v2",
     "prepare_generation",
+    "parent_change_set_record",
     "parse_change_set_record",
-    "parse_producible_change_set_record",
+    "record_semantic_root_derivation",
     "render_change_set",
     "render_generation_descriptor",
-    "require_producible_candidate",
-    "require_producible_change_set",
+    "semantic_root_for_record",
 ]

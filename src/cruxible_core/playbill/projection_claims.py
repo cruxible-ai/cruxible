@@ -7,12 +7,12 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.canonical import manifest_root, semantic_projection
 from cruxible_core.playbill.compiler import projection_registry_for_compiler
 from cruxible_core.playbill.errors import ProjectionCoordinateError
 from cruxible_core.playbill.projection import (
     AcceptedProjectionCoordinate,
     ProvisionalProjectionCoordinate,
+    verify_provisional_tree,
 )
 from cruxible_core.playbill.projection_artifacts import (
     ArtifactEnvelopeRow,
@@ -133,11 +133,7 @@ def compile_provisional_claim_projection(
     coordinate: ProvisionalProjectionCoordinate,
     registry: ProjectionExtensionRegistry | None = None,
 ) -> ProvisionalClaimProjection:
-    actual = manifest_root(semantic_projection(tree)).tagged
-    if actual != coordinate.candidate.candidate_manifest_root:
-        raise ProjectionCoordinateError(
-            "provisional tree differs from the candidate manifest coordinate"
-        )
+    verify_provisional_tree(tree, coordinate=coordinate)
     parsed = parse_projection_tree(
         dict(tree),
         registry=registry or projection_registry_for_compiler(coordinate.canonical.compiler),

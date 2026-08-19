@@ -41,10 +41,15 @@ accepted answer that a genesis-rooted replay would not have produced.
    roots. A forged root does not survive the recomputation.
 
 3. The checkpoint coordinate's own tree is read from the ledger, its semantic
-   manifest is rebuilt by hashing those bytes, and that manifest's root is
-   required to equal the manifest root the accepted change-set record at that
-   sequence commits to. So the member digests the suffix carries forward are
-   bound to a daemon-signed generation, not to this file.
+   manifest is rebuilt by hashing those bytes, and that manifest's root -- flat
+   and merkle both -- is required to equal the root the accepted change-set
+   record at that sequence commits to, in whichever structure that record's own
+   version signs. The manifest trie the suffix carries forward is rebuilt from
+   those member digests rather than read out of this file, and its root is
+   required to reproduce, so no node the suffix updates in place was ever
+   accepted on the file's word. The dependency index is likewise rebuilt from
+   the coordinate's own member bytes. So everything the suffix carries is bound
+   to a daemon-signed generation, not to this cache.
 
 4. The daemon signature on the checkpoint commit is verified against the
    principal registry reconstructed for its predecessor, so the key that admits
@@ -79,6 +84,7 @@ from cruxible_core.playbill.canonical import (
     GenerationRoot,
     Manifest,
     SemanticManifestRoot,
+    SemanticMerkleRoot,
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
@@ -87,17 +93,24 @@ from cruxible_core.playbill.canonical import (
     semantic_projection,
     typed_digest,
 )
+from cruxible_core.playbill.closure import build_dependency_index
 from cruxible_core.playbill.errors import PlaybillError, ReplayCheckpointError
 from cruxible_core.playbill.git import GitLedger
+from cruxible_core.playbill.merkle import (
+    MANIFEST_MERKLE_DOMAINS,
+    build_merkle_manifest,
+    verify_merkle_tree,
+)
 from cruxible_core.playbill.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
 )
+from cruxible_core.playbill.proposals import EvaluatedTreeState
 from cruxible_core.playbill.settlement import (
-    ChangeSetRecord,
-    ChangeSetRecordV2,
-    compute_semantic_root,
-    parse_producible_change_set_record,
+    ChangeSetRecordAnyVersion,
+    ChangeSetRecordV3,
+    parse_change_set_record,
+    semantic_root_for_record,
 )
 from cruxible_core.playbill.types import (
     CompilerCoordinate,
@@ -108,8 +121,9 @@ from cruxible_core.playbill.types import (
 from cruxible_core.temporal import format_datetime, utc_now
 
 CHECKPOINT_DIRECTORY: Final = "checkpoints"
-CHECKPOINT_FILE: Final = "replay-checkpoint-v1.json"
-CHECKPOINT_TAG: Final = "playbill-replay-checkpoint-v1"
+CHECKPOINT_FILE: Final = "replay-checkpoint-v2.json"
+CHECKPOINT_TAG: Final = "playbill-replay-checkpoint-v2"
+_SUPERSEDED_CHECKPOINT_FILES: Final = ("replay-checkpoint-v1.json",)
 DEFAULT_CHECKPOINT_INTERVAL: Final = 50
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
@@ -131,16 +145,25 @@ class _StrictCheckpointModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ReplayCheckpointBodyV1(_StrictCheckpointModel):
+class ReplayCheckpointBodyV2(_StrictCheckpointModel):
     """Exactly the fields the checkpoint digest commits to.
 
     No wall-clock value appears here. The file records when it was written
     outside this preimage, so an identical accepted coordinate always produces
     an identical digest.
+
+    The body carries both manifest roots over the same members, because the
+    coordinate it summarizes may sit on either side of the wire succession and
+    the accepted receipt at that sequence signs exactly one of them. It does not
+    carry the manifest trie's nodes: the nodes would have to be recomputed from
+    the members to be worth anything, the members are already re-derived from the
+    coordinate's own bytes on every load, and rebuilding the trie from them costs
+    a hash per path where storing it would cost a node per path on disk and prove
+    nothing extra.
     """
 
-    tag: Literal["playbill-replay-checkpoint-v1"] = CHECKPOINT_TAG
-    format_version: Literal[1] = 1
+    tag: Literal["playbill-replay-checkpoint-v2"] = CHECKPOINT_TAG
+    format_version: Literal[2] = 2
     instance_id: str
     git_object_format: GitObjectFormat
     compiler: CompilerCoordinate
@@ -151,6 +174,7 @@ class ReplayCheckpointBodyV1(_StrictCheckpointModel):
     generation_root: str
     parent_generation_root: str
     manifest_root: str
+    merkle_root: str
     members: dict[str, str]
     principals: PrincipalRegistrySnapshot
 
@@ -186,12 +210,18 @@ class ReplayCheckpointBodyV1(_StrictCheckpointModel):
         SemanticManifestRoot.from_tagged(value)
         return value
 
+    @field_validator("merkle_root")
+    @classmethod
+    def _merkle_root(cls, value: str) -> str:
+        SemanticMerkleRoot.from_tagged(value)
+        return value
 
-class ReplayCheckpointFileV1(_StrictCheckpointModel):
+
+class ReplayCheckpointFileV2(_StrictCheckpointModel):
     """The on-disk record: one digest-committed body plus non-committed metadata."""
 
-    tag: Literal["playbill-replay-checkpoint-file-v1"] = "playbill-replay-checkpoint-file-v1"
-    body: ReplayCheckpointBodyV1
+    tag: Literal["playbill-replay-checkpoint-file-v2"] = "playbill-replay-checkpoint-file-v2"
+    body: ReplayCheckpointBodyV2
     checkpoint_digest: str
     written_at: str
 
@@ -212,7 +242,7 @@ class CheckpointGeneration:
     descriptor: GenerationDescriptor
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
-    record: ChangeSetRecord | ChangeSetRecordV2 | None
+    record: ChangeSetRecordAnyVersion | None
 
 
 @dataclass(frozen=True)
@@ -221,10 +251,10 @@ class CheckpointSeed:
 
     prefix: tuple[CheckpointGeneration, ...]
     tree: dict[str, bytes]
-    manifest: Manifest
+    state: EvaluatedTreeState
 
 
-def checkpoint_digest(body: ReplayCheckpointBodyV1) -> ReplayCheckpointDigest:
+def checkpoint_digest(body: ReplayCheckpointBodyV2) -> ReplayCheckpointDigest:
     return typed_digest(
         ReplayCheckpointDigest,
         CHECKPOINT_TAG,
@@ -232,8 +262,8 @@ def checkpoint_digest(body: ReplayCheckpointBodyV1) -> ReplayCheckpointDigest:
     )
 
 
-def render_checkpoint(body: ReplayCheckpointBodyV1, *, written_at: str) -> bytes:
-    record = ReplayCheckpointFileV1(
+def render_checkpoint(body: ReplayCheckpointBodyV2, *, written_at: str) -> bytes:
+    record = ReplayCheckpointFileV2(
         body=body,
         checkpoint_digest=checkpoint_digest(body).tagged,
         written_at=written_at,
@@ -254,7 +284,7 @@ def checkpoint_body(
     parent_generation_root: str,
     tree: Mapping[str, bytes],
     members: Manifest | None = None,
-) -> ReplayCheckpointBodyV1:
+) -> ReplayCheckpointBodyV2:
     """Summarize one already-verified accepted coordinate.
 
     Both the member manifest and the principal registry are derived from the
@@ -268,7 +298,7 @@ def checkpoint_body(
 
     resolved = members if members is not None else members_for_tree(tree)
     principals = principal_registry_from_tree(tree, semantic_root=semantic_root)
-    return ReplayCheckpointBodyV1(
+    return ReplayCheckpointBodyV2(
         instance_id=instance_id,
         git_object_format=object_format,
         compiler=compiler,
@@ -279,6 +309,7 @@ def checkpoint_body(
         generation_root=generation_root,
         parent_generation_root=parent_generation_root,
         manifest_root=manifest_root_from_members(resolved).tagged,
+        merkle_root=build_merkle_manifest(resolved).root.tagged,
         members=resolved,
         principals=principals,
     )
@@ -296,7 +327,7 @@ def checkpoint_path(directory: Path) -> Path:
 
 def write_checkpoint(
     directory: Path,
-    body: ReplayCheckpointBodyV1,
+    body: ReplayCheckpointBodyV2,
     *,
     written_at: str | None = None,
 ) -> Path:
@@ -343,9 +374,37 @@ def discard_checkpoint(directory: Path) -> None:
         target.unlink(missing_ok=True)
 
 
-def load_checkpoint_file(directory: Path) -> ReplayCheckpointFileV1 | None:
+def _discard_superseded_checkpoints(directory: Path) -> None:
+    """Delete cache files written in a checkpoint format this build no longer reads.
+
+    A checkpoint is a local cache of verification work and never evidence, so a
+    file in a superseded format is not refused, translated, or kept for a reader
+    that might understand it -- there is none. It is deleted, and the reopen it
+    would have shortened replays from genesis instead.
+
+    Only names this build knows to be *superseded* are swept, never every
+    checkpoint-shaped name: a directory shared with a newer build must not have
+    its cache deleted by an older one on every load. Sweeping is advisory, so a
+    file that cannot be removed is left where it is rather than turning a read
+    into a failure.
+    """
+
+    current = checkpoint_path(directory)
+    for name in _SUPERSEDED_CHECKPOINT_FILES:
+        path = directory / name
+        if path == current or path.is_symlink() or not path.is_file():
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            continue
+
+
+def load_checkpoint_file(directory: Path) -> ReplayCheckpointFileV2 | None:
     """Read and self-verify one checkpoint file, or report its absence."""
 
+    if directory.is_dir():
+        _discard_superseded_checkpoints(directory)
     target = checkpoint_path(directory)
     if target.is_symlink():
         raise ReplayCheckpointError("checkpoint file may not be a symlink")
@@ -353,7 +412,7 @@ def load_checkpoint_file(directory: Path) -> ReplayCheckpointFileV1 | None:
         return None
     raw = target.read_bytes()
     try:
-        record = ReplayCheckpointFileV1.model_validate_json(raw)
+        record = ReplayCheckpointFileV2.model_validate_json(raw)
     except (ValidationError, ValueError) as exc:
         raise ReplayCheckpointError("checkpoint file is malformed") from exc
     if canonical_bytes(record.model_dump(mode="json")) + b"\n" != raw:
@@ -367,7 +426,7 @@ def _prefix_records(
     tree: Mapping[str, bytes],
     *,
     sequence: int,
-) -> tuple[ChangeSetRecord | ChangeSetRecordV2, ...]:
+) -> tuple[ChangeSetRecordAnyVersion, ...]:
     """Read every accepted change-set record of the prefix from one signed tree.
 
     `changesets/` is append-only in accepted history -- replay refuses any
@@ -376,7 +435,7 @@ def _prefix_records(
     settled, under the same daemon signature.
     """
 
-    records: list[ChangeSetRecord | ChangeSetRecordV2] = []
+    records: list[ChangeSetRecordAnyVersion] = []
     for index in range(1, sequence + 1):
         path = f"changesets/cs-{index:020d}.json"
         content = tree.get(path)
@@ -384,11 +443,7 @@ def _prefix_records(
             raise ReplayCheckpointError(
                 f"checkpoint coordinate is missing an accepted change-set record: {path}"
             )
-        record = parse_producible_change_set_record(
-            content,
-            path=path,
-            operation="checkpoint prefix replay",
-        )
+        record = parse_change_set_record(content, path=path)
         if record.sequence != index:
             raise ReplayCheckpointError("accepted change-set record sequence differs from its path")
         records.append(record)
@@ -423,7 +478,7 @@ def _rederive_prefix(
     *,
     genesis: VerifiedGenesis,
     history: tuple[str, ...],
-    records: tuple[ChangeSetRecord | ChangeSetRecordV2, ...],
+    records: tuple[ChangeSetRecordAnyVersion, ...],
     head_tree: Mapping[str, bytes],
 ) -> tuple[CheckpointGeneration, ...]:
     """Rebuild the whole prefix coordinate chain from the verified genesis forward."""
@@ -454,11 +509,11 @@ def _rederive_prefix(
                 approval_digest(submission.attestation).tagged for submission in record.approvals
             )
         )
-        semantic_root = compute_semantic_root(
-            manifest_root_value=record.candidate.candidate_manifest_root,
-            changeset_digest_value=record.changeset_digest,
+        semantic_root = semantic_root_for_record(
+            record,
             approval_digests=approvals,
             parent_semantic_root=parent.semantic_root.tagged,
+            parent_record=records[index - 2] if index >= 2 else None,
         )
         descriptor = GenerationDescriptor(
             semantic_root=semantic_root.value,
@@ -500,7 +555,7 @@ def _rederive_prefix(
 
 def verify_checkpoint(
     ledger: GitLedger,
-    record: ReplayCheckpointFileV1,
+    record: ReplayCheckpointFileV2,
     *,
     genesis: VerifiedGenesis,
     instance_id: str,
@@ -531,10 +586,28 @@ def verify_checkpoint(
         )
 
     tree = ledger.read_tree(body.git_oid)
-    members = manifest_for_tree(semantic_projection(tree))
+    projected = semantic_projection(tree)
+    members = manifest_for_tree(projected)
     manifest_root = manifest_root_from_members(members)
     records = _prefix_records(tree, sequence=body.sequence)
-    if manifest_root.tagged != records[-1].candidate.candidate_manifest_root:
+    head_record = records[-1]
+    # The trie is rebuilt from the re-derived members and its root is required to
+    # reproduce, so the warm cache the suffix updates in place is proven at the
+    # cold start rather than trusted from the file.
+    try:
+        merkle = verify_merkle_tree(
+            members,
+            claimed_root=body.merkle_root,
+            domains=MANIFEST_MERKLE_DOMAINS,
+        )
+    except PlaybillError as exc:
+        raise ReplayCheckpointError(
+            "checkpoint merkle manifest root does not reproduce from its coordinate tree"
+        ) from exc
+    accepted_root = (
+        merkle.root.tagged if isinstance(head_record, ChangeSetRecordV3) else manifest_root.tagged
+    )
+    if accepted_root != head_record.candidate.candidate_manifest_root:
         raise ReplayCheckpointError(
             "checkpoint coordinate tree differs from the manifest root its change set accepted"
         )
@@ -572,7 +645,17 @@ def verify_checkpoint(
             raise ReplayCheckpointError(
                 "ledger generation note differs from the re-derived checkpoint descriptor"
             )
-    return CheckpointSeed(prefix=prefix, tree=tree, manifest=members)
+    return CheckpointSeed(
+        prefix=prefix,
+        tree=tree,
+        state=EvaluatedTreeState(
+            members=members,
+            merkle=merkle,
+            # Rebuilt from the coordinate's own member bytes. A checkpoint elides
+            # the prefix's law evaluation, never the state the suffix reads.
+            dependencies=build_dependency_index(projected),
+        ),
+    )
 
 
 def load_verified_checkpoint(
@@ -620,9 +703,9 @@ __all__ = [
     "DEFAULT_CHECKPOINT_INTERVAL",
     "CheckpointGeneration",
     "CheckpointSeed",
-    "ReplayCheckpointBodyV1",
+    "ReplayCheckpointBodyV2",
     "ReplayCheckpointDigest",
-    "ReplayCheckpointFileV1",
+    "ReplayCheckpointFileV2",
     "checkpoint_body",
     "checkpoint_digest",
     "checkpoint_path",

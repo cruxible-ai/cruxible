@@ -1,14 +1,19 @@
-"""The dark half of the coordinated wire succession: formats, verifiers, inert gate.
+"""The coordinated wire succession: formats, verifiers, and the producers.
 
 `playbill-candidate-v2`, `playbill-sroot-v2`, `playbill-dependency-graph-v3`, and
-`playbill-changeset-v3` land here with their verifiers and goldens and nothing
-else. No producer emits them, and every path that could act on one refuses it.
+`playbill-changeset-v3` are pinned here against their goldens, and every one of
+them is now what a new proposal produces. The versions they succeed survive as
+verifiers only: an accepted generation is re-verified against the object its own
+receipt carries, and nothing reaches those shapes without naming one.
+
+The ledger-scale consequence -- a history spanning the boundary replaying end to
+end -- is `test_wire_succession_boundary.py`.
 """
 
 from __future__ import annotations
 
-import ast
 import hashlib
+import inspect
 import json
 from pathlib import Path
 from typing import Any, cast
@@ -17,6 +22,8 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_core.playbill.candidates import (
+    PRODUCED_CANDIDATE_VERSION,
+    CandidateRecord,
     CandidateRecordV2,
     CandidateRecordV3,
     ClosureProofV3,
@@ -30,8 +37,9 @@ from cruxible_core.playbill.canonical import (
     SemanticManifestRoot,
     SemanticMerkleRoot,
     canonical_bytes,
+    manifest_root,
+    semantic_projection,
 )
-from cruxible_core.playbill.checkpoints import _prefix_records
 from cruxible_core.playbill.closure import (
     ClosureEvaluationV3,
     dependency_edge_root,
@@ -44,12 +52,8 @@ from cruxible_core.playbill.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_core.playbill.errors import (
-    SettlementIntegrityError,
-    UnproducibleWireVersionError,
-)
-from cruxible_core.playbill.projection_artifacts import parse_projection_tree
-from cruxible_core.playbill.projection_extensions import playbill_runtime_extension_registry
+from cruxible_core.playbill.errors import SettlementIntegrityError
+from cruxible_core.playbill.merkle import merkle_manifest_root
 from cruxible_core.playbill.proposals import evaluate_proposal_tree
 from cruxible_core.playbill.settlement import (
     SEMANTIC_ROOT_V2_DOMAIN,
@@ -60,11 +64,7 @@ from cruxible_core.playbill.settlement import (
     compute_semantic_root,
     compute_semantic_root_v2,
     parse_change_set_record,
-    parse_producible_change_set_record,
-    prepare_generation,
     render_change_set,
-    require_producible_candidate,
-    require_producible_change_set,
 )
 from cruxible_core.playbill.types import GenerationDescriptor
 from tests.test_playbill._support import initialize_local
@@ -472,48 +472,17 @@ def test_a_v3_receipt_is_recognized_by_shared_parsing() -> None:
     assert recognized.tag == "playbill-changeset-v3"
 
 
-def test_the_inert_gate_refuses_a_v3_receipt_at_every_entry(tmp_path: Path) -> None:
-    record = _record_v3()
-    content = render_change_set(record)
-    path = f"changesets/cs-{record.sequence:020d}.json"
+def test_a_new_proposal_produces_the_whole_succession_and_nothing_older(
+    tmp_path: Path,
+) -> None:
+    """One evaluation, one wire version: the three commitments move together.
 
-    # 1. the shared parse-and-gate seam used by replay, checkpoints, projection
-    with pytest.raises(UnproducibleWireVersionError, match="playbill-changeset-v3"):
-        parse_producible_change_set_record(content, path=path, operation="replay")
+    The candidate's merkle manifest root, the closure proof's edge root, and the
+    receipt that carries both are one succession, so a build that produced any
+    two of them without the third would leave a receipt whose own evidence it
+    could not verify. This is the test that they arrive together.
+    """
 
-    # 2. checkpoint prefix re-derivation
-    with pytest.raises(UnproducibleWireVersionError):
-        _prefix_records({path: content}, sequence=record.sequence)
-
-    # 3. accepted projection, whose format-error translation must not swallow it
-    with pytest.raises(UnproducibleWireVersionError):
-        parse_projection_tree({path: content}, registry=playbill_runtime_extension_registry())
-
-    # 4. change-set production
-    candidate = _candidate_record_v3()
-    with pytest.raises(UnproducibleWireVersionError, match="playbill-validated-candidate-v3"):
-        build_change_set_record(
-            candidate,
-            sequence=1,
-            approvals=(),
-            actor_binding=ChangeActorBinding(actor_id="owner"),
-        )
-
-    # 5. settlement, before the ledger is read, signed, or written
-    with pytest.raises(UnproducibleWireVersionError, match="settlement"):
-        prepare_generation(
-            cast(Any, None),
-            base=cast(Any, None),
-            candidate_tree={},
-            candidate=candidate,
-            approval_submissions=(),
-            bodies=cast(Any, None),
-            actor_binding=ChangeActorBinding(actor_id="owner"),
-            sequence=1,
-        )
-
-
-def test_the_gate_passes_the_versions_this_build_does_produce(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     base_tree, proposed = _document_tree(instance)
     evaluation = evaluate_proposal_tree(
@@ -527,8 +496,12 @@ def test_the_gate_passes_the_versions_this_build_does_produce(tmp_path: Path) ->
         actor_id="owner",
     )
     candidate = evaluation.candidate
-    assert candidate is not None
-    assert require_producible_candidate(candidate, operation="settlement") is candidate
+    assert isinstance(candidate, CandidateRecordV3)
+    assert candidate.tag == PRODUCED_CANDIDATE_VERSION
+    assert isinstance(candidate.candidate, SemanticCandidateV2)
+    SemanticMerkleRoot.from_tagged(candidate.candidate.candidate_manifest_root)
+    assert candidate.closure_proof.tag == "playbill-closure-proof-v3"
+    DependencyEdgeRoot.from_tagged(candidate.closure_proof.dependency_edge_root)
 
     record = build_change_set_record(
         candidate,
@@ -536,46 +509,102 @@ def test_the_gate_passes_the_versions_this_build_does_produce(tmp_path: Path) ->
         approvals=(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
     )
-    assert require_producible_change_set(record, operation="replay") is record
+    assert isinstance(record, ChangeSetRecordV3)
     content = render_change_set(record)
-    path = f"changesets/cs-{record.sequence:020d}.json"
-    assert parse_producible_change_set_record(content, path=path, operation="replay") == record
+    assert parse_change_set_record(content, path="changesets/cs-1.json") == record
+
+    # A single-member Document change is an ordinary change set now: it is judged
+    # by the Document law through the one evaluator, not by a separate one.
+    assert len(candidate.members) == 1
+    assert candidate.members[0].artifact_kind == "document"
+    assert candidate.closure_proof.paths == candidate.candidate.scope
 
 
-# The three format modules define these versions and so construct them; nothing
-# else may, which is what "dark" means for this slice.
-_FORMAT_MODULES = {"candidates.py", "closure.py", "settlement.py"}
-_DARK_CALLABLES = {
-    "SemanticCandidateV2",
-    "CandidateRecordV3",
-    "ChangeSetRecordV3",
-    "ClosureProofV3",
-    "ClosureEvaluationV3",
-    "compute_semantic_root_v2",
-    "evaluate_dependency_closure_v3",
-}
+def test_the_manifest_root_a_new_candidate_signs_is_the_trie_over_its_own_members(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    base_tree, proposed = _document_tree(instance)
+    evaluation = evaluate_proposal_tree(
+        base_tree=base_tree,
+        current_tree=base_tree,
+        proposed_tree=proposed,
+        current=instance.accepted_coordinate(),
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id="owner",
+    )
+    candidate = evaluation.candidate
+    assert isinstance(candidate, CandidateRecordV3)
+    assert candidate.candidate.candidate_manifest_root == (
+        merkle_manifest_root(semantic_projection(proposed)).tagged
+    )
+    # And it is not the flat root, which no longer parses in that field at all.
+    with pytest.raises(ValueError):
+        SemanticMerkleRoot.from_tagged(manifest_root(semantic_projection(proposed)).tagged)
 
 
-def test_nothing_outside_the_format_modules_produces_a_dark_version() -> None:
-    source = Path(__file__).parents[2] / "src" / "cruxible_core"
-    offenders: dict[str, set[str]] = {}
-    for path in sorted(source.rglob("*.py")):
-        if path.name in _FORMAT_MODULES:
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        called = {
-            node.func.id
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        } | {
-            node.func.attr
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-        }
-        dark = called & _DARK_CALLABLES
-        if dark:
-            offenders[str(path)] = dark
-    assert offenders == {}, offenders
+def test_a_superseded_wire_version_is_reachable_only_by_naming_it(tmp_path: Path) -> None:
+    """The older shapes survive as verifiers, and only replay can ask for one.
+
+    Reproducing a v1 or v2 candidate is how an accepted generation settled before
+    the succession is re-verified against the object its own receipt carries.
+    Nothing reaches those shapes by default: the parameter has one value unless a
+    caller holding an accepted receipt supplies the version that receipt names.
+    """
+
+    instance, _owner = initialize_local(tmp_path)
+    base_tree, proposed = _document_tree(instance)
+    coordinate = instance.accepted_coordinate()
+
+    def evaluate(version: str | None) -> object:
+        extra = {} if version is None else {"wire_version": version}
+        return evaluate_proposal_tree(
+            base_tree=base_tree,
+            current_tree=base_tree,
+            proposed_tree=proposed,
+            current=coordinate,
+            bodies=instance.body_store(),
+            timestamp=TIMESTAMP,
+            rebased=False,
+            actor_id="owner",
+            **cast(Any, extra),
+        ).candidate
+
+    produced = evaluate(None)
+    assert isinstance(produced, CandidateRecordV3)
+    v2 = evaluate("playbill-validated-candidate-v2")
+    v1 = evaluate("playbill-validated-candidate-v1")
+    assert isinstance(v2, CandidateRecordV2)
+    assert isinstance(v1, CandidateRecord)
+
+    # v1 and v2 records embed the same frozen `C_s`, so they sign the same digest
+    # and only the record around it moved. v3 signs a different `C_s` under its
+    # own domain, so no approval raised over one can be replayed onto the other.
+    assert isinstance(v2.candidate, SemanticCandidate)
+    assert isinstance(v1.candidate, SemanticCandidate)
+    assert v1.candidate_digest == v2.candidate_digest
+    assert produced.candidate_digest != v2.candidate_digest
+    assert v2.closure_proof.tag == "playbill-closure-proof-v2"
+    assert v1.closure_paths == v2.closure_proof.paths == produced.closure_proof.paths
+    # The judgement underneath is one judgement: the same member, the same law.
+    assert v1.members[0].path == v2.members[0].path == produced.members[0].path
+    assert v2.members == produced.members
+    assert v2.law_evidence == produced.law_evidence
+
+
+def test_production_is_single_version_and_says_so_in_one_place() -> None:
+    """One constant names the produced version, and the producers read it.
+
+    A build that produced two versions would have to decide between them
+    somewhere, and that decision is exactly what a succession must not leave
+    lying around. There is one constant, and the evaluator's default is it.
+    """
+
+    assert PRODUCED_CANDIDATE_VERSION == "playbill-validated-candidate-v3"
+    signature = inspect.signature(evaluate_proposal_tree)
+    assert signature.parameters["wire_version"].default == PRODUCED_CANDIDATE_VERSION
 
 
 def test_the_v3_edge_root_reproduces_from_the_receipt_it_travels_in() -> None:

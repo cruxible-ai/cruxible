@@ -11,9 +11,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_core.playbill.candidates import (
-    CandidateRecord,
-    CandidateRecordV2,
-    SemanticCandidate,
+    CandidateRecordAnyVersion,
+    SemanticCandidateLike,
     candidate_digest,
 )
 from cruxible_core.playbill.canonical import (
@@ -139,11 +138,17 @@ class VerifiedApproval:
 def verify_approval(
     submission: ApprovalSubmission,
     *,
-    candidate: SemanticCandidate,
+    candidate: SemanticCandidateLike,
     principals: PrincipalRegistrySnapshot,
     purpose: ApprovalPurpose = "ordinary-artifact",
 ) -> VerifiedApproval:
-    """Verify one public attestation against the exact signing-root registry."""
+    """Verify one public attestation against the exact signing-root registry.
+
+    The expected payload digest is taken under the candidate's own version
+    domain, so an attestation raised over a v1 candidate cannot approve the v2
+    candidate carrying the same five values, and vice versa. The succession
+    therefore invalidates no accepted signature and forges no new one.
+    """
 
     attestation = submission.attestation
     expected_digest = candidate_digest(candidate).tagged
@@ -179,7 +184,7 @@ def verify_approval(
 
 
 def verify_candidate_approvals(
-    candidate: CandidateRecord | CandidateRecordV2,
+    candidate: CandidateRecordAnyVersion,
     submissions: tuple[ApprovalSubmission, ...],
     *,
     principals: PrincipalRegistrySnapshot,

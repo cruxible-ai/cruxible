@@ -13,7 +13,7 @@ from cruxible_core.playbill.candidates import (
     CandidateMemberEvidence,
     CandidateMemberLawEvidenceV2,
     CandidateRecord,
-    CandidateRecordV2,
+    CandidateRecordAnyVersion,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.documents import parse_document
@@ -69,7 +69,7 @@ class PlaybillProposalReview(_StrictReviewModel):
     tag: Literal["playbill-proposal-review-v1"] = "playbill-proposal-review-v1"
     coordinate_kind: Literal["provisional"] = "provisional"
     proposal_id: str
-    candidate: CandidateRecord | CandidateRecordV2
+    candidate: CandidateRecordAnyVersion
     candidate_digest: str
     parent_semantic_root: str
     settlement_base: AcceptedCoordinate
@@ -187,7 +187,7 @@ def _review_document(
 
 
 def _review_members(
-    candidate: CandidateRecord | CandidateRecordV2,
+    candidate: CandidateRecordAnyVersion,
     *,
     base_tree: dict[str, bytes],
     candidate_tree: dict[str, bytes],
@@ -203,7 +203,7 @@ def _review_members(
             raise ProposalIntegrityError("review member must be a canonical object")
         return value
 
-    if isinstance(candidate, CandidateRecordV2):
+    if not isinstance(candidate, CandidateRecord):
         evidence_by_path = {item.path: item for item in candidate.law_evidence}
         return tuple(
             PlaybillReviewedMember(

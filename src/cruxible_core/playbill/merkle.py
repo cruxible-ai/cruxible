@@ -14,9 +14,10 @@ spelling, so the two commitments are domain-separated at every node and their
 roots cannot be confused, without a second trie to keep in step. A family is a
 wire commitment: adding one is a wire succession, and changing one is a break.
 
-Nothing here is wired into settlement, recovery, or any served surface. The
-primitives and their root spellings land first; the wire succession that adopts
-them is separate work.
+Both commitments are live. A `playbill-candidate-v2` signs the manifest root and
+a `playbill-closure-proof-v3` the dependency edge root, and replay carries both
+tries forward between generations so accepting or verifying a change set
+re-hashes only the touched leaves and the interior nodes above them.
 """
 
 from __future__ import annotations

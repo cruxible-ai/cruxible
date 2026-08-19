@@ -11,7 +11,7 @@ from cruxible_core.playbill.artifacts import (
     ArtifactIdentity,
     ArtifactPin,
 )
-from cruxible_core.playbill.candidates import CandidateRecordV2
+from cruxible_core.playbill.candidates import CandidateRecordV3
 from cruxible_core.playbill.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     build_direct_claim_capture,
@@ -296,7 +296,7 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
         timestamp=TIMESTAMP,
     )
     assert not evaluated.evaluation.diagnostics
-    assert isinstance(evaluated.candidate, CandidateRecordV2)
+    assert isinstance(evaluated.candidate, CandidateRecordV3)
     assert tuple(item.artifact_kind for item in evaluated.candidate.members) == (
         "capture-contract",
         "claim-type",
