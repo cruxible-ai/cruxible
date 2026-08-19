@@ -1,15 +1,15 @@
-"""Relationship visibility helpers for query traversal.
+"""Relationship visibility helpers, retained as config-schema donor residue.
 
-This module is the single source of truth for deciding whether a stored edge is
-visible under a given read-visibility state. Every read path that filters edges
-by review/relationship state must route through these helpers (rather than
-re-deriving the decision from raw metadata dicts) so the answer is identical
-across the query engine, the ``list edges`` service surface, edge export, and
-graph-quality checks.
+This module was the single source of truth for deciding whether a stored edge
+is visible under a given read-visibility state, so the query engine, the
+``list edges`` service surface, edge export, and graph-quality checks could not
+disagree. PC-F deleted all of those readers, along with the companion
+``query.entity_state`` module that gated entities by lifecycle under the same
+:data:`QueryVisibilityState` value space.
 
-The companion :mod:`cruxible_core.query.entity_state` gates *entities* by their
-lifecycle under the SAME :data:`QueryVisibilityState` value space, so a single
-``--state`` selector gates every surface uniformly.
+What keeps this module alive is narrower: ``query.predicates`` imports it, and
+``config/schema.py`` reaches ``query.predicates`` when it validates a named
+query's predicate scopes. It leaves with the config donor in PC-H.
 """
 
 from __future__ import annotations

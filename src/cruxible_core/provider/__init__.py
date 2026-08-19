@@ -1,40 +1,13 @@
-"""Provider runtime surface."""
+"""Residual provider contract types held for the bundled provider readers.
 
-from typing import TYPE_CHECKING, Any
+PC-F deleted the provider registry and payload donors along with the workflow
+executor that drove them. What survives is the contract surface the
+un-transplanted readers in :mod:`cruxible_core.providers` are written against
+(:mod:`cruxible_core.provider.types`) and the trace payload retention
+primitive it depends on (:mod:`cruxible_core.provider.trace_payloads`). Both
+leave with those readers in PC-G.
 
-from cruxible_core.provider.payloads import (
-    EvidenceRef,
-    JsonItems,
-    ParsedTabularBundle,
-    evidence_ref,
-    merge_evidence_refs,
-)
-from cruxible_core.provider.types import ExecutionTrace, ProviderContext, ResolvedArtifact
-
-if TYPE_CHECKING:
-    from cruxible_core.provider.registry import resolve_provider
-
-__all__ = [
-    "ExecutionTrace",
-    "EvidenceRef",
-    "JsonItems",
-    "ParsedTabularBundle",
-    "ProviderContext",
-    "ResolvedArtifact",
-    "evidence_ref",
-    "merge_evidence_refs",
-    "resolve_provider",
-]
-
-
-def __getattr__(name: str) -> Any:
-    # resolve_provider is exported lazily: registry imports the runtime
-    # package, and an eager import here closes an import cycle
-    # (receipt.store -> provider -> registry -> runtime.instance ->
-    # receipt.store) for entry points that reach receipts before runtime —
-    # e.g. scripts/publish_kev_release.py via service -> query.types.
-    if name == "resolve_provider":
-        from cruxible_core.provider.registry import resolve_provider
-
-        return resolve_provider
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+Nothing is re-exported here: the old lazy ``resolve_provider`` accessor existed
+only to break an import cycle through the deleted runtime instance, and every
+remaining consumer imports the owning module directly.
+"""

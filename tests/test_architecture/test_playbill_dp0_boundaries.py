@@ -31,16 +31,13 @@ ORACLE_COMMITS = {
 
 RATIFIED_DONOR_REMOVAL_BATCHES = {
     "cruxible_core.procedure": "PC-H",
-    "cruxible_core.workflow": "PC-F",
-    "cruxible_core.config.schema": "PC-F",
-    "cruxible_core.predicate": "PC-F",
-    "cruxible_core.query": "PC-F",
-    "cruxible_core.graph": "PC-F",
-    "cruxible_core.provider": "PC-F",
+    "cruxible_core.config": "PC-H",
+    "cruxible_core.predicate": "PC-H",
+    "cruxible_core.query": "PC-H",
+    "cruxible_core.graph": "PC-H",
+    "cruxible_core.workflow": "PC-H",
+    "cruxible_core.provider": "PC-G",
     "cruxible_core.providers": "PC-G",
-    "cruxible_core.runtime.instance": "PC-F",
-    "cruxible_core.storage.sqlite": "PC-F",
-    "cruxible_core.instance_protocol": "PC-F",
 }
 
 SERVED_ROOTS = (
@@ -504,9 +501,10 @@ def test_pc_d_retired_donor_packages_and_modules_are_absent() -> None:
     )
     assert not any(path.exists() for path in retired_modules)
 
-    mutation_source = (CORE / "service" / "mutations.py").read_text(encoding="utf-8")
-    assert "cruxible_core.group" not in mutation_source
-    assert "get_group_store" not in mutation_source
+    # PC-D's residual law was that the retained mutation service could not
+    # reach back into the group donor. PC-F deleted the mutation service
+    # itself, which subsumes it.
+    assert not (CORE / "service" / "mutations.py").exists()
 
 
 def test_pc_e1_retired_storage_authorities_and_executor_are_absent() -> None:
@@ -530,29 +528,88 @@ def test_pc_e1_retired_storage_authorities_and_executor_are_absent() -> None:
     )
     assert not any(path.exists() for path in retired_modules)
 
-    sqlite_source = (CORE / "storage" / "sqlite.py").read_text(encoding="utf-8")
-    assert "SQLiteReceiptStore" not in sqlite_source
-    assert "ResolutionContractStore" not in sqlite_source
-
-    instance_protocol = (CORE / "instance_protocol.py").read_text(encoding="utf-8")
-    for retired_protocol in (
-        "ReceiptStoreProtocol",
-        "ProcedureStoreProtocol",
-        "ProcedureReadingStoreProtocol",
-        "ResolutionContractStoreProtocol",
-        "GroupStoreProtocol",
+    # PC-E1's residual laws named store classes, protocols, and accessors that
+    # had to stay absent from three retained donor harnesses. PC-F deleted all
+    # three harnesses, which subsumes every one of those substring checks.
+    for retired_harness in (
+        CORE / "storage" / "sqlite.py",
+        CORE / "instance_protocol.py",
+        CORE / "runtime" / "instance.py",
     ):
-        assert retired_protocol not in instance_protocol
+        assert not retired_harness.exists()
 
-    runtime_instance = (CORE / "runtime" / "instance.py").read_text(encoding="utf-8")
-    for retired_accessor in (
-        "get_receipt_store",
-        "get_procedure_store",
-        "get_procedure_reading_store",
-        "get_resolution_contract_store",
-        "get_group_store",
+
+def test_pc_f_purged_donors_are_absent_and_residue_is_exact() -> None:
+    """PC-F deleted the query-oracle spine and every harness that carried it.
+
+    The residue is deliberately narrow: it is the deferred validator chain
+    ``cruxible_core.config.schema`` reaches (``query.predicates`` is imported
+    inside ``_validate_top_level_query_predicate_scopes``), plus the lock types
+    ``procedure/pins.py`` describes a pin with, plus the provider contract the
+    un-transplanted readers are written against. Both halves are asserted so a
+    later batch cannot quietly widen the residue or re-land a purged donor.
+    """
+    for module in (
+        CORE / "instance_protocol.py",
+        CORE / "sqlite_ddl.py",
+        CORE / "cli" / "instance.py",
+        CORE / "runtime" / "instance.py",
+        CORE / "server" / "auth_managed_entities.py",
+        CORE / "storage" / "protocols.py",
+        CORE / "storage" / "sqlite.py",
+        CORE / "config" / "composition_ownership.py",
+        CORE / "config" / "ownership.py",
+        CORE / "config" / "provenance.py",
     ):
-        assert retired_accessor not in runtime_instance
+        assert not module.exists(), module
+
+    for service_module in (
+        "direct_write_policy.py",
+        "evidence.py",
+        "lifecycle_inputs.py",
+        "mutation_guards.py",
+        "mutation_proposals.py",
+        "mutation_transactions.py",
+        "mutations.py",
+        "queries.py",
+        "server.py",
+        "types.py",
+    ):
+        assert not (CORE / "service" / service_module).exists(), service_module
+
+    def _surviving_modules(package: str) -> set[str]:
+        return {
+            path.stem
+            for path in (CORE / package).glob("*.py")
+            if path.stem != "__init__" and "__pycache__" not in path.parts
+        }
+
+    assert _surviving_modules("workflow") == {"types"}
+    assert _surviving_modules("provider") == {"types", "trace_payloads"}
+    assert _surviving_modules("query") == {
+        "enums",
+        "predicates",
+        "profiles",
+        "relationship_state",
+        "types",
+    }
+    assert _surviving_modules("graph") == {
+        "assertion_state",
+        "entity_graph",
+        "evidence",
+        "provenance",
+        "types",
+    }
+
+    # The residue is exactly the config-schema import closure, so it is derived
+    # rather than merely listed: nothing survives that the chain does not need.
+    chain = _dependency_closure(("cruxible_core.config.schema",))
+    for donor_package in ("cruxible_core.query", "cruxible_core.graph"):
+        surviving = {
+            f"{donor_package}.{name}"
+            for name in _surviving_modules(donor_package.rsplit(".", 1)[1])
+        }
+        assert surviving <= chain, surviving - chain
 
 
 def test_destructive_pass_oracles_are_exact_and_immutable() -> None:

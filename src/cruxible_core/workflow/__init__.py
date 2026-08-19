@@ -1,45 +1,12 @@
-"""Frozen workflow compiler surface retained as a PC-E2 behavior oracle.
+"""Residual workflow lock/plan types held for the Procedure pin payload.
 
-Execution and governed-apply exports were removed in PC-D. Importing this
-package therefore cannot initialize the retired proposal/apply machinery.
+PC-F deleted the workflow compiler, contract, transform, artifact, and ref
+modules together with the rest of the query-oracle spine. One module survives,
+:mod:`cruxible_core.workflow.types`, because ``procedure/pins.py`` still
+describes what a pin records in terms of ``WorkflowLock``, ``LockedProvider``,
+and ``LockedArtifact``. It leaves with the Procedure donor in PC-H.
+
+Nothing is re-exported here: an eager catalog would make importing the package
+pull in the whole Procedure/receipt type graph, and both remaining consumers
+import the owning module directly.
 """
-
-from cruxible_core.workflow.compiler import (
-    LOCK_FILE_NAME,
-    build_lock,
-    compile_plan_definition,
-    compile_workflow,
-    compute_lock_config_digest,
-    compute_lock_digest,
-    get_lock_path,
-    load_lock,
-    resolve_lock_path,
-    write_lock,
-)
-from cruxible_core.workflow.types import (
-    CompiledPlan,
-    CompiledPlanStep,
-    LockedArtifact,
-    LockedProvider,
-    WorkflowExecutionResult,
-    WorkflowLock,
-)
-
-__all__ = [
-    "LOCK_FILE_NAME",
-    "CompiledPlan",
-    "CompiledPlanStep",
-    "LockedArtifact",
-    "LockedProvider",
-    "WorkflowExecutionResult",
-    "WorkflowLock",
-    "build_lock",
-    "compile_plan_definition",
-    "compile_workflow",
-    "compute_lock_config_digest",
-    "compute_lock_digest",
-    "get_lock_path",
-    "load_lock",
-    "resolve_lock_path",
-    "write_lock",
-]

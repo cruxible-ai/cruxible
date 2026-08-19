@@ -23,56 +23,56 @@ DONOR_MANIFEST: tuple[DonorEntry, ...] = (
         "permanent non-donor verifier package",
     ),
     DonorEntry(
-        "cruxible_core.workflow",
-        "PC-F",
-        "query-oracle spine for PC-F parity; the ReceiptBuilder/Receipt tree rehomed to "
-        "cruxible_core.receipt_tree, so nothing outliving PC-F is left behind here",
-    ),
-    DonorEntry(
-        "cruxible_core.config.schema",
-        "PC-F",
-        "selected step, query, provider, and contract schema donor",
+        "cruxible_core.config",
+        "PC-H",
+        "step, query, provider, and contract schema donor pinned by the Procedure "
+        "definition digest; the whole package is labelled rather than schema.py alone "
+        "because carving a module out of it risks moving that frozen digest",
     ),
     DonorEntry(
         "cruxible_core.predicate",
-        "PC-F",
-        "typed comparison and coercion donor through query parity",
+        "PC-H",
+        "typed comparison and coercion donor; 100% of its remaining consumers are the "
+        "Procedure guard grammar and the config schema it validates",
     ),
     DonorEntry(
         "cruxible_core.query",
-        "PC-F",
-        "traversal, filtering, and projection behavior donor",
+        "PC-H",
+        "residual query vocabulary the config schema reaches when validating a named "
+        "query -- enums, predicates, types, profiles, relationship_state; the engine, "
+        "evaluation, filter, projection, continuation, layout, and read-surface donors "
+        "left in PC-F",
     ),
     DonorEntry(
         "cruxible_core.graph",
-        "PC-F",
-        "query-oracle types and EvidenceRef behavior donor",
+        "PC-H",
+        "residual graph vocabulary reached through the same config-schema validator "
+        "chain -- types, entity_graph, assertion_state, provenance -- plus the "
+        "EvidenceRef behavior the Procedure and workflow lock types depend on; the "
+        "mutable graph operations, diff, and identity donors left in PC-F",
+    ),
+    DonorEntry(
+        "cruxible_core.workflow",
+        "PC-H",
+        "residual lock/plan types only: procedure/pins.py describes what a pin records "
+        "in terms of WorkflowLock, LockedProvider, and LockedArtifact, so the module "
+        "leaves with the Procedure donor; the compiler and the rest of the query-oracle "
+        "spine left in PC-F and the Receipt tree was already rehomed to "
+        "cruxible_core.receipt_tree",
     ),
     DonorEntry(
         "cruxible_core.provider",
-        "PC-F",
-        "provider contract/trace donor; last consumers are workflow and service types",
+        "PC-G",
+        "residual provider contract/trace types only; the last consumers are the "
+        "un-transplanted readers in cruxible_core.providers (providers/common/* is "
+        "written against ProviderContext), so it leaves with them rather than with the "
+        "registry and payload donors that left in PC-F",
     ),
     DonorEntry(
         "cruxible_core.providers",
         "PC-G",
         "un-transplanted tabular/document/identity readers; native source connectors "
         "land with the vertical slice",
-    ),
-    DonorEntry(
-        "cruxible_core.runtime.instance",
-        "PC-F",
-        "temporary donor-parity harness",
-    ),
-    DonorEntry(
-        "cruxible_core.storage.sqlite",
-        "PC-F",
-        "temporary donor-parity storage harness",
-    ),
-    DonorEntry(
-        "cruxible_core.instance_protocol",
-        "PC-F",
-        "temporary donor-parity interface, snapshot-metadata, and integrity harness",
     ),
 )
 

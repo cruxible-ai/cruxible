@@ -9,7 +9,6 @@ import pytest
 from cruxible_core.errors import ConfigError
 from cruxible_core.procedure.analysis import build_procedure_graph, procedure_node_kind
 from cruxible_core.procedure.types import ProcedureDefinition
-from cruxible_core.workflow.compiler import _prior_step_aliases_by_index
 
 _BUDGET = {"wall_clock_s": 30, "max_provider_calls": 5}
 
@@ -37,12 +36,21 @@ def test_a_linear_definition_degenerates_to_the_path_graph() -> None:
     assert graph.entry_id == "a"
 
 
-def test_linear_availability_matches_the_compilers_prior_alias_walk() -> None:
-    """The regression obligation, stated as an equality rather than a promise."""
+def test_linear_availability_is_the_prior_alias_walk() -> None:
+    """The regression obligation, stated as an equality rather than a promise.
+
+    The right-hand side used to be read off the workflow compiler's
+    ``_prior_step_aliases_by_index``. That donor left in PC-F, so the walk is
+    now written out: on a path graph, MUST-availability degenerates to exactly
+    the aliases produced by strictly earlier steps.
+    """
     definition = _definition([_provider("a", "ra"), _provider("b", "rb"), _provider("c", "rc")])
     graph = build_procedure_graph(definition)
-    expected = _prior_step_aliases_by_index(definition.steps)
-    assert [graph.available_aliases[node_id] for node_id in graph.node_ids] == expected
+    assert [graph.available_aliases[node_id] for node_id in graph.node_ids] == [
+        frozenset(),
+        frozenset({"ra"}),
+        frozenset({"ra", "rb"}),
+    ]
 
 
 def _branching_definition(**overrides: Any) -> ProcedureDefinition:

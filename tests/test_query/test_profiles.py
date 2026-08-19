@@ -11,7 +11,6 @@ Pins the three profile contracts at the serializer seam:
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import get_args
 
 import pytest
@@ -393,73 +392,53 @@ class TestCompactGovernanceMarkerMatrix:
         assert compact["metadata"] == {}
 
 
-class TestCompactPersistenceRoundTrip:
-    """F-001 regression: compact selection is stable across a storage reload.
+class TestCompactPropertyOrderIndependence:
+    """F-001 regression: compact selection does not depend on insertion order.
 
-    Fresh writes keep the caller's insertion order in the in-memory graph;
-    persistence canonicalizes property JSON with sorted keys. The entity below
-    is written with ADVERSARIAL (reverse-sorted) key order and more scalars
-    than the compact cap, then reloaded from sqlite; the compact card must be
-    identical (values AND key order) before and after the round-trip.
+    The original case drove this through a SQLite save/reload, whose only
+    contribution was to re-key the property dict in sorted order — the storage
+    donor left in PC-F, so the two orderings are now presented directly. The
+    invariant under test is unchanged and it is the profile's, not the store's:
+    an entity carrying more scalars than the compact cap must produce the same
+    card (values AND key order) whichever order its properties arrive in.
     """
 
-    _CONFIG = """\
-version: "1.0"
-name: profile_round_trip
-entity_types:
-  Widget:
-    properties:
-      widget_ref: {type: string, primary_key: true}
-      alpha_prop: {type: string, optional: true}
-      bravo_prop: {type: string, optional: true}
-      charlie_prop: {type: string, optional: true}
-      delta_prop: {type: string, optional: true}
-      echo_prop: {type: string, optional: true}
-      foxtrot_prop: {type: string, optional: true}
-relationships: []
-"""
+    _ADVERSARIAL_KEYS = (
+        "widget_ref",
+        "foxtrot_prop",
+        "echo_prop",
+        "delta_prop",
+        "charlie_prop",
+        "bravo_prop",
+        "alpha_prop",
+    )
 
-    def test_compact_properties_identical_before_and_after_reload(self, tmp_path: Path) -> None:
-        from cruxible_core.runtime.instance import CruxibleInstance
-
-        (tmp_path / "config.yaml").write_text(self._CONFIG)
-        instance = CruxibleInstance.init(tmp_path, "config.yaml")
-
-        adversarial_keys = [
-            "widget_ref",
-            "foxtrot_prop",
-            "echo_prop",
-            "delta_prop",
-            "charlie_prop",
-            "bravo_prop",
-            "alpha_prop",
-        ]
-        entity = EntityInstance(
+    def _entity(self, keys: tuple[str, ...]) -> EntityInstance:
+        return EntityInstance(
             entity_type="Widget",
             entity_id="W-1",
-            properties={key: key.upper() for key in adversarial_keys},
-        )
-        graph = instance.load_graph()
-        graph.add_entity(entity)
-        instance.save_graph(graph)
-
-        fresh_compact = profile_entity_payload(entity.model_dump(mode="json"), "compact")
-
-        restored_entity = CruxibleInstance.load(tmp_path).load_graph().get_entity("Widget", "W-1")
-        assert restored_entity is not None
-        # The round-trip really changed the raw ordering (storage canonicalizes
-        # with sorted keys) — otherwise this test would pass vacuously.
-        assert list(restored_entity.properties) == sorted(adversarial_keys)
-        assert list(restored_entity.properties) != adversarial_keys
-
-        restored_compact = profile_entity_payload(
-            restored_entity.model_dump(mode="json"), "compact"
+            properties={key: key.upper() for key in keys},
         )
 
-        assert fresh_compact == restored_compact
-        assert list(fresh_compact["properties"]) == list(restored_compact["properties"])
+    def test_compact_properties_identical_under_either_property_order(self) -> None:
+        canonical_keys = tuple(sorted(self._ADVERSARIAL_KEYS))
+        # Otherwise the case would pass vacuously.
+        assert canonical_keys != self._ADVERSARIAL_KEYS
+
+        as_written = self._entity(self._ADVERSARIAL_KEYS)
+        as_canonicalized = self._entity(canonical_keys)
+        assert list(as_written.properties) == list(self._ADVERSARIAL_KEYS)
+        assert list(as_canonicalized.properties) == list(canonical_keys)
+
+        written_compact = profile_entity_payload(as_written.model_dump(mode="json"), "compact")
+        canonical_compact = profile_entity_payload(
+            as_canonicalized.model_dump(mode="json"), "compact"
+        )
+
+        assert written_compact == canonical_compact
+        assert list(written_compact["properties"]) == list(canonical_compact["properties"])
         # Sorted-key selection: the first five scalars alphabetically.
-        assert list(fresh_compact["properties"]) == [
+        assert list(written_compact["properties"]) == [
             "alpha_prop",
             "bravo_prop",
             "charlie_prop",

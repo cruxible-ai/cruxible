@@ -415,8 +415,8 @@ class EntityGraph:
         if not rel.claim_id or not rel.claim_id.strip():
             raise ValueError(
                 "Relationship added to a graph is missing claim_id "
-                f"({rel.relationship_label()}). Edges enter the graph through "
-                "graph.operations.apply_relationship, which mints the id; "
+                f"({rel.relationship_label()}). The caller must mint the id "
+                "(graph.types.mint_claim_id) before the edge enters a graph; "
                 "constructing an id-less RelationshipInstance is fine, adding "
                 "one is a programming error."
             )

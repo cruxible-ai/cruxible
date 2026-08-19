@@ -24,9 +24,6 @@ from cruxible_core.config.compact import (
 )
 from cruxible_core.config.loader import load_config
 from cruxible_core.config.schema import CoreConfig, ResolutionContractGuardCondition
-from cruxible_core.errors import DataValidationError
-from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.operations import apply_entity, validate_entity
 
 KIT_DIR = Path(__file__).resolve().parents[1] / "data" / "config_donors" / "agent-operation"
 # config.yaml is the single source of truth (compact); the loader expands it on load,
@@ -210,7 +207,7 @@ def test_entity_level_id_becomes_primary_key() -> None:
     assert list(props.keys())[0] == "e_id"
 
 
-def test_compact_entity_identity_fields_load_and_enforce_on_write() -> None:
+def test_compact_entity_identity_fields_load() -> None:
     config = load_config(
         _join(
             """
@@ -234,17 +231,8 @@ def test_compact_entity_identity_fields_load_and_enforce_on_write() -> None:
     assert account.identity_hint == ["name", "family"]
     assert account.unique_by == ["name", "family"]
     assert account.id_pattern == "^account_[a-z0-9_]+$"
-
-    graph = EntityGraph()
-    invalid = validate_entity(
-        config,
-        graph,
-        "Account",
-        "INVALID-ID",
-        {"name": "Bluest Account", "family": "Checking"},
-    )
-    with pytest.raises(DataValidationError, match="does not match id_pattern"):
-        apply_entity(graph, invalid, config=config, source="add_entity")
+    # The write-enforcement half of this case drove the ``graph/operations.py``
+    # chokepoint, which left with the PC-F donor purge.
 
 
 def test_property_unknown_token_raises() -> None:

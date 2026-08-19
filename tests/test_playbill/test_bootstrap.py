@@ -1,16 +1,14 @@
-"""Opt-in managed layout, exact genesis, and legacy compatibility tests."""
+"""Opt-in managed layout and exact genesis tests."""
 
 from __future__ import annotations
 
-import json
 import stat
 from pathlib import Path
 
 import pytest
 
-from cruxible_core.cli.instance import CruxibleInstance
 from cruxible_core.playbill.errors import PlaybillBootstrapError, PlaybillKeyError
-from cruxible_core.playbill.instance import DESCRIPTOR_FILE, PlaybillInstance
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.keys import (
     DAEMON_PRIVATE_KEY_FILE,
     assert_outside_roots,
@@ -202,27 +200,3 @@ def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> N
         timestamp=FIXED_TIMESTAMP,
     )
     assert instance.inspect().recovery_posture == "recovery-configured"
-
-
-def test_legacy_instance_initialization_remains_unchanged(tmp_path: Path) -> None:
-    project = tmp_path / "legacy"
-    project.mkdir()
-    config = project / "config.yaml"
-    config.write_text(
-        "version: '1.0'\n"
-        "name: legacy\n"
-        "entity_types:\n"
-        "  Item:\n"
-        "    properties:\n"
-        "      item_id:\n"
-        "        type: string\n"
-        "        primary_key: true\n"
-        "relationships: []\n"
-    )
-    instance = CruxibleInstance.init(project, "config.yaml")
-    metadata = json.loads((instance.instance_dir / DESCRIPTOR_FILE).read_text())
-
-    assert instance.instance_dir == project / ".cruxible"
-    assert "playbill" not in metadata
-    assert not (project / "ledger.git").exists()
-    assert not (project / "credentials").exists()

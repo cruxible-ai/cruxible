@@ -1,138 +1,89 @@
-"""Tests for the receipt system: builder, types, and engine integration."""
+"""Tests for the receipt system: builder, types, and serializer.
+
+The query-shaped cases below used to run ``query.engine.execute_query`` over a
+config/graph pair and assert against the receipt it returned. That made the
+query donor an input to a package that outlives it, so PC-F replaced the oracle
+rather than the coverage: :func:`_parts_for_vehicle_receipt` composes the same
+receipt DAG through the public ``ReceiptBuilder`` API, node for node and edge
+for edge, and every assertion the engine used to satisfy is asserted against it
+unchanged. The receipt tree has no donor dependency left.
+"""
 
 import pytest
 
-from cruxible_core.config.schema import (
-    CoreConfig,
-    EntityTypeSchema,
-    NamedQuerySchema,
-    PropertySchema,
-    RelationshipSchema,
-    TraversalStep,
-)
-from cruxible_core.graph.entity_graph import EntityGraph
-from cruxible_core.graph.types import EntityInstance, RelationshipInstance, mint_claim_id
-from cruxible_core.query.engine import execute_query
 from cruxible_core.receipt_tree.builder import ReceiptBuilder
 from cruxible_core.receipt_tree.serializer import to_json, to_markdown, to_mermaid
 from cruxible_core.receipt_tree.types import Receipt
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Donor-free query-shaped receipts
 # ---------------------------------------------------------------------------
 
+_PARTS_FOR_VEHICLE_PARAMETERS = {"vehicle_id": "V-1"}
+_FITS_FILTER = {"verified": True}
+
+
+def _parts_for_vehicle_receipt() -> Receipt:
+    """The receipt a ``parts_for_vehicle`` traversal produces.
+
+    Entry Vehicle ``V-1`` is looked up; both ``fits`` edges into it are
+    traversed (Part ``P-1`` verified, Part ``P-2`` not); the declared
+    ``verified: true`` filter passes on ``P-1`` and fails on ``P-2``; the single
+    surviving candidate produces the result row.
+    """
+    builder = ReceiptBuilder(
+        query_name="parts_for_vehicle",
+        parameters=dict(_PARTS_FOR_VEHICLE_PARAMETERS),
+    )
+    entry = builder.record_entity_lookup(entity_type="Vehicle", entity_id="V-1")
+
+    surviving: list[str] = []
+    for part_id, verified in (("P-1", True), ("P-2", False)):
+        traversal = builder.record_traversal(
+            from_entity_type="Vehicle",
+            from_entity_id="V-1",
+            to_entity_type="Part",
+            to_entity_id=part_id,
+            relationship="fits",
+            edge_props={"verified": verified},
+            edge_key=0,
+            parent_id=entry,
+        )
+        builder.record_filter(
+            filter_spec=dict(_FITS_FILTER),
+            passed=verified,
+            parent_id=traversal,
+        )
+        if verified:
+            surviving.append(traversal)
+
+    results = [{"entity_type": "Part", "entity_id": "P-1"}]
+    builder.record_results(results, parent_ids=surviving)
+    return builder.build(results=results)
+
+
+def _vehicles_for_part_receipt() -> Receipt:
+    """The receipt an unfiltered ``vehicles_for_part`` traversal produces."""
+    builder = ReceiptBuilder(query_name="vehicles_for_part", parameters={"part_number": "P-1"})
+    entry = builder.record_entity_lookup(entity_type="Part", entity_id="P-1")
+    traversal = builder.record_traversal(
+        from_entity_type="Part",
+        from_entity_id="P-1",
+        to_entity_type="Vehicle",
+        to_entity_id="V-1",
+        relationship="fits",
+        edge_props={"verified": True},
+        edge_key=0,
+        parent_id=entry,
+    )
+    results = [{"entity_type": "Vehicle", "entity_id": "V-1"}]
+    builder.record_results(results, parent_ids=[traversal])
+    return builder.build(results=results)
+
 
 @pytest.fixture
-def config() -> CoreConfig:
-    return CoreConfig(
-        name="test",
-        entity_types={
-            "Vehicle": EntityTypeSchema(
-                properties={
-                    "vehicle_id": PropertySchema(type="string", primary_key=True),
-                    "make": PropertySchema(type="string"),
-                }
-            ),
-            "Part": EntityTypeSchema(
-                properties={
-                    "part_number": PropertySchema(type="string", primary_key=True),
-                    "name": PropertySchema(type="string"),
-                    "category": PropertySchema(type="string"),
-                }
-            ),
-        },
-        relationships=[
-            RelationshipSchema(
-                name="fits",
-                from_entity="Part",
-                to_entity="Vehicle",
-                properties={
-                    "verified": PropertySchema(type="bool"),
-                },
-            ),
-        ],
-        named_queries={
-            "parts_for_vehicle": NamedQuerySchema(
-                mode="traversal",
-                description="Find parts that fit a vehicle",
-                entry_point="Vehicle",
-                traversal=[
-                    TraversalStep(
-                        relationship="fits",
-                        direction="incoming",
-                        filter={"verified": True},
-                    )
-                ],
-                returns="list[Part]",
-            ),
-            "vehicles_for_part": NamedQuerySchema(
-                mode="traversal",
-                description="Find vehicles a part fits",
-                entry_point="Part",
-                traversal=[
-                    TraversalStep(
-                        relationship="fits",
-                        direction="outgoing",
-                    )
-                ],
-                returns="list[Vehicle]",
-            ),
-        },
-    )
-
-
-@pytest.fixture
-def graph() -> EntityGraph:
-    g = EntityGraph()
-
-    g.add_entity(
-        EntityInstance(
-            entity_type="Vehicle",
-            entity_id="V-1",
-            properties={"vehicle_id": "V-1", "make": "Honda"},
-        )
-    )
-    g.add_entity(
-        EntityInstance(
-            entity_type="Part",
-            entity_id="P-1",
-            properties={"part_number": "P-1", "name": "Brake Pad", "category": "brakes"},
-        )
-    )
-    g.add_entity(
-        EntityInstance(
-            entity_type="Part",
-            entity_id="P-2",
-            properties={"part_number": "P-2", "name": "Rotor", "category": "brakes"},
-        )
-    )
-
-    # P-1 fits V-1 (verified)
-    g.add_relationship(
-        RelationshipInstance(
-            claim_id=mint_claim_id(),
-            relationship_type="fits",
-            from_type="Part",
-            from_id="P-1",
-            to_type="Vehicle",
-            to_id="V-1",
-            properties={"verified": True},
-        )
-    )
-    # P-2 fits V-1 (not verified)
-    g.add_relationship(
-        RelationshipInstance(
-            claim_id=mint_claim_id(),
-            relationship_type="fits",
-            from_type="Part",
-            from_id="P-2",
-            to_type="Vehicle",
-            to_id="V-1",
-            properties={"verified": False},
-        )
-    )
-
-    return g
+def parts_for_vehicle() -> Receipt:
+    return _parts_for_vehicle_receipt()
 
 
 # ---------------------------------------------------------------------------
@@ -443,100 +394,56 @@ class TestReceiptBuilder:
 
 
 # ---------------------------------------------------------------------------
-# Engine integration: receipts produced by execute_query
+# Query-shaped receipt DAGs
 # ---------------------------------------------------------------------------
 
 
-class TestReceiptIntegration:
-    def test_receipt_attached_to_result(
-        self,
-        config: CoreConfig,
-        graph: EntityGraph,
-    ):
-        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-1"})
-        assert result.receipt is not None
-        assert isinstance(result.receipt, Receipt)
+class TestQueryShapedReceipt:
+    def test_receipt_is_a_receipt(self, parts_for_vehicle: Receipt):
+        assert parts_for_vehicle is not None
+        assert isinstance(parts_for_vehicle, Receipt)
 
-    def test_receipt_has_query_metadata(
-        self,
-        config: CoreConfig,
-        graph: EntityGraph,
-    ):
-        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-1"})
-        receipt = result.receipt
-        assert receipt.query_name == "parts_for_vehicle"
-        assert receipt.parameters == {"vehicle_id": "V-1"}
-        assert receipt.duration_ms >= 0
+    def test_receipt_has_query_metadata(self, parts_for_vehicle: Receipt):
+        assert parts_for_vehicle.query_name == "parts_for_vehicle"
+        assert parts_for_vehicle.parameters == {"vehicle_id": "V-1"}
+        assert parts_for_vehicle.duration_ms >= 0
 
-    def test_receipt_records_entry_lookup(
-        self,
-        config: CoreConfig,
-        graph: EntityGraph,
-    ):
-        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-1"})
-        receipt = result.receipt
-
-        lookups = [n for n in receipt.nodes if n.node_type == "entity_lookup"]
+    def test_receipt_records_entry_lookup(self, parts_for_vehicle: Receipt):
+        lookups = [n for n in parts_for_vehicle.nodes if n.node_type == "entity_lookup"]
         assert len(lookups) == 1
         assert lookups[0].entity_type == "Vehicle"
         assert lookups[0].entity_id == "V-1"
 
-    def test_receipt_records_traversals(
-        self,
-        config: CoreConfig,
-        graph: EntityGraph,
-    ):
+    def test_receipt_records_traversals(self, parts_for_vehicle: Receipt):
         """Both P-1 and P-2 are traversed (filter result recorded separately)."""
-        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-1"})
-        receipt = result.receipt
-
-        traversals = [n for n in receipt.nodes if n.node_type == "edge_traversal"]
+        traversals = [n for n in parts_for_vehicle.nodes if n.node_type == "edge_traversal"]
         assert len(traversals) == 2
         traversed_ids = {t.entity_id for t in traversals}
         assert traversed_ids == {"P-1", "P-2"}
         assert all("edge_key" in t.detail for t in traversals)
 
-    def test_receipt_records_filter_pass_and_fail(
-        self,
-        config: CoreConfig,
-        graph: EntityGraph,
-    ):
+    def test_receipt_records_filter_pass_and_fail(self, parts_for_vehicle: Receipt):
         """P-1 has verified=True (pass), P-2 has verified=False (fail)."""
-        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-1"})
-        receipt = result.receipt
-
-        filters = [n for n in receipt.nodes if n.node_type == "filter_applied"]
+        filters = [n for n in parts_for_vehicle.nodes if n.node_type == "filter_applied"]
         assert len(filters) == 2
         passed = [f for f in filters if f.detail["passed"] is True]
         failed = [f for f in filters if f.detail["passed"] is False]
         assert len(passed) == 1
         assert len(failed) == 1
 
-    def test_receipt_records_results(
-        self,
-        config: CoreConfig,
-        graph: EntityGraph,
-    ):
-        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-1"})
-        receipt = result.receipt
-
-        result_nodes = [n for n in receipt.nodes if n.node_type == "result"]
+    def test_receipt_records_results(self, parts_for_vehicle: Receipt):
+        result_nodes = [n for n in parts_for_vehicle.nodes if n.node_type == "result"]
         assert len(result_nodes) == 1
         assert result_nodes[0].detail["count"] == 1  # Only P-1 passes filter
-        produced = [e for e in receipt.edges if e.to_node == result_nodes[0].node_id]
+        produced = [e for e in parts_for_vehicle.edges if e.to_node == result_nodes[0].node_id]
         assert len(produced) == 1
-        parent = next(n for n in receipt.nodes if n.node_id == produced[0].from_node)
+        parent = next(n for n in parts_for_vehicle.nodes if n.node_id == produced[0].from_node)
         assert parent.node_type == "edge_traversal"
         assert parent.entity_id == "P-1"
 
-    def test_no_filter_query_has_traversals_only(
-        self,
-        config: CoreConfig,
-        graph: EntityGraph,
-    ):
-        """vehicles_for_part has no filter — should have traversals but no filter nodes."""
-        result = execute_query(config, graph, "vehicles_for_part", {"part_number": "P-1"})
-        receipt = result.receipt
+    def test_no_filter_query_has_traversals_only(self):
+        """vehicles_for_part has no filter — traversals but no filter nodes."""
+        receipt = _vehicles_for_part_receipt()
 
         filters = [n for n in receipt.nodes if n.node_type == "filter_applied"]
         assert len(filters) == 0
@@ -545,28 +452,16 @@ class TestReceiptIntegration:
         assert len(traversals) == 1
         assert traversals[0].entity_id == "V-1"
 
-    def test_receipt_dag_edges_are_connected(
-        self,
-        config: CoreConfig,
-        graph: EntityGraph,
-    ):
+    def test_receipt_dag_edges_are_connected(self, parts_for_vehicle: Receipt):
         """Every non-root node should be reachable from some edge."""
-        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-1"})
-        receipt = result.receipt
-
-        to_nodes = {e.to_node for e in receipt.edges}
-        non_root = [n for n in receipt.nodes if n.node_type != "query"]
+        to_nodes = {e.to_node for e in parts_for_vehicle.edges}
+        non_root = [n for n in parts_for_vehicle.nodes if n.node_type != "query"]
         for node in non_root:
             assert node.node_id in to_nodes, f"{node.node_id} has no incoming edge"
 
-    def test_receipt_results_in_build_match_query_results(
-        self,
-        config: CoreConfig,
-        graph: EntityGraph,
-    ):
-        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-1"})
-        receipt = result.receipt
-        assert len(receipt.results) == len(result.results)
+    def test_receipt_results_in_build_match_recorded_result_count(self, parts_for_vehicle: Receipt):
+        result_node = next(n for n in parts_for_vehicle.nodes if n.node_type == "result")
+        assert len(parts_for_vehicle.results) == result_node.detail["count"]
 
 
 # ---------------------------------------------------------------------------
@@ -576,9 +471,8 @@ class TestReceiptIntegration:
 
 class TestSerializer:
     @pytest.fixture
-    def receipt(self, config: CoreConfig, graph: EntityGraph) -> Receipt:
-        result = execute_query(config, graph, "parts_for_vehicle", {"vehicle_id": "V-1"})
-        return result.receipt
+    def receipt(self, parts_for_vehicle: Receipt) -> Receipt:
+        return parts_for_vehicle
 
     def test_to_json_roundtrip(self, receipt: Receipt):
         json_str = to_json(receipt)
