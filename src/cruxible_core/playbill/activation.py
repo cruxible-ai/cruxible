@@ -10,6 +10,11 @@ from typing import Final, Protocol
 
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.playbill.cas import BodyProjectionProtocol
+from cruxible_core.playbill.checkpoints import (
+    DEFAULT_CHECKPOINT_INTERVAL,
+    checkpoint_body,
+    write_checkpoint,
+)
 from cruxible_core.playbill.errors import SettlementIntegrityError
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.projection import (
@@ -25,6 +30,7 @@ from cruxible_core.playbill.settlement import (
     VerifiedGenerationBundle,
     render_generation_descriptor,
 )
+from cruxible_core.playbill.types import GenesisCoordinate
 from cruxible_core.playbill.witness import WitnessRecord, WitnessSink
 from cruxible_core.storage.playbill_projection import bind_projection
 
@@ -72,12 +78,20 @@ class ActivationPublisher:
         bodies: BodyProjectionProtocol,
         witness: WitnessSink | None = None,
         accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
+        checkpoint_directory: Path | None = None,
+        checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
+        genesis: GenesisCoordinate | None = None,
     ) -> None:
+        if checkpoint_interval < 1:
+            raise SettlementIntegrityError("checkpoint interval must be at least one generation")
         self.ledger = ledger
         self.publication_directory = publication_directory.resolve(strict=True)
         self.bodies = bodies
         self.witness = witness
         self.accepted_coordinates_by_sequence = dict(accepted_coordinates_by_sequence or {})
+        self.checkpoint_directory = checkpoint_directory
+        self.checkpoint_interval = checkpoint_interval
+        self.genesis = genesis
 
     def prebuild(
         self,
@@ -207,7 +221,48 @@ class ActivationPublisher:
                 )
             )
         _checkpoint(WITNESS_PUBLICATION, "after", crash_hook)
+        self._advance_replay_checkpoint(bundle, base=base)
         return ActivationResult(status="accepted", accepted=accepted, projection=projection)
+
+    def _advance_replay_checkpoint(
+        self,
+        bundle: VerifiedGenerationBundle,
+        *,
+        base: AcceptedProjectionCoordinate,
+    ) -> None:
+        """Summarize this coordinate every `checkpoint_interval` accepted generations.
+
+        Writing on a stride rather than on every acceptance keeps the cost of
+        rebuilding a full member manifest off the hot acceptance path while
+        bounding the suffix a reopen has to replay. The write is the last thing
+        activation does and is never load bearing: a torn, stale, or absent
+        checkpoint only ever costs replay time.
+        """
+
+        if self.checkpoint_directory is None or self.genesis is None:
+            return
+        sequence = bundle.record.sequence
+        if sequence % self.checkpoint_interval != 0:
+            return
+        parent = self.accepted_coordinates_by_sequence.get(sequence - 1)
+        if parent is None:
+            # Without the predecessor's replayed coordinate there is nothing to
+            # chain this summary to, so no checkpoint is written and the next
+            # reopen simply replays further.
+            return
+        body = checkpoint_body(
+            instance_id=base.instance_id,
+            object_format=base.git_object_format,
+            compiler=base.compiler,
+            genesis=self.genesis,
+            sequence=sequence,
+            git_oid=bundle.oid,
+            semantic_root=bundle.semantic_root.tagged,
+            generation_root=bundle.generation_root.tagged,
+            parent_generation_root=parent.generation_root,
+            tree=bundle.tree,
+        )
+        write_checkpoint(self.checkpoint_directory, body)
 
 
 __all__ = [

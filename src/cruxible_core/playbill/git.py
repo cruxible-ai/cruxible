@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import os
 import re
 import subprocess
@@ -46,6 +47,22 @@ class GitTreeEntry:
     object_type: str
     oid: str
     size: int | None
+
+
+@dataclass(frozen=True)
+class GitTreeChange:
+    """One raw add, modification, type change, or deletion between two trees.
+
+    `mode` and `oid` describe the *destination* entry; a deletion carries
+    `oid=None` and the caller drops the path. No rename or copy detection ever
+    runs, so a rename is reported as exactly one deletion plus one addition and
+    the caller never has to reason about a similarity score.
+    """
+
+    path: str
+    status: str
+    mode: str
+    oid: str | None
 
 
 class GitLedger:
@@ -116,31 +133,10 @@ class GitLedger:
     ) -> str:
         """Create one signed no-parent commit from exact normalized tree bytes."""
 
-        normalized_to_raw: dict[str, str] = {}
-        for raw_path in tree:
-            normalized = normalize_manifest_paths([raw_path])[0]
-            if normalized in normalized_to_raw:
-                raise PlaybillGitError("genesis paths collide after normalization")
-            normalized_to_raw[normalized] = raw_path
-
-        with tempfile.TemporaryDirectory(prefix="playbill-index-") as temporary:
-            environment = {"GIT_INDEX_FILE": str(Path(temporary) / "index")}
-            self._git(["read-tree", "--empty"], environment=environment)
-            for path in normalize_manifest_paths(list(tree)):
-                content = tree[normalized_to_raw[path]]
-                blob_oid = self._git(["hash-object", "-w", "--stdin"], input_bytes=content)
-                self._git(
-                    [
-                        "update-index",
-                        "--add",
-                        "--cacheinfo",
-                        "100644",
-                        blob_oid.decode().strip(),
-                        path,
-                    ],
-                    environment=environment,
-                )
-            tree_oid = self._git(["write-tree"], environment=environment).decode().strip()
+        tree_oid = self._write_tree(
+            tree,
+            collision_message="genesis paths collide after normalization",
+        )
 
         commit_environment = {
             "GIT_AUTHOR_NAME": "playbill-daemon",
@@ -210,31 +206,102 @@ class GitLedger:
             raise PlaybillGitError("new generation commit signature does not verify")
         return oid
 
-    def _write_tree(self, tree: Mapping[str, bytes]) -> str:
+    def _blob_oid(self, content: bytes) -> str:
+        """Compute Git's own content address for one blob without spawning Git.
+
+        A blob's object ID is the repository hash of ``blob <size>\\0`` followed
+        by the exact bytes. Deriving it in process is what lets a tree write ask
+        Git to store only the members it does not already hold, instead of
+        paying one `hash-object` process per member of the whole tree. Git still
+        confirms the address of every object this writes.
+        """
+
+        header = f"blob {len(content)}".encode("ascii") + b"\x00"
+        if self.object_format() == "sha1":
+            return hashlib.sha1(header + content).hexdigest()  # noqa: S324
+        return hashlib.sha256(header + content).hexdigest()
+
+    def _absent_objects(self, oids: Sequence[str]) -> set[str]:
+        """Report which of these exact object IDs the repository does not hold."""
+
+        ordered = tuple(dict.fromkeys(oids))
+        if not ordered:
+            return set()
+        output = self._git(
+            ["cat-file", "--batch-check"],
+            input_bytes=("\n".join(ordered) + "\n").encode("ascii"),
+        )
+        absent: set[str] = set()
+        try:
+            rows = output.decode("ascii").splitlines()
+        except UnicodeDecodeError as exc:
+            raise PlaybillGitError("Git object existence output is malformed") from exc
+        if len(rows) != len(ordered):
+            raise PlaybillGitError("Git object existence output does not match its request")
+        for expected_oid, row in zip(ordered, rows, strict=True):
+            fields = row.split()
+            if not fields or fields[0] != expected_oid:
+                raise PlaybillGitError("Git object existence output does not match its request")
+            if len(fields) == 2 and fields[1] == "missing":
+                absent.add(expected_oid)
+                continue
+            if len(fields) != 3 or fields[1] != "blob":
+                raise PlaybillGitError(f"ledger object is not a blob: {expected_oid}")
+        return absent
+
+    def _write_tree(
+        self,
+        tree: Mapping[str, bytes],
+        *,
+        collision_message: str = "generation paths collide after normalization",
+    ) -> str:
+        """Write one exact normalized tree, storing only its not-yet-held members.
+
+        Successive accepted trees differ in a handful of members, so hashing and
+        re-storing every member would make each write cost O(members) Git
+        processes for bytes the repository already holds. Blob addresses are
+        computed in process, one batched existence check names the members Git
+        is actually missing, and one batched index update builds the tree. The
+        resulting tree object ID is byte-for-byte the one a member-by-member
+        write produces.
+        """
+
         normalized_to_raw: dict[str, str] = {}
         for raw_path in tree:
             normalized = normalize_manifest_paths([raw_path])[0]
             if normalized in normalized_to_raw:
-                raise PlaybillGitError("generation paths collide after normalization")
+                raise PlaybillGitError(collision_message)
             normalized_to_raw[normalized] = raw_path
 
-        with tempfile.TemporaryDirectory(prefix="playbill-generation-index-") as temporary:
+        ordered = normalize_manifest_paths(list(tree))
+        contents = {path: tree[normalized_to_raw[path]] for path in ordered}
+        oids = {path: self._blob_oid(content) for path, content in contents.items()}
+        absent = self._absent_objects(tuple(oids.values()))
+        stored: set[str] = set()
+        for path in ordered:
+            blob_oid = oids[path]
+            if blob_oid not in absent or blob_oid in stored:
+                continue
+            written = (
+                self._git(["hash-object", "-w", "--stdin"], input_bytes=contents[path])
+                .decode()
+                .strip()
+            )
+            if written != blob_oid:
+                raise PlaybillGitError("stored blob differs from its computed content address")
+            stored.add(blob_oid)
+
+        index_info = b"".join(
+            b"100644 " + oids[path].encode("ascii") + b"\t" + path.encode("utf-8") + b"\x00"
+            for path in ordered
+        )
+        with tempfile.TemporaryDirectory(prefix="playbill-tree-index-") as temporary:
             environment = {"GIT_INDEX_FILE": str(Path(temporary) / "index")}
             self._git(["read-tree", "--empty"], environment=environment)
-            for path in normalize_manifest_paths(list(tree)):
-                blob_oid = self._git(
-                    ["hash-object", "-w", "--stdin"],
-                    input_bytes=tree[normalized_to_raw[path]],
-                )
+            if index_info:
                 self._git(
-                    [
-                        "update-index",
-                        "--add",
-                        "--cacheinfo",
-                        "100644",
-                        blob_oid.decode().strip(),
-                        path,
-                    ],
+                    ["update-index", "-z", "--index-info"],
+                    input_bytes=index_info,
                     environment=environment,
                 )
             oid = self._git(["write-tree"], environment=environment).decode().strip()
@@ -263,31 +330,10 @@ class GitLedger:
         if current != expected_ref_oid:
             raise PlaybillGitError("proposal ref moved before its parent-bound update")
 
-        normalized_to_raw: dict[str, str] = {}
-        for raw_path in tree:
-            normalized = normalize_manifest_paths([raw_path])[0]
-            if normalized in normalized_to_raw:
-                raise PlaybillGitError("proposal paths collide after normalization")
-            normalized_to_raw[normalized] = raw_path
-
-        with tempfile.TemporaryDirectory(prefix="playbill-proposal-index-") as temporary:
-            environment = {"GIT_INDEX_FILE": str(Path(temporary) / "index")}
-            self._git(["read-tree", "--empty"], environment=environment)
-            for path in normalize_manifest_paths(list(tree)):
-                content = tree[normalized_to_raw[path]]
-                blob_oid = self._git(["hash-object", "-w", "--stdin"], input_bytes=content)
-                self._git(
-                    [
-                        "update-index",
-                        "--add",
-                        "--cacheinfo",
-                        "100644",
-                        blob_oid.decode().strip(),
-                        path,
-                    ],
-                    environment=environment,
-                )
-            tree_oid = self._git(["write-tree"], environment=environment).decode().strip()
+        tree_oid = self._write_tree(
+            tree,
+            collision_message="proposal paths collide after normalization",
+        )
 
         commit_environment = {
             "GIT_AUTHOR_NAME": actor_id,
@@ -523,6 +569,61 @@ class GitLedger:
         blobs = self.read_blobs(tuple(entry.oid for entry in entries))
         return {entry.path: blobs[entry.oid] for entry in entries}
 
+    def changed_entries(self, base_oid: str, target_oid: str) -> tuple[GitTreeChange, ...]:
+        """Report exactly the paths whose (mode, object) differs between two commits.
+
+        Git compares the two trees structurally and skips every subtree whose
+        object ID already matches, so the cost tracks the number of changed
+        members rather than the size of the tree. The complement of this report
+        is the load-bearing part: a path Git omits has byte-identical content in
+        both trees, because identical content under an identical mode is the
+        same content-addressed object by construction. That is what lets a
+        caller carry a parent tree forward instead of re-reading it.
+
+        Rename and copy detection are disabled: a similarity heuristic would
+        turn one delete plus one add into a single record and lose the exact
+        add/delete pair the caller must apply.
+        """
+
+        self._validate_oid(base_oid)
+        self._validate_oid(target_oid)
+        listing = self._git(
+            [
+                "diff-tree",
+                "-r",
+                "-z",
+                "--no-renames",
+                "--no-abbrev",
+                "--no-commit-id",
+                base_oid,
+                target_oid,
+            ]
+        )
+        fields = [field for field in listing.split(b"\x00") if field]
+        if len(fields) % 2 != 0:
+            raise PlaybillGitError("Git tree diff ended before a changed path")
+        changes: list[GitTreeChange] = []
+        for index in range(0, len(fields), 2):
+            metadata, raw_path = fields[index], fields[index + 1]
+            if not metadata.startswith(b":"):
+                raise PlaybillGitError("Git tree diff contains malformed metadata")
+            try:
+                parts = metadata[1:].decode("ascii").split()
+                path = raw_path.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise PlaybillGitError("Git tree diff contains malformed metadata") from exc
+            if len(parts) != 5:
+                raise PlaybillGitError("Git tree diff contains malformed metadata")
+            _source_mode, mode, _source_oid, destination_oid, status = parts
+            if status not in {"A", "M", "D", "T"}:
+                raise PlaybillGitError(f"Git tree diff reported an unsupported status: {status}")
+            if status == "D":
+                changes.append(GitTreeChange(path=path, status=status, mode=mode, oid=None))
+                continue
+            self._validate_oid(destination_oid)
+            changes.append(GitTreeChange(path=path, status=status, mode=mode, oid=destination_oid))
+        return tuple(changes)
+
     def list_tree(self, oid: str) -> tuple[GitTreeEntry, ...]:
         """List an exact commit recursively without reading any blob payload.
 
@@ -676,21 +777,40 @@ class GitLedger:
         return result.returncode == 0
 
     def main_history(self) -> tuple[str, ...]:
-        """Return the non-merge main chain in oldest-first order."""
+        """Return the non-merge main chain in oldest-first order.
 
-        rows = (
-            self._git(["rev-list", "--reverse", "--first-parent", "refs/heads/main"])
-            .decode()
-            .splitlines()
-        )
-        for oid in rows:
+        One walk reports each commit with its own parent list, so listing a long
+        history costs a single Git process rather than two per generation. The
+        walk deliberately does not follow first parents only: a merge would then
+        be silently flattened, whereas here it surfaces as a commit with more
+        than one parent and is refused. Ancestry is checked as it is walked --
+        every commit after the root must name its predecessor in the returned
+        order -- so the result is a proven linear chain, not just a listing.
+        """
+
+        rows = self._git(["rev-list", "--parents", "--reverse", "refs/heads/main"]).decode()
+        history: list[str] = []
+        for row in rows.splitlines():
+            fields = row.split()
+            if len(fields) > 2:
+                raise PlaybillGitError("Playbill refuses merge commits on main")
+            oid = fields[0]
             self._validate_oid(oid)
-            if (
-                self.parent_of(oid) is not None
-                and len(self._git(["rev-list", "--parents", "-n", "1", oid]).decode().split()) != 2
-            ):
-                raise PlaybillGitError("Playbill main history contains a merge commit")
-        return tuple(rows)
+            if not history:
+                if len(fields) != 1:
+                    raise PlaybillGitError(
+                        "Playbill main history is not rooted at a parentless commit"
+                    )
+            else:
+                if len(fields) != 2:
+                    raise PlaybillGitError(
+                        "Playbill main history contains a second parentless commit"
+                    )
+                self._validate_oid(fields[1])
+                if fields[1] != history[-1]:
+                    raise PlaybillGitError("Playbill main history is not a single parent chain")
+            history.append(oid)
+        return tuple(history)
 
     def is_ancestor(self, ancestor_oid: str, descendant_oid: str) -> bool:
         self._validate_oid(ancestor_oid)
@@ -794,4 +914,4 @@ def _command(
     return result
 
 
-__all__ = ["GitLedger", "GitTreeEntry"]
+__all__ = ["GitLedger", "GitTreeChange", "GitTreeEntry"]

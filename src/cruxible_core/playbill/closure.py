@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -78,6 +79,11 @@ from cruxible_core.playbill.subjects import (
     subject_digest,
 )
 
+# Bounded so the memo can never grow with history. One accepted tree at the
+# pre-PC-G file-count posture fits several times over, which is what keeps the
+# steady-state hit rate high, and every entry is dropped when the process exits.
+_PARSE_MEMO_ENTRIES = 16_384
+
 
 class _StrictClosureModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -123,8 +129,24 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         return SemanticAddress.whole_artifact(self.path)
 
 
+@lru_cache(maxsize=_PARSE_MEMO_ENTRIES)
 def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencyStateV1 | None:
-    """Parse only artifact kinds participating in PC-A2 dependency closure."""
+    """Parse only artifact kinds participating in PC-A2 dependency closure.
+
+    The result is a pure function of the exact path and the exact bytes -- every
+    parser below reads nothing else -- and the state it returns is frozen, so a
+    bounded content-addressed memo is observationally identical to reparsing and
+    is safe to share between callers.
+
+    The memo is load bearing rather than decorative. One proposal evaluation
+    parses the parent tree and the candidate tree, then evaluates closure over
+    both again, so an unmemoized evaluation re-derives every member of the whole
+    tree four times for a change that touched a handful of them. Replay
+    compounds that by the length of history while handing the identical `bytes`
+    objects forward from generation to generation. Format failures are raised
+    rather than memoized, so a malformed member is re-derived and re-refused on
+    every look.
+    """
 
     try:
         if path.startswith("documents/"):

@@ -387,6 +387,44 @@ the active HTTP/CLI runtime operations, so nothing it lists can be reachable.
 PC-H settles whether the catalog is kept as history or deleted with the rest of
 the donor vocabulary.
 
+## Local operational formats, which are not wire formats
+
+Some formats an instance writes are deliberately **not** accepted state. They
+carry a version tag and a canonical encoding the way a wire format does, because
+that is how this codebase writes any structured record, but nothing outside the
+instance may read them as authority and no reviewer should read a change to one
+as a wire change.
+
+| Format | Where it lives | What it is |
+|---|---|---|
+| `playbill-replay-checkpoint-v1`, inside `playbill-replay-checkpoint-file-v1` | `<managed root>/checkpoints/replay-checkpoint-v1.json` | A summary of one already-verified accepted prefix, so a reopen replays only a bounded suffix. |
+| `playbill-projection-manifest-v1` and its piece builds | `<managed root>/projections/` | Disposable materialized read state, rebuilt from the accepted tree. |
+| `playbill-serving-manifest-v1` | `<managed root>/projections/serving.json` | The local admission pointer at one exact accepted coordinate. |
+
+The checkpoint format is the one PC-F added. Four properties make it reviewable
+as local state rather than as a new surface:
+
+- It sits **outside** the `StorageLayout` that the `playbill-instance-v1`
+  descriptor commits to, so adding it did not widen a frozen preimage. It is a
+  fixed directory name resolved from the managed root, created on first write.
+- It never enters the ledger, the CAS, an exhaust journal, or an export, and
+  `inspect()` does not report it among the storage directories.
+- Every value it carries is re-derived from the ledger when it is loaded and
+  then compared against the file. A mismatch is a typed `ReplayCheckpointError`,
+  the file is deleted, and recovery falls back to genesis. The module docstring
+  in `src/cruxible_core/playbill/checkpoints.py` carries the full argument for
+  why replaying only a suffix does not weaken tamper detection for that suffix.
+- Deleting it costs replay time and nothing else. No test and no operator
+  procedure may treat its presence as required.
+
+Its self-digest kind, `ReplayCheckpointDigest`, is declared in `checkpoints.py`
+rather than beside the wire digest kinds in `canonical.py`, precisely so a later
+reader cannot mistake it for one.
+
+No golden pins any of these formats, and none should: a golden is how this
+repository freezes a contract other parties depend on, and these are rebuildable
+local files.
+
 ## Exact frozen goldens retained
 
 The complete tracked `tests/goldens/` inventory is:

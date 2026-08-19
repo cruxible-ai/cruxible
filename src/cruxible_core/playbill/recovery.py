@@ -25,8 +25,15 @@ from cruxible_core.playbill.canonical import (
     semantic_projection,
 )
 from cruxible_core.playbill.cas import BodyProjectionProtocol
+from cruxible_core.playbill.checkpoints import (
+    ReplayCheckpointBodyV1,
+    checkpoint_body,
+    load_verified_checkpoint,
+    write_checkpoint,
+)
 from cruxible_core.playbill.errors import (
     PlaybillError,
+    PlaybillGitError,
     ProjectionIntegrityError,
     SettlementIntegrityError,
 )
@@ -64,7 +71,12 @@ from cruxible_core.playbill.settlement import (
     parse_change_set_record,
     render_generation_descriptor,
 )
-from cruxible_core.playbill.types import CompilerCoordinate, GenerationDescriptor, GitObjectFormat
+from cruxible_core.playbill.types import (
+    CompilerCoordinate,
+    GenerationDescriptor,
+    GenesisCoordinate,
+    GitObjectFormat,
+)
 from cruxible_core.playbill.witness import WitnessRecord, WitnessSink
 from cruxible_core.storage.playbill_projection import (
     bind_projection,
@@ -123,6 +135,62 @@ def _semantic_manifest(tree: dict[str, bytes]) -> Manifest:
     """
 
     return manifest_for_tree(semantic_projection(tree))
+
+
+def _materialize_successor_tree(
+    ledger: GitLedger,
+    *,
+    parent_oid: str,
+    oid: str,
+    parent_tree: dict[str, bytes],
+) -> dict[str, bytes]:
+    """Build a successor's exact tree as its parent plus only the changed members.
+
+    `ledger.read_tree(oid)` reads every member of every generation, which makes
+    replay cost O(generations x members) of blob reads for bytes that mostly did
+    not change. Git already knows which members changed, and knows it exactly:
+    an entry Git omits from the diff has the same mode and the same
+    content-addressed object ID in both trees, so its bytes are identical by
+    construction rather than by assumption. Only the changed members are read.
+
+    The result is byte-identical to `read_tree(oid)`, including iteration order:
+    a recursive Git listing is ordered as if every directory entry carried a
+    trailing separator, which for full paths is exactly byte order, so the
+    rebuilt mapping is re-ordered the same way.
+
+    The tamper posture is unchanged. Every carried member's bytes were read from
+    Git in this same process (at the window's cold seed or at an earlier step of
+    this walk), Git validates each object against its own content address on
+    read, and the successor's manifest still verifies against the manifest root
+    the accepted change-set record commits to.
+    """
+
+    changes = ledger.changed_entries(parent_oid, oid)
+    blobs = ledger.read_blobs([change.oid for change in changes if change.oid is not None])
+    materialized = dict(parent_tree)
+    for change in changes:
+        if change.oid is None:
+            if change.path not in materialized:
+                raise SettlementIntegrityError(
+                    f"generation deletes a member absent from its predecessor: {change.path}"
+                )
+            del materialized[change.path]
+            continue
+        if change.mode != "100644":
+            # `read_tree` refuses the same non-regular-file members before any
+            # blob is read; a successor may not smuggle one past replay.
+            raise PlaybillGitError(
+                f"ledger tree contains unsupported {change.mode} member: {change.path}"
+            )
+        if (change.status == "A") != (change.path not in materialized):
+            raise SettlementIntegrityError(
+                f"generation change status differs from its predecessor tree: {change.path}"
+            )
+        materialized[change.path] = blobs[change.oid]
+    return {
+        path: materialized[path]
+        for path in sorted(materialized, key=lambda item: item.encode("utf-8"))
+    }
 
 
 @dataclass(frozen=True)
@@ -199,7 +267,12 @@ def _verify_successor(
         public_key_hex=daemon.public_key,
     ):
         raise SettlementIntegrityError("generation daemon signature does not verify")
-    tree = ledger.read_tree(oid)
+    tree = _materialize_successor_tree(
+        ledger,
+        parent_oid=parent.oid,
+        oid=oid,
+        parent_tree=parent_tree,
+    )
     parent_change_sets = {
         path: content for path, content in parent_tree.items() if path.startswith("changesets/")
     }
@@ -547,12 +620,25 @@ def recover_instance(
     witness: WitnessSink | None = None,
     laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+    checkpoint_directory: Path | None = None,
 ) -> RecoveredInstanceState:
-    """Replay accepted history and repair only deterministic post-CAS publication."""
+    """Replay accepted history and repair only deterministic post-CAS publication.
+
+    When `checkpoint_directory` names a verifiable local checkpoint, the prefix
+    it summarizes is re-derived from the ledger instead of re-verified, and only
+    the suffix after it is replayed. An unusable checkpoint is discarded and the
+    replay is genesis-rooted, so the answer never depends on the cache.
+    """
 
     history_oids = ledger.main_history()
     if not history_oids or history_oids[0] != genesis.oid:
         raise SettlementIntegrityError("main history is not rooted at verified genesis")
+    genesis_coordinate = GenesisCoordinate(
+        git_oid=genesis.oid,
+        bootstrap_root=genesis.bootstrap_root.tagged,
+        semantic_root=genesis.semantic_root.tagged,
+        generation_root=genesis.generation_root.tagged,
+    )
     genesis_principals = principal_registry_from_tree(
         genesis.tree,
         semantic_root=genesis.semantic_root.tagged,
@@ -566,18 +652,47 @@ def recover_instance(
         principals=genesis_principals,
         record=None,
     )
-    history: list[RecoveredGeneration] = [genesis_generation]
     repository_path = str(ledger.path.resolve(strict=True))
-    # A two-generation sliding window: rebinding `window` releases the
-    # predecessor's tree, so replay memory stays flat in the history length.
-    # Genesis is the one cold manifest of the walk; every later generation
-    # carries its predecessor's digests forward for byte-identical members.
-    window = _GenerationWindow(
-        generation=genesis_generation,
-        tree=genesis.tree,
-        manifest=_semantic_manifest(genesis.tree),
+    seed = load_verified_checkpoint(
+        ledger,
+        checkpoint_directory,
+        genesis=genesis,
+        instance_id=instance_id,
+        object_format=object_format,
+        compiler=compiler,
+        genesis_coordinate=genesis_coordinate,
     )
-    for oid in history_oids[1:]:
+    if seed is None:
+        history: list[RecoveredGeneration] = [genesis_generation]
+        # A two-generation sliding window: rebinding `window` releases the
+        # predecessor's tree, so replay memory stays flat in the history length.
+        # Genesis is the one cold manifest of the walk; every later generation
+        # carries its predecessor's digests forward for byte-identical members.
+        window = _GenerationWindow(
+            generation=genesis_generation,
+            tree=genesis.tree,
+            manifest=_semantic_manifest(genesis.tree),
+        )
+    else:
+        history = [
+            RecoveredGeneration(
+                sequence=generation.sequence,
+                oid=generation.oid,
+                semantic_root=generation.semantic_root,
+                descriptor=generation.descriptor,
+                generation_root=generation.generation_root,
+                principals=generation.principals,
+                record=generation.record,
+            )
+            for generation in seed.prefix
+        ]
+        window = _GenerationWindow(
+            generation=history[-1],
+            tree=seed.tree,
+            manifest=seed.manifest,
+        )
+    replayed_from = len(history)
+    for oid in history_oids[replayed_from:]:
         window = _verify_successor(
             ledger,
             oid,
@@ -591,9 +706,24 @@ def recover_instance(
             promotion_verifier=promotion_verifier,
         )
         history.append(window.generation)
+    head = history[-1]
+    checkpoint: ReplayCheckpointBodyV1 | None = None
+    if checkpoint_directory is not None and head.sequence > 0:
+        checkpoint = checkpoint_body(
+            instance_id=instance_id,
+            object_format=object_format,
+            compiler=compiler,
+            genesis=genesis_coordinate,
+            sequence=head.sequence,
+            git_oid=head.oid,
+            semantic_root=head.semantic_root.tagged,
+            generation_root=head.generation_root.tagged,
+            parent_generation_root=history[-2].generation_root.tagged,
+            tree=window.tree,
+            members=window.manifest,
+        )
     # Release the head tree before projection assembly, the peak-memory phase.
     del window
-    head = history[-1]
     recovered_history = tuple(history)
     _clean_unaccepted_generations(
         ledger,
@@ -626,7 +756,10 @@ def recover_instance(
     )
     projection: AssemblerResult | None = None
     if head.sequence > 0:
-        for generation in recovered_history[1:]:
+        # Only the generations this process actually replayed can have a torn
+        # note: a checkpointed prefix was noted when it was accepted, and its
+        # notes are re-checked whenever a genesis-rooted replay runs.
+        for generation in recovered_history[replayed_from:]:
             if ledger.read_generation_note(generation.oid) is None:
                 ledger.write_recovered_generation_note(
                     generation.oid,
@@ -651,6 +784,10 @@ def recover_instance(
             object_format=object_format,
             witness=witness,
         )
+    if checkpoint is not None and checkpoint_directory is not None:
+        # Written last, after every repair has succeeded: a checkpoint may only
+        # ever summarize a coordinate this process fully brought into service.
+        write_checkpoint(checkpoint_directory, checkpoint)
     return RecoveredInstanceState(
         genesis=genesis,
         head=head,

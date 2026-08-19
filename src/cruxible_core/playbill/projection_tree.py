@@ -15,12 +15,23 @@ _LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1\n"
 
 
 class TreeReadLimits(BaseModel):
-    """Serialized resource bounds applied before parsing any artifact."""
+    """Serialized resource bounds applied before parsing any artifact.
+
+    The file-count and aggregate-byte defaults carry the pre-PC-G adoption
+    posture: sharded Claim vocabularies reach six figures of members, so a
+    10,000-file ceiling would refuse a real instance rather than a hostile one.
+    Raising the count does not weaken any other gate -- path canonicality,
+    registered-kind resolution, mode/symlink/submodule refusal, declared size,
+    LFS-pointer refusal, and the per-blob ceiling all stay exactly as they were,
+    and the per-blob ceiling deliberately does not move: it is the bound that
+    keeps a single member from exhausting memory. Operators may configure lower
+    soft limits; the serialized hard ceiling stays bounded either way.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    max_files: int = Field(default=10_000, ge=1, le=1_000_000)
-    max_total_bytes: int = Field(default=64 * 1024 * 1024, ge=1)
+    max_files: int = Field(default=250_000, ge=1, le=1_000_000)
+    max_total_bytes: int = Field(default=512 * 1024 * 1024, ge=1, le=2**44)
     max_blob_bytes: int = Field(default=4 * 1024 * 1024, ge=1)
 
 

@@ -265,9 +265,23 @@ class AuthenticatedActor(_StrictProposalModel):
 
 
 class ProposalReceiveLimits(_StrictProposalModel):
-    max_files: int = Field(default=10_000, ge=1, le=1_000_000)
+    """Every bound proposal receive enforces before a single member is parsed.
+
+    The file-count and aggregate-byte ceilings track the adoption posture of
+    `TreeReadLimits`: a proposal carries the whole candidate tree, so a receive
+    ceiling below the tree-read ceiling would make a legally accepted instance
+    unproposable. The other three keep receive itself bounded no matter how
+    large the accepted tree has grown -- how many members one submission may
+    change, how large a single member may be, and how deep a member path may
+    nest -- so an oversized submission is refused on cheap metadata instead of
+    after parsing.
+    """
+
+    max_files: int = Field(default=250_000, ge=1, le=1_000_000)
+    max_changed_members: int = Field(default=5_000, ge=1, le=1_000_000)
     max_file_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=2**40)
-    max_total_bytes: int = Field(default=64 * 1024 * 1024, ge=1, le=2**44)
+    max_total_bytes: int = Field(default=512 * 1024 * 1024, ge=1, le=2**44)
+    max_path_depth: int = Field(default=8, ge=1, le=64)
 
 
 class ProposalAdmissionRequest(_StrictProposalModel):
@@ -683,6 +697,16 @@ def validate_proposal_tree(
 ) -> dict[str, bytes]:
     if len(tree) > limits.max_files:
         raise ProposalAdmissionError("proposal exceeds its file-count limit")
+    if base_tree is not None:
+        # Counted before any member is parsed, and counted in both directions so
+        # that dropping ten thousand members is bounded exactly as adding them is.
+        changed = sum(1 for path, content in tree.items() if base_tree.get(path) != content)
+        changed += sum(1 for path in base_tree if path not in tree)
+        if changed > limits.max_changed_members:
+            raise ProposalAdmissionError("proposal exceeds its changed-member limit")
+    for raw_path in tree:
+        if raw_path.count("/") + 1 > limits.max_path_depth:
+            raise ProposalAdmissionError(f"proposal exceeds its path-depth limit: {raw_path}")
     normalized = normalize_manifest_paths(list(tree))
     if set(normalized) != set(tree):
         raise ProposalAdmissionError("proposal paths must already be canonical")

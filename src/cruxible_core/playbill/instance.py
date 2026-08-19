@@ -19,6 +19,10 @@ from cruxible_core.playbill.bootstrap import VerifiedGenesis, prepare_genesis, v
 from cruxible_core.playbill.candidates import CandidateRecord, CandidateRecordV2
 from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.cas import CasObjectMetadata, ContentAddressedBodyStore
+from cruxible_core.playbill.checkpoints import (
+    CHECKPOINT_DIRECTORY,
+    DEFAULT_CHECKPOINT_INTERVAL,
+)
 from cruxible_core.playbill.compiler import (
     SUPPORTED_COMPILERS,
     current_compiler_coordinate,
@@ -376,6 +380,7 @@ class PlaybillInstance:
             bodies=ContentAddressedBodyStore(paths["cas"]),
             witness=witness,
             promotion_verifier=promotion_verifier,
+            checkpoint_directory=cls._checkpoint_directory(managed_root),
         )
         return cls(
             managed_root,
@@ -386,6 +391,19 @@ class PlaybillInstance:
             recovered,
             promotion_verifier,
         )
+
+    @staticmethod
+    def _checkpoint_directory(root: Path) -> Path:
+        """Locate the rebuildable checkpoint cache beside the managed storage roots.
+
+        Deliberately not a `StorageLayout` field: the layout is part of the
+        frozen `playbill-instance-v1` descriptor preimage, and a disposable local
+        cache may never widen an accepted format. The directory is created on
+        first write, may be deleted at any time, and `inspect()` never reports it
+        as semantic storage.
+        """
+
+        return root / CHECKPOINT_DIRECTORY
 
     @staticmethod
     def _validated_paths(root: Path, layout: StorageLayout) -> dict[str, Path]:
@@ -611,6 +629,7 @@ class PlaybillInstance:
             bodies=ContentAddressedBodyStore(paths["cas"]),
             witness=witness,
             promotion_verifier=self._promotion_verifier,
+            checkpoint_directory=self._checkpoint_directory(self.root),
         )
         return self.accepted_coordinate()
 
@@ -628,6 +647,9 @@ class PlaybillInstance:
             bodies=ContentAddressedBodyStore(paths["cas"]),
             witness=witness,
             accepted_coordinates_by_sequence=self._accepted_coordinates_by_sequence(),
+            checkpoint_directory=self._checkpoint_directory(self.root),
+            checkpoint_interval=DEFAULT_CHECKPOINT_INTERVAL,
+            genesis=self.descriptor.genesis,
         )
 
     def prepare_generation(

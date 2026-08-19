@@ -85,6 +85,10 @@ class SettlementIntegrityError(PlaybillError):
     """A candidate, change set, generation, or root correspondence failed."""
 
 
+class ReplayCheckpointError(PlaybillError):
+    """A local replay checkpoint is missing, stale, or does not reproduce the ledger."""
+
+
 class ProjectionError(PlaybillError):
     """Base refusal for deterministic Playbill projection operations."""
 
@@ -127,6 +131,7 @@ __all__ = [
     "ProjectionFormatError",
     "ProjectionIntegrityError",
     "ProjectionPublicationError",
+    "ReplayCheckpointError",
     "SettlementIntegrityError",
     "SubjectFormatError",
     "SubjectNotFoundError",
