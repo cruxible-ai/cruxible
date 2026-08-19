@@ -267,10 +267,53 @@ def manifest_for_tree(tree: Mapping[str, bytes]) -> Manifest:
     return {path: file_digest(tree[normalized_to_raw[path]]).value for path in ordered_paths}
 
 
-def manifest_root(tree: Mapping[str, bytes]) -> SemanticManifestRoot:
-    """Hash sorted path and exact-content digest entries."""
+def manifest_for_tree_carrying(
+    tree: Mapping[str, bytes],
+    *,
+    previous_tree: Mapping[str, bytes],
+    previous_manifest: Manifest,
+) -> Manifest:
+    """Build `manifest_for_tree(tree)` without re-hashing byte-identical members.
 
-    manifest = manifest_for_tree(tree)
+    A member digest is a pure function of the member's bytes, so a member whose
+    bytes are byte-for-byte the predecessor's already has its digest in
+    `previous_manifest` and does not have to be hashed again. Every other member
+    is hashed exactly as the from-scratch build hashes it, so the result is
+    identical to `manifest_for_tree(tree)` whenever `previous_manifest` is the
+    manifest of `previous_tree` -- and the carry is proven per member by exact
+    byte comparison, never assumed from an external identifier.
+
+    Path normalization, NFC-collision refusal, and case-fold sibling refusal run
+    over the whole path set exactly as in `manifest_for_tree`: this reuses member
+    digests, never the path set the manifest commits to.
+    """
+
+    normalized_to_raw: dict[str, str] = {}
+    for raw_path in tree:
+        path = normalize_ledger_path(raw_path)
+        if path in normalized_to_raw:
+            raise CanonicalEncodingError(
+                "paths collide after NFC normalization: "
+                f"{normalized_to_raw[path]!r} and {raw_path!r}"
+            )
+        normalized_to_raw[path] = raw_path
+    manifest: Manifest = {}
+    for path in normalize_manifest_paths(list(tree)):
+        raw_path = normalized_to_raw[path]
+        content = tree[raw_path]
+        carried = previous_manifest.get(path)
+        # A raw path present in both trees normalizes to the same member path in
+        # both, so an exact-byte match discharges the whole proof obligation.
+        if carried is not None and previous_tree.get(raw_path) == content:
+            manifest[path] = carried
+        else:
+            manifest[path] = file_digest(content).value
+    return manifest
+
+
+def manifest_root_from_members(manifest: Manifest) -> SemanticManifestRoot:
+    """Hash one already-built path-to-member-digest manifest."""
+
     entries: list[CanonicalValue] = [
         [path, cast(CanonicalScalar, digest)] for path, digest in manifest.items()
     ]
@@ -279,6 +322,12 @@ def manifest_root(tree: Mapping[str, bytes]) -> SemanticManifestRoot:
         "playbill-manifest-v1",
         {"entries": entries},
     )
+
+
+def manifest_root(tree: Mapping[str, bytes]) -> SemanticManifestRoot:
+    """Hash sorted path and exact-content digest entries."""
+
+    return manifest_root_from_members(manifest_for_tree(tree))
 
 
 def semantic_projection(tree: Mapping[str, bytes]) -> dict[str, bytes]:
@@ -291,14 +340,17 @@ def semantic_projection(tree: Mapping[str, bytes]) -> dict[str, bytes]:
     }
 
 
-def semantic_diff(
-    base_tree: Mapping[str, bytes],
-    candidate_tree: Mapping[str, bytes],
+def semantic_diff_from_members(
+    base: Manifest,
+    candidate: Manifest,
 ) -> tuple[SemanticDiffDigest, tuple[str, ...]]:
-    """Hash sorted path/old/new content-digest entries, never Git object IDs."""
+    """Diff two already-built semantic manifests, never Git object IDs.
 
-    base = manifest_for_tree(semantic_projection(base_tree))
-    candidate = manifest_for_tree(semantic_projection(candidate_tree))
+    The digest preimage covers only the changed entries and the returned scope is
+    only the changed paths, so a caller that already holds both manifests never
+    has to touch a single member byte to reproduce either value.
+    """
+
     scope = tuple(
         sorted(
             {
@@ -327,6 +379,18 @@ def semantic_diff(
     )
 
 
+def semantic_diff(
+    base_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+) -> tuple[SemanticDiffDigest, tuple[str, ...]]:
+    """Hash sorted path/old/new content-digest entries, never Git object IDs."""
+
+    return semantic_diff_from_members(
+        manifest_for_tree(semantic_projection(base_tree)),
+        manifest_for_tree(semantic_projection(candidate_tree)),
+    )
+
+
 __all__ = [
     "ArtifactDigest",
     "AcceptanceLawDigest",
@@ -349,11 +413,14 @@ __all__ = [
     "canonical_digest",
     "file_digest",
     "manifest_for_tree",
+    "manifest_for_tree_carrying",
     "manifest_root",
+    "manifest_root_from_members",
     "normalize_canonical",
     "normalize_ledger_path",
     "normalize_manifest_paths",
     "semantic_diff",
+    "semantic_diff_from_members",
     "semantic_projection",
     "typed_digest",
 ]

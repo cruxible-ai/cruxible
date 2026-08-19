@@ -15,10 +15,13 @@ from cruxible_core.playbill.bootstrap import VerifiedGenesis, generation_root
 from cruxible_core.playbill.candidates import CandidateRecord, CandidateRecordV2
 from cruxible_core.playbill.canonical import (
     GenerationRoot,
+    Manifest,
     SemanticRoot,
     canonical_bytes,
-    manifest_root,
-    semantic_diff,
+    manifest_for_tree,
+    manifest_for_tree_carrying,
+    manifest_root_from_members,
+    semantic_diff_from_members,
     semantic_projection,
 )
 from cruxible_core.playbill.cas import BodyProjectionProtocol
@@ -99,10 +102,27 @@ class _GenerationWindow:
     whole parent context a verification step receives; keeping it cohesive lets
     later incremental (merkle) verification thread additional carried-forward
     state through the same seam without re-plumbing every call site.
+
+    `manifest` is the parent's semantic-projection manifest -- the exact
+    path-to-member-digest map its own verified `manifest_root` committed to. It
+    is carried, not recomputed, so a successor only has to hash the members whose
+    bytes actually changed. It must never be seeded from anything but a manifest
+    this replay computed or verified: see `_semantic_manifest`.
     """
 
     generation: RecoveredGeneration
     tree: dict[str, bytes]
+    manifest: Manifest
+
+
+def _semantic_manifest(tree: dict[str, bytes]) -> Manifest:
+    """Compute one generation's semantic manifest from scratch, hashing every member.
+
+    This is the cold seed for a replay window: genesis, and every ad-hoc window
+    built outside the sliding walk. Nothing carried can enter here.
+    """
+
+    return manifest_for_tree(semantic_projection(tree))
 
 
 @dataclass(frozen=True)
@@ -242,11 +262,18 @@ def _verify_successor(
         raise SettlementIntegrityError(
             "principal lifecycle actor did not cryptographically approve the transition"
         )
-    semantic_tree = semantic_projection(tree)
-    manifest = manifest_root(semantic_tree)
+    # Both committed values are functions of the two member manifests alone, so
+    # the successor's manifest is built once -- carrying the parent's digest for
+    # every byte-identical member -- and then serves both.
+    members = manifest_for_tree_carrying(
+        semantic_projection(tree),
+        previous_tree=parent_tree,
+        previous_manifest=window.manifest,
+    )
+    manifest = manifest_root_from_members(members)
     if manifest.tagged != record.candidate.candidate_manifest_root:
         raise SettlementIntegrityError("generation manifest root differs from C_s")
-    diff, scope = semantic_diff(parent_tree, tree)
+    diff, scope = semantic_diff_from_members(window.manifest, members)
     if diff.tagged != record.candidate.semantic_diff_digest or scope != record.candidate.scope:
         raise SettlementIntegrityError("generation semantic diff differs from C_s")
     approval_digests = tuple(sorted(item.digest.tagged for item in verified_approvals))
@@ -277,6 +304,7 @@ def _verify_successor(
             record=record,
         ),
         tree=tree,
+        manifest=members,
     )
 
 
@@ -403,11 +431,18 @@ def _clean_unaccepted_generations(
             if parent is None:
                 continue
             # The parent tree is read back from the ledger for exactly this
-            # check and released with the window when the iteration ends.
+            # check and released with the window when the iteration ends. Its
+            # manifest is computed cold: this window is built from an arbitrary
+            # accepted parent, so no replay-carried manifest applies to it.
+            parent_tree = ledger.read_tree(parent.oid)
             _verify_successor(
                 ledger,
                 oid,
-                window=_GenerationWindow(generation=parent, tree=ledger.read_tree(parent.oid)),
+                window=_GenerationWindow(
+                    generation=parent,
+                    tree=parent_tree,
+                    manifest=_semantic_manifest(parent_tree),
+                ),
                 repository_path=repository_path,
                 object_format=object_format,
                 instance_id=instance_id,
@@ -535,7 +570,13 @@ def recover_instance(
     repository_path = str(ledger.path.resolve(strict=True))
     # A two-generation sliding window: rebinding `window` releases the
     # predecessor's tree, so replay memory stays flat in the history length.
-    window = _GenerationWindow(generation=genesis_generation, tree=genesis.tree)
+    # Genesis is the one cold manifest of the walk; every later generation
+    # carries its predecessor's digests forward for byte-identical members.
+    window = _GenerationWindow(
+        generation=genesis_generation,
+        tree=genesis.tree,
+        manifest=_semantic_manifest(genesis.tree),
+    )
     for oid in history_oids[1:]:
         window = _verify_successor(
             ledger,
