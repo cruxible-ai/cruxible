@@ -319,16 +319,16 @@ disposable, digest-committed, deleted rather than trusted when it does not
 reproduce, and costing only provable freshness when removed.
 
 **What accepted state can reach today, stated so a reviewer does not have to
-re-derive it.** Every Capture the served authoring surface produces is
-content-addressed, and a CAS reference deliberately names no logical source. By
-§11.6.1 a byte match at a working occurrence is therefore a labeled
+re-derive it.** Every Capture the served authoring surface produced *in this
+slice* is content-addressed, and a CAS reference deliberately names no logical
+source. By §11.6.1 a byte match at a working occurrence is therefore a labeled
 `content_equivalent` candidate, and `exact` and `drifted` -- both of which
-require the accepted and observed logical source to agree -- are not yet
-reachable end to end from the CLI. `build_ledger_capture` and the external
-acquisition path already produce the logical-source-bound Captures that unlock
-them; no served operation invokes those builders, and PC-G's watcher is their
-first caller. The resolver, the cards, and their rendering are proved against
-real `exact`, `drifted`, and ambiguous coverage in the headless suites.
+require the accepted and observed logical source to agree -- were not reachable
+end to end from the CLI here. `build_ledger_capture` and the external
+acquisition path already produced the logical-source-bound Captures that unlock
+them, and no served operation invoked those builders. The resolver, the cards,
+and their rendering are proved against real `exact`, `drifted`, and ambiguous
+coverage in the headless suites. **PC-G-H1 closes this gap** -- see below.
 
 ### The authorized golden re-pin
 
@@ -343,6 +343,67 @@ operation:
 
 Each was produced through its own regeneration path, and every other golden in
 this repository is byte-identical across the slice.
+
+## PC-G-H1: the logical-source capture path
+
+This slice closes the PC-F2-S2 gap recorded above. `exact` and `drifted` are now
+reachable end to end from the served surface, for foreign knowledge sources this
+instance has never governed as Documents. **No new operation lands**: the whole
+surface delta is one added variant on an existing request model, so the facade
+operation inventory, the route inventory, the MCP tool inventory, and every
+golden in this repository are byte-identical across the slice.
+
+**One added authoring input.** `DirectClaimAuthoringV1.source_selection` is a
+tag-discriminated union, and `playbill-direct-foreign-source-selection-v1` joins
+it beside the CAS-span and typed-external forms. A proposer stores the foreign
+file's bytes through the ordinary body-store operation, then names the logical
+source and the byte window inside those bytes; `claim propose` and `claim
+propose-batch` carry it with no flag and no new command, which is what the
+authoring-JSON harnesses need. Three things are bound and they are deliberately
+different things: the **coordinate** names the whole snapshot the proposer
+presented, by content digest and length; the **selector** names the window
+inside that snapshot; and the **commitment** is over the selected bytes alone,
+because that is the unit a working occurrence is later matched against.
+
+**One contract per logical source, and it earns its acceptance.**
+`logical_source_identities` is an enumerated tuple, so a shared contract would
+have to be *succeeded* every time a corpus grew a file. A per-source contract is
+instead always new: the first authoring against a source writes it, and every
+later one writes byte-identical content that deduplicates against the accepted
+base. It carries no exemption. `DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT` is
+exempted from the component and rule registry checks because it is the built-in
+constant; a foreign-source contract is an ordinary artifact and passes
+`evaluate_capture_contract_law` on its own terms, which is possible only because
+reviewed code registered the components it needs in
+`PLAYBILL_CAPTURE_COMPONENTS`.
+
+**The provenance grade is honest, and it is honest structurally.** The
+registered components are named for what actually happened: the provenance rule
+is `playbill.external.proposer-asserted-v1`, not the daemon-fetched one, and the
+replay policy promises only what retained bytes deliver. The grade itself now
+follows a contract's declared provenance rule rather than an identity comparison
+against one constant, so a second self-asserted contract cannot be graded as
+though a daemon had fetched it. Only a contract pinning a registered rule can
+carry one of those digests, so the derivation is exactly as narrow as the
+comparison it generalizes and no existing contract's grade moves.
+
+**What the Capture may and may not claim.** Its external reference is
+`attested_only`: the daemon fetched nothing and can reach the foreign source
+never, so `open_source` returns `attested_only` rather than a replay that did
+not happen. What it *can* do is commit to the exact bytes it was shown, retain
+them under bounded CAS materialization, and bind them to a logical source -- and
+that binding is the entire point, because it is what makes an edit to that
+source measurable as drift and a relocation within it not.
+
+**The transcript F2-S2 could not write.** `tests/test_cli/test_playbill_coverage_surface.py`
+now drives the whole §11.6 story through `cruxible ...` argv against a served
+instance: govern a span of a foreign file, resolve the unchanged file to
+`exact`, move the span inside the file and stay `exact` with the *same*
+occurrence identity and a moved line overlay, edit the span and get `drifted`
+carrying the complete §11.6.2 binding, and put the identical bytes under a
+different logical source to get a labeled `content_equivalent` candidate that
+inherits nothing. The resolver, the coverage indexes, and the render package are
+unchanged; they were built for exactly this input and this slice supplies it.
 
 ## PC-F3-S1b: the multi-Claim proposal operation
 

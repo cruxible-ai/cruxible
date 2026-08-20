@@ -12,9 +12,12 @@ from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed
 from cruxible_core.playbill.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     DirectByteSpanSelectionV1,
+    DirectCaptureBuildResult,
     DirectClaimSelectionV1,
+    DirectForeignSourceSelectionV1,
     build_direct_claim_capture,
     build_direct_claim_selection_capture,
+    build_foreign_source_capture,
     capture_contract_path,
     parse_capture_envelope,
     render_capture_contract,
@@ -607,19 +610,32 @@ def _author_direct_claim(
         accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(proposed_base),
         materialize_source=authoring.materialize_source,
     )
-    selection_capture = (
-        None
-        if authoring.source_selection is None
-        else build_direct_claim_selection_capture(
+    # A foreign-source selection is the one authoring input that binds a Capture
+    # to a *logical* source rather than to content, so it is built under its own
+    # per-source contract instead of the shared direct one.
+    selection = authoring.source_selection
+    foreign_capture: DirectCaptureBuildResult | None = None
+    selection_capture: DirectCaptureBuildResult | None = None
+    if isinstance(selection, DirectForeignSourceSelectionV1):
+        foreign_capture = build_foreign_source_capture(
             store=instance.body_store(),
             actor_id=actor_id,
             claim_id=claim_id,
             rationale=authoring.rationale,
             observed_at=observed_at,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(proposed_base),
-            selection=authoring.source_selection,
+            selection=selection,
         )
-    )
+    elif selection is not None:
+        selection_capture = build_direct_claim_selection_capture(
+            store=instance.body_store(),
+            actor_id=actor_id,
+            claim_id=claim_id,
+            rationale=authoring.rationale,
+            observed_at=observed_at,
+            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(proposed_base),
+            selection=selection,
+        )
     contract_path = capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)
     _write_dependency_member(
         candidate_tree,
@@ -628,6 +644,14 @@ def _author_direct_claim(
         content=render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT),
         conflict="accepted direct CaptureContract seed bytes differ",
     )
+    if foreign_capture is not None:
+        _write_dependency_member(
+            candidate_tree,
+            authored,
+            path=capture_contract_path(foreign_capture.contract.identity.name),
+            content=render_capture_contract(foreign_capture.contract),
+            conflict="accepted foreign-source CaptureContract seed bytes differ",
+        )
 
     mapping_members: list[SourceMapping] = []
     if authoring.materialize_source:
@@ -646,11 +670,30 @@ def _author_direct_claim(
                 ),
             )
         )
-    if isinstance(authoring.source_selection, DirectByteSpanSelectionV1):
+    if isinstance(selection, DirectByteSpanSelectionV1):
         mapping_members.append(
             SourceMapping(
                 subject=claim_statement_address(path),
-                spans=(authoring.source_selection.span,),
+                spans=(selection.span,),
+            )
+        )
+    if foreign_capture is not None:
+        # The mapping covers the committed *selection*, not the presented
+        # snapshot: the selected bytes are what the Capture commits to and what
+        # a working occurrence is later matched against.
+        selected_length = foreign_capture.envelope.commitment.byte_length
+        if selected_length is None:
+            raise ProposalIntegrityError("foreign-source Capture has no committed byte length")
+        mapping_members.append(
+            SourceMapping(
+                subject=claim_statement_address(path),
+                spans=(
+                    ContentSpan(
+                        content_digest=foreign_capture.source_body_digest,
+                        start_byte=0,
+                        end_byte=selected_length,
+                    ),
+                ),
             )
         )
     mapping_by_wire = {
@@ -678,6 +721,14 @@ def _author_direct_claim(
             artifact_digest=subject_artifact_digest,
         ),
     ]
+    if foreign_capture is not None:
+        pins.append(
+            ArtifactPin(
+                role="capture-contract",
+                target=foreign_capture.contract.identity,
+                artifact_digest=foreign_capture.contract_digest,
+            )
+        )
     if object_referent is not None:
         pins.append(
             ArtifactPin(
@@ -697,6 +748,7 @@ def _author_direct_claim(
                         *(() if predecessor is None else predecessor.backing.capture_digests),
                         capture.capture_digest,
                         *(() if selection_capture is None else (selection_capture.capture_digest,)),
+                        *(() if foreign_capture is None else (foreign_capture.capture_digest,)),
                     },
                     key=lambda item: item.encode("ascii"),
                 )

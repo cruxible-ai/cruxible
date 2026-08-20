@@ -6,23 +6,24 @@ instance: govern some exact bytes, export the floor with its coverage boundary,
 put those bytes in a working file, resolve coverage over it, then edit the file
 and resolve again.
 
-What the reachable accepted state can and cannot show
------------------------------------------------------
-Every Capture the served authoring surface produces today is content-addressed:
-`build_direct_claim_capture` and `build_direct_claim_selection_capture` both
-cite CAS, and a CAS reference deliberately names no logical source. By §11.6.1
-that makes a byte match at a *working* source a labeled `content_equivalent`
-candidate rather than an `exact` match, and it makes `drifted` -- which requires
-the accepted and observed logical source to be the same -- unreachable from this
-surface. `build_ledger_capture` and the external acquisition path produce the
-logical-source-bound Captures that unlock `exact`/`drifted`, and no served
-operation invokes them yet; PC-G's watcher is their first caller.
+Two authoring inputs, two reachable answers
+-------------------------------------------
+`DirectByteSpanSelectionV1` cites CAS, and a CAS reference deliberately names no
+logical source, so by §11.6.1 a byte match at a *working* source is a labeled
+`content_equivalent` candidate and nothing stronger. That is the first test
+below, and it is not a gap: content-addressed evidence really does name no place
+an edit could move content within.
 
-So this test proves what the surface can prove end to end -- governed bytes are
-recognized and named to their accepted Claim, an edit removes that answer, and
-the absence is summarized once rather than annotated per line -- and the drift
-card's own rendering is pinned against real drift in
-`tests/test_playbill/test_coverage_render.py`.
+`DirectForeignSourceSelectionV1` (PC-G-H1) cites one. It commits to exactly the
+bytes a proposer presented and binds them to a declared *logical* external
+source under a per-source self-asserted CaptureContract, which is what makes
+`exact` and `drifted` reachable end to end from the served surface: the same
+selection stays `exact` after it moves inside its source, becomes `drifted` when
+its bytes change, and stays a labeled candidate when identical bytes appear
+under a different logical source. Before that slice both states were
+structurally unreachable from any served operation -- `build_ledger_capture` and
+the external acquisition path produced logical-source-bound Captures and nothing
+served called them.
 """
 
 from __future__ import annotations
@@ -34,7 +35,10 @@ from typing import Any
 from click.testing import CliRunner
 
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.captures import DirectByteSpanSelectionV1
+from cruxible_core.playbill.captures import (
+    DirectByteSpanSelectionV1,
+    DirectForeignSourceSelectionV1,
+)
 from cruxible_core.playbill.claim_types import claim_type_digest
 from cruxible_core.playbill.claims import ClaimStatement, LiteralClaimObject
 from cruxible_core.playbill.coverage.render import BATCH_SUMMARY_PREFIX
@@ -58,6 +62,20 @@ GOVERNED_BYTES = (
 )
 WORKING_PATH = "docs/handbook.md"
 WORKING_SOURCE = "external:workspace.handbook"
+
+# The foreign corpus: a file this instance has never governed as a Document, the
+# span inside it a Claim is about, and the logical name the harness declares it
+# under on both the accepted and the working side.
+GOVERNED_LINE = b"The reviewer accepted the migration plan on the second reading.\n"
+FOREIGN_PREAMBLE = b"# Foreign migration handbook\n\n"
+FOREIGN_TRAILER = b"\nFiled by the migration working group.\n"
+FOREIGN_BYTES = FOREIGN_PREAMBLE + GOVERNED_LINE + FOREIGN_TRAILER
+FOREIGN_PATH = "corpus/handbook.md"
+FOREIGN_IDENTITY = "corpus.handbook"
+FOREIGN_SOURCE = f"external:{FOREIGN_IDENTITY}"
+COPY_PATH = "corpus/handbook-copy.md"
+COPY_IDENTITY = "corpus.handbook-copy"
+COPY_SOURCE = f"external:{COPY_IDENTITY}"
 
 
 def _bootstrap(cruxible: _Cli, tmp_path: Path) -> None:
@@ -123,6 +141,93 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
     )
     cruxible.accept(_proposal_id(proposal["proposal"]))
     return str(proposal["claim_identity"])
+
+
+def _govern_a_foreign_span(cruxible: _Cli, tmp_path: Path) -> str:
+    """Accept one Claim whose Capture binds a span of a foreign *logical* source.
+
+    The proposer presents the whole foreign file's bytes through the ordinary
+    body store, then points at the one line the Claim is about. The daemon
+    fetched nothing, so the Capture it builds is self-asserted -- but it cites
+    `external:corpus.handbook` rather than a content digest, which is what makes
+    the span's later fate measurable.
+    """
+
+    claim_type = _claim_type()
+    proposed = cruxible.json(
+        "playbill",
+        "claim-type",
+        "propose",
+        "--envelope",
+        _write(tmp_path / "foreign-claim-type.json", claim_type.model_dump(mode="json")),
+        "--name",
+        "seed-claim-type",
+    )
+    cruxible.accept(_proposal_id(proposed))
+
+    presented = tmp_path / "presented.md"
+    presented.write_bytes(FOREIGN_BYTES)
+    stored = cruxible.json("playbill", "body", "store", str(presented))
+
+    start = FOREIGN_BYTES.index(GOVERNED_LINE)
+    authoring = DirectClaimAuthoringV1(
+        statement=ClaimStatement(
+            subject=subject_address("wi-77"),
+            claim_type=claim_type.identity,
+            claim_type_digest=claim_type_digest(claim_type).tagged,
+            predicate=claim_type.predicate,
+            object=LiteralClaimObject(value="done"),
+            role="observation",
+        ),
+        rationale="The foreign handbook records the reviewer's acceptance.",
+        subject_shell=subject_shell("wi-77"),
+        source_selection=DirectForeignSourceSelectionV1(
+            logical_source_identity=FOREIGN_IDENTITY,
+            span=ContentSpan(
+                content_digest=stored["digest"],
+                start_byte=start,
+                end_byte=start + len(GOVERNED_LINE),
+            ),
+            media_type="text/markdown",
+        ),
+    )
+    proposal = cruxible.json(
+        "playbill",
+        "claim",
+        "propose",
+        "--authoring",
+        _write(tmp_path / "foreign-claim.json", authoring.model_dump(mode="json")),
+        "--name",
+        "seed-foreign-claim",
+    )
+    cruxible.accept(_proposal_id(proposal["proposal"]))
+    return str(proposal["claim_identity"])
+
+
+def _resolve_foreign(
+    cruxible: _Cli,
+    workspace: Path,
+    *binds: str,
+) -> tuple[str, dict[str, Any]]:
+    """Resolve the declared foreign working set in both output modes."""
+
+    argv: tuple[str, ...] = ("playbill", "coverage", "resolve", "--root", str(workspace))
+    for entry in binds or (f"{FOREIGN_PATH}={FOREIGN_SOURCE}",):
+        path, _, _ = entry.partition("=")
+        argv = (*argv, "--bind", entry, "--file", path)
+    return cruxible.run(*argv).stdout, cruxible.json(*argv)
+
+
+def _card_for(payload: dict[str, Any], source: str) -> dict[str, Any]:
+    """The single card the named logical source's span resolved to."""
+
+    span = next(
+        item
+        for item in payload["spans"]
+        if f"{item['request']['source']['plane']}:{item['request']['source']['identity']}" == source
+    )
+    assert len(span["cards"]) == 1, span["cards"]
+    return dict(span["cards"][0])
 
 
 def _resolve(cruxible: _Cli, workspace: Path, *extra: str) -> tuple[str, dict[str, Any]]:
@@ -226,6 +331,164 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     # 4. Nothing about accepted state moved: the coordinate is the one the
     #    Claim was accepted at, and coverage appended no receipt to reach it.
     assert edited["at"] == exported["coordinate"]
+
+
+def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_source(
+    served_cli: _Cli,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The whole §11.6 transcript, end to end, through argv against a served daemon.
+
+    Unchanged span -> `exact`. Same span moved within its file -> still `exact`,
+    with the *same* occurrence identity and a moved line overlay, because line
+    movement alone may never break a verified match. Span edited -> `drifted`,
+    carrying the complete §11.6.2 binding rather than an `exact` with a flag.
+    """
+
+    cruxible = served_cli
+    _bootstrap(cruxible, tmp_path)
+    claim_identity = _govern_a_foreign_span(cruxible, tmp_path)
+
+    workspace = tmp_path / "workspace"
+    (workspace / "corpus").mkdir(parents=True)
+    working = workspace / FOREIGN_PATH
+    working.write_bytes(FOREIGN_BYTES)
+
+    # 1. The foreign file, unchanged: the governed span is verified against the
+    #    accepted Claim and its logical source, not merely recognized by bytes.
+    human, payload = _resolve_foreign(cruxible, workspace)
+
+    assert payload["summary"]["exact"] == 1
+    assert payload["summary"]["drifted"] == 0
+    assert payload["summary"]["candidate"] == 0
+    assert payload["health"] == "complete"
+
+    # The daemon fetched nothing, and the accepted law evidence says so: every
+    # Capture behind this Claim is graded self-asserted, including the one that
+    # names a logical source.
+    explained = cruxible.json("playbill", "claim", "explain", claim_identity)
+    assert {item["provenance_grade"] for item in explained["law_evidence"]["verdict_captures"]} == {
+        "self-asserted"
+    }
+
+    exact = _card_for(payload, FOREIGN_SOURCE)
+    assert exact["match_state"] == "exact"
+    assert exact["match_basis"] is None
+    assert exact["accepted_source"] == exact["observed_source"]
+    assert exact["accepted_source"]["plane"] == "external"
+    assert exact["accepted_source"]["identity"] == FOREIGN_IDENTITY
+    assert exact["observed_commitment_digest"] == exact["expected_commitment_digest"]
+    assert exact["grants_mutation_authority"] is False
+    assert claim_identity.endswith(Path(exact["claim_addresses"][0]["artifact_path"]).stem)
+    assert exact["at"] == payload["at"]
+    # The overlay is where the bytes currently sit: line 3 of the original file.
+    assert exact["line_overlay"]["start_line"] == 3
+    assert human.strip().splitlines()[0].startswith(f"exact  {FOREIGN_SOURCE}  lines 3-3  ")
+
+    # 2. Relocate the same bytes inside the same file. Identity is
+    #    (source, observed commitment, ordinal) and none of those moved, so the
+    #    match survives and only the presentation overlay changes.
+    working.write_bytes(GOVERNED_LINE + FOREIGN_PREAMBLE + FOREIGN_TRAILER)
+
+    moved_human, moved = _resolve_foreign(cruxible, workspace)
+    relocated = _card_for(moved, FOREIGN_SOURCE)
+
+    assert moved["summary"]["exact"] == 1
+    assert relocated["match_state"] == "exact"
+    assert relocated["occurrence_identity_digest"] == exact["occurrence_identity_digest"]
+    assert relocated["expected_commitment_digest"] == exact["expected_commitment_digest"]
+    assert relocated["line_overlay"]["start_line"] == 1
+    assert relocated["line_overlay"] != exact["line_overlay"]
+    assert moved_human.strip().splitlines()[0].startswith(f"exact  {FOREIGN_SOURCE}  lines 1-1  ")
+
+    # 3. Edit the governed span itself. That is drift, and drift is its own
+    #    state and its own card.
+    edited_bytes = FOREIGN_BYTES.replace(b"accepted", b"rejected")
+    working.write_bytes(edited_bytes)
+
+    drift_human, drifted_payload = _resolve_foreign(cruxible, workspace)
+    drifted = _card_for(drifted_payload, FOREIGN_SOURCE)
+
+    assert drifted_payload["summary"] == {
+        "tag": "playbill-coverage-batch-summary-v1",
+        "exact": 0,
+        "drifted": 1,
+        "candidate": 0,
+        "none": 0,
+        "returned_spans": 1,
+        "omitted_card_count": 0,
+    }
+    assert drifted["match_state"] == "drifted"
+    # The full §11.6.2 tuple: accepted Claim and Capture, accepted coordinate,
+    # expected commitment, newly observed commitment, the source identity on
+    # both sides, and the bounded dependent count.
+    assert drifted["claim_addresses"] == exact["claim_addresses"]
+    assert drifted["capture_digests"] == exact["capture_digests"]
+    assert drifted["at"] == drifted_payload["at"]
+    assert drifted["expected_commitment_digest"] == exact["expected_commitment_digest"]
+    assert drifted["observed_commitment_digest"] != drifted["expected_commitment_digest"]
+    assert drifted["accepted_source"] == drifted["observed_source"] == exact["accepted_source"]
+    assert drifted["dependent_claim_count"] == 1
+    assert list(drifted["reason_codes"]) == ["commitment_superseded"]
+    assert drifted["grants_mutation_authority"] is False
+
+    drift_lines = drift_human.strip().splitlines()
+    assert drift_lines[0].startswith(f"drifted  {FOREIGN_SOURCE}  ")
+    assert f"expected {drifted['expected_commitment_digest']}" in drift_lines[0]
+    assert f"observed {drifted['observed_commitment_digest']}" in drift_lines[0]
+    assert "dependents 1" in drift_lines[0]
+    assert drift_lines[-3] == "Playbill coverage: 0 exact, 1 drifted, 0 candidates, 0 none"
+
+    # 4. Nothing about accepted state moved across the whole transcript.
+    assert drifted_payload["at"] == payload["at"] == moved["at"]
+
+
+def test_cli_coverage_never_lets_identical_bytes_in_a_foreign_source_read_as_exact(
+    served_cli: _Cli,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The §11.6.1 cross-source law, now testable end to end.
+
+    The same bytes sit in two working files. One is the logical source the
+    accepted Capture cites; the other is not. Only the first is `exact`, and the
+    second is a labeled `content_equivalent` candidate that inherits nothing --
+    which is precisely why coverage is not keyed on `content digest -> Claims`.
+    """
+
+    cruxible = served_cli
+    _bootstrap(cruxible, tmp_path)
+    _govern_a_foreign_span(cruxible, tmp_path)
+
+    workspace = tmp_path / "workspace"
+    (workspace / "corpus").mkdir(parents=True)
+    (workspace / FOREIGN_PATH).write_bytes(FOREIGN_BYTES)
+    (workspace / COPY_PATH).write_bytes(FOREIGN_BYTES)
+
+    _, payload = _resolve_foreign(
+        cruxible,
+        workspace,
+        f"{FOREIGN_PATH}={FOREIGN_SOURCE}",
+        f"{COPY_PATH}={COPY_SOURCE}",
+    )
+
+    assert payload["summary"]["exact"] == 1
+    assert payload["summary"]["candidate"] == 1
+    assert payload["summary"]["drifted"] == 0
+
+    cited = _card_for(payload, FOREIGN_SOURCE)
+    foreign = _card_for(payload, COPY_SOURCE)
+
+    assert cited["match_state"] == "exact"
+    assert foreign["match_state"] == "candidate"
+    assert foreign["match_basis"] == "content_equivalent"
+    assert list(foreign["reason_codes"]) == ["foreign_occurrence"]
+    # Identical bytes, identical commitment -- and still a different answer,
+    # because the accepted source and the observed source disagree.
+    assert foreign["expected_commitment_digest"] == cited["expected_commitment_digest"]
+    assert foreign["observed_source"]["identity"] == COPY_IDENTITY
+    assert foreign["accepted_source"]["identity"] == FOREIGN_IDENTITY
+    assert foreign["resolves_equivalence"] is False
+    assert foreign["grants_mutation_authority"] is False
 
 
 def test_cli_coverage_status_renders_the_manifest_over_the_declared_scope(

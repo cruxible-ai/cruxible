@@ -26,13 +26,13 @@ from cruxible_core.playbill.canonical import (
     normalize_canonical,
 )
 from cruxible_core.playbill.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CaptureContractV1,
     CaptureEnvelopeV1,
     CaptureObjectStoreProtocol,
     CaptureRunCoordinateV1,
     CaptureSelectionBudgetV1,
     capture_contract_digest,
+    capture_contract_is_self_asserted,
     capture_digest,
     parse_capture_envelope,
 )
@@ -157,7 +157,7 @@ class ProcedureSourceAcquirerProtocol(Protocol):
 def capture_provenance_grade(contract: CaptureContractV1) -> EvidenceProvenanceGrade:
     """Reuse the accepted Claim-side derivation; never invent a second ladder."""
 
-    if contract == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT:
+    if capture_contract_is_self_asserted(contract):
         return "self-asserted"
     return "daemon-fetched"
 

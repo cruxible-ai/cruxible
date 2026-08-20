@@ -67,6 +67,14 @@ DIRECT_EXTERNAL_SELECTOR_TYPES = (
     "resource-key-v1",
 )
 
+FOREIGN_SOURCE_CONTRACT_PREFIX = "playbill.foreign-source."
+FOREIGN_SOURCE_COORDINATE_TYPE = "foreign-source-snapshot-v1"
+FOREIGN_SOURCE_SELECTOR_TYPE = "foreign-source-span-v1"
+FOREIGN_SOURCE_PROVENANCE_RULE = "playbill.external.proposer-asserted-v1"
+FOREIGN_SOURCE_REPLAY_POLICY = "playbill.external.retained-selection-replay-v1"
+FOREIGN_SOURCE_SUBJECT_MAPPING = "playbill.external.claim-statement-span-v1"
+FOREIGN_SOURCE_MAX_BYTES = 1024 * 1024
+
 
 class CaptureFormatError(PlaybillFormatError):
     """A Capture contract/envelope or its canonical location is invalid."""
@@ -247,13 +255,18 @@ _CAPTURE_COMPONENT_PIN_NAMES: tuple[tuple[str, str], ...] = (
     ("commitment-canonicalizer", "sha256-bytes-v1"),
     ("coordinate-grammar", "playbill.database-snapshot-coordinate-v1"),
     ("coordinate-schema", "database-snapshot-v1"),
+    ("coordinate-schema", FOREIGN_SOURCE_COORDINATE_TYPE),
     ("coordinate-schema", "postgres-lsn-v1"),
     ("erasure-rule", "playbill.capture-erasure-authority-v1"),
     ("proof-adapter", "playbill.database-snapshot-proof-v1"),
     ("provenance-rule", "playbill.external.daemon-fetched-v1"),
+    ("provenance-rule", FOREIGN_SOURCE_PROVENANCE_RULE),
     ("replay-policy", "playbill.external.exact-replay-v1"),
+    ("replay-policy", FOREIGN_SOURCE_REPLAY_POLICY),
+    ("selector-schema", FOREIGN_SOURCE_SELECTOR_TYPE),
     ("selector-schema", "query-result-v1"),
     ("selector-schema", "relation-primary-key-v1"),
+    ("source-subject-mapping", FOREIGN_SOURCE_SUBJECT_MAPPING),
     ("source-subject-mapping", "playbill.external.record-subject-v1"),
 )
 
@@ -331,6 +344,105 @@ DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContractV1(
         approve_roles=("owner",),
     ),
 )
+
+
+def foreign_source_contract_id(logical_source_identity: str) -> str:
+    """Name the CaptureContract one foreign logical source is governed under.
+
+    One contract per logical source, rather than one contract listing many.
+    ``logical_source_identities`` is an enumerated tuple, so a shared contract
+    would have to be succeeded every time a corpus grew a file -- and succession
+    needs the exact predecessor digest and authority over it. A per-source
+    contract is instead always *new*: an authoring that governs a source for the
+    first time writes it, and every later authoring against the same source
+    writes byte-identical content that deduplicates against the accepted base.
+    """
+
+    if not _CONTRACT_ID_RE.fullmatch(logical_source_identity):
+        raise CaptureFormatError("foreign logical source identity must be canonical and lowercase")
+    contract_id = f"{FOREIGN_SOURCE_CONTRACT_PREFIX}{logical_source_identity}"
+    if not _CONTRACT_ID_RE.fullmatch(contract_id):
+        raise CaptureFormatError("foreign logical source identity is not path-addressable")
+    return contract_id
+
+
+def foreign_source_capture_contract(logical_source_identity: str) -> CaptureContractV1:
+    """Build the self-asserted CaptureContract governing one foreign logical source.
+
+    Every component this contract names is registered in the compiler registry
+    by reviewed code, so it passes the same fail-closed component and rule
+    checks any other external contract does -- no exemption, no placeholder
+    digest. The registered names are the honest ones: the provenance rule is
+    proposer-asserted rather than daemon-fetched, and the replay policy promises
+    only what retained bytes can deliver. Its external reference is therefore
+    attested-only: the daemon can reproduce exactly the bytes it was shown and
+    can re-read the foreign source never.
+    """
+
+    replay_pin = capture_component_pin("replay-policy", FOREIGN_SOURCE_REPLAY_POLICY)
+    provenance_pin = capture_component_pin("provenance-rule", FOREIGN_SOURCE_PROVENANCE_RULE)
+    mapping_pin = capture_component_pin("source-subject-mapping", FOREIGN_SOURCE_SUBJECT_MAPPING)
+    return CaptureContractV1(
+        identity=ArtifactIdentity(
+            kind="CaptureContract",
+            name=foreign_source_contract_id(logical_source_identity),
+        ),
+        allowed_source_kinds=("external",),
+        logical_source_identities=(logical_source_identity,),
+        coordinate_schema_pins=(
+            capture_component_pin("coordinate-schema", FOREIGN_SOURCE_COORDINATE_TYPE),
+        ),
+        selector_schema_pins=(
+            capture_component_pin("selector-schema", FOREIGN_SOURCE_SELECTOR_TYPE),
+        ),
+        commitment_canonicalizer=capture_component_pin(
+            "commitment-canonicalizer",
+            "sha256-bytes-v1",
+        ),
+        allowed_materialization_modes=("cas",),
+        selection_budget=CaptureSelectionBudgetV1(
+            max_bytes=FOREIGN_SOURCE_MAX_BYTES,
+            max_rows=1,
+            max_items=1,
+        ),
+        retention_erasure_policy=CaptureRetentionErasurePolicyV1(
+            body_retention="optional",
+            erasure="prohibited",
+            selector_privacy="direct_allowed",
+        ),
+        replay_policy_digest=replay_pin.artifact_digest,
+        epistemic_grade="observed",
+        provenance_rule_digest=provenance_pin.artifact_digest,
+        evidence_kinds=("self_asserted",),
+        source_subject_mapping_digest=mapping_pin.artifact_digest,
+        authority=ArtifactAuthority(
+            propose_roles=("owner",),
+            approve_roles=("owner",),
+        ),
+        pins=tuple(sorted((replay_pin, provenance_pin, mapping_pin), key=_pin_key)),
+    )
+
+
+_SELF_ASSERTED_PROVENANCE_RULE_DIGESTS: frozenset[str] = frozenset(
+    {
+        DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.provenance_rule_digest,
+        capture_component_pin("provenance-rule", FOREIGN_SOURCE_PROVENANCE_RULE).artifact_digest,
+    }
+)
+
+
+def capture_contract_is_self_asserted(contract: CaptureContractV1) -> bool:
+    """Whether a contract's declared provenance rule is proposer-supplied.
+
+    The grade follows the contract's own registered provenance rule rather than
+    an identity comparison against one constant, so a second self-asserted
+    contract cannot silently be graded as though a daemon had fetched it. Only a
+    contract that pins a registered rule can carry one of these digests -- the
+    rule-registry check refuses any other -- so this stays exactly as narrow as
+    the identity comparison it generalizes.
+    """
+
+    return contract.provenance_rule_digest in _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS
 
 
 def capture_contract_path(contract_id: str) -> str:
@@ -807,8 +919,49 @@ class DirectExternalSelectionV1(_StrictCaptureModel):
         return self
 
 
+class DirectForeignSourceSelectionV1(_StrictCaptureModel):
+    """An exact span of a foreign logical source, committed exactly as presented.
+
+    The proposer names the logical source, hands over the source bytes it read,
+    and points at the window inside them; the daemon commits to the bytes it was
+    shown and to nothing else. That is weaker than an acquisition -- nothing was
+    fetched and nothing can be re-read -- and it is the whole point: the
+    resulting Capture cites a *logical* source rather than content, so an edit to
+    that source is measurable as drift and a relocation within it is not.
+    """
+
+    tag: Literal["playbill-direct-foreign-source-selection-v1"] = (
+        "playbill-direct-foreign-source-selection-v1"
+    )
+    logical_source_identity: str
+    span: ContentSpan
+    media_type: str | None = None
+
+    @field_validator("logical_source_identity")
+    @classmethod
+    def _logical_source_identity(cls, value: str) -> str:
+        try:
+            foreign_source_contract_id(value)
+        except CaptureFormatError as exc:
+            raise ValueError(str(exc)) from exc
+        return value
+
+    @field_validator("media_type")
+    @classmethod
+    def _media_type(cls, value: str | None) -> str | None:
+        if value is not None and ("/" not in value or any(char.isspace() for char in value)):
+            raise ValueError("foreign span media_type must use canonical type/subtype spelling")
+        return value
+
+    @model_validator(mode="after")
+    def _selection(self) -> "DirectForeignSourceSelectionV1":
+        if self.span.end_byte <= self.span.start_byte:
+            raise ValueError("a foreign source selection must cover at least one byte")
+        return self
+
+
 DirectClaimSelectionV1 = Annotated[
-    DirectByteSpanSelectionV1 | DirectExternalSelectionV1,
+    DirectByteSpanSelectionV1 | DirectExternalSelectionV1 | DirectForeignSourceSelectionV1,
     Field(discriminator="tag"),
 ]
 
@@ -872,6 +1025,7 @@ def _direct_binding_digest(
 def _store_capture_envelope(
     *,
     store: CaptureObjectStoreProtocol,
+    contract: CaptureContractV1,
     envelope: CaptureEnvelopeV1,
     source_body_digest: str,
     source_body_materialized: bool,
@@ -882,7 +1036,7 @@ def _store_capture_envelope(
     if stored_envelope.digest != expected_capture_digest:
         raise PlaybillCasError("Capture envelope CAS digest did not reproduce")
     return DirectCaptureBuildResult(
-        contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+        contract=contract,
         contract_digest=envelope.capture_contract_digest,
         envelope=envelope,
         capture_digest=expected_capture_digest,
@@ -978,6 +1132,7 @@ def build_direct_claim_capture(
     )
     return _store_capture_envelope(
         store=store,
+        contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
         envelope=envelope,
         source_body_digest=source_digest,
         source_body_materialized=materialize_source,
@@ -992,10 +1147,20 @@ def build_direct_claim_selection_capture(
     rationale: str,
     observed_at: datetime,
     accepted_coordinate: AcceptedCoordinate,
-    selection: DirectClaimSelectionV1,
+    selection: DirectByteSpanSelectionV1 | DirectExternalSelectionV1,
 ) -> DirectCaptureBuildResult:
-    """Bind one exact span or typed external selector as self-asserted evidence."""
+    """Bind one exact span or typed external selector as self-asserted evidence.
 
+    Both forms this builder accepts are content-addressed or unmaterialized, so
+    neither names a logical source. A foreign-source selection does name one and
+    is built by :func:`build_foreign_source_capture` under its own contract; it
+    is refused here rather than being quietly signed under this one.
+    """
+
+    if not isinstance(selection, DirectByteSpanSelectionV1 | DirectExternalSelectionV1):
+        raise CaptureFormatError(
+            "a logical-source selection is not admissible under the direct CaptureContract"
+        )
     binding_digest = _direct_binding_digest(
         actor_id=actor_id,
         accepted_coordinate=accepted_coordinate,
@@ -1071,9 +1236,107 @@ def build_direct_claim_selection_capture(
     )
     return _store_capture_envelope(
         store=store,
+        contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
         envelope=envelope,
         source_body_digest=source_digest,
         source_body_materialized=materialized,
+    )
+
+
+def build_foreign_source_capture(
+    *,
+    store: CaptureObjectStoreProtocol,
+    actor_id: str,
+    claim_id: str,
+    rationale: str,
+    observed_at: datetime,
+    accepted_coordinate: AcceptedCoordinate,
+    selection: DirectForeignSourceSelectionV1,
+) -> DirectCaptureBuildResult:
+    """Commit one exact span of a foreign logical source as self-asserted evidence.
+
+    Three things are bound and they are deliberately different things. The
+    *coordinate* names the whole source snapshot the proposer presented, by
+    content digest and length, so a reader can tell which revision was read. The
+    *selector* names the window inside that snapshot the Claim is about. The
+    *commitment* is over the selected bytes alone -- not the snapshot -- because
+    that is the unit coverage looks for when the file later moves or changes.
+    """
+
+    contract = foreign_source_capture_contract(selection.logical_source_identity)
+    contract_digest_value = capture_contract_digest(contract).tagged
+    if not store.verify(selection.span.content_digest):
+        raise CaptureFormatError("presented foreign source content is unavailable in CAS")
+    source_bytes = store.read(
+        selection.span.content_digest,
+        access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
+    )
+    if selection.span.end_byte > len(source_bytes):
+        raise CaptureFormatError("selected span exceeds the presented foreign source bytes")
+    selected = source_bytes[selection.span.start_byte : selection.span.end_byte]
+    if len(selected) > contract.selection_budget.max_bytes:
+        raise CaptureFormatError("foreign source selection exceeds its accepted byte budget")
+    selection_digest = CasDigest(hashlib.sha256(selected).hexdigest()).tagged
+    stored = store.store(selected)
+    if stored.digest != selection_digest:
+        raise PlaybillCasError("foreign source selection CAS digest did not reproduce")
+    binding_digest = _direct_binding_digest(
+        actor_id=actor_id,
+        accepted_coordinate=accepted_coordinate,
+    )
+    receipt_digest = typed_digest(
+        Sha256Value,
+        "playbill-foreign-source-capture-receipt-v1",
+        {
+            "actor_id": actor_id,
+            "claim_id": claim_id,
+            "observed_at": _canonical_datetime(observed_at),
+            "rationale": rationale,
+            "selection": selection.model_dump(mode="json"),
+        },
+    ).tagged
+    envelope = CaptureEnvelopeV1(
+        capture_contract_digest=contract_digest_value,
+        source=ExternalSourceReferenceV1(
+            source_identity=selection.logical_source_identity,
+            producer_binding_digest=binding_digest,
+            coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
+            coordinate={
+                "source_byte_length": len(source_bytes),
+                "source_content_digest": selection.span.content_digest,
+            },
+            selector_type=FOREIGN_SOURCE_SELECTOR_TYPE,
+            selector={
+                "claim_id": claim_id,
+                "end_byte": selection.span.end_byte,
+                "start_byte": selection.span.start_byte,
+            },
+            replayability="attested_only",
+        ),
+        commitment=EvidenceCommitmentV1(
+            digest_kind="exact_bytes",
+            digest=selection_digest,
+            byte_length=len(selected),
+            materialization="cas",
+        ),
+        run_coordinate=CaptureRunCoordinateV1(
+            run_kind="provider",
+            run_id=f"foreign-source:{claim_id.casefold()}",
+            bound_generation=accepted_coordinate.generation_root,
+            executable_identity=contract.identity,
+            executable_digest=contract_digest_value,
+        ),
+        run_receipt_digest=receipt_digest,
+        producer=ArtifactIdentity(kind="Principal", name=actor_id),
+        producer_binding_digest=binding_digest,
+        observed_at=observed_at,
+    )
+    return _store_capture_envelope(
+        store=store,
+        contract=contract,
+        envelope=envelope,
+        source_body_digest=selection_digest,
+        source_body_materialized=True,
     )
 
 
@@ -1393,12 +1656,20 @@ __all__ = [
     "DIRECT_SELF_ASSERTED_CONTRACT_ID",
     "DIRECT_EXTERNAL_COORDINATE_TYPES",
     "DIRECT_EXTERNAL_SELECTOR_TYPES",
+    "FOREIGN_SOURCE_CONTRACT_PREFIX",
+    "FOREIGN_SOURCE_COORDINATE_TYPE",
+    "FOREIGN_SOURCE_MAX_BYTES",
+    "FOREIGN_SOURCE_PROVENANCE_RULE",
+    "FOREIGN_SOURCE_REPLAY_POLICY",
+    "FOREIGN_SOURCE_SELECTOR_TYPE",
+    "FOREIGN_SOURCE_SUBJECT_MAPPING",
     "PLAYBILL_CAPTURE_COMPONENTS",
     "DirectCaptureBuildResult",
     "DirectByteSpanSelectionV1",
     "DirectClaimSelectionV1",
     "DirectClaimSourceV1",
     "DirectExternalSelectionV1",
+    "DirectForeignSourceSelectionV1",
     "InputReceiptSetManifestV1",
     "LedgerMaterialResolverProtocol",
     "SourceEffectiveTimeV1",
@@ -1406,11 +1677,15 @@ __all__ = [
     "build_direct_claim_selection_capture",
     "build_cas_capture",
     "build_derived_cas_capture",
+    "build_foreign_source_capture",
     "build_ledger_capture",
     "capture_contract_digest",
+    "capture_contract_is_self_asserted",
     "capture_contract_path",
     "capture_component_pin",
     "capture_digest",
+    "foreign_source_capture_contract",
+    "foreign_source_contract_id",
     "evaluate_capture_contract_law",
     "parse_capture_contract",
     "parse_capture_envelope",

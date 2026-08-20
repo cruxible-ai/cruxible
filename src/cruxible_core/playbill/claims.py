@@ -27,11 +27,11 @@ from cruxible_core.playbill.canonical import (
     typed_digest,
 )
 from cruxible_core.playbill.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
     CaptureContractV1,
     CaptureObjectStoreProtocol,
     LedgerMaterialResolverProtocol,
+    capture_contract_is_self_asserted,
     verify_capture,
 )
 from cruxible_core.playbill.claim_attestations import (
@@ -1066,7 +1066,7 @@ def evaluate_claim_law(
                 epistemic_grade=resolved_contract.contract.epistemic_grade,
                 provenance_grade=(
                     "self-asserted"
-                    if resolved_contract.contract == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+                    if capture_contract_is_self_asserted(resolved_contract.contract)
                     else "daemon-fetched"
                 ),
                 observed_at=envelope.observed_at,

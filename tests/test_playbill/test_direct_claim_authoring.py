@@ -10,8 +10,16 @@ from pydantic import ValidationError
 
 from cruxible_core.playbill.artifacts import ArtifactIdentity
 from cruxible_core.playbill.captures import (
+    CaptureFormatError,
     DirectByteSpanSelectionV1,
     DirectExternalSelectionV1,
+    DirectForeignSourceSelectionV1,
+    build_direct_claim_selection_capture,
+    capture_contract_digest,
+    capture_contract_is_self_asserted,
+    capture_contract_path,
+    evaluate_capture_contract_law,
+    foreign_source_capture_contract,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import claim_type_digest
@@ -531,6 +539,228 @@ def test_typed_external_selection_is_retained_as_attested_metadata(
     )
     assert opened.status == "attested_only"
     assert opened.coverage.reason_codes == ("external_attested_only",)
+
+
+def test_foreign_source_contract_satisfies_the_unexempted_capture_component_laws() -> None:
+    """The per-source contract earns acceptance; it does not inherit an exemption.
+
+    `DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT` is exempted from the component and
+    rule registry checks because it *is* the built-in constant. A foreign-source
+    contract is an ordinary artifact and passes both checks on its own, which is
+    only possible because reviewed code registered honestly-named components for
+    it -- a proposer-asserted provenance rule rather than the daemon-fetched one.
+    """
+
+    contract = foreign_source_capture_contract("corpus.handbook")
+
+    law = evaluate_capture_contract_law(
+        contract,
+        path=capture_contract_path(contract.identity.name),
+        actor_roles=("owner",),
+        predecessor=None,
+    )
+
+    assert law.verdict == "accepted"
+    assert law.artifact_digest == capture_contract_digest(contract).tagged
+    assert law.required_tier == "governed_write"
+    assert contract.logical_source_identities == ("corpus.handbook",)
+    assert contract.allowed_source_kinds == ("external",)
+    assert contract.evidence_kinds == ("self_asserted",)
+    # The grade is read off the declared rule, so proposer-supplied bytes can
+    # never be reported as though a daemon had fetched them.
+    assert capture_contract_is_self_asserted(contract) is True
+
+
+def test_foreign_source_identity_that_cannot_be_path_addressed_is_refused() -> None:
+    with pytest.raises(ValidationError):
+        DirectForeignSourceSelectionV1(
+            logical_source_identity="Corpus.Handbook",
+            span=ContentSpan(content_digest="sha256:" + "ab" * 32, start_byte=0, end_byte=4),
+        )
+    with pytest.raises(ValidationError):
+        DirectForeignSourceSelectionV1(
+            logical_source_identity="c" * 250,
+            span=ContentSpan(content_digest="sha256:" + "ab" * 32, start_byte=0, end_byte=4),
+        )
+
+
+def test_direct_selection_builder_refuses_a_logical_source_selection(tmp_path: Path) -> None:
+    """The direct contract declares one logical source and it is not a corpus file."""
+
+    instance, _ = initialize_local(tmp_path)
+    stored = instance.body_store().store(b"status: ready\n")
+
+    with pytest.raises(CaptureFormatError):
+        build_direct_claim_selection_capture(
+            store=instance.body_store(),
+            actor_id="owner",
+            claim_id="CLM-" + "0" * 32,
+            rationale="never signed under the wrong contract",
+            observed_at=datetime.fromisoformat("2026-08-16T20:00:00+00:00"),
+            accepted_coordinate=instance.accepted_coordinate(),
+            selection=DirectForeignSourceSelectionV1(  # type: ignore[arg-type]
+                logical_source_identity="corpus.handbook",
+                span=ContentSpan(
+                    content_digest=stored.digest,
+                    start_byte=0,
+                    end_byte=6,
+                ),
+            ),
+        )
+
+
+def test_foreign_source_selection_commits_to_the_selected_span_under_its_own_contract(
+    tmp_path: Path,
+) -> None:
+    """One authored Claim, two Captures, and only one of them names a source."""
+
+    instance, owner = initialize_local(tmp_path)
+    presented = b"# handbook\n\nstatus: ready\n"
+    stored = instance.body_store().store(presented)
+    start = presented.index(b"status: ready\n")
+    selection = DirectForeignSourceSelectionV1(
+        logical_source_identity="corpus.handbook",
+        span=ContentSpan(
+            content_digest=stored.digest,
+            start_byte=start,
+            end_byte=start + len(b"status: ready\n"),
+        ),
+        media_type="text/markdown",
+    )
+
+    proposed = service_propose_playbill_claim(
+        instance,
+        authoring=_authoring().model_copy(update={"source_selection": selection}),
+        actor_id="owner",
+        proposal_name="ready-from-corpus",
+        timestamp=TIMESTAMP,
+    )
+    evaluated_oid = proposed.proposal.proposal.evaluation.evaluated_tree_oid
+    assert evaluated_oid is not None
+    contract = foreign_source_capture_contract("corpus.handbook")
+    assert capture_contract_path(contract.identity.name) in instance.proposal_tree(evaluated_oid)
+
+    _activate_direct_claim(instance, owner, proposed)
+    explanation = service_explain_playbill_claim(instance, identity=proposed.claim_identity)
+    external = next(
+        handle for handle in explanation.source_handles if handle.source.kind == "external"
+    )
+
+    # The coordinate names the presented snapshot; the selector names the window
+    # inside it; the commitment is over the selected bytes alone.
+    assert external.source.source_identity == "corpus.handbook"
+    assert external.source.coordinate == {
+        "source_byte_length": len(presented),
+        "source_content_digest": stored.digest,
+    }
+    assert external.source.selector == {
+        "claim_id": proposed.claim_identity.removeprefix("Claim:"),
+        "end_byte": start + len(b"status: ready\n"),
+        "start_byte": start,
+    }
+    assert external.source.replayability == "attested_only"
+    assert external.commitment.digest_kind == "exact_bytes"
+    assert external.commitment.byte_length == len(b"status: ready\n")
+    assert external.commitment.materialization == "cas"
+    # Dereference asks whether the *source* can be re-read, and it cannot: the
+    # proposer presented these bytes and the daemon can reach `corpus.handbook`
+    # never. The retained material is what coverage matches against; it is not a
+    # licence to report a replay that did not happen.
+    opened = service_open_playbill_source(
+        instance,
+        request=OpenSourceRequestV1(
+            source_handle=external,
+            resource_budget_bytes=len(presented),
+        ),
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+    )
+    assert opened.status == "attested_only"
+    assert opened.coverage.reason_codes == ("external_attested_only",)
+    grades = {
+        item.capture_digest: item.provenance_grade
+        for item in explanation.law_evidence.verdict_captures
+    }
+    assert set(grades.values()) == {"self-asserted"}
+
+
+def test_a_second_claim_against_an_accepted_foreign_source_reuses_its_contract(
+    tmp_path: Path,
+) -> None:
+    """Governing one source repeatedly is the ordinary case, not a succession.
+
+    The per-source contract is written by whichever authoring reaches the source
+    first. A later authoring writes byte-identical content, so the contract is
+    not a changed member at all -- which is what keeps a growing corpus from
+    needing a CaptureContract succession per file.
+    """
+
+    instance, owner = initialize_local(tmp_path)
+    presented = b"# handbook\n\nstatus: ready\nstatus: blocked\n"
+    stored = instance.body_store().store(presented)
+    contract = foreign_source_capture_contract("corpus.handbook")
+    contract_path = capture_contract_path(contract.identity.name)
+
+    def _authoring_for(window: bytes) -> DirectClaimAuthoringV1:
+        start = presented.index(window)
+        return _authoring().model_copy(
+            update={
+                "source_selection": DirectForeignSourceSelectionV1(
+                    logical_source_identity="corpus.handbook",
+                    span=ContentSpan(
+                        content_digest=stored.digest,
+                        start_byte=start,
+                        end_byte=start + len(window),
+                    ),
+                )
+            }
+        )
+
+    first = service_propose_playbill_claim(
+        instance,
+        authoring=_authoring_for(b"status: ready\n"),
+        actor_id="owner",
+        proposal_name="first-corpus-claim",
+        timestamp=TIMESTAMP,
+    )
+    first_oid = first.proposal.proposal.evaluation.evaluated_tree_oid
+    assert first_oid is not None
+    assert contract_path in instance.proposal_tree(first_oid)
+    _activate_direct_claim(instance, owner, first)
+
+    second = service_propose_playbill_claim(
+        instance,
+        authoring=_authoring_for(b"status: blocked\n").model_copy(
+            update={
+                "existing_statement_handoffs": (
+                    ExistingStatementHandoffV1(
+                        statement_digest=first.statement_digest,
+                        disposition="not_tested",
+                    ),
+                ),
+            }
+        ),
+        actor_id="owner",
+        proposal_name="second-corpus-claim",
+        timestamp=TIMESTAMP,
+    )
+
+    second_oid = second.proposal.proposal.evaluation.evaluated_tree_oid
+    assert second_oid is not None
+    assert contract_path in instance.proposal_tree(second_oid)
+    _activate_direct_claim(instance, owner, second, sequence=2)
+
+    # The contract is present in the accepted tree and absent from the second
+    # change set: identical bytes are not a change, so no succession law is ever
+    # consulted and no CaptureContract predecessor has to be tracked.
+    record = instance.accepted_history()[-1].record
+    assert record is not None
+    assert contract_path not in {member.path for member in record.members}
+
+    explanation = service_explain_playbill_claim(instance, identity=second.claim_identity)
+    external = next(
+        handle for handle in explanation.source_handles if handle.source.kind == "external"
+    )
+    assert external.source.source_identity == "corpus.handbook"
 
 
 def test_competing_claims_require_handoffs_report_conflict_and_preserve_lineage(
