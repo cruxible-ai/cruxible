@@ -717,6 +717,102 @@ def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
     assert sorted(module for module in imported if module in forbidden) == []
 
 
+def test_pc_f3_native_render_adds_no_authority_and_reads_no_clock() -> None:
+    """A render is a checkout: it reads accepted state and writes nothing, ever.
+
+    Two statements, both structural. The lens imports from an explicit read-side
+    allowlist, so there is no name in scope through which a render could propose,
+    compile, accept, activate, settle, or reach the ledger -- and in particular
+    it never imports the coverage *resolver's* forbidden set either, because
+    §11.9 forbids a second compiler, index, or state authority rather than
+    merely discouraging one. And no module in the package calls a clock, which is
+    the §11.9.6 "render never samples wall clock" law: the read time arrives in
+    the explicit render context, and the CLI is the only place a clock is read.
+    """
+
+    package = CORE / "playbill" / "native"
+    modules = sorted(path.stem for path in package.glob("*.py"))
+    assert modules == [
+        "__init__",
+        "context",
+        "grammar",
+        "lens",
+        "manifest",
+        "parse",
+        "state",
+        "sync",
+        "verify",
+    ]
+
+    permitted = {
+        "cruxible_core",
+        "cruxible_core.playbill",
+        "cruxible_core.playbill.canonical",
+        "cruxible_core.playbill.claim_verdicts",
+        "cruxible_core.playbill.claims",
+        "cruxible_core.playbill.coverage",
+        "cruxible_core.playbill.coverage.adapter",
+        "cruxible_core.playbill.coverage.contracts",
+        "cruxible_core.playbill.coverage.indexes",
+        "cruxible_core.playbill.coverage.manifest",
+        "cruxible_core.playbill.coverage.resolver",
+        "cruxible_core.playbill.errors",
+        "cruxible_core.playbill.native",
+        "cruxible_core.playbill.native.context",
+        "cruxible_core.playbill.native.grammar",
+        "cruxible_core.playbill.native.lens",
+        "cruxible_core.playbill.native.manifest",
+        "cruxible_core.playbill.native.parse",
+        "cruxible_core.playbill.native.state",
+        "cruxible_core.playbill.native.sync",
+        "cruxible_core.playbill.native.verify",
+        "cruxible_core.playbill.projection",
+        "cruxible_core.playbill.query",
+        "cruxible_core.playbill.query.grammar",
+        "cruxible_core.playbill.semantic",
+    }
+    forbidden = (
+        "cruxible_core.playbill.activation",
+        "cruxible_core.playbill.compiler",
+        "cruxible_core.playbill.git",
+        "cruxible_core.playbill.instance",
+        "cruxible_core.playbill.proposals",
+        "cruxible_core.playbill.service",
+        "cruxible_core.playbill.settlement",
+        "cruxible_core.server",
+        "cruxible_core.service",
+        "cruxible_core.storage",
+    )
+
+    imported: set[str] = set()
+    for path in package.glob("*.py"):
+        imported.update(module for module in _imports(path) if module.startswith("cruxible_core"))
+    assert sorted(imported - permitted) == []
+    assert sorted(module for module in imported if module in forbidden) == []
+
+    clock_calls: list[str] = []
+    for path in sorted(package.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr in {"now", "utcnow", "today", "time", "monotonic"}:
+                    clock_calls.append(f"{path.name}:{node.lineno}")
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                names = (
+                    [alias.name for alias in node.names]
+                    if isinstance(node, ast.Import)
+                    else [node.module or ""]
+                )
+                assert "time" not in names, f"{path.name} imports a clock"
+    assert clock_calls == []
+
+    # The filesystem is the caller's, not the renderer's: §11.9.5 keeps
+    # rendering and committing separate operations even for the invoking actor.
+    for path in sorted(package.glob("*.py")):
+        for imported_module in _imports(path):
+            assert imported_module not in {"os", "shutil", "subprocess"}, path.name
+
+
 def test_destructive_pass_oracles_are_exact_and_immutable() -> None:
     metadata = json.loads((GOLDENS / "oracles-v1.json").read_text(encoding="utf-8"))
     assert metadata["format"] == "playbill-oracles-v1"

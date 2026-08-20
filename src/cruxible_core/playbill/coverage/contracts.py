@@ -535,6 +535,69 @@ class CoverageResultV1(_StrictCoverageModel):
         return self
 
 
+# -- the manifest family --------------------------------------------------
+
+
+class CoverageManifestProfileV1(_StrictCoverageModel):
+    """The fields every §11.6.3 manifest binds, in one place, so profiles inherit.
+
+    §11.6.3 requires every coverage result *or manifest* to bind the instance and
+    accepted coordinate, the compiler/index digest, the working-set scope, the
+    access profile, the manifest epoch, watcher health, and completeness with its
+    truncation. Surfaces that publish a boundary differ only in what they can
+    honestly fill in and what they add: an exported floor observes no working
+    snapshot, so its epoch is absent; a render adds a lens and per-file
+    baselines. Those are **profiles of one family**, not separate schemas, and
+    they say so by subclassing this record rather than by re-listing its fields
+    and hoping they stay in step.
+
+    Two fields stay wide here on purpose. ``epoch`` and ``watcher_health`` are
+    filled by profiles that observe a working snapshot and left at "no snapshot"
+    by profiles that do not; a profile that can never observe one narrows them
+    with its own validator rather than with a narrowed annotation, so the family
+    keeps one type for one field.
+    """
+
+    format: Literal["playbill-coverage-manifest-v1"] = "playbill-coverage-manifest-v1"
+    instance_id: str
+    coordinate: AcceptedCoordinate
+    index_digest: str
+    access_profile_id: str
+    watcher_health: CoverageWatcherHealthV1 = "absent"
+    epoch: int | None = Field(default=None, ge=0)
+    completeness: Literal["complete", "partial"]
+    truncation_reason_codes: tuple[str, ...] = ()
+    scope: tuple[LogicalSourceIdentityV1, ...] = ()
+
+    @field_validator("index_digest")
+    @classmethod
+    def _index_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("truncation_reason_codes")
+    @classmethod
+    def _reasons(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != byte_sorted(value):
+            raise ValueError("manifest truncation reason codes must be sorted and unique")
+        return value
+
+    @field_validator("scope")
+    @classmethod
+    def _scope(
+        cls, value: tuple[LogicalSourceIdentityV1, ...]
+    ) -> tuple[LogicalSourceIdentityV1, ...]:
+        if value != logical_sources_sorted(value):
+            raise ValueError("manifest scope sources must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _completeness_is_explained(self) -> "CoverageManifestProfileV1":
+        if (self.completeness == "partial") != bool(self.truncation_reason_codes):
+            raise ValueError("manifest completeness must agree with its truncation reasons")
+        return self
+
+
 def weakest_health(*values: CoverageHealthV1) -> CoverageHealthV1:
     """Combine health floors: the weakest wins, always."""
 
@@ -570,6 +633,7 @@ __all__ = [
     "CoverageError",
     "CoverageHealthV1",
     "CoverageLineOverlayV1",
+    "CoverageManifestProfileV1",
     "CoverageMatchStateV1",
     "CoverageRequestV1",
     "CoverageResultV1",

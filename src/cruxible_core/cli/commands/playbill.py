@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
@@ -18,6 +21,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.playbill import native
 from cruxible_core.playbill.attestations import ApprovalStatement
 from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.coverage.adapter import (
@@ -30,6 +34,7 @@ from cruxible_core.playbill.coverage.adapter import (
     selection_for_lines,
 )
 from cruxible_core.playbill.coverage.contracts import (
+    CoverageAccessProfileV1,
     CoverageResultV1,
     LogicalSourceIdentityV1,
 )
@@ -39,6 +44,8 @@ from cruxible_core.playbill.coverage.render import (
 )
 from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.playbill.native.grammar import NativeRenderError
+from cruxible_core.playbill.native.manifest import parse_native_manifest
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.review import (
@@ -1081,6 +1088,248 @@ def export_floor(output: str, force: bool, output_json: bool) -> None:
     click.echo(f"Wrote {len(result.files)} floor file(s) to {destination}")
     click.echo(f"Floor digest: {result.manifest['floor_digest']}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
+@playbill_group.group("native")
+def native_group() -> None:
+    """Check out accepted knowledge as an editable in-repo working tree."""
+
+
+def _native_state(client: CruxibleClient, instance_id: str) -> native.NativeAcceptedStateV1:
+    """Assemble the render input from the served reads that already exist.
+
+    No operation is added for this. The lens is a pure function of accepted
+    state, and every part of that state is already reachable: the artifact reads
+    return the envelopes and facts, and the floor export publishes the §11.6.3
+    coverage boundary the render manifest inherits. Rendering here rather than
+    on the daemon also keeps the §11.9.5 explicit-sync law structural -- the
+    daemon has no path by which it could write into a user's repository, because
+    it never produced the bytes.
+
+    A Claim's verdict comes from its accepted ``current_verdict`` projection,
+    which the list read already carries, so this costs one call per artifact kind
+    rather than one call per Claim.
+    """
+
+    floor = client.export_playbill_floor(instance_id)
+    boundary_file = next(
+        (item for item in floor.files if item.path == "coverage-manifest.json"), None
+    )
+    if boundary_file is None:
+        raise click.ClickException("The floor export carries no coverage boundary to inherit.")
+    boundary = native.native_boundary_from_floor(
+        json.loads(base64.b64decode(boundary_file.content_base64, validate=True))
+    )
+    return native.build_native_state(
+        instance_id=instance_id,
+        at=AcceptedCoordinate.model_validate(floor.coordinate.model_dump(mode="json")),
+        boundary=boundary,
+        subjects=[
+            native.artifact_record_from_projection("Subject", view.envelope)
+            for view in client.list_playbill_subjects(instance_id).subjects
+        ],
+        claim_types=[
+            native.artifact_record_from_projection(
+                "ClaimType",
+                view.envelope,
+                path=view.path,
+                identity=view.identity,
+                artifact_digest=view.artifact_digest,
+            )
+            for view in client.list_playbill_claim_types(instance_id).claim_types
+        ],
+        query_definitions=[
+            native.artifact_record_from_projection(
+                "QueryDefinition",
+                view.envelope,
+                path=view.path,
+                identity=view.identity,
+                artifact_digest=view.artifact_digest,
+            )
+            for view in client.list_playbill_query_definitions(instance_id).query_definitions
+        ],
+        documents=[
+            native.artifact_record_from_projection("Document", view.envelope)
+            for view in client.list_playbill_documents(instance_id).documents
+        ],
+        claims=[
+            native.claim_record_from_projection(view.envelope, view.facts)
+            for view in client.list_playbill_claims(instance_id).claims
+        ],
+    )
+
+
+def _read_native_tree(root: Path) -> dict[str, bytes]:
+    """Read the rendered working tree as it currently is, manifest included."""
+
+    if not root.is_dir():
+        raise click.ClickException(f"Not a rendered knowledge directory: {root}")
+    files: dict[str, bytes] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if relative.endswith(".md") or relative == native.NATIVE_RENDER_MANIFEST_PATH:
+            files[relative] = path.read_bytes()
+    return files
+
+
+def _native_manifest(root: Path) -> native.NativeRenderManifestV1:
+    target = root / native.NATIVE_RENDER_MANIFEST_PATH
+    try:
+        content = target.read_bytes()
+    except OSError as exc:
+        raise click.ClickException(
+            f"No render manifest at {target}. Run `cruxible playbill native render` first."
+        ) from exc
+    try:
+        return parse_native_manifest(content)
+    except NativeRenderError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
+@native_group.command("render")
+@click.option("--output", required=True, type=click.Path(file_okay=False))
+@click.option(
+    "--evaluation-time",
+    default=None,
+    help="Explicit ISO-8601 read time. Defaults to now; the renderer never reads a clock.",
+)
+@click.option(
+    "--discard",
+    is_flag=True,
+    help="Discard local edits in editable regions instead of refusing to overwrite them.",
+)
+@json_option
+@handle_errors
+def render_native(
+    output: str,
+    evaluation_time: str | None,
+    discard: bool,
+    output_json: bool,
+) -> None:
+    """Check out accepted knowledge as a browsable, editable Markdown tree.
+
+    Rendering and writing are separate acts. The lens returns bytes; this command
+    writes them, and it refuses to overwrite an editable region you have edited
+    unless you pass --discard.
+    """
+
+    read_at = (
+        datetime.now(UTC) if evaluation_time is None else datetime.fromisoformat(evaluation_time)
+    )
+    if read_at.tzinfo is None:
+        raise click.BadParameter("an evaluation time must carry an explicit offset")
+    state = _server_call(_native_state, command_name="playbill native render")
+    ctx = native.whole_scope_context(
+        instance_id=state.instance_id,
+        at=state.at,
+        evaluation_time=read_at,
+        access_profile=CoverageAccessProfileV1(profile_id=state.boundary.access_profile_id),
+    )
+    render = native.build_native_render(state, ctx)
+
+    destination = Path(output).expanduser()
+    existing = _read_native_tree(destination) if destination.is_dir() else {}
+    if native.NATIVE_RENDER_MANIFEST_PATH in existing:
+        plan = native.plan_native_render(
+            existing,
+            manifest=_native_manifest(destination),
+            render=render,
+            discard=discard,
+        )
+    else:
+        plan = native.NativeRenderPlanV1(
+            write_paths=tuple(sorted(render.files, key=lambda item: item.encode("utf-8")))
+        )
+
+    root = destination.resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    for relative in plan.write_paths:
+        target = (destination / relative).resolve()
+        if not target.is_relative_to(root):
+            raise click.ClickException(f"Refusing to write outside the render root: {relative}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(render.files[relative])
+    for relative in plan.delete_paths:
+        (destination / relative).unlink(missing_ok=True)
+
+    if output_json:
+        _emit_json(
+            {
+                "manifest": render.manifest.model_dump(mode="json"),
+                "plan": plan.model_dump(mode="json"),
+            }
+        )
+        return
+    click.echo(f"Rendered {len(render.files)} file(s) into {destination}")
+    click.echo(f"Wrote {len(plan.write_paths)}, unchanged {len(plan.unchanged_paths)}")
+    click.echo(f"Generation: {render.manifest.coordinate.generation_root}")
+    click.echo(f"Lens: {render.manifest.lens.lens_id} v{render.manifest.lens.lens_version}")
+    click.echo(f"Render digest: {render.manifest.render_digest}")
+
+
+@native_group.command("status")
+@click.argument("directory", type=click.Path(file_okay=False))
+@json_option
+@handle_errors
+def native_status_cmd(directory: str, output_json: bool) -> None:
+    """Report which rendered fields are clean, edited, or tampered with.
+
+    A working-tree question, answered against the render baseline in the
+    directory, so it needs no daemon and grants nothing. The derived display
+    beside a dirty field is invalidated through the coverage resolver rather
+    than by this command's own reckoning: the rendered file is a working source,
+    and the resolver is the one place a working occurrence is compared with what
+    accepted state says about it.
+    """
+
+    root = Path(directory).expanduser()
+    files = _read_native_tree(root)
+    manifest = _native_manifest(root)
+    parsed = native.parse_native_tree(files, manifest=manifest)
+    status = native.native_status(files, manifest=manifest, parsed=parsed)
+    invalidation = native.resolve_native_invalidation(
+        files,
+        manifest=manifest,
+        ctx=native.render_context_from_manifest(manifest),
+        parsed=parsed,
+    )
+    if output_json:
+        _emit_json(
+            {
+                "status": status.model_dump(mode="json"),
+                "invalidation": invalidation.model_dump(mode="json"),
+            }
+        )
+        return
+    click.echo(
+        f"Playbill native render: generation {status.baseline_generation_root}, "
+        f"lens {status.lens_id} v{status.lens_version}"
+    )
+    click.echo(f"rendered at {status.evaluation_time}, render digest {status.render_digest}")
+    for item in status.files:
+        click.echo(
+            f"{item.state:>11}  {item.path}  "
+            f"{item.region_count} region(s): {item.clean_regions} clean, "
+            f"{item.dirty_regions} dirty, {item.tampered_regions} tampered, "
+            f"{item.ambiguous_regions} ambiguous, {item.unbaselined_regions} unbaselined"
+        )
+    for path in status.missing_paths:
+        click.echo(f"    missing  {path}  (removal is never inferred as retirement)")
+    for path in status.untracked_paths:
+        click.echo(f"  untracked  {path}  (no render baseline; not compilable)")
+    for diagnostic in status.diagnostics:
+        if diagnostic.severity == "refusal":
+            click.echo(f"    refusal  {diagnostic.code}  {diagnostic.message}")
+    for line in render_coverage_result(invalidation.coverage):
+        click.echo(line)
+    if invalidation.invalidated_region_ids:
+        click.echo(
+            f"invalidated derived fields: {len(invalidation.invalidated_region_ids)} "
+            f"beside {len(invalidation.drifted_addresses)} edited statement(s); "
+            "no governance fact reaches the edited material"
+        )
 
 
 @playbill_group.group("coverage")

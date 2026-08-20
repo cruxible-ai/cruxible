@@ -24,13 +24,13 @@ import hashlib
 from collections.abc import Mapping
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import claim_type_path, parse_claim_type
 from cruxible_core.playbill.claims import ClaimArtifact
-from cruxible_core.playbill.coverage.contracts import LogicalSourceIdentityV1
+from cruxible_core.playbill.coverage.contracts import CoverageManifestProfileV1
 from cruxible_core.playbill.coverage.indexes import evidence_citation_index_digest
 from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -97,36 +97,34 @@ class PlaybillFloorManifestV1(_StrictFloorModel):
     floor_digest: str
 
 
-class PlaybillFloorCoverageManifestV1(_StrictFloorModel):
+class PlaybillFloorCoverageManifestV1(CoverageManifestProfileV1):
     """The coverage boundary an exported floor carries with it (§11.6.3, §11.7).
 
-    A profile of the coverage-manifest family, honest about which fields an
-    export can fill. It binds the instance, the accepted coordinate, the
-    evidence-index generation, the access profile the boundary was computed
-    under, and the declared scope -- the logical sources accepted evidence
-    actually cites there.
+    A **profile of the coverage-manifest family**: every §11.6.3 field is
+    inherited from :class:`CoverageManifestProfileV1` rather than restated, so
+    the floor boundary and every later profile cannot drift apart into two
+    schemas. What this profile adds is the two counts that say how much accepted
+    evidence the boundary was computed over.
 
     ``epoch`` and per-source commitments are absent by construction: an export
     observes no working snapshot, so it has nothing to be fresh *against*.
     ``watcher_health`` is `absent` for the same reason, and the floor alone
-    therefore proves no `exact` match. This is the §11.6.3 completeness
-    boundary, stated in a file, so an agent reading the floor without a daemon
-    knows exactly what a `none` would and would not have meant.
+    therefore proves no `exact` match. Both are enforced below rather than
+    narrowed in the annotation, because the family keeps one type per field.
+    This is the §11.6.3 completeness boundary, stated in a file, so an agent
+    reading the floor without a daemon knows exactly what a `none` would and
+    would not have meant.
     """
 
     tag: Literal["playbill-floor-coverage-manifest-v1"] = "playbill-floor-coverage-manifest-v1"
-    format: Literal["playbill-coverage-manifest-v1"] = "playbill-coverage-manifest-v1"
-    instance_id: str
-    coordinate: PlaybillAcceptedCoordinate
-    index_digest: str
-    access_profile_id: str
-    watcher_health: Literal["absent"] = "absent"
-    epoch: None = None
-    completeness: Literal["complete", "partial"]
-    truncation_reason_codes: tuple[str, ...] = ()
-    scope: tuple[LogicalSourceIdentityV1, ...]
     cited_commitment_count: int
     exact_bytes_commitment_count: int
+
+    @model_validator(mode="after")
+    def _export_observes_no_snapshot(self) -> "PlaybillFloorCoverageManifestV1":
+        if self.epoch is not None or self.watcher_health != "absent":
+            raise ValueError("an exported floor observes no working snapshot and proves no epoch")
+        return self
 
 
 def _resolve_coordinate(

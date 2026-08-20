@@ -49,6 +49,8 @@ playbill explain
 playbill floor export
 playbill host create
 playbill init
+playbill native render
+playbill native status
 playbill principal list
 playbill principal recover
 playbill principal revoke

@@ -174,6 +174,57 @@ non-empty output directory unless --force is given. The export carries its own
 coverage boundary in `coverage-manifest.json`, enumerated in the root manifest
 like every other floor file.
 
+## playbill native
+
+~~~text
+cruxible playbill native render --output DIR
+  [--evaluation-time ISO-8601] [--discard]
+cruxible playbill native status DIR
+~~~
+
+The ledger is the semantic object store; the rendered directory is its editable
+working tree. `render` checks out accepted knowledge as browsable Markdown --
+one page per Subject with its Claims grouped by predicate, plus pages for
+ClaimTypes, QueryDefinitions, and Documents, a `README.md` orientation floor,
+and a `render-manifest.json` holding the baseline every field is compared
+against. The render is a pure function of accepted state and an explicit render
+context, so the same generation and the same read time always produce identical
+bytes; the CLI supplies the read time, and the renderer never reads a clock.
+
+Fields are typed. Statement values and qualifiers are editable and free-form
+inside themselves; verdict, provenance, and coverage blocks are derived, always
+rendered generation- and time-qualified, and regenerate rather than accept an
+edit. Editing changes nothing accepted: compile is a separate gate.
+
+`render` writes the bytes -- the daemon never writes into a repository -- and
+refuses to overwrite an editable field you have edited unless you pass
+`--discard`, naming every dirty field it would otherwise have lost.
+
+`status` compares a rendered directory against its own baseline and needs no
+daemon:
+
+~~~text
+      clean  subjects/project.work_item/wi-43.md  8 region(s): 8 clean, 0 dirty, ...
+      dirty  subjects/project.work_item/wi-42.md  8 region(s): 7 clean, 1 dirty, ...
+Playbill coverage: 1 exact, 2 drifted, 3 candidates, 1 none
+invalidated derived fields: 2 beside 1 edited statement(s); no governance fact
+reaches the edited material
+~~~
+
+The invalidation half of that answer comes from the coverage resolver, not from
+`status` itself: a rendered file is a working source, the render baseline is what
+accepted state said its bytes were at that generation, and the drift the resolver
+reports is what invalidates the verdict and provenance blocks beside an edited
+field. No card it returns can grant the edited material a governance fact.
+
+Deleting a rendered file or directory loses uncompiled local edits and nothing
+else; removal is never inferred as retirement.
+
+The render format is deliberately experimental through dogfood. The typed
+editable/derived split and the round-trip laws are the contract; the Markdown
+spellings and the invisible marker channel are versioned by the lens and
+expected to change.
+
 ## playbill coverage
 
 ~~~text

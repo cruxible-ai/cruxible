@@ -489,6 +489,21 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="sources_group",
             ),
+            "native": _group(
+                "Check out accepted knowledge as an editable in-repo working tree.",
+                {
+                    "render": _command(
+                        "playbill", "render_native", "Render accepted knowledge as Markdown."
+                    ),
+                    "status": _command(
+                        "playbill",
+                        "native_status_cmd",
+                        "Report clean, edited, and tampered fields.",
+                    ),
+                },
+                module="playbill",
+                attr="native_group",
+            ),
             "principal": _group(
                 "Govern owner, reviewer, and recovery public keys.",
                 {
