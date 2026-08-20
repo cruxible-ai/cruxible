@@ -73,7 +73,7 @@ from cruxible_core.playbill.coverage.manifest import (
 )
 from cruxible_core.playbill.coverage.resolver import resolve_coverage
 from cruxible_core.playbill.native.context import RenderContextV1
-from cruxible_core.playbill.native.grammar import NativeLocatorV1
+from cruxible_core.playbill.native.grammar import NativeLocatorV1, locator_lens_matches
 from cruxible_core.playbill.native.manifest import (
     NativeRegionBaselineV1,
     NativeRenderFileV1,
@@ -172,8 +172,7 @@ def verify_native_locator(
     accepted = _accepted_digests(state)
     key = locator.address.model_dump_json().encode("utf-8")
 
-    lens = manifest.lens
-    if locator.lens_id != lens.lens_id or locator.lens_version != lens.lens_version:
+    if not locator_lens_matches(locator, manifest.lens):
         reasons.append("lens_mismatch")
     if locator.generation_root != manifest.coordinate.generation_root:
         reasons.append("generation_mismatch")

@@ -36,11 +36,15 @@ from cruxible_core.playbill.native import (
     compile_native_tree,
     native_boundary_from_manifest,
     native_review_currency,
+    parse_native_tree,
     render_context_from_manifest,
+    verify_native_locator,
 )
 from cruxible_core.playbill.native.grammar import (
     NativeDraftMarkerV1,
+    parse_region_open,
     render_draft_marker,
+    render_region_open,
 )
 from cruxible_core.playbill.native.manifest import NativeRenderManifestV1
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
@@ -403,6 +407,69 @@ def test_a_duplicated_locator_refuses_as_ambiguity(tmp_path: Path) -> None:
 
     assert any(item.code == "locator_duplicated" for item in result.refusals)
     assert result.members == ()
+
+
+def _forge_lens(files: dict[str, bytes], path: str, **forgery: object) -> dict[str, bytes]:
+    """Restate every locator in one file under a forged lens, changing nothing else.
+
+    Region identity, baseline digest, address, artifact digest, and generation
+    root all survive verbatim: the only lie in the tree is which lens claims to
+    have minted the region.
+    """
+
+    forged: list[str] = []
+    for line in files[path].decode("utf-8").splitlines(keepends=True):
+        locator = parse_region_open(line)
+        if locator is None:
+            forged.append(line)
+            continue
+        ending = line[len(line.rstrip("\n")) :]
+        forged.append(render_region_open(locator.model_copy(update=forgery)) + ending)
+    edited = dict(files)
+    edited[path] = "".join(forged).encode("utf-8")
+    return edited
+
+
+@pytest.mark.parametrize(
+    "forgery",
+    [{"lens_id": "playbill-native-markdown-forged"}, {"lens_version": 99}],
+    ids=["lens_id", "lens_version"],
+)
+def test_a_forged_locator_lens_refuses_at_the_parse_gate(
+    tmp_path: Path, forgery: dict[str, object]
+) -> None:
+    """Compile may not admit a lens identity the standalone verifier refuses."""
+
+    instance, _owner, files, manifest = _seeded(tmp_path)
+    forged = _forge_lens(_edit(files, WI_42, READY, DONE), WI_42, **forgery)
+
+    forged_locator = next(
+        locator
+        for line in forged[WI_42].decode("utf-8").splitlines()
+        if (locator := parse_region_open(line)) is not None
+    )
+    parsed = parse_native_tree(forged, manifest=manifest)
+    regions = tuple(item for item in parsed.regions if item.path == WI_42)
+    result = _compiled(instance, forged, manifest)
+    verdict = verify_native_locator(
+        forged_locator,
+        state=native_state(instance),
+        manifest=manifest,
+        path=WI_42,
+    )
+
+    # The forged locators kept the identity the genuine render minted, so every
+    # region is found in the baseline and only the lens claim is false.
+    assert regions
+    assert all(manifest.baseline_for(item.region_id) is not None for item in regions)
+    assert {item.state for item in regions} == {"tampered"}
+    assert all("locator_lens_mismatch" in item.reason_codes for item in regions)
+    assert any(item.code == "locator_lens_mismatch" for item in parsed.refusals)
+    assert verdict.verdict == "refused"
+    assert "lens_mismatch" in verdict.reason_codes
+    assert result.compilable is False
+    assert result.members == ()
+    assert result.authorings == ()
 
 
 def test_a_foreign_region_is_categorically_not_a_mutation_target(tmp_path: Path) -> None:

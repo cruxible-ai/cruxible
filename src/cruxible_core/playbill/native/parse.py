@@ -66,6 +66,7 @@ from cruxible_core.playbill.native.grammar import (
     NativeRawRegionV1,
     NativeRegionKind,
     extract_regions,
+    locator_lens_matches,
 )
 from cruxible_core.playbill.native.manifest import (
     NATIVE_RENDER_MANIFEST_PATH,
@@ -239,7 +240,13 @@ def _evaluate(
             moved_from = baseline_file.path
             reasons.append("region_moved")
         mismatch: str | None = None
-        if locator.baseline_digest != baseline.body_digest:
+        if not locator_lens_matches(locator, manifest.lens):
+            # Region identity commits to the lens that minted it, so a locator
+            # naming another lens is claiming an identity that lens never
+            # issued -- the same law `verify_native_locator` refuses on, asked
+            # here so the compile path cannot admit what the verifier refuses.
+            mismatch = "locator_lens_mismatch"
+        elif locator.baseline_digest != baseline.body_digest:
             mismatch = "locator_baseline_mismatch"
         elif locator.region_kind != baseline.region_kind or locator.editable != baseline.editable:
             mismatch = "locator_kind_mismatch"

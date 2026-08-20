@@ -257,6 +257,18 @@ class NativeLocatorV1(_StrictNativeModel):
         return self.region_id.encode("ascii")
 
 
+def locator_lens_matches(locator: NativeLocatorV1, lens: NativeLensV1) -> bool:
+    """Answer the one lens-identity question every gate over a locator asks.
+
+    Region identity commits to the lens that minted it, so a locator naming
+    another lens is claiming an identity that lens never issued. Both the parse
+    gate and the standalone verifier ask exactly this, and they ask it here so
+    the law is stated once and cannot drift apart between them.
+    """
+
+    return locator.lens_id == lens.lens_id and locator.lens_version == lens.lens_version
+
+
 # -- the marker channel ----------------------------------------------------
 
 
@@ -710,6 +722,7 @@ __all__ = [
     "default_native_lens",
     "extract_prose",
     "extract_regions",
+    "locator_lens_matches",
     "native_renderer_digest",
     "parse_draft_marker",
     "parse_file_marker",
