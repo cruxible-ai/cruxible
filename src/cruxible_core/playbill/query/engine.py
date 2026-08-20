@@ -39,7 +39,7 @@ from cruxible_core.playbill.canonical import (
     typed_digest,
 )
 from cruxible_core.playbill.claims import SubjectClaimObject
-from cruxible_core.playbill.errors import PlaybillError
+from cruxible_core.playbill.errors import CanonicalEncodingError, PlaybillError
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import (
     ClaimFactRowV1,
@@ -87,6 +87,7 @@ QueryClippedBudgetV1 = Literal[
 QueryValueStateV1 = Literal["absent", "conflict", "present"]
 
 PARAMETER_DIGEST_DOMAIN = "playbill-query-parameters-v1"
+ATTEMPTED_PARAMETER_DIGEST_DOMAIN = "playbill-query-attempted-parameters-v1"
 RESULT_DIGEST_DOMAIN = "playbill-query-result-v1"
 
 BUDGET_BELOW_DECLARED_DEPTH = "playbill.query.budget_below_declared_depth"
@@ -377,6 +378,31 @@ def query_parameter_digest(parameters: Sequence[QueryParameterBindingV1]) -> str
         Sha256Value,
         PARAMETER_DIGEST_DOMAIN,
         {"parameters": [item.model_dump(mode="json") for item in parameters]},
+    ).tagged
+
+
+def query_attempted_parameter_digest(parameters: Mapping[str, object] | None) -> str:
+    """Digest the attempted caller input of an evaluation refused before binding.
+
+    A refusal raised before the declared parameters resolved has no resolved
+    binding to digest, and must never borrow the digest of the empty binding:
+    that spelling belongs to an evaluation that legitimately declared no
+    parameters. The attempted input is committed under its own domain instead,
+    so an unbound input can never collide with any resolved one. A value the
+    canonical value set refuses is committed by the type it was rejected as,
+    never by a canonical value it never had.
+    """
+
+    attempted: dict[str, object] = {}
+    for name, value in dict(parameters or {}).items():
+        try:
+            attempted[name] = {"supplied": normalize_canonical(value)}
+        except CanonicalEncodingError:
+            attempted[name] = {"uncanonical": type(value).__name__}
+    return typed_digest(
+        Sha256Value,
+        ATTEMPTED_PARAMETER_DIGEST_DOMAIN,
+        {"parameters": attempted},
     ).tagged
 
 
@@ -904,6 +930,7 @@ def evaluate_claim_query(
             EVALUATION_TIME_NOT_ABSOLUTE,
             "a query evaluation time must be an explicit absolute instant",
         )
+    bindings: tuple[QueryParameterBindingV1, ...] | None = None
     try:
         if canonical_bytes(coordinate.model_dump(mode="json")) != canonical_bytes(
             facts.coordinate.model_dump(mode="json")
@@ -927,7 +954,11 @@ def evaluate_claim_query(
             verdict="refused",
             definition_path=definition.path,
             definition_digest=definition.artifact_digest,
-            parameter_digest=query_parameter_digest(()),
+            parameter_digest=(
+                query_attempted_parameter_digest(parameters)
+                if bindings is None
+                else query_parameter_digest(bindings)
+            ),
             coordinate=coordinate,
             evaluated_at=evaluation_time,
             expires_at=_expiry(query, evaluation_time),
@@ -1285,6 +1316,7 @@ __all__ = [
     "claim_query_result_digest",
     "evaluate_claim_query",
     "relation_edges",
+    "query_attempted_parameter_digest",
     "query_execution_receipt",
     "query_parameter_digest",
     "resolve_query_parameters",

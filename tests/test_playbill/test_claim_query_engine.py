@@ -47,7 +47,10 @@ from cruxible_core.playbill.query.engine import (
     ClaimQueryResultV1,
     claim_query_result_digest,
     evaluate_claim_query,
+    query_attempted_parameter_digest,
     query_execution_receipt,
+    query_parameter_digest,
+    resolve_query_parameters,
 )
 from cruxible_core.playbill.query.grammar import (
     QueryBudgetsV1,
@@ -1023,6 +1026,79 @@ def test_the_execution_receipt_pins_definition_parameters_coordinate_and_truncat
     assert receipt.verdict == "completed"
     assert receipt.refusal_code is None
     assert receipt.result_digest == claim_query_result_digest(result)
+
+
+def test_a_refusal_after_binding_commits_the_resolved_parameters_it_bound() -> None:
+    fact_rows = facts((status_claim(1, "wi-1", "ready"),))
+    over_ceiling = QueryBudgetsV1(max_results=500, max_traversal_depth=0)
+    first = run(
+        single_status_query(),
+        fact_rows,
+        parameters={"item_id": "wi-1"},
+        budgets=over_ceiling,
+    )
+    second = run(
+        single_status_query(),
+        fact_rows,
+        parameters={"item_id": "wi-2"},
+        budgets=over_ceiling,
+    )
+
+    assert first.refusal is not None and first.refusal.code == BUDGET_EXCEEDS_MAXIMUM
+    assert second.refusal is not None and second.refusal.code == BUDGET_EXCEEDS_MAXIMUM
+    assert first.parameter_digest == query_parameter_digest(
+        resolve_query_parameters(single_status_query(), {"item_id": "wi-1"})
+    )
+    assert second.parameter_digest == query_parameter_digest(
+        resolve_query_parameters(single_status_query(), {"item_id": "wi-2"})
+    )
+    assert first.parameter_digest != second.parameter_digest
+    assert query_execution_receipt(first).parameter_digest == first.parameter_digest
+    assert query_execution_receipt(second).parameter_digest == second.parameter_digest
+
+
+def test_a_refusal_before_binding_never_borrows_the_empty_binding_digest() -> None:
+    fact_rows = facts((status_claim(1, "wi-1", "ready"), status_claim(2, "wi-2", "ready")))
+    parameterless = run(collection_status_query(), fact_rows)
+    unbound = run(single_status_query(), fact_rows)
+    undeclared = run(
+        single_status_query(),
+        fact_rows,
+        parameters={"item_id": "wi-1", "other": "x"},
+    )
+
+    assert parameterless.refusal is not None and parameterless.refusal.code == RESULT_CONFLICT
+    assert parameterless.parameter_digest == query_parameter_digest(())
+    assert unbound.refusal is not None and unbound.refusal.code == PARAMETER_MISSING
+    assert unbound.parameter_digest == query_attempted_parameter_digest(None)
+    assert unbound.parameter_digest != parameterless.parameter_digest
+    assert undeclared.refusal is not None and undeclared.refusal.code == PARAMETER_UNDECLARED
+    assert undeclared.parameter_digest == query_attempted_parameter_digest(
+        {"item_id": "wi-1", "other": "x"}
+    )
+    assert undeclared.parameter_digest not in {
+        unbound.parameter_digest,
+        parameterless.parameter_digest,
+        query_parameter_digest(
+            resolve_query_parameters(single_status_query(), {"item_id": "wi-1"})
+        ),
+    }
+    assert query_execution_receipt(unbound).parameter_digest == unbound.parameter_digest
+
+
+def test_an_attempted_parameter_outside_the_canonical_value_set_still_refuses() -> None:
+    fact_rows = facts((status_claim(1, "wi-1", "ready"),))
+    foreign = evaluate_claim_query(
+        accepted_query(single_status_query()),
+        facts=fact_rows,
+        coordinate=coordinate(generation="33"),
+        evaluation_time=NOW,
+        parameters={"item_id": 1.5},
+    )
+
+    assert foreign.refusal is not None and foreign.refusal.code == COORDINATE_MISMATCH
+    assert foreign.parameter_digest == query_attempted_parameter_digest({"item_id": 1.5})
+    assert foreign.parameter_digest != query_attempted_parameter_digest({"item_id": "1.5"})
 
 
 def test_a_refused_execution_receipt_names_its_refusal_code() -> None:
