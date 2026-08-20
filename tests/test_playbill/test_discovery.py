@@ -20,8 +20,10 @@ import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_core.playbill.artifacts import ArtifactIdentity
 from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes
@@ -31,6 +33,9 @@ from cruxible_core.playbill.claims import LiteralClaimObject
 from cruxible_core.playbill.dereference import dereference_source_handle
 from cruxible_core.playbill.discovery import (
     DiscoveryBudgetV1,
+    DiscoveryHitV1,
+    DiscoveryMatchBasis,
+    DiscoveryMatchBasisV1,
     DiscoveryRequestV1,
     ExpandRequestV1,
     ExpansionBudgetV1,
@@ -57,6 +62,7 @@ from cruxible_core.playbill.query.capsules import (
     build_expansion_context_capsule,
     render_bounded_context_capsule,
 )
+from cruxible_core.playbill.query.cards import InterfaceMatchBasisV1
 from cruxible_core.playbill.query.definitions import (
     query_definition_path,
     render_query_definition,
@@ -80,10 +86,12 @@ from cruxible_core.playbill.query.receipts import (
 )
 from cruxible_core.playbill.query.semantic_discovery import (
     MATCH_BASIS_PRIORITY,
+    MATCH_BASIS_RESOLVES_EQUIVALENCE,
     DiscoveryError,
     build_discovery_vocabulary,
     discover,
     discovery_vocabulary_digest,
+    resolved_equivalence_address,
 )
 from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
@@ -263,6 +271,100 @@ def test_discovery_ranges_over_procedures_and_line_specs() -> None:
     procedure_hit, line_hit = page.hits
     assert tuple(item.basis for item in procedure_hit.match_basis) == ("exact_address",)
     assert tuple(item.basis for item in line_hit.match_basis) == ("dependency_walk",)
+
+
+# -- the closed match-basis set -------------------------------------------
+
+
+def test_the_match_basis_set_is_closed_and_both_frozen_maps_are_total() -> None:
+    closed = frozenset(get_args(DiscoveryMatchBasis))
+
+    assert closed == {
+        "content_equivalent",
+        "dependency_walk",
+        "exact_address",
+        "exact_alias",
+        "lexical",
+        "named_entrypoint",
+        "structural_signature",
+        "tag",
+    }
+    assert frozenset(MATCH_BASIS_PRIORITY) == closed
+    assert frozenset(MATCH_BASIS_RESOLVES_EQUIVALENCE) == closed
+    # Priority is a total order over the closed set: two bases that tie would
+    # make the page order depend on dictionary insertion rather than on law.
+    assert len(set(MATCH_BASIS_PRIORITY.values())) == len(closed)
+    assert [
+        basis for basis, _ in sorted(MATCH_BASIS_PRIORITY.items(), key=lambda item: item[1])
+    ] == [
+        "exact_address",
+        "named_entrypoint",
+        "exact_alias",
+        "content_equivalent",
+        "structural_signature",
+        "dependency_walk",
+        "tag",
+        "lexical",
+    ]
+
+
+def test_a_content_equivalent_match_never_resolves_equivalence() -> None:
+    """`dd-match-basis-content-equivalent`: copied bytes are not identity.
+
+    Priority ranks `content_equivalent` above every recall-only basis, so this
+    is the law that keeps the rank from being read as a grant: it may never
+    resolve an expression to a target, never merge two Subjects, and never
+    satisfy the §6.3.1 identity resolution a reuse disposition turns on.
+    """
+
+    assert MATCH_BASIS_RESOLVES_EQUIVALENCE["content_equivalent"] is False
+    assert MATCH_BASIS_PRIORITY["content_equivalent"] > MATCH_BASIS_PRIORITY["exact_address"]
+    assert MATCH_BASIS_PRIORITY["content_equivalent"] > MATCH_BASIS_PRIORITY["named_entrypoint"]
+    assert MATCH_BASIS_PRIORITY["content_equivalent"] > MATCH_BASIS_PRIORITY["exact_alias"]
+    assert all(
+        MATCH_BASIS_PRIORITY["content_equivalent"] < MATCH_BASIS_PRIORITY[basis]
+        for basis, resolves in MATCH_BASIS_RESOLVES_EQUIVALENCE.items()
+        if not resolves and basis != "content_equivalent"
+    )
+
+    vocabulary = _vocabulary()
+    at = vocabulary.at
+    hits = tuple(
+        DiscoveryHitV1(
+            address=SemanticAddress.whole_artifact(path),
+            at=at,
+            kind="Subject",
+            label=path,
+            match_basis=(DiscoveryMatchBasisV1(basis="content_equivalent", matched_text=None),),
+            currency="not_applicable",
+        )
+        for path in (WI1_PATH, WI2_PATH)
+    )
+    single = discover(_request(query="wi-1"), vocabulary=vocabulary).model_copy(
+        update={"hits": hits[:1]}
+    )
+    both = single.model_copy(update={"hits": hits})
+
+    # Not even a lone content-equivalent hit resolves: an unambiguous page is
+    # exactly where a weaker basis would otherwise be promoted by accident.
+    assert resolved_equivalence_address(single) is None
+    assert resolved_equivalence_address(both) is None
+
+    # The card projection refuses to render the grade any other way.
+    with pytest.raises(ValidationError, match="equivalence grade differs"):
+        InterfaceMatchBasisV1(
+            basis="content_equivalent",
+            terms=("copied text",),
+            resolves_equivalence=True,
+        )
+    assert (
+        InterfaceMatchBasisV1(
+            basis="content_equivalent",
+            terms=("copied text",),
+            resolves_equivalence=False,
+        ).resolves_equivalence
+        is False
+    )
 
 
 # -- ordering, ambiguity, and determinism ---------------------------------

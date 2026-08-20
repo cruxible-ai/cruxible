@@ -45,8 +45,19 @@ DiscoveryMatchBasis = Literal[
     "lexical",
     "named_entrypoint",
     "dependency_walk",
+    "content_equivalent",
 ]
-"""The closed v1 discovery match bases; ranking may reorder, never extend."""
+"""The closed v1 match bases; ranking may reorder, and only a ratified contract
+change extends.
+
+``content_equivalent`` joined the closed set under
+`dd-match-basis-content-equivalent` as a coordinated contract change, never a
+free addition. It is minted only by the §11.6 coverage resolver, for identical
+bytes observed at a *foreign* source occurrence; :func:`discover` never produces
+it, because the accepted naming layer that path ranges over carries no byte
+occurrences to compare. It resolves equivalence to ``False``: copied bytes at a
+foreign occurrence are, by §11.6.1, precisely not identity.
+"""
 
 DescriptorAuthorityFloor = Literal[
     "target_namespace_authority",

@@ -71,19 +71,32 @@ MATCH_BASIS_PRIORITY: Mapping[str, int] = {
     "exact_address": 0,
     "named_entrypoint": 1,
     "exact_alias": 2,
-    "structural_signature": 3,
-    "dependency_walk": 4,
-    "tag": 5,
-    "lexical": 6,
+    "content_equivalent": 3,
+    "structural_signature": 4,
+    "dependency_walk": 5,
+    "tag": 6,
+    "lexical": 7,
 }
 """The frozen v1 basis order: an accepted tag or a lexical hit can never outrank
 an exact address or an accepted alias, and no opaque score participates at all.
+
+The order grades *strength of deterministic evidence*, not trust, and the
+equivalence grade below is the separate axis that decides what a basis may
+conclude. ``content_equivalent`` therefore sits immediately below the three
+equivalence-resolving bases and above every recall-only one: byte-for-byte
+digest equality of cited material is a stronger deterministic signal than a
+shared structural shape (which is a shape collision) and categorically stronger
+than a tag or a lexical token, so when a bounded card list is clipped from the
+low-priority tail it is the byte-identical foreign occurrence a reviewer keeps.
+Ranking it high grants it nothing: `dd-match-basis-content-equivalent` resolves
+it to ``False`` below, and §11.6.1 makes copied bytes precisely not identity.
 """
 
 MATCH_BASIS_RESOLVES_EQUIVALENCE: Mapping[str, bool] = {
     "exact_address": True,
     "named_entrypoint": True,
     "exact_alias": True,
+    "content_equivalent": False,
     "structural_signature": False,
     "dependency_walk": False,
     "tag": False,
@@ -96,7 +109,9 @@ admitted under the target namespace's own authority, so it may resolve; a tag
 and a lexical token are recall-only and can only add or rank candidates. A
 shared structural signature is a blocking near candidate for review, never a
 proof of equivalence -- two ClaimTypes can have the same shape and mean
-different things.
+different things. Identical bytes at a foreign source occurrence are the same
+kind of near candidate: §11.6.1 gives them no inherited governance, so
+``content_equivalent`` can never merge Subjects or satisfy identity resolution.
 """
 
 _DESCRIPTOR_LITERAL_PREDICATES = frozenset({"semantic.alias", "semantic.tag"})
