@@ -7,6 +7,15 @@ root manifest that binds every file to the accepted coordinate it came from.
 The service writes nothing. It returns a path-to-bytes map that is a pure
 function of the accepted coordinate, so the same coordinate always materializes
 byte-identical files.
+
+§11.7 makes the file-based context floor half of the reference coverage
+surface, so the floor also carries its own coverage boundary: a
+`coverage-manifest.json` naming the accepted coordinate, the evidence-index
+generation, and exactly which logical sources accepted evidence cites there. It
+is enumerated in the root manifest like every other floor file. An exported
+floor observes no working snapshot, so it carries no epoch and proves no
+freshness -- reading the boundary tells you what a coverage answer *could* be
+about, and only the resolver can tell you what it *is*.
 """
 
 from __future__ import annotations
@@ -21,6 +30,8 @@ from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import claim_type_path, parse_claim_type
 from cruxible_core.playbill.claims import ClaimArtifact
+from cruxible_core.playbill.coverage.contracts import LogicalSourceIdentityV1
+from cruxible_core.playbill.coverage.indexes import evidence_citation_index_digest
 from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
@@ -43,6 +54,11 @@ from cruxible_core.service.playbill_claims import (
     _claim_from_view,
     service_list_playbill_claims,
 )
+from cruxible_core.service.playbill_coverage import (
+    COVERAGE_ACCESS_PROFILE_ID,
+    accepted_evidence_sources,
+    build_accepted_evidence_index,
+)
 from cruxible_core.service.playbill_discovery import (
     accepted_claim_types,
     build_accepted_discovery_vocabulary,
@@ -51,6 +67,7 @@ from cruxible_core.service.playbill_query import build_accepted_query_facts
 
 FLOOR_FORMAT = "playbill-floor-export-v1"
 MANIFEST_PATH = "manifest.json"
+COVERAGE_MANIFEST_PATH = "coverage-manifest.json"
 FLOOR_DIGEST_DOMAIN = "playbill-floor-export-v1"
 DEFAULT_FLOOR_PRINCIPAL = "playbill-floor"
 SUBJECT_PATH_PREFIX = "subjects/"
@@ -78,6 +95,38 @@ class PlaybillFloorManifestV1(_StrictFloorModel):
     coordinate: PlaybillAcceptedCoordinate
     files: tuple[PlaybillFloorFileV1, ...]
     floor_digest: str
+
+
+class PlaybillFloorCoverageManifestV1(_StrictFloorModel):
+    """The coverage boundary an exported floor carries with it (§11.6.3, §11.7).
+
+    A profile of the coverage-manifest family, honest about which fields an
+    export can fill. It binds the instance, the accepted coordinate, the
+    evidence-index generation, the access profile the boundary was computed
+    under, and the declared scope -- the logical sources accepted evidence
+    actually cites there.
+
+    ``epoch`` and per-source commitments are absent by construction: an export
+    observes no working snapshot, so it has nothing to be fresh *against*.
+    ``watcher_health`` is `absent` for the same reason, and the floor alone
+    therefore proves no `exact` match. This is the §11.6.3 completeness
+    boundary, stated in a file, so an agent reading the floor without a daemon
+    knows exactly what a `none` would and would not have meant.
+    """
+
+    tag: Literal["playbill-floor-coverage-manifest-v1"] = "playbill-floor-coverage-manifest-v1"
+    format: Literal["playbill-coverage-manifest-v1"] = "playbill-coverage-manifest-v1"
+    instance_id: str
+    coordinate: PlaybillAcceptedCoordinate
+    index_digest: str
+    access_profile_id: str
+    watcher_health: Literal["absent"] = "absent"
+    epoch: None = None
+    completeness: Literal["complete", "partial"]
+    truncation_reason_codes: tuple[str, ...] = ()
+    scope: tuple[LogicalSourceIdentityV1, ...]
+    cited_commitment_count: int
+    exact_bytes_commitment_count: int
 
 
 def _resolve_coordinate(
@@ -193,6 +242,35 @@ def _subject_profiles(
     return files
 
 
+def _coverage_manifest(
+    instance: PlaybillInstance,
+    *,
+    at: PlaybillAcceptedCoordinate,
+) -> PlaybillFloorCoverageManifestV1:
+    """Summarize the coverage boundary of this export from the evidence index.
+
+    Only identities, digests, and counts leave here. The index is built over
+    accepted Capture envelopes, but no evidence bytes, no body content, and no
+    selection material reaches the floor, so the boundary is publishable at the
+    same access class the floor itself already is.
+    """
+
+    index = build_accepted_evidence_index(instance, at=at)
+    return PlaybillFloorCoverageManifestV1(
+        instance_id=instance.descriptor.instance_id,
+        coordinate=at,
+        index_digest=evidence_citation_index_digest(index),
+        access_profile_id=COVERAGE_ACCESS_PROFILE_ID,
+        completeness="partial" if index.truncated else "complete",
+        truncation_reason_codes=("evidence_index_truncated",) if index.truncated else (),
+        scope=accepted_evidence_sources(index),
+        cited_commitment_count=len(index.citations),
+        exact_bytes_commitment_count=sum(
+            1 for citation in index.citations if citation.digest_kind == "exact_bytes"
+        ),
+    )
+
+
 def _documents(
     instance: PlaybillInstance,
     *,
@@ -253,6 +331,9 @@ def service_export_playbill_floor(
         _subject_profiles(tree, entries=entries, at=accepted, claims=claims, relations=relations)
     )
     files.update(_documents(instance, at=accepted, access=body_access))
+    files[COVERAGE_MANIFEST_PATH] = _render(
+        _coverage_manifest(instance, at=accepted).model_dump(mode="json")
+    )
 
     ordered = {path: files[path] for path in sorted(files, key=lambda item: item.encode("utf-8"))}
     inventory = tuple(
@@ -276,7 +357,9 @@ def service_export_playbill_floor(
 
 
 __all__ = [
+    "COVERAGE_MANIFEST_PATH",
     "MANIFEST_PATH",
+    "PlaybillFloorCoverageManifestV1",
     "PlaybillFloorFileV1",
     "PlaybillFloorManifestV1",
     "service_export_playbill_floor",

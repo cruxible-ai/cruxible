@@ -131,6 +131,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_export_floor": (
         "Use when you need the whole accepted floor as greppable files rather than one read."
     ),
+    "cruxible_playbill_resolve_coverage": (
+        "Use when you have read or changed working files and need what they have to do with "
+        "accepted state."
+    ),
 }
 
 

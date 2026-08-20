@@ -52,6 +52,7 @@ _COMMON_READS = {
     "cruxible_playbill_discover",
     "cruxible_playbill_expand",
     "cruxible_playbill_export_floor",
+    "cruxible_playbill_resolve_coverage",
 }
 
 _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {

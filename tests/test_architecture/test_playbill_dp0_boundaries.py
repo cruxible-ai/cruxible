@@ -399,6 +399,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "cruxible_playbill_discover",
         "cruxible_playbill_expand",
         "cruxible_playbill_export_floor",
+        "cruxible_playbill_resolve_coverage",
     }
     public_client_methods = {
         name
@@ -455,6 +456,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "discover_playbill",
         "expand_playbill",
         "export_playbill_floor",
+        "resolve_playbill_coverage",
     }
 
 
@@ -663,7 +665,15 @@ def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
 
     package = CORE / "playbill" / "coverage"
     modules = sorted(path.stem for path in package.glob("*.py"))
-    assert modules == ["__init__", "contracts", "indexes", "manifest", "resolver"]
+    assert modules == [
+        "__init__",
+        "adapter",
+        "contracts",
+        "indexes",
+        "manifest",
+        "render",
+        "resolver",
+    ]
 
     permitted = {
         "cruxible_core",
@@ -672,9 +682,11 @@ def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
         "cruxible_core.playbill.captures",
         "cruxible_core.playbill.claims",
         "cruxible_core.playbill.coverage",
+        "cruxible_core.playbill.coverage.adapter",
         "cruxible_core.playbill.coverage.contracts",
         "cruxible_core.playbill.coverage.indexes",
         "cruxible_core.playbill.coverage.manifest",
+        "cruxible_core.playbill.coverage.render",
         "cruxible_core.playbill.coverage.resolver",
         "cruxible_core.playbill.discovery",
         "cruxible_core.playbill.errors",

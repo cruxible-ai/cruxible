@@ -98,6 +98,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_discover": PermissionMode.READ_ONLY,
     "cruxible_playbill_expand": PermissionMode.READ_ONLY,
     "cruxible_playbill_export_floor": PermissionMode.READ_ONLY,
+    "cruxible_playbill_resolve_coverage": PermissionMode.READ_ONLY,
     "cruxible_playbill_store_body": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_propose_document": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_propose_source_bundle": PermissionMode.GOVERNED_WRITE,

@@ -20,6 +20,23 @@ from cruxible_core.cli.commands._common import (
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.playbill.attestations import ApprovalStatement
 from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_core.playbill.coverage.adapter import (
+    WorkingPathBindingsV1,
+    WorkingPathBindingV1,
+    WorkingSourceObservationV1,
+    observe_working_source,
+    parse_grep_batch,
+    read_working_path,
+    selection_for_lines,
+)
+from cruxible_core.playbill.coverage.contracts import (
+    CoverageResultV1,
+    LogicalSourceIdentityV1,
+)
+from cruxible_core.playbill.coverage.render import (
+    render_coverage_manifest,
+    render_coverage_result,
+)
 from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -1064,6 +1081,220 @@ def export_floor(output: str, force: bool, output_json: bool) -> None:
     click.echo(f"Wrote {len(result.files)} floor file(s) to {destination}")
     click.echo(f"Floor digest: {result.manifest['floor_digest']}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
+@playbill_group.group("coverage")
+def coverage_group() -> None:
+    """Deliver what working files have to do with accepted state."""
+
+
+def _coverage_options(function: Callable[..., Any]) -> Callable[..., Any]:
+    function = click.option(
+        "--bind",
+        "bind_values",
+        multiple=True,
+        help="Declare one binding as PATH=PLANE:IDENTITY. Repeat per working file.",
+    )(function)
+    function = click.option(
+        "--bindings",
+        "bindings_path",
+        default=None,
+        type=click.Path(exists=True, dir_okay=False),
+        help="A mapping of working path to PLANE:IDENTITY.",
+    )(function)
+    function = click.option(
+        "--root",
+        default=".",
+        show_default=True,
+        type=click.Path(file_okay=False),
+        help="Working root every bound path is read under.",
+    )(function)
+    return function
+
+
+def _coverage_bindings(
+    bind_values: tuple[str, ...],
+    bindings_path: str | None,
+) -> WorkingPathBindingsV1:
+    """Collect the declared path bindings; coverage never infers one."""
+
+    declared: dict[str, str] = {}
+    if bindings_path is not None:
+        for path, value in _read_mapping(bindings_path).items():
+            if not isinstance(value, str):
+                raise click.BadParameter("each binding value must be PLANE:IDENTITY")
+            declared[str(path)] = value
+    for entry in bind_values:
+        path, separator, value = entry.partition("=")
+        if not separator or not path or not value:
+            raise click.BadParameter("a binding must be PATH=PLANE:IDENTITY")
+        declared[path] = value
+
+    bindings: list[WorkingPathBindingV1] = []
+    for path, value in sorted(declared.items()):
+        plane, separator, identity = value.partition(":")
+        if not separator or plane not in {"ledger", "external"}:
+            raise click.BadParameter(f"binding for {path} must name the ledger or external plane")
+        bindings.append(
+            WorkingPathBindingV1(
+                path=path,
+                source=LogicalSourceIdentityV1(
+                    plane=cast(Any, plane),
+                    identity=identity,
+                ),
+            )
+        )
+    if not bindings:
+        raise click.BadParameter("coverage needs at least one declared --bind or --bindings entry")
+    return WorkingPathBindingsV1(bindings=tuple(bindings))
+
+
+def _line_range(value: str) -> tuple[str, int, int]:
+    path, separator, span = value.rpartition(":")
+    start_text, dash, end_text = span.partition("-")
+    if not separator or not path or not start_text.isdigit():
+        raise click.BadParameter("a range must be PATH:START-END")
+    end_text = end_text if dash else start_text
+    if not end_text.isdigit():
+        raise click.BadParameter("a range must be PATH:START-END")
+    return path, int(start_text), int(end_text)
+
+
+def _coverage_observations(
+    bindings: WorkingPathBindingsV1,
+    *,
+    root: Path,
+    files: tuple[str, ...],
+    ranges: tuple[str, ...],
+    grep_path: str | None,
+    whole_working_set: bool,
+) -> tuple[WorkingSourceObservationV1, ...]:
+    """Read the working set locally and hand the operation observations.
+
+    Whole-source and windowed requests over the same path collapse to one
+    observation, because a source is observed once per snapshot. A path named
+    as changed is asked about whole, which is what makes an edit's drift
+    visible without the caller having to guess which window moved.
+    """
+
+    whole = set(bindings.paths) if whole_working_set else set(files)
+    windows: dict[str, set[tuple[int, int]]] = {}
+    for value in ranges:
+        path, start_line, end_line = _line_range(value)
+        windows.setdefault(path, set()).add((start_line, end_line))
+    if grep_path is not None:
+        text = Path(grep_path).expanduser().read_text(encoding="utf-8")
+        for path, line in parse_grep_batch(text):
+            windows.setdefault(path, set()).add((line, line))
+
+    observations: list[WorkingSourceObservationV1] = []
+    for path in sorted(whole | set(windows)):
+        content = read_working_path(path, root=root)
+        selections = (
+            ()
+            if path in whole
+            else tuple(
+                selection_for_lines(content, start_line=start, end_line=end)
+                for start, end in sorted(windows[path])
+            )
+        )
+        observations.append(
+            observe_working_source(bindings.source_for(path), content, selections=selections)
+        )
+    if not observations:
+        raise click.BadParameter("name at least one --file, --range, --grep-results, or --all")
+    return tuple(observations)
+
+
+def _resolved_coverage(
+    observations: tuple[WorkingSourceObservationV1, ...],
+    *,
+    command_name: str,
+) -> CoverageResultV1:
+    result = _server_call(
+        lambda client, instance_id: client.resolve_playbill_coverage(
+            instance_id,
+            observations=[item.model_dump(mode="json") for item in observations],
+        ),
+        command_name=command_name,
+    )
+    return CoverageResultV1.model_validate(result.result)
+
+
+@coverage_group.command("resolve")
+@_coverage_options
+@click.option("--file", "files", multiple=True, help="A changed or read working path.")
+@click.option("--range", "ranges", multiple=True, help="A read selection as PATH:START-END.")
+@click.option(
+    "--grep-results",
+    "grep_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="A `grep -n` result batch to resolve as one operation.",
+)
+@click.option("--all", "whole_working_set", is_flag=True, help="Resolve the whole declared scope.")
+@json_option
+@handle_errors
+def resolve_coverage(
+    bind_values: tuple[str, ...],
+    bindings_path: str | None,
+    root: str,
+    files: tuple[str, ...],
+    ranges: tuple[str, ...],
+    grep_path: str | None,
+    whole_working_set: bool,
+    output_json: bool,
+) -> None:
+    """Resolve what the working files you just read or changed are governed by.
+
+    Governed spans are annotated inline; the ungoverned majority is summarized
+    once. Resolving coverage changes no accepted state and appends no receipt.
+    """
+
+    bindings = _coverage_bindings(bind_values, bindings_path)
+    observations = _coverage_observations(
+        bindings,
+        root=Path(root).expanduser(),
+        files=files,
+        ranges=ranges,
+        grep_path=grep_path,
+        whole_working_set=whole_working_set,
+    )
+    result = _resolved_coverage(observations, command_name="playbill coverage resolve")
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for line in render_coverage_result(result):
+        click.echo(line)
+
+
+@coverage_group.command("status")
+@_coverage_options
+@json_option
+@handle_errors
+def coverage_status(
+    bind_values: tuple[str, ...],
+    bindings_path: str | None,
+    root: str,
+    output_json: bool,
+) -> None:
+    """Render the coverage manifest: epoch, health, completeness, and scope."""
+
+    bindings = _coverage_bindings(bind_values, bindings_path)
+    observations = _coverage_observations(
+        bindings,
+        root=Path(root).expanduser(),
+        files=(),
+        ranges=(),
+        grep_path=None,
+        whole_working_set=True,
+    )
+    result = _resolved_coverage(observations, command_name="playbill coverage status")
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for line in render_coverage_manifest(result):
+        click.echo(line)
 
 
 __all__ = ["playbill_group"]

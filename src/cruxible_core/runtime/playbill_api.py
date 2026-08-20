@@ -22,6 +22,9 @@ from cruxible_core.playbill.attestations import ApprovalAttestation
 from cruxible_core.playbill.candidates import canonical_candidate_timestamp
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import ClaimType
+from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
+from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.discovery import (
     DiscoveryBudgetV1,
     ExpandRequestV1,
@@ -93,6 +96,7 @@ from cruxible_core.service.playbill_claims import (
     service_playbill_claim_history,
     service_propose_playbill_claim,
 )
+from cruxible_core.service.playbill_coverage import service_resolve_playbill_coverage
 from cruxible_core.service.playbill_discovery import service_discover_playbill_semantic
 from cruxible_core.service.playbill_floor import MANIFEST_PATH, service_export_playbill_floor
 from cruxible_core.service.playbill_query import service_run_playbill_query
@@ -734,6 +738,57 @@ def playbill_expand(
         ),
     )
     return contracts.PlaybillContextCapsule.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_resolve_coverage(
+    instance_id: str,
+    *,
+    observations: tuple[WorkingSourceObservationV1, ...],
+    at: AcceptedCoordinate | None = None,
+    budget: CoverageCardBudgetV1 | None = None,
+    scan_budget: CoverageScanBudgetV1 | None = None,
+) -> contracts.PlaybillCoverageResult:
+    """Resolve one batch of working-set observations into a `CoverageResultV1`.
+
+    The one vendor-neutral coverage operation of §11.7. Every request form it
+    has to serve -- a file read with a line/range selection, a grep result
+    batch, a set of changed filesystem paths, an explicit source occurrence, and
+    a working-set scope -- arrives here already reduced by the adapter to
+    observations and the spans they carry, because an adapter contains no
+    semantic logic and this operation reads no filesystem.
+
+    **No receipt is appended, and that is a decision rather than an omission.**
+    §11.6 makes coverage delivery semantically side-effect-free: it changes no
+    accepted state, no candidate, no permission, no verdict input, and no
+    evaluation episode, and it adds no authority to the material it describes.
+    Whether ordinary reads append to a daemon-owned journal is PC-G's
+    journal-ownership decision -- the same open seam that leaves
+    ``journal_record_digest`` absent on query execution -- and settling it here
+    would settle it from the wrong end, by making the highest-frequency read in
+    the system the first journal writer. A coverage answer stays checkable
+    without one: it names the evidence-index digest, the overlay digest, and the
+    manifest digest it resolved against, and those three reproduce it exactly.
+
+    The access profile is derived from this surface's read authority and is
+    never accepted from the caller, so a request cannot widen its own
+    disclosure.
+    """
+
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_resolve_playbill_coverage(
+        get_playbill_manager().get(instance_id),
+        instance_id=instance_id,
+        observations=observations,
+        at=at,
+        budget=budget,
+        scan_budget=scan_budget,
+    )
+    return contracts.PlaybillCoverageResult(
+        coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
+            result.at.model_dump(mode="json")
+        ),
+        result=result.model_dump(mode="json"),
+    )
 
 
 def playbill_export_floor(

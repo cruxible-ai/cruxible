@@ -433,6 +433,23 @@ class PlaybillContextCapsule(BaseModel):
     receipt_digest: str
 
 
+class PlaybillCoverageResult(BaseModel):
+    """One resolved coverage answer: the whole `playbill-coverage-result-v1`.
+
+    ``result`` carries the frozen coverage grammar verbatim -- span results,
+    cards, the one batch summary, coverage health, accepted coordinate, scope,
+    manifest epoch, and the index/overlay/manifest digests the answer was
+    resolved against. Resolving coverage appends no receipt: it changes no
+    accepted state, and those three digests are what make it reproducible.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-coverage-result-v1"] = "playbill-coverage-result-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    result: dict[str, Any]
+
+
 class PlaybillFloorFile(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

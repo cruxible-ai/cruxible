@@ -457,6 +457,19 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="floor_group",
             ),
+            "coverage": _group(
+                "Deliver what working files have to do with accepted state.",
+                {
+                    "resolve": _command(
+                        "playbill", "resolve_coverage", "Resolve coverage for working sources."
+                    ),
+                    "status": _command(
+                        "playbill", "coverage_status", "Render the coverage manifest."
+                    ),
+                },
+                module="playbill",
+                attr="coverage_group",
+            ),
             "explain": _command(
                 "playbill", "explain", "Explain governance at an accepted coordinate."
             ),

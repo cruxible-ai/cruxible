@@ -752,6 +752,37 @@ class CruxibleClient:
         response = self._client.post(f"/api/v1/{instance_id}/playbill/expand", json=payload)
         return self._parse_model(response, contracts.PlaybillContextCapsule)
 
+    def resolve_playbill_coverage(
+        self,
+        instance_id: str,
+        *,
+        observations: Sequence[Mapping[str, Any]],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        budget: Mapping[str, Any] | None = None,
+        scan_budget: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillCoverageResult:
+        """Resolve coverage for a batch of already-observed working sources.
+
+        The caller observes its own working set -- binding each path to a
+        declared logical source and hashing the bytes it actually read -- and
+        this call carries those observations. Coverage is delivered against
+        them; the daemon reads no client filesystem.
+        """
+
+        payload: dict[str, Any] = {
+            "at": self._playbill_coordinate_body(at),
+            "observations": [dict(item) for item in observations],
+        }
+        if budget is not None:
+            payload["budget"] = dict(budget)
+        if scan_budget is not None:
+            payload["scan_budget"] = dict(scan_budget)
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/coverage/resolve",
+            json=payload,
+        )
+        return self._parse_model(response, contracts.PlaybillCoverageResult)
+
     def export_playbill_floor(
         self,
         instance_id: str,

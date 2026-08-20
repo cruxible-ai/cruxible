@@ -10,7 +10,9 @@ from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
 )
 from cruxible_core.service.playbill_floor import (
+    COVERAGE_MANIFEST_PATH,
     MANIFEST_PATH,
+    PlaybillFloorCoverageManifestV1,
     PlaybillFloorManifestV1,
     service_export_playbill_floor,
 )
@@ -134,3 +136,28 @@ def test_floor_grows_with_accepted_state_rather_than_being_frozen(tmp_path: Path
 
     assert _manifest(before).coordinate != _manifest(after).coordinate
     assert _manifest(before).floor_digest != _manifest(after).floor_digest
+
+
+def test_floor_carries_its_coverage_boundary_and_enumerates_it(tmp_path: Path) -> None:
+    """§11.7: the exported floor is half the reference surface, boundary included."""
+
+    instance, _owner = _instance_with_query(tmp_path)
+    accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    floor = service_export_playbill_floor(instance)
+
+    assert COVERAGE_MANIFEST_PATH in floor
+    assert COVERAGE_MANIFEST_PATH in {item.path for item in _manifest(floor).files}
+    boundary = PlaybillFloorCoverageManifestV1.model_validate(
+        json.loads(floor[COVERAGE_MANIFEST_PATH])
+    )
+    assert boundary.coordinate == accepted
+    assert boundary.instance_id == instance.descriptor.instance_id
+    assert boundary.index_digest.startswith("sha256:")
+    assert boundary.completeness == "complete"
+    assert boundary.truncation_reason_codes == ()
+    assert boundary.cited_commitment_count > 0
+    # An export observes no working snapshot, so it proves no freshness and
+    # therefore carries no epoch and no watcher.
+    assert boundary.epoch is None
+    assert boundary.watcher_health == "absent"

@@ -9,6 +9,9 @@ from pydantic import BaseModel, ConfigDict
 
 from cruxible_core.playbill.attestations import ApprovalAttestation
 from cruxible_core.playbill.claim_types import ClaimType
+from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
+from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -127,6 +130,22 @@ class PlaybillExpandRequest(_StrictPlaybillRequest):
     evaluation_time: str | None = None
     facets: tuple[str, ...] = ()
     budget: ExpansionBudgetV1 = ExpansionBudgetV1()
+
+
+class PlaybillResolveCoverageRequest(_StrictPlaybillRequest):
+    """The vendor-neutral coverage request (§11.7).
+
+    Observations, never paths: the caller binds each working path to a declared
+    logical source and hashes the bytes it read, and only the resulting
+    observation crosses the wire. The daemon reads no client filesystem, and no
+    access profile is accepted here -- a request may not widen its own
+    disclosure.
+    """
+
+    at: AcceptedCoordinate | None = None
+    observations: tuple[WorkingSourceObservationV1, ...]
+    budget: CoverageCardBudgetV1 | None = None
+    scan_budget: CoverageScanBudgetV1 | None = None
 
 
 class PlaybillFloorExportRequest(_StrictPlaybillRequest):

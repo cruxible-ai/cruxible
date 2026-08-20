@@ -35,6 +35,9 @@
   "/api/v1/{instance_id}/playbill/claims/{identity}/history": {
     "GET": "PlaybillClaimHistory"
   },
+  "/api/v1/{instance_id}/playbill/coverage/resolve": {
+    "POST": "PlaybillCoverageResult"
+  },
   "/api/v1/{instance_id}/playbill/discover": {
     "POST": "PlaybillDiscoveryResult"
   },

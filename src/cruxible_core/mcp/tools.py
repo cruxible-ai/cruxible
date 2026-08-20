@@ -402,6 +402,21 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_resolve_coverage(
+        instance_id: str,
+        observations: list[dict[str, Any]],
+        budget: dict[str, Any] | None = None,
+        scan_budget: dict[str, Any] | None = None,
+    ) -> contracts.PlaybillCoverageResult:
+        """Resolve what observed working sources have to do with accepted state."""
+        return handlers.handle_playbill_resolve_coverage(
+            instance_id,
+            observations,
+            budget=budget,
+            scan_budget=scan_budget,
+        )
+
+    @_tool
     def cruxible_playbill_export_floor(
         instance_id: str,
     ) -> contracts.PlaybillFloorExport:

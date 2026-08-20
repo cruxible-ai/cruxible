@@ -24,6 +24,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillProposePrincipalRequest,
     PlaybillProposeQueryDefinitionRequest,
     PlaybillProposeSubjectRequest,
+    PlaybillResolveCoverageRequest,
     PlaybillReviewRequest,
     PlaybillRunQueryRequest,
     PlaybillSourceBundleRequest,
@@ -641,6 +642,23 @@ async def expand(
         evaluation_time=req.evaluation_time,
         facets=req.facets,
         budget=req.budget,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/coverage/resolve",
+    response_model=contracts.PlaybillCoverageResult,
+)
+async def resolve_coverage(
+    instance_id: str,
+    req: PlaybillResolveCoverageRequest,
+) -> contracts.PlaybillCoverageResult:
+    return playbill_api.playbill_resolve_coverage(
+        resolve_server_instance_id(instance_id),
+        observations=req.observations,
+        at=req.at,
+        budget=req.budget,
+        scan_budget=req.scan_budget,
     )
 
 

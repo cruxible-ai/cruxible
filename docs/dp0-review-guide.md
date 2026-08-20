@@ -37,6 +37,8 @@ playbill claim-type get
 playbill claim-type list
 playbill claim-type propose
 playbill discover
+playbill coverage resolve
+playbill coverage status
 playbill document body
 playbill document get
 playbill document history
@@ -130,6 +132,7 @@ GET  /api/v1/{instance_id}/playbill/queries/{name}
 POST /api/v1/{instance_id}/playbill/queries/{name}/run
 POST /api/v1/{instance_id}/playbill/discover
 POST /api/v1/{instance_id}/playbill/expand
+POST /api/v1/{instance_id}/playbill/coverage/resolve
 POST /api/v1/{instance_id}/playbill/floor/export
 ```
 
@@ -179,6 +182,7 @@ cruxible_playbill_run_query
 cruxible_playbill_discover
 cruxible_playbill_expand
 cruxible_playbill_export_floor
+cruxible_playbill_resolve_coverage
 ```
 
 The permission catalog and MCP registration catalog are equality-tested. See
@@ -242,6 +246,93 @@ expands it:
 All three diffs are strictly additive, and each was produced through that
 artifact's own regeneration path rather than a blanket golden refresh. Every
 other golden in this repository is byte-identical across the slice.
+
+## PC-F2-S2: the reference coverage surface
+
+PC-F2-S1 landed coverage headless: two disposable indexes, one pure resolver,
+one local freshness manifest, and no way to call any of it. This slice serves
+it as §11.7's one vendor-neutral operation and renders it as §11.6.4's reference
+surface. The facade operation inventory moves from 38 to 39.
+
+**One operation, five request forms.** `playbill_resolve_coverage` is the whole
+public surface. §11.7's five forms -- a file read with a line/range selection, a
+grep result batch, a set of changed filesystem paths, an explicit source
+occurrence, and a working-set scope -- are not five operations; the adapter
+reduces all five to observations and the spans they carry before the operation
+sees them.
+
+**The adapter reads the filesystem; the operation never does.** A request
+carries *observations*: a declared logical-source binding, the bytes the caller
+actually read, and the windows it asked about. Bindings are declared, never
+inferred -- guessing that `handbook.md` is `documents/handbook.md` would let
+identical bytes inherit governance by filename coincidence, which is the exact
+mistake §11.6.1 exists to prevent -- and an undeclared path is a typed refusal.
+Bytes travel because an accepted commitment is a digest rather than a needle:
+finding cited content that moved means hashing windows of the working source,
+and only the side holding accepted state knows which lengths to look for. The
+access profile is derived from the surface's read authority and is never
+accepted from the caller, so a request cannot widen its own disclosure.
+
+**Rendering lives in the package, not the CLI.** §11.7 requires every adapter to
+reproduce the reference surface's coverage semantics, so `coverage/render.py`
+holds the §11.6.4 laws and the CLI is one caller of them. Governed cards are
+annotated inline in canonical order; ungoverned spans are summarized once and
+render nothing at all; omitted and truncated counts are stated on every
+operation, including when they are zero; and a span whose health is not
+`complete` prints that health with its reason codes, so `denied` and
+`unavailable` can never read as a factual absence.
+
+**The floor carries its coverage boundary.** `floor export` gains
+`coverage-manifest.json`, enumerated in the root manifest like every other floor
+file: the accepted coordinate, the evidence-index generation, the access
+profile, and the logical sources accepted evidence cites there. An export
+observes no working snapshot, so it carries no epoch and proves no freshness --
+it tells a reader what a coverage answer could be about, never what it is.
+
+**A coverage resolve appends no receipt, and that is a recorded decision.**
+§11.6 makes coverage delivery semantically side-effect-free: it changes no
+accepted state, candidate, permission, verdict input, or evaluation episode, and
+it adds no authority to the material it describes. Whether ordinary reads append
+to a daemon-owned journal is PC-G's journal-ownership decision -- the same open
+seam that leaves `journal_record_digest` null on query execution -- and settling
+it here would settle it from the wrong end, by making the highest-frequency read
+in the system the first journal writer. The answer stays checkable without one:
+it names the evidence-index digest, the overlay digest, and the manifest digest
+it resolved against, and those three reproduce it exactly.
+
+**The one thing the operation writes** is the local coverage manifest under
+`<managed root>/coverage/`, and only when the observed snapshot or the accepted
+coordinate actually moved. The epoch is therefore a counter over *observations*
+rather than over calls, which is what makes it usable for ordering two
+snapshots. That file is the same class of artifact as a replay checkpoint:
+disposable, digest-committed, deleted rather than trusted when it does not
+reproduce, and costing only provable freshness when removed.
+
+**What accepted state can reach today, stated so a reviewer does not have to
+re-derive it.** Every Capture the served authoring surface produces is
+content-addressed, and a CAS reference deliberately names no logical source. By
+§11.6.1 a byte match at a working occurrence is therefore a labeled
+`content_equivalent` candidate, and `exact` and `drifted` -- both of which
+require the accepted and observed logical source to agree -- are not yet
+reachable end to end from the CLI. `build_ledger_capture` and the external
+acquisition path already produce the logical-source-bound Captures that unlock
+them; no served operation invokes those builders, and PC-G's watcher is their
+first caller. The resolver, the cards, and their rendering are proved against
+real `exact`, `drifted`, and ambiguous coverage in the headless suites.
+
+### The authorized golden re-pin
+
+The same three served-surface pins move, additively, for the one added
+operation:
+
+| Golden | What changed |
+|---|---|
+| `tests/goldens/playbill/served-surface-dp0b-v1.json` | `facade_operations` 38 → 39 (`playbill_resolve_coverage`); `http_delegate_count` and `mcp_delegate_count` 38 → 39 |
+| `tests/goldens/http_surface/http_surface_snapshot.json` | one added path, `POST /api/v1/{instance_id}/playbill/coverage/resolve`; zero existing paths removed or changed |
+| `tests/goldens/cruxible_client/contracts_snapshot.json` | one added model, `PlaybillCoverageResult`; zero existing models removed or changed |
+
+Each was produced through its own regeneration path, and every other golden in
+this repository is byte-identical across the slice.
 
 ## Deleted directory and service inventory
 

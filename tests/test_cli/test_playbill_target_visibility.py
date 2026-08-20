@@ -166,3 +166,104 @@ def test_host_creation_names_explicit_requested_id(
     assert result.stderr == (
         "target: inst_requested @ https://host.example.test (transport=explicit)\n"
     )
+
+
+def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Coverage delivery adds no authority, so it announces no write target.
+
+    The inventory above is equality-tested, so this is not a second assertion of
+    the same fact: it pins the *reason* the new surface is absent from it, by
+    driving a real resolve and proving the command stays silent on stderr the
+    way every other read does.
+    """
+
+    for path in (("playbill", "coverage", "resolve"), ("playbill", "coverage", "status")):
+        assert path not in MUTATING_COMMAND_TARGETS
+        assert _command_at_path(path).callback is not None
+
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    working = tmp_path / "workspace"
+    working.mkdir()
+    (working / "notes.txt").write_text("ordinary working notes\n", encoding="utf-8")
+
+    class StubClient:
+        def resolve_playbill_coverage(
+            self,
+            instance_id: str,
+            *,
+            observations: list[dict[str, object]],
+            **_: object,
+        ) -> contracts.PlaybillCoverageResult:
+            assert instance_id == "inst_read"
+            assert len(observations) == 1
+            coordinate = contracts.PlaybillAcceptedCoordinate(
+                git_oid="11" * 20,
+                semantic_root="sha256:" + "aa" * 32,
+                generation_root="sha256:" + "22" * 32,
+                compiler_digest="sha256:" + "bb" * 32,
+            )
+            return contracts.PlaybillCoverageResult(
+                coordinate=coordinate,
+                result={
+                    "tag": "playbill-coverage-result-v1",
+                    "at": coordinate.model_dump(mode="json"),
+                    "instance_id": instance_id,
+                    "index_digest": "sha256:" + "cc" * 32,
+                    "overlay_digest": "sha256:" + "dd" * 32,
+                    "manifest_digest": None,
+                    "epoch": None,
+                    "watcher_health": "absent",
+                    "access_profile": {
+                        "tag": "playbill-coverage-access-profile-v1",
+                        "profile_id": "playbill.coverage.read",
+                        "permitted_access_classes": ["instance", "public"],
+                        "disclose_restricted_existence": True,
+                    },
+                    "scope": [],
+                    "spans": [],
+                    "summary": {
+                        "tag": "playbill-coverage-batch-summary-v1",
+                        "exact": 0,
+                        "drifted": 0,
+                        "candidate": 0,
+                        "none": 0,
+                        "returned_spans": 0,
+                        "omitted_card_count": 0,
+                    },
+                    "health": "complete",
+                    "coverage": {
+                        "tag": "playbill-coverage-descriptor-v1",
+                        "requested_facets": ["coverage"],
+                    },
+                },
+            )
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://read.example.test",
+            "--instance-id",
+            "inst_read",
+            "playbill",
+            "coverage",
+            "resolve",
+            "--root",
+            str(working),
+            "--bind",
+            "notes.txt=external:workspace.notes",
+            "--file",
+            "notes.txt",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert result.stdout.startswith("Playbill coverage: 0 exact, 0 drifted, 0 candidates, 0 none")

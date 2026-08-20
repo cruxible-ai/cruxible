@@ -33,6 +33,7 @@
     "playbill_propose_query_definition",
     "playbill_propose_source_bundle",
     "playbill_propose_subject",
+    "playbill_resolve_coverage",
     "playbill_review_proposal",
     "playbill_run_query",
     "playbill_source_context",
@@ -40,6 +41,6 @@
     "playbill_subject_history",
     "playbill_submit_approval"
   ],
-  "http_delegate_count": 38,
-  "mcp_delegate_count": 38
+  "http_delegate_count": 39,
+  "mcp_delegate_count": 39
 }

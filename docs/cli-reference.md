@@ -170,7 +170,44 @@ cruxible playbill floor export --output DIR [--force]
 
 Writes the deterministic greppable floor of accepted state. The daemon returns
 bytes keyed by floor path and never writes a client path; export refuses a
-non-empty output directory unless --force is given.
+non-empty output directory unless --force is given. The export carries its own
+coverage boundary in `coverage-manifest.json`, enumerated in the root manifest
+like every other floor file.
+
+## playbill coverage
+
+~~~text
+cruxible playbill coverage resolve
+  [--bind PATH=PLANE:IDENTITY]... [--bindings FILE] [--root DIR]
+  [--file PATH]... [--range PATH:START-END]...
+  [--grep-results FILE] [--all]
+cruxible playbill coverage status
+  [--bind PATH=PLANE:IDENTITY]... [--bindings FILE] [--root DIR]
+~~~
+
+resolve answers what the working files you just read or changed have to do with
+accepted state. Every working path is bound to a logical source by an explicit
+declaration -- coverage never infers a binding from a filename, because
+identical bytes in another file are precisely not the same source. The CLI reads
+and hashes the bytes locally; the daemon reads no client filesystem.
+
+Governed spans are annotated inline in card order. Ungoverned results are
+summarized once per operation, never one line per result:
+
+~~~text
+Playbill coverage: 2 exact, 1 drifted, 3 candidates, 41 none
+coverage complete for 47 returned spans at generation gen-sha256:...
+omitted cards: 0, truncated spans: 0
+~~~
+
+A `none` is factual only inside a complete boundary, so a span whose health is
+`partial`, `stale`, `denied`, or `unavailable` prints that health and its reason
+codes rather than reading as an absence.
+
+status renders the coverage manifest over the whole declared scope: epoch,
+health, completeness, and the sources a `none` would have been factual inside.
+
+Resolving coverage changes no accepted state and appends no receipt.
 
 ## playbill proposal
 

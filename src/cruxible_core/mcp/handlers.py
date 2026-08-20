@@ -12,6 +12,9 @@ from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.playbill.attestations import ApprovalAttestation
 from cruxible_core.playbill.claim_types import ClaimType
+from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
+from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
+from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -696,6 +699,33 @@ def handle_playbill_expand(
             budget=limits,
         ),
         operation_name="cruxible_playbill_expand",
+    )
+
+
+def handle_playbill_resolve_coverage(
+    instance_id: str,
+    observations: list[dict[str, Any]],
+    *,
+    budget: dict[str, Any] | None = None,
+    scan_budget: dict[str, Any] | None = None,
+) -> contracts.PlaybillCoverageResult:
+    observed = tuple(WorkingSourceObservationV1.model_validate(item) for item in observations)
+    cards = None if budget is None else CoverageCardBudgetV1.model_validate(budget)
+    scan = None if scan_budget is None else CoverageScanBudgetV1.model_validate(scan_budget)
+    return _dispatch_remote_or_local(
+        lambda client: client.resolve_playbill_coverage(
+            instance_id,
+            observations=[item.model_dump(mode="json") for item in observed],
+            budget=(None if cards is None else cards.model_dump(mode="json")),
+            scan_budget=(None if scan is None else scan.model_dump(mode="json")),
+        ),
+        lambda: playbill_api.playbill_resolve_coverage(
+            instance_id,
+            observations=observed,
+            budget=cards,
+            scan_budget=scan,
+        ),
+        operation_name="cruxible_playbill_resolve_coverage",
     )
 
 

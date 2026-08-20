@@ -92,10 +92,15 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
 | `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
 | `cruxible_playbill_export_floor` | Export the greppable floor as base64 bytes | `READ_ONLY` |
+| `cruxible_playbill_resolve_coverage` | Resolve observed working sources against accepted state | `READ_ONLY` |
 
 Query execution is a read: it returns the result together with its
 `playbill-query-execution-receipt-v1`, and it writes nothing. The floor export
 returns bytes keyed by floor path; materializing a directory is a client act.
+Coverage resolution takes observations -- a declared logical-source binding and
+the bytes the caller read -- rather than paths, so the daemon reads no client
+filesystem. It appends no receipt: it changes no accepted state, and the
+evidence-index, overlay, and manifest digests it returns reproduce the answer.
 
 ## Permission tiers
 
