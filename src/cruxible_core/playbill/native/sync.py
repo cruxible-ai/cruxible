@@ -262,8 +262,11 @@ def plan_native_render(
         write_paths=writes,
         unchanged_paths=unchanged,
         delete_paths=deletes,
-        discarded_region_ids=byte_sorted(dirty) if discard else (),
-        stashed_region_ids=byte_sorted(dirty) if stash else (),
+        # `dirty` arrives canonically ordered from the parse -- see the ordering
+        # law in `native/parse.py`. Re-sorting it here would only hide a
+        # regression in the accessor the stash body is compared against.
+        discarded_region_ids=dirty if discard else (),
+        stashed_region_ids=dirty if stash else (),
         stash_required=bool(dirty),
     )
 

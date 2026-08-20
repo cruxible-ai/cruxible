@@ -25,6 +25,23 @@ baseline region is `unbaselined`: forged, copied from another render, or left
 behind by a lens version that no longer applies. A locator that appears twice
 anywhere in the tree makes **both** occurrences ambiguous and binds neither.
 
+Region-identity lists are canonically ordered, never presentation-ordered
+------------------------------------------------------------------------
+`regions` is walked in presentation order -- byte-sorted path, then position
+inside the file -- because that is what a person reading a file expects and what
+a diagnostic should name. Every accessor that returns *identities* instead
+(`dirty_region_ids`, `tampered_region_ids`, `moved_region_ids`) returns them
+`byte_sorted`, which is the same canonical ordering the digest-committed stash
+body and the render plan already require of themselves.
+
+That is not tidiness. Region identity is path-free by §11.9.3, so an identity
+list carrying path order is an identity list carrying presentation coordinates,
+and two callers deriving "the dirty regions" by two different routes then
+disagree on the *order* of the same digests. A caller comparing or committing to
+such a list gets an answer that depends on where the lens happened to place a
+Claim -- which for a digest-committed record is nondeterminism, and this format
+family exists to refuse exactly that.
+
 Deletion is never inferred
 --------------------------
 A file in the baseline that is absent from the tree, a region that vanished from
@@ -123,11 +140,13 @@ class NativeFileParseV1(_StrictParseModel):
 
     @property
     def dirty_region_ids(self) -> tuple[str, ...]:
-        return tuple(item.region_id for item in self.regions if item.state == "dirty")
+        return byte_sorted(tuple(item.region_id for item in self.regions if item.state == "dirty"))
 
     @property
     def tampered_region_ids(self) -> tuple[str, ...]:
-        return tuple(item.region_id for item in self.regions if item.state == "tampered")
+        return byte_sorted(
+            tuple(item.region_id for item in self.regions if item.state == "tampered")
+        )
 
 
 class NativeTreeParseV1(_StrictParseModel):
@@ -143,15 +162,17 @@ class NativeTreeParseV1(_StrictParseModel):
 
     @property
     def dirty_region_ids(self) -> tuple[str, ...]:
-        return tuple(item.region_id for item in self.regions if item.state == "dirty")
+        return byte_sorted(tuple(item.region_id for item in self.regions if item.state == "dirty"))
 
     @property
     def tampered_region_ids(self) -> tuple[str, ...]:
-        return tuple(item.region_id for item in self.regions if item.state == "tampered")
+        return byte_sorted(
+            tuple(item.region_id for item in self.regions if item.state == "tampered")
+        )
 
     @property
     def moved_region_ids(self) -> tuple[str, ...]:
-        return tuple(item.region_id for item in self.regions if item.moved)
+        return byte_sorted(tuple(item.region_id for item in self.regions if item.moved))
 
     @property
     def refusals(self) -> tuple[NativeDiagnosticV1, ...]:

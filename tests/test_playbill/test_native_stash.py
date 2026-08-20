@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_core.playbill.coverage.contracts import CoverageLineOverlayV1
 from cruxible_core.playbill.native import (
     NativeRenderManifestV1,
     NativeStashError,
@@ -23,14 +24,22 @@ from cruxible_core.playbill.native import (
     native_stash_entry_path,
     parse_native_stash,
     parse_native_tree,
+    plan_native_render,
     render_native_stash,
     resolve_native_stash,
     restore_native_stash,
+)
+from cruxible_core.playbill.native.parse import (
+    NativeFileParseV1,
+    NativeParsedRegionV1,
+    NativeTreeParseV1,
 )
 from cruxible_core.playbill.native.stash import (
     NATIVE_STASH_DIRECTORY,
     NativeStashFileV1,
 )
+from cruxible_core.playbill.query.grammar import byte_sorted
+from cruxible_core.playbill.semantic import SemanticAddress
 from tests.test_playbill._native_support import (
     WI_42,
     WI_43,
@@ -96,6 +105,83 @@ def test_a_stash_captures_exactly_the_dirty_regions_bytes(tmp_path: Path) -> Non
         assert baseline is not None
         assert region.baseline_digest == baseline[1].body_digest
         assert region.body_digest != region.baseline_digest
+
+
+def test_a_parse_reports_region_identities_in_canonical_order_not_file_order(
+    tmp_path: Path,
+) -> None:
+    """Two routes to "the dirty regions" may not disagree about their order.
+
+    The digest-committed stash body orders its regions by region identity, and
+    identity is path-free by §11.9.3. A parse that reported the same identities
+    in *presentation* order -- byte-sorted path, then position in the file --
+    therefore agreed with the stash only when the two orderings happened to
+    coincide, which for content-addressed identities is a coin flip per render.
+    That is a digest-committed local format whose field order depends on where
+    the lens placed a Claim, and this format family exists to refuse exactly
+    that.
+
+    Constructed rather than rendered, because the failure has to be *forced*:
+    the file that sorts first here deliberately holds the identity that sorts
+    last, so this case fails before the fix on every run rather than half of
+    them.
+    """
+
+    address = SemanticAddress.whole_artifact("claims/00/CLM-{}.yaml".format("0" * 32))
+    high, low = f"sha256:{'f' * 64}", f"sha256:{'0' * 64}"
+
+    def _region(region_id: str, path: str) -> NativeParsedRegionV1:
+        return NativeParsedRegionV1(
+            path=path,
+            region_id=region_id,
+            region_kind="statement_value",
+            editable=True,
+            address=address,
+            state="dirty",
+            baseline_digest=f"sha256:{'1' * 64}",
+            observed_digest=f"sha256:{'2' * 64}",
+            byte_length=3,
+            line_overlay=CoverageLineOverlayV1(start_byte=0, end_byte=3, start_line=1, end_line=1),
+        )
+
+    parsed = NativeTreeParseV1(
+        files=(
+            NativeFileParseV1(path="a.md", tracked=True, regions=(_region(high, "a.md"),)),
+            NativeFileParseV1(path="b.md", tracked=True, regions=(_region(low, "b.md"),)),
+        )
+    )
+
+    # Presentation order is preserved where presentation is the question.
+    assert [item.path for item in parsed.regions] == ["a.md", "b.md"]
+    # Identity lists are canonical, and canonical is byte order over identities.
+    assert parsed.dirty_region_ids == (low, high)
+    assert parsed.dirty_region_ids == byte_sorted(parsed.dirty_region_ids)
+
+
+def test_a_stash_body_and_its_parse_agree_on_region_order_whatever_the_paths(
+    tmp_path: Path,
+) -> None:
+    """The regression the constructed case above generalizes, on a real render.
+
+    Same two edits as the capture test, asserted as an ordering *law* rather
+    than as an incidental equality: the stash body's committed order, the
+    parse's identity list, and the canonical ordering are one order.
+    """
+
+    _state, _ctx, render = seeded_render(tmp_path)
+    edited = _edit(dict(render.files), WI_42, READY, DONE)
+    edited = _edit(edited, WI_43, BLOCKED, SHIPPED)
+    parsed = parse_native_tree(edited, manifest=render.manifest)
+
+    body = native_stash_body(edited, manifest=render.manifest)
+
+    assert body is not None
+    assert body.region_ids == byte_sorted(body.region_ids)
+    assert parsed.dirty_region_ids == byte_sorted(parsed.dirty_region_ids)
+    assert body.region_ids == parsed.dirty_region_ids
+    # And the render plan, which is the third route to the same list.
+    plan = plan_native_render(edited, manifest=render.manifest, render=render, stash=True)
+    assert plan.stashed_region_ids == body.region_ids
 
 
 def test_a_stash_entry_commits_to_its_own_body_and_refuses_when_it_does_not(
