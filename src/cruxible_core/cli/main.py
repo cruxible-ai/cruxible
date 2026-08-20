@@ -40,6 +40,10 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim", "propose"): "active",
     ("playbill", "claim", "propose-batch"): "active",
+    # Compile is two acts behind one command: --preview writes nothing at all,
+    # so the notice belongs immediately before the submit rather than before
+    # the command that might only be previewing.
+    ("playbill", "native", "compile"): "manual",
     ("playbill", "query", "propose"): "active",
     ("playbill", "proposal", "approve"): "active",
     ("playbill", "proposal", "activate"): "active",
@@ -505,6 +509,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "playbill",
                         "native_status_cmd",
                         "Report clean, edited, and tampered fields.",
+                    ),
+                    "compile": _command(
+                        "playbill",
+                        "compile_native",
+                        "Compile local edits into one governed proposal.",
+                    ),
+                    "review-current": _command(
+                        "playbill",
+                        "native_review_current",
+                        "Check that review evidence binds the current candidate.",
                     ),
                 },
                 module="playbill",

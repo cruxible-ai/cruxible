@@ -183,6 +183,9 @@ like every other floor file.
 cruxible playbill native render --output DIR
   [--evaluation-time ISO-8601] [--discard]
 cruxible playbill native status DIR
+cruxible playbill native compile DIR [--preview | --submit --name NAME]
+  [--dispositions FILE]
+cruxible playbill native review-current PROPOSAL_ID [--bound DIGEST]
 ~~~
 
 The ledger is the semantic object store; the rendered directory is its editable
@@ -220,8 +223,30 @@ accepted state said its bytes were at that generation, and the drift the resolve
 reports is what invalidates the verdict and provenance blocks beside an edited
 field. No card it returns can grant the edited material a governance fact.
 
+`compile` is the middle of three gates. It binds the baseline generation the
+tree was rendered from, classifies every edited field against the current
+accepted head, and assembles one change set: edited locator-bound fields become
+successor Claims, and unlocated prose becomes an `unbound_native_draft` that
+needs an explicit disposition -- `reuse`, `extend`, `new_distinct`, or
+`withdraw` -- stated either in the file's invisible draft marker or in a
+`--dispositions` list. A `new_distinct` disposition lowers into an explicit
+`semantic.distinct_from` Claim for every blocking candidate, in the same change
+set, and `--preview` shows those generated Claims before anything is submitted.
+A draft with no disposition refuses, naming the candidates it collided with.
+
+`--preview` and `--submit` render the same compile result; only `--submit`
+creates a proposal, which is then approved and activated like any other. When
+the accepted head has moved under the baseline, submitting binds the baseline
+and the proposal receive path performs the deterministic three-way rebase --
+no textual merge decides what is admissible. A rebase produces a different
+candidate digest, so approvals collected against the old one no longer verify;
+`review-current` reports that as `superseded_by_rebase` and names the digest
+fresh approval must bind. It exits non-zero until review evidence binds the
+candidate that would settle.
+
 Deleting a rendered file or directory loses uncompiled local edits and nothing
-else; removal is never inferred as retirement.
+else; removal is never inferred as retirement, and no compile path produces a
+retirement either.
 
 The render format is deliberately experimental through dogfood. The typed
 editable/derived split and the round-trip laws are the contract; the Markdown

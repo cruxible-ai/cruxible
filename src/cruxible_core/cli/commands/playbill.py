@@ -16,6 +16,7 @@ from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
+    _echo_write_target,
     _emit_json,
     _require_instance_id,
     json_option,
@@ -1120,7 +1121,13 @@ def native_group() -> None:
     """Check out accepted knowledge as an editable in-repo working tree."""
 
 
-def _native_state(client: CruxibleClient, instance_id: str) -> native.NativeAcceptedStateV1:
+def _native_state(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    at: dict[str, Any] | None = None,
+    boundary: native.NativeCoverageBoundaryV1 | None = None,
+) -> native.NativeAcceptedStateV1:
     """Assemble the render input from the served reads that already exist.
 
     No operation is added for this. The lens is a pure function of accepted
@@ -1134,24 +1141,35 @@ def _native_state(client: CruxibleClient, instance_id: str) -> native.NativeAcce
     A Claim's verdict comes from its accepted ``current_verdict`` projection,
     which the list read already carries, so this costs one call per artifact kind
     rather than one call per Claim.
+
+    ``at`` and ``boundary`` are what a compile needs and a render does not: to
+    reconstruct the *baseline*, this reads an older generation and is handed the
+    boundary that generation's render already committed to, because exporting a
+    fresh floor would answer about the head.
     """
 
-    floor = client.export_playbill_floor(instance_id)
-    boundary_file = next(
-        (item for item in floor.files if item.path == "coverage-manifest.json"), None
-    )
-    if boundary_file is None:
-        raise click.ClickException("The floor export carries no coverage boundary to inherit.")
-    boundary = native.native_boundary_from_floor(
-        json.loads(base64.b64decode(boundary_file.content_base64, validate=True))
-    )
+    if boundary is None:
+        floor = client.export_playbill_floor(instance_id, at=at)
+        boundary_file = next(
+            (item for item in floor.files if item.path == "coverage-manifest.json"), None
+        )
+        if boundary_file is None:
+            raise click.ClickException("The floor export carries no coverage boundary to inherit.")
+        boundary = native.native_boundary_from_floor(
+            json.loads(base64.b64decode(boundary_file.content_base64, validate=True))
+        )
+        coordinate = AcceptedCoordinate.model_validate(floor.coordinate.model_dump(mode="json"))
+    else:
+        if at is None:  # pragma: no cover - callers pass both or neither
+            raise click.ClickException("A declared coverage boundary needs its own coordinate.")
+        coordinate = AcceptedCoordinate.model_validate(at)
     return native.build_native_state(
         instance_id=instance_id,
-        at=AcceptedCoordinate.model_validate(floor.coordinate.model_dump(mode="json")),
+        at=coordinate,
         boundary=boundary,
         subjects=[
             native.artifact_record_from_projection("Subject", view.envelope)
-            for view in client.list_playbill_subjects(instance_id).subjects
+            for view in client.list_playbill_subjects(instance_id, at=at).subjects
         ],
         claim_types=[
             native.artifact_record_from_projection(
@@ -1161,7 +1179,7 @@ def _native_state(client: CruxibleClient, instance_id: str) -> native.NativeAcce
                 identity=view.identity,
                 artifact_digest=view.artifact_digest,
             )
-            for view in client.list_playbill_claim_types(instance_id).claim_types
+            for view in client.list_playbill_claim_types(instance_id, at=at).claim_types
         ],
         query_definitions=[
             native.artifact_record_from_projection(
@@ -1171,15 +1189,15 @@ def _native_state(client: CruxibleClient, instance_id: str) -> native.NativeAcce
                 identity=view.identity,
                 artifact_digest=view.artifact_digest,
             )
-            for view in client.list_playbill_query_definitions(instance_id).query_definitions
+            for view in client.list_playbill_query_definitions(instance_id, at=at).query_definitions
         ],
         documents=[
             native.artifact_record_from_projection("Document", view.envelope)
-            for view in client.list_playbill_documents(instance_id).documents
+            for view in client.list_playbill_documents(instance_id, at=at).documents
         ],
         claims=[
             native.claim_record_from_projection(view.envelope, view.facts)
-            for view in client.list_playbill_claims(instance_id).claims
+            for view in client.list_playbill_claims(instance_id, at=at).claims
         ],
     )
 
@@ -1355,6 +1373,236 @@ def native_status_cmd(directory: str, output_json: bool) -> None:
             f"beside {len(invalidation.drifted_addresses)} edited statement(s); "
             "no governance fact reaches the edited material"
         )
+
+
+def _read_dispositions(path: str | None) -> tuple[native.NativeDraftDispositionV1, ...]:
+    """Read draft dispositions supplied beside the tree rather than inside it."""
+
+    if path is None:
+        return ()
+    source = Path(path).expanduser()
+    try:
+        payload = yaml.safe_load(source.read_text())
+    except (OSError, yaml.YAMLError) as exc:
+        raise click.ClickException(f"Could not read {source}: {exc}") from exc
+    if not isinstance(payload, list):
+        raise click.ClickException(f"{source} must contain a list of draft dispositions")
+    try:
+        return tuple(native.NativeDraftDispositionV1.model_validate(item) for item in payload)
+    except ValueError as exc:
+        raise click.ClickException(f"{source} is not a valid disposition list: {exc}") from exc
+
+
+def _render_compile_result(result: native.NativeCompileResultV1) -> list[str]:
+    """One rendering of the compile result; preview and submit both use it."""
+
+    lines = [
+        f"Compile: baseline generation {result.baseline.generation_root}",
+        f"         accepted head      {result.head.generation_root}",
+        f"         lens {result.lens_id} v{result.lens_version}, read at {result.evaluation_time}",
+    ]
+    for item in result.three_way:
+        lines.append(
+            f"  three-way  {item.outcome:>18}  {item.claim_path}  "
+            f"{len(item.region_ids)} edited region(s)"
+        )
+    for draft in result.drafts:
+        stated = "none" if draft.disposition is None else draft.disposition.kind
+        lines.append(
+            f"      draft  {draft.draft_id}  {draft.path}  disposition: {stated}  "
+            f"{len(draft.candidates)} candidate(s)"
+        )
+        for candidate in draft.candidates:
+            mark = "blocking" if candidate.blocking else "advisory"
+            lines.append(f"             {mark}  {candidate.identity}  ({candidate.kind})")
+        for generated in draft.generated_distinct_from:
+            lines.append(f"             lowers to semantic.distinct_from {generated.artifact_path}")
+    for member in result.members:
+        lines.append(f"     member  {member.kind}  {member.predicate}  {member.subject_path}")
+    for notice in result.notices:
+        lines.append(f"     notice  {notice.code}  {notice.message}")
+    for refusal in result.refusals:
+        lines.append(f"    refusal  {refusal.code}  {refusal.message}")
+        lines.append(f"             action: {refusal.required_action}")
+        for named in refusal.candidates:
+            lines.append(f"             candidate: {named}")
+    if result.baseline != result.head:
+        lines.append(
+            "The accepted head moved under this baseline; submitting binds the baseline and "
+            "the proposal receive path performs the deterministic rebase."
+        )
+    if result.rebase_expected:
+        lines.append(
+            "At least one edited Claim also changed at the head, so that rebase has real "
+            "work to do and may report a typed member conflict instead of a candidate."
+        )
+    return lines
+
+
+@native_group.command("compile")
+@click.argument("directory", type=click.Path(file_okay=False))
+@click.option(
+    "--submit/--preview",
+    "submit",
+    default=False,
+    show_default=True,
+    help="Preview the change set, or submit it as one governed proposal.",
+)
+@click.option(
+    "--name", "proposal_name", default=None, help="Proposal ref name, required to submit."
+)
+@click.option(
+    "--dispositions",
+    "dispositions_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="A list of draft dispositions, for drafts not dispositioned in the file itself.",
+)
+@json_option
+@handle_errors
+def compile_native(
+    directory: str,
+    submit: bool,
+    proposal_name: str | None,
+    dispositions_path: str | None,
+    output_json: bool,
+) -> None:
+    """Compile local edits into one governed proposal, or preview the one it would make.
+
+    Editing proposed nothing and this command accepts nothing: compile is the
+    middle of three gates. It binds the baseline the tree was rendered from, so
+    when the accepted head has moved the proposal receive path performs the
+    deterministic three-way rebase -- no merge here decides what is admissible.
+    """
+
+    root = Path(directory).expanduser()
+    files = _read_native_tree(root)
+    manifest = _native_manifest(root)
+    baseline_at = manifest.coordinate.model_dump(mode="json")
+    dispositions = _read_dispositions(dispositions_path)
+
+    def _compile(client: CruxibleClient, instance_id: str) -> native.NativeCompileResultV1:
+        return native.compile_native_tree(
+            files,
+            manifest=manifest,
+            baseline_state=_native_state(
+                client,
+                instance_id,
+                at=baseline_at,
+                boundary=native.native_boundary_from_manifest(manifest),
+            ),
+            accepted_state_at_head=_native_state(client, instance_id),
+            ctx=native.render_context_from_manifest(manifest),
+            dispositions=dispositions,
+        )
+
+    try:
+        result = _server_call(_compile, command_name="playbill native compile")
+    except NativeRenderError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    proposal: dict[str, Any] | None = None
+    if submit and result.compilable:
+        if proposal_name is None:
+            raise click.BadParameter("submitting a compile requires --name")
+        _echo_write_target("active", {})
+        batch = _server_call(
+            lambda client, instance_id: client.propose_playbill_claims(
+                instance_id,
+                authorings=result.authorings,
+                proposal_name=proposal_name,
+                base=baseline_at,
+            ),
+            command_name="playbill native compile",
+        )
+        proposal = batch.proposal.proposal
+
+    # A submitted compile can still be refused by the ledger -- a rebase member
+    # conflict is exactly that, and it is the outcome compile deliberately does
+    # not predict. Reporting it as success would make the one thing this loop
+    # promises to be headlessly checkable unreadable from an exit code.
+    refused_by_evaluation = (
+        proposal is not None and proposal["evaluation"]["verdict"] != "candidate"
+    )
+
+    if output_json:
+        _emit_json(
+            {
+                "compile": result.model_dump(mode="json"),
+                "proposal": proposal,
+            }
+        )
+    else:
+        for line in _render_compile_result(result):
+            click.echo(line)
+        if not result.members and not result.refusals:
+            click.echo("Nothing to compile: every rendered field matches accepted state.")
+        if proposal is not None:
+            evaluation = proposal["evaluation"]
+            click.echo(f"Proposal: {proposal['admission']['proposal_id']}")
+            click.echo(f"Verdict: {evaluation['verdict']}, rebased {evaluation['rebased']}")
+            click.echo(f"Candidate: {evaluation['candidate_digest']}")
+            for diagnostic in evaluation["diagnostics"]:
+                click.echo(f"    refusal  {diagnostic['code']}  {diagnostic['message']}")
+            if refused_by_evaluation:
+                click.echo(
+                    "Refused: the proposal was admitted and evaluated, and no candidate was "
+                    "produced. Nothing is pending approval."
+                )
+        elif submit and result.refusals:
+            click.echo("Refused: nothing was submitted.")
+    if result.refusals or refused_by_evaluation:
+        raise SystemExit(1)
+
+
+@native_group.command("review-current")
+@click.argument("proposal_id")
+@click.option(
+    "--bound",
+    "bound_candidate_digest",
+    default=None,
+    help="The candidate digest the collected review evidence was signed against.",
+)
+@json_option
+@handle_errors
+def native_review_current(
+    proposal_id: str,
+    bound_candidate_digest: str | None,
+    output_json: bool,
+) -> None:
+    """Check headlessly that review evidence binds the candidate that would settle.
+
+    Approvals are stored under the exact candidate digest they signed, so a
+    rebase does not weaken prior evidence -- it moves the candidate out from
+    under it. Naming the digest an earlier review bound is how that earlier act
+    re-enters the answer, which is then reported as superseded_by_rebase.
+    """
+
+    review = _server_call(
+        lambda client, instance_id: client.review_playbill_proposal(instance_id, proposal_id),
+        command_name="playbill native review-current",
+    )
+    attestations = review.attestation_coverage.get("attestations") or ()
+    currency = native.native_review_currency(
+        proposal_id=proposal_id,
+        candidate_digest=review.candidate_digest,
+        parent_semantic_root=review.parent_semantic_root,
+        attestation_signer_ids=tuple(str(item["signer_id"]) for item in attestations),
+        bound_candidate_digest=bound_candidate_digest,
+    )
+    if output_json:
+        _emit_json(currency.model_dump(mode="json"))
+    else:
+        click.echo(f"review-current: {currency.status}")
+        click.echo(f"candidate: {currency.candidate_digest}")
+        click.echo(f"parent semantic root: {currency.parent_semantic_root}")
+        if currency.binding_signer_ids:
+            click.echo(f"binding approvals: {', '.join(currency.binding_signer_ids)}")
+        if currency.bound_candidate_digest is not None:
+            click.echo(f"evidence bound: {currency.bound_candidate_digest}")
+        click.echo(f"action: {currency.required_action}")
+    if currency.status != "current":
+        raise SystemExit(1)
 
 
 @playbill_group.group("coverage")

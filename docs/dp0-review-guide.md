@@ -50,7 +50,9 @@ playbill explain
 playbill floor export
 playbill host create
 playbill init
+playbill native compile
 playbill native render
+playbill native review-current
 playbill native status
 playbill principal list
 playbill principal recover
