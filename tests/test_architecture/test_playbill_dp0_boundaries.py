@@ -612,6 +612,61 @@ def test_pc_f_purged_donors_are_absent_and_residue_is_exact() -> None:
         assert surviving <= chain, surviving - chain
 
 
+def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
+    """Coverage points at accepted state; it may never reach a write path.
+
+    Transitive closure is the wrong instrument here -- every read model in the
+    substrate eventually imports the acceptance kernel through `claims` -- so
+    the checkable statement is the one that actually constrains the batch: the
+    coverage modules import from an explicit read-side allowlist and from
+    nothing else, so there is no name in scope through which a resolver could
+    propose, compile, accept, activate, settle, or touch the ledger.
+    """
+
+    package = CORE / "playbill" / "coverage"
+    modules = sorted(path.stem for path in package.glob("*.py"))
+    assert modules == ["__init__", "contracts", "indexes", "manifest", "resolver"]
+
+    permitted = {
+        "cruxible_core",
+        "cruxible_core.playbill",
+        "cruxible_core.playbill.canonical",
+        "cruxible_core.playbill.captures",
+        "cruxible_core.playbill.claims",
+        "cruxible_core.playbill.coverage",
+        "cruxible_core.playbill.coverage.contracts",
+        "cruxible_core.playbill.coverage.indexes",
+        "cruxible_core.playbill.coverage.manifest",
+        "cruxible_core.playbill.coverage.resolver",
+        "cruxible_core.playbill.discovery",
+        "cruxible_core.playbill.errors",
+        "cruxible_core.playbill.projection",
+        "cruxible_core.playbill.query",
+        "cruxible_core.playbill.query.grammar",
+        "cruxible_core.playbill.query.semantic_discovery",
+        "cruxible_core.playbill.semantic",
+        "cruxible_core.playbill.source_references",
+    }
+    forbidden = (
+        "cruxible_core.playbill.activation",
+        "cruxible_core.playbill.compiler",
+        "cruxible_core.playbill.git",
+        "cruxible_core.playbill.instance",
+        "cruxible_core.playbill.proposals",
+        "cruxible_core.playbill.service",
+        "cruxible_core.playbill.settlement",
+        "cruxible_core.server",
+        "cruxible_core.service",
+        "cruxible_core.storage",
+    )
+
+    imported: set[str] = set()
+    for path in package.glob("*.py"):
+        imported.update(module for module in _imports(path) if module.startswith("cruxible_core"))
+    assert sorted(imported - permitted) == []
+    assert sorted(module for module in imported if module in forbidden) == []
+
+
 def test_destructive_pass_oracles_are_exact_and_immutable() -> None:
     metadata = json.loads((GOLDENS / "oracles-v1.json").read_text(encoding="utf-8"))
     assert metadata["format"] == "playbill-oracles-v1"

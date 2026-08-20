@@ -400,6 +400,7 @@ as a wire change.
 | `playbill-replay-checkpoint-v2`, inside `playbill-replay-checkpoint-file-v2` | `<managed root>/checkpoints/replay-checkpoint-v2.json` | A summary of one already-verified accepted prefix, so a reopen replays only a bounded suffix. |
 | `playbill-projection-manifest-v1` and its piece builds | `<managed root>/projections/` | Disposable materialized read state, rebuilt from the accepted tree. |
 | `playbill-serving-manifest-v1` | `<managed root>/projections/serving.json` | The local admission pointer at one exact accepted coordinate. |
+| `playbill-coverage-manifest-v1`, inside `playbill-coverage-manifest-file-v1` | `<managed root>/coverage/coverage-manifest-v1.json` | The published freshness proof for coverage delivery: which working sources were observed, at which accepted coordinate, over which index, under which access profile, at which epoch. |
 
 The checkpoint format is the one PC-F added. Four properties make it reviewable
 as local state rather than as a new surface:
@@ -433,9 +434,27 @@ Its self-digest kind, `ReplayCheckpointDigest`, is declared in `checkpoints.py`
 rather than beside the wire digest kinds in `canonical.py`, precisely so a later
 reader cannot mistake it for one.
 
-No golden pins any of these formats, and none should: a golden is how this
-repository freezes a contract other parties depend on, and these are rebuildable
-local files.
+The coverage manifest is the one PC-F2 added, and it is local state by the same
+four properties. It sits outside the descriptor's `StorageLayout` under a fixed
+`coverage/` directory; it never enters the ledger, the CAS, a journal, or an
+export; every value it carries is compared against a freshly observed index and
+overlay on each resolve, and a file whose self-digest does not reproduce is
+deleted rather than read; and deleting it costs only provable freshness, after
+which the resolver reports `unavailable`, stops returning `exact`, and keeps
+answering. Its self-digest kind, `CoverageManifestDigest`, is likewise declared
+in `coverage/manifest.py` rather than in `canonical.py`. Its epoch is a
+monotonic counter and never a time, and its publication time sits outside the
+digest preimage, so rebuilding it over the same coordinate and snapshot
+reproduces the same digest exactly.
+
+No golden pins the *contents* of these files, and none should: a golden is how
+this repository freezes a contract other parties depend on, and these are
+rebuildable local caches whose presence no test may require. One golden,
+`coverage-grammar-v1.json`, does pin the coverage manifest's **field grammar**
+alongside the coverage request/result grammar, because the §11.5 coverage
+addendum froze the manifest's identity and completeness binding fields as part
+of the contract every coverage adapter reads. That is a pin on the shape a
+manifest must have, never on any particular manifest existing.
 
 ## Exact frozen goldens retained
 
@@ -461,6 +480,7 @@ tests/goldens/playbill/candidate-v2.json
 tests/goldens/playbill/capture-claim-v1.json
 tests/goldens/playbill/changeset-v3.json
 tests/goldens/playbill/claim-type-v1.json
+tests/goldens/playbill/coverage-grammar-v1.json
 tests/goldens/playbill/depgraph-v3.json
 tests/goldens/playbill/discovery-index-v1.json
 tests/goldens/playbill/journal_corpus/index.json
