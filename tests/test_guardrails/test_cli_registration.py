@@ -95,7 +95,7 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
     group_claims, _ = _walk_lazy_map(CLI_COMMANDS)
     defined = _defined_click_objects()
     groups = [(obj, origin) for obj, origin in defined.values() if isinstance(obj, click.Group)]
-    assert len(groups) == 19, f"expected 19 Playbill/host groups, found {len(groups)}"
+    assert len(groups) == 20, f"expected 20 Playbill/host groups, found {len(groups)}"
 
     problems: list[str] = []
     for group, origin in groups:
@@ -118,8 +118,8 @@ def test_every_command_registered_on_a_group_is_in_the_lazy_cli_map() -> None:
 def test_every_command_defined_in_the_commands_package_is_reachable() -> None:
     """A command defined but never registered is dead or invisible, never fine."""
     group_claims, leaf_claims = _walk_lazy_map(CLI_COMMANDS)
-    assert len(leaf_claims) == 65, (
-        f"expected 65 Playbill/host leaf commands, found {len(leaf_claims)}"
+    assert len(leaf_claims) == 66, (
+        f"expected 66 Playbill/host leaf commands, found {len(leaf_claims)}"
     )
 
     reachable = set(leaf_claims)

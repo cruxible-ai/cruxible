@@ -71,6 +71,7 @@ playbill query get
 playbill query list
 playbill query propose
 playbill query run
+playbill seed apply
 playbill sources check
 playbill sources compile
 playbill sources propose
@@ -459,6 +460,173 @@ acceptance anywhere in it.
 golden moves; the only added surface is the `playbill hook post-tool-use` CLI
 command, and the coverage package's no-authority import allowlist still holds
 over both new modules.
+
+## PC-G-H3: the seed bundle, the arm recipe, and one ordering defect
+
+The last slice of the TauBench critical path. It adds one CLI group, one flag on
+an existing command, a pure planning module, and a committed benchmark
+directory. **Zero served operations, zero routes, zero MCP tools, zero client
+methods, and zero golden diffs**; every propose call the seed command makes
+existed before this slice, and `playbill/seed.py` writes the table of them out
+by name so that is readable rather than asserted.
+
+### The stash ordering defect, and the class it belongs to
+
+`test_a_stash_captures_exactly_the_dirty_regions_bytes` failed roughly half the
+time. The symptom was `body.region_ids != parsed.dirty_region_ids` carrying the
+same two digests in swapped order; the cause was two different canonical
+orderings for one list.
+
+`NativeStashBodyV1` orders its regions by **region identity**, and its validator
+enforces that — correct, because identity is path-free by §11.9.3 and a
+digest-committed record must not order its fields by where a lens happened to
+place a Claim. `NativeTreeParseV1.dirty_region_ids` returned the same identities
+in **presentation** order: byte-sorted path, then position inside the file. Those
+two orderings coincide only when the digests happen to sort the way the paths
+do, and a region identity is a digest over the Claim's semantic address, so
+which way that falls is decided afresh by every instance's own artifact
+identifiers. Roughly a coin flip per run, which is exactly how it presented.
+
+The fix is at the source and it is one line per accessor: `dirty_region_ids`,
+`tampered_region_ids`, and `moved_region_ids` — on both the file parse and the
+tree parse — return `byte_sorted`. `regions` still walks in presentation order,
+because presentation order is what a person reading a file expects and what a
+diagnostic should name; it is *identity lists* that may not carry presentation
+coordinates. `native/sync.py` had already been wrapping `byte_sorted(dirty)`
+around every commit point, which is the same defect being worked around one
+caller at a time; those wrappers are now gone, so a regression in the accessor
+surfaces instead of being papered over.
+
+Two regression tests, and the split between them is deliberate. The constructed
+one builds a tree parse whose first file deliberately holds the last-sorting
+identity, so it fails before the fix on **every** run rather than half of them —
+a coin-flip regression test is not a regression test. The rendered one asserts
+the ordering as a law across all three routes to the list: the stash body's
+committed order, the parse's identity list, and the render plan's
+`stashed_region_ids`.
+
+The class matters more than the instance. A digest-committed local format whose
+field ordering depends on presentation is nondeterministic, and the local-format
+family — checkpoint, coverage manifest, stash — exists to be reproducible. Any
+future accessor returning region identities inherits the same rule, which is
+written into `native/parse.py`'s module docstring rather than left to memory.
+
+### The seed bundle is CLI orchestration, and could not have been one proposal
+
+`playbill seed apply BUNDLE_DIR --name NAME` applies a directory of authoring
+JSONs — `claim-types/`, `subjects/`, `documents/`, `claims/`,
+`query-definitions/`, plus a `bodies/` subtree stored in CAS first — as the
+fewest governed proposals it can legally become. The layout is the manifest:
+there is no bundle manifest file, and a file outside those directories refuses
+rather than being skipped, because silently applying part of a bundle makes
+"this bundle was applied" untrue in a way nobody can see.
+
+**Where the minimum comes from.** `DirectClaimAuthoringV1` already carries
+dependency closures. A ClaimType or Subject that some bundle Claim declares in
+`claim_type_artifact`, `subject_shell`, `dependency_claim_types`, or
+`dependency_subject_shells` costs **no proposal at all**, because the batch
+operation admits it in the same generation; the plan names each such entry and
+the Claim that carries it. The planner never adds a closure an authoring did not
+declare — deciding that a Claim should carry a Subject is an authoring decision
+the admission laws adjudicate, not one a seeding convenience takes. The example
+bundle's three Claims, one ClaimType, and three Subjects are therefore one
+proposal, with the QueryDefinition a second because the served surface has a
+singular propose operation for it and no plural one.
+
+**Why applying is one group per invocation.** This was measured, not assumed:
+opening two proposals against one accepted head and activating both fails with
+`settlement base is not the current main ref`. A plan is therefore a *sequence*,
+and the caller must approve and activate each group before submitting the next.
+Approval and activation are separate governed acts and this command performs
+neither; `--plan` prints the whole grouping offline and reaches no daemon, and a
+harness loops plan → apply → approve → activate over the printed group ids.
+`benchmarks/playbill_taubench/recipe.py:seed` is that loop, committed.
+
+**Refusals defer to the laws.** The one thing checked at plan time is the case
+the propose operation would refuse anyway and that is cheaper to say early: two
+entries putting different bytes at one canonical path in one change set — a
+top-level ClaimType diverging from the one a Claim carries, or two Claims
+carrying different copies. Everything else about admissibility is left to the
+propose operation's own diagnostics, which are the authoritative answer. The
+planner accordingly validates only the models it reads fields out of, and every
+one of them lives inside the `playbill` package: `seed.py` imports no service
+module and there is no import cycle to break.
+
+### The floor and the native renders compose in the CLI, not the service
+
+`playbill floor export --with-native` is the §11.8 native-surface amendment —
+"the file floor in arms 3 and 4 includes the committed native knowledge renders
+of §11.9". It is a **CLI** composition, deliberately: the floor service keeps
+returning bytes and touching no filesystem, and the render lens keeps being a
+pure function of accepted state, because the daemon having any path by which it
+could write into a repository is exactly what §11.9.5's explicit-sync law
+forbids.
+
+**No manifest format moved.** The two exports share one directory without
+knowing about each other, because they cannot collide: every floor artifact is
+`.json` under its own prefix and every rendered page is `.md`, and the manifests
+keep their own names — `manifest.json`, `render-manifest.json`, and
+`coverage-manifest.json` naming the §11.6.3 boundary. The floor manifest
+enumerates no `.md` path and does not mention the render manifest; a test
+asserts both.
+
+The native write is the *same* function `playbill native render` uses, factored
+out rather than reimplemented, so the floor export inherits the §11.9.5
+dirty-region refusal by construction. A second write path that skipped that
+check would be a second way to lose an author's edits.
+
+### The arm recipe is executable and committed
+
+`benchmarks/playbill_taubench/` holds `recipe.py`, `seed-example/`, and a README.
+Each of the six steps is a function, and
+`tests/test_cli/test_playbill_taubench_arms.py` imports the committed recipe and
+drives all of them against a served instance — there is no second implementation
+of any step in the test, which is what makes "an integrator needs only this
+directory" a proof rather than a claim. It runs in the ordinary suite in seconds;
+unlike the adoption-scale benchmark it is setup, not a measured gate.
+
+**Arms 3 and 4 differ by one boolean and that is asserted.** `build_arm`
+produces both records through one code path, including constructing the
+middleware for arm 3, which then never calls it. The two `ArmSetupV1` records
+differ in exactly one field, `deliver_coverage`, and `run_turn` reads it to
+decide whether to call `after_tool`. The smoke test asserts the one differing
+field, the shared middleware configuration, and byte-identical arm workspaces
+after the turn — the delivery adapter changed what the model saw and nothing
+about what the tools did.
+
+**The flagship, from the committed transcript.** Same event stream, same edit,
+same turn. Arm 3 receives exactly the tool's own output on all three events and
+says nothing at all. Arm 4 receives that same string plus a pure addendum:
+`exact external:corpus.handbook.md …` on the read, then
+`drifted external:corpus.handbook.md expected … observed … claims claims/83/CLM-….yaml … [commitment_superseded]`
+on the edit, naming the affected Claim in the text the agent is already reading,
+with the accepted coordinate identical across the transcript and no compile,
+proposal, or acceptance in it.
+
+**The run manifest pins what §11.8 requires pinned.** Index, overlay, manifest
+digests and epoch off a coverage result the hooked arm received; generation,
+semantic, compiler, and floor digests off the floor manifest's own coordinate;
+render digest and lens version off the render manifest; the rule set and its
+digest; and the seed plan digest, which excludes the invocation's proposal name
+so it answers "is this the same world?" rather than "was this the same command?".
+`hook_adapter.envelope_version` is `null` and recorded rather than omitted,
+because the owned-harness middleware has no vendor hook envelope and "not
+applicable" must not look like "forgotten" in a pinned manifest.
+
+### Recorded backlog: what PC-G-proper still holds
+
+The TauBench critical path is complete at this slice. Four PC-G items are
+deliberately *not* in it and are recorded here rather than left implied:
+
+| Item | Where it stands | What closing it needs |
+|---|---|---|
+| Procedure expand | `playbill expand` returns a context capsule for Subjects, Claims, and interfaces; Procedures are not a facet | a Procedure facet on the capsule, once dogfood shows which fields a reader actually wants |
+| Journal ownership | `run["journal_record_digest"] is None`: the daemon opens no query-receipt journal, and the knowledge-loop smoke pins that | a daemon-owned journal and the decision about who owns retention — the same open seam PC-F2-S2 recorded |
+| Lineage read | an earlier proposal can be *named* and the naming is checked against the shared target ref; no read enumerates a lineage | one served read operation over admissions, which is a contract change and was out of scope for both PC-F3 and this batch |
+| Native TauBench task corpora | the recipe seeds a foreign-source world and runs one scripted turn; §11.8's native-knowledge tasks want tasks *about* rendered governed spans | a task corpus authored against OKF-rendered spans, per the §11.8 note that native-knowledge tasks are meaningful only with the §11.9 surface present |
+
+The four PC-F3 seams recorded above (draft scope, foreign renders, lineage read,
+capture path for rendered occurrences) are unchanged by this slice.
 
 ## PC-F3-S1b: the multi-Claim proposal operation
 

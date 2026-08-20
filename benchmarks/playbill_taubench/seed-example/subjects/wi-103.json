@@ -1,0 +1,22 @@
+{
+  "artifact_format": "playbill-subject-v1",
+  "authority": {
+    "approve_roles": [
+      "owner"
+    ],
+    "propose_roles": [
+      "owner"
+    ]
+  },
+  "identity": {
+    "kind": "Subject",
+    "name": "project.work_item/wi-103"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "pins": [],
+  "subject_id": "wi-103",
+  "subject_kind": "project.work_item"
+}

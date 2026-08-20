@@ -1,0 +1,61 @@
+{
+  "claim_id": null,
+  "claim_type_artifact": null,
+  "dependency_claim_types": [],
+  "dependency_subject_shells": [],
+  "existing_statement_handoffs": [],
+  "materialize_source": true,
+  "predecessor_artifact_digest": null,
+  "rationale": "The release checklist for wi-103 is complete and it is ready to start.",
+  "retire": false,
+  "source_selection": null,
+  "statement": {
+    "claim_type": {
+      "kind": "ClaimType",
+      "name": "project.work_item.status"
+    },
+    "claim_type_digest": "sha256:84e26af5cd292edb33d7d3d246cc400b11d2c0a598f55d628c023be547da0906",
+    "effective_from": null,
+    "effective_until": null,
+    "object": {
+      "kind": "literal",
+      "value": "ready"
+    },
+    "predicate": "project.work_item.status",
+    "qualifier": null,
+    "role": "observation",
+    "shell_context_digest": null,
+    "subject": {
+      "artifact_path": "subjects/project.work_item/wi-103.yaml",
+      "selector": {
+        "scheme": "artifact-v1",
+        "value": ""
+      },
+      "tag": "playbill-semantic-address-v1"
+    },
+    "tag": "playbill-claim-statement-v1"
+  },
+  "subject_shell": {
+    "artifact_format": "playbill-subject-v1",
+    "authority": {
+      "approve_roles": [
+        "owner"
+      ],
+      "propose_roles": [
+        "owner"
+      ]
+    },
+    "identity": {
+      "kind": "Subject",
+      "name": "project.work_item/wi-103"
+    },
+    "lifecycle": {
+      "predecessor_digest": null,
+      "state": "live"
+    },
+    "pins": [],
+    "subject_id": "wi-103",
+    "subject_kind": "project.work_item"
+  },
+  "tag": "playbill-direct-claim-authoring-v1"
+}

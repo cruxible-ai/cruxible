@@ -44,6 +44,9 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     # so the notice belongs immediately before the submit rather than before
     # the command that might only be previewing.
     ("playbill", "native", "compile"): "manual",
+    # Seeding is the same shape: --plan is an offline reading of a directory
+    # that reaches no instance, so the notice belongs before the submit.
+    ("playbill", "seed", "apply"): "manual",
     ("playbill", "query", "propose"): "active",
     ("playbill", "proposal", "approve"): "active",
     ("playbill", "proposal", "activate"): "active",
@@ -456,6 +459,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             ),
             "expand": _command(
                 "playbill", "expand", "Expand one address into a bounded context capsule."
+            ),
+            "seed": _group(
+                "Apply a bundle of authoring JSONs as governed proposals.",
+                {
+                    "apply": _command(
+                        "playbill", "apply_seed", "Propose one group of a seed bundle."
+                    )
+                },
+                module="playbill",
+                attr="seed_group",
             ),
             "floor": _group(
                 "Materialize the deterministic greppable floor.",

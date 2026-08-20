@@ -165,10 +165,31 @@ cruxible playbill expand ARTIFACT_PATH [--facet NAME]... [--evaluation-time TS]
 Returns one bounded context capsule for an accepted address. Repeat --facet to
 narrow what the capsule carries.
 
+## playbill seed
+
+~~~text
+cruxible playbill seed apply BUNDLE_DIR --name NAME [--plan] [--group GROUP_ID]
+~~~
+
+Applies a bundle directory of authoring JSONs — `claim-types/`, `subjects/`,
+`documents/`, `claims/`, `query-definitions/`, plus a `bodies/` subtree stored in
+CAS first — as the fewest governed proposals it can legally become. Every Claim
+settles as one batch proposal carrying the dependencies the Claims themselves
+declare; each remaining artifact uses the singular propose operation the served
+surface already has for it. No operation is added.
+
+`--plan` prints the grouping and submits nothing; it reaches no daemon. Without
+it, one group is submitted per invocation — `--group` names which, defaulting to
+the first — because a proposal settles against the base it was admitted at and
+two proposals opened against one head cannot both activate. Approving and
+activating stay separate acts, so a harness loops plan → apply → approve →
+activate over the printed group ids.
+
 ## playbill floor
 
 ~~~text
 cruxible playbill floor export --output DIR [--force]
+  [--with-native] [--evaluation-time ISO-8601]
 ~~~
 
 Writes the deterministic greppable floor of accepted state. The daemon returns
@@ -176,6 +197,15 @@ bytes keyed by floor path and never writes a client path; export refuses a
 non-empty output directory unless --force is given. The export carries its own
 coverage boundary in `coverage-manifest.json`, enumerated in the root manifest
 like every other floor file.
+
+`--with-native` additionally writes the native knowledge renders into the same
+directory, which is the arm-3/arm-4 file surface: floor artifacts (`.json`),
+rendered pages (`.md`), and the coverage boundary in one greppable tree. The two
+manifests keep their own names, `manifest.json` and `render-manifest.json`, and
+neither format changes. The composition is done by the CLI, so the floor service
+still touches no filesystem and the render lens stays a pure function of
+accepted state. `--evaluation-time` pins the render's read time and applies only
+with `--with-native`.
 
 ## playbill native
 

@@ -7,7 +7,7 @@ import json
 import os
 import secrets
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -25,7 +25,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.playbill import native
+from cruxible_core.playbill import native, seed
 from cruxible_core.playbill.attestations import ApprovalStatement
 from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.coverage.adapter import (
@@ -1106,6 +1106,198 @@ def expand(
     _emit_json(result.model_dump(mode="json"))
 
 
+@playbill_group.group("seed")
+def seed_group() -> None:
+    """Apply a bundle of authoring JSONs as governed proposals."""
+
+
+def _read_seed_bundle_files(root: Path) -> dict[str, bytes]:
+    """Read the whole bundle directory as bundle-relative bytes."""
+
+    if not root.is_dir():
+        raise click.ClickException(f"Not a seed bundle directory: {root}")
+    files: dict[str, bytes] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            files[path.relative_to(root).as_posix()] = path.read_bytes()
+    if not files:
+        raise click.ClickException(f"The seed bundle at {root} is empty")
+    return files
+
+
+def _submit_seed_group(
+    client: CruxibleClient,
+    instance_id: str,
+    *,
+    files: Mapping[str, bytes],
+    plan: seed.SeedPlanV1,
+    group: seed.SeedProposalGroupV1,
+    proposal_name: str,
+) -> dict[str, Any]:
+    """Store the bundle's bodies, then submit one group through its own operation.
+
+    Bodies first and always: a foreign-source citation names a content digest and
+    a Document names a body digest, so the bytes have to be in CAS before the
+    artifact citing them is proposed. Storing is content-addressed and therefore
+    idempotent, which is what makes re-running a group safe in the only sense a
+    store can be safe.
+    """
+
+    for path in plan.body_paths:
+        client.store_playbill_body(instance_id, files[path])
+
+    payloads = [json.loads(files[path].decode("utf-8")) for path in group.entry_paths]
+    if group.kind == "claim":
+        return client.propose_playbill_claims(
+            instance_id, authorings=payloads, proposal_name=proposal_name
+        ).model_dump(mode="json")
+    single = payloads[0]
+    if group.kind == "claim_type":
+        return client.propose_playbill_claim_type(
+            instance_id, claim_type=single, proposal_name=proposal_name
+        ).model_dump(mode="json")
+    if group.kind == "subject":
+        return client.propose_playbill_subject(
+            instance_id, shell=single, proposal_name=proposal_name
+        ).model_dump(mode="json")
+    if group.kind == "document":
+        return client.propose_playbill_document(
+            instance_id, shell=single, proposal_name=proposal_name
+        ).model_dump(mode="json")
+    return client.propose_playbill_query_definition(
+        instance_id, query=single, proposal_name=proposal_name
+    ).model_dump(mode="json")
+
+
+def _seed_proposal_id(submitted: Mapping[str, Any]) -> str:
+    """Dig the proposal id out of whichever result shape the operation returned.
+
+    The five propose operations wrap their inspection at different depths -- a
+    ClaimType result *is* the inspection, a batch result carries one inside its
+    own `proposal` field -- so this descends `proposal` until it finds the
+    admission rather than encoding five shapes. It is deliberately a *read* of
+    the result, not a re-derivation: the id is whatever the operation said it
+    was.
+    """
+
+    node: Any = submitted
+    for _ in range(4):
+        if not isinstance(node, dict):
+            break
+        admission = node.get("admission")
+        if isinstance(admission, dict) and "proposal_id" in admission:
+            return str(admission["proposal_id"])
+        node = node.get("proposal")
+    raise click.ClickException(  # pragma: no cover - every propose result carries one
+        "The propose operation returned no admission to approve"
+    )
+
+
+@seed_group.command("apply")
+@click.argument("bundle_dir", type=click.Path(exists=True, file_okay=False))
+@click.option("--name", "proposal_name", required=True, help="Proposal name for the group.")
+@click.option(
+    "--plan",
+    "plan_only",
+    is_flag=True,
+    help="Print the proposal grouping and submit nothing. Needs no daemon.",
+)
+@click.option(
+    "--group",
+    "group_id",
+    default=None,
+    help="Which planned group to submit. Defaults to the first one.",
+)
+@json_option
+@handle_errors
+@click.pass_context
+def apply_seed(
+    ctx: click.Context,
+    bundle_dir: str,
+    proposal_name: str,
+    plan_only: bool,
+    group_id: str | None,
+    output_json: bool,
+) -> None:
+    """Apply one seed bundle as the fewest governed proposals it can legally become.
+
+    Orchestration over operations that already exist, and nothing else. The
+    grouping rule is in `playbill/seed.py`: every Claim in the bundle settles as
+    one batch proposal carrying every dependency the Claims themselves declare,
+    and each remaining artifact gets the singular propose operation that is the
+    only one the served surface has for it.
+
+    **One group per invocation.** A proposal settles against the base it was
+    admitted at, so two proposals opened against one head cannot both activate.
+    Approving and activating are separate governed acts and this command performs
+    neither; a harness runs `--plan`, then loops apply/approve/activate over the
+    group ids in the order the plan printed them.
+
+    A bundle that cannot be legally grouped refuses -- here when two of its own
+    entries would put different bytes at one canonical path, and otherwise
+    through the propose operation's own diagnostics, which are the authoritative
+    answer about admissibility and are not second-guessed here.
+    """
+
+    root = Path(bundle_dir).expanduser()
+    files = _read_seed_bundle_files(root)
+    try:
+        plan = seed.plan_seed_bundle(files, proposal_name=proposal_name)
+    except seed.SeedBundleError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not plan.groups:
+        raise click.ClickException(f"The seed bundle at {root} declares nothing to propose")
+
+    if plan_only:
+        if output_json:
+            _emit_json(
+                {
+                    **plan.model_dump(mode="json"),
+                    "plan_digest": seed.seed_plan_digest(plan).tagged,
+                }
+            )
+            return
+        for line in seed.render_seed_plan(plan):
+            click.echo(line)
+        return
+
+    try:
+        group = plan.group(group_id) if group_id is not None else plan.groups[0]
+    except seed.SeedBundleError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    _echo_write_target("active", ctx.params)
+    submitted = _server_call(
+        lambda client, instance_id: _submit_seed_group(
+            client,
+            instance_id,
+            files=files,
+            plan=plan,
+            group=group,
+            proposal_name=f"{proposal_name}-{group.proposal_slug}",
+        ),
+        command_name="playbill seed apply",
+    )
+    payload = {
+        "tag": "playbill-seed-application-v1",
+        "proposal_name": plan.proposal_name,
+        "plan_digest": seed.seed_plan_digest(plan).tagged,
+        "group_id": group.group_id,
+        "operation": group.operation,
+        "entry_paths": list(group.entry_paths),
+        "proposal_id": _seed_proposal_id(submitted),
+        "next_group_id": plan.next_group_id(group.group_id),
+        "result": submitted,
+    }
+    if output_json:
+        _emit_json(payload)
+        return
+    click.echo(f"Proposed {group.group_id} as {payload['proposal_id']}")
+    click.echo(f"Entries: {', '.join(group.entry_paths)}")
+    click.echo("Approve and activate it, then apply the next group.")
+    click.echo(f"Next group: {payload['next_group_id'] or 'none; the bundle is applied'}")
+
+
 @playbill_group.group("floor")
 def floor_group() -> None:
     """Materialize the deterministic greppable floor of accepted state."""
@@ -1114,20 +1306,73 @@ def floor_group() -> None:
 @floor_group.command("export")
 @click.option("--output", required=True, type=click.Path(file_okay=False))
 @click.option("--force", is_flag=True, help="Overwrite a non-empty output directory.")
+@click.option(
+    "--with-native",
+    "with_native",
+    is_flag=True,
+    help="Also write the §11.9 native knowledge renders into the same directory.",
+)
+@click.option(
+    "--evaluation-time",
+    default=None,
+    help="Explicit ISO-8601 read time for the native render. Only used with --with-native.",
+)
 @json_option
 @handle_errors
-def export_floor(output: str, force: bool, output_json: bool) -> None:
+def export_floor(
+    output: str,
+    force: bool,
+    with_native: bool,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """Write the accepted floor, optionally with the native renders beside it.
+
+    `--with-native` is the §11.8 native-surface amendment: "the file floor in
+    arms 3 and 4 includes the committed native knowledge renders of §11.9". It is
+    a **CLI** composition and deliberately not a service one -- the floor service
+    keeps returning bytes and touching no filesystem, and the render lens keeps
+    being a pure function of accepted state, because the daemon having a path by
+    which it could write into a repository is exactly what §11.9.5's
+    explicit-sync law forbids.
+
+    The two exports share one directory without a manifest change of any kind.
+    They cannot collide: every floor artifact is `.json` under its own prefix and
+    every rendered page is `.md`, and the two manifests keep their own names --
+    `manifest.json` for the floor, `render-manifest.json` for the render, with
+    `coverage-manifest.json` naming the §11.6.3 boundary both were taken at. What
+    a grep sees afterwards is one greppable tree: floor artifacts, native
+    renders, and the coverage boundary.
+    """
+
+    if evaluation_time is not None and not with_native:
+        raise click.BadParameter("--evaluation-time only applies to --with-native")
     result = _server_call(
         lambda client, instance_id: client.export_playbill_floor(instance_id),
         command_name="playbill floor export",
     )
     destination = Path(output).expanduser()
     _write_floor(destination, result, force=force)
+    render = None
+    if with_native:
+        render, _plan, _stash = _write_native_render(
+            destination, read_at=_read_time(evaluation_time)
+        )
     if output_json:
-        _emit_json(result.manifest)
+        _emit_json(
+            result.manifest
+            if render is None
+            else {
+                **result.manifest,
+                "native_render_manifest": render.manifest.model_dump(mode="json"),
+            }
+        )
         return
     click.echo(f"Wrote {len(result.files)} floor file(s) to {destination}")
     click.echo(f"Floor digest: {result.manifest['floor_digest']}")
+    if render is not None:
+        click.echo(f"Wrote {len(render.files)} native render file(s) beside them")
+        click.echo(f"Render digest: {render.manifest.render_digest}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
@@ -1301,6 +1546,76 @@ def _resolve_stash(root: Path, stash_id: str) -> native.NativeStashFileV1:
         raise click.ClickException(str(exc)) from exc
 
 
+def _write_native_render(
+    destination: Path,
+    *,
+    read_at: datetime,
+    stash: bool = False,
+    discard: bool = False,
+) -> tuple[native.NativeRenderV1, native.NativeRenderPlanV1, str | None]:
+    """Render accepted knowledge and write it into ``destination``.
+
+    The whole of `playbill native render`'s write, factored out because
+    `playbill floor export --with-native` needs *exactly* it -- including the
+    §11.9.5 refusal. A second write path that skipped the dirty-region check
+    would be a second way to lose an author's edits, so there is only this one:
+    the floor export inherits the refusal by construction rather than by
+    remembering to re-implement it.
+    """
+
+    state = _server_call(_native_state, command_name="playbill native render")
+    ctx = native.whole_scope_context(
+        instance_id=state.instance_id,
+        at=state.at,
+        evaluation_time=read_at,
+        access_profile=CoverageAccessProfileV1(profile_id=state.boundary.access_profile_id),
+    )
+    render = native.build_native_render(state, ctx)
+
+    existing = _read_native_tree(destination) if destination.is_dir() else {}
+    stash_id: str | None = None
+    if native.NATIVE_RENDER_MANIFEST_PATH in existing:
+        existing_manifest = _native_manifest(destination)
+        plan = native.plan_native_render(
+            existing,
+            manifest=existing_manifest,
+            render=render,
+            discard=discard,
+            stash=stash,
+        )
+        if plan.stashed_region_ids:
+            # Captured before a byte of the re-render lands: a stash that ran
+            # after the overwrite would be a stash of the overwrite.
+            body = native.native_stash_body(existing, manifest=existing_manifest)
+            if body is not None:
+                stash_id = _write_stash(destination, body, written_at=read_at.isoformat())
+    else:
+        plan = native.NativeRenderPlanV1(
+            write_paths=tuple(sorted(render.files, key=lambda item: item.encode("utf-8")))
+        )
+
+    root = destination.resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    for relative in plan.write_paths:
+        target = (destination / relative).resolve()
+        if not target.is_relative_to(root):
+            raise click.ClickException(f"Refusing to write outside the render root: {relative}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(render.files[relative])
+    for relative in plan.delete_paths:
+        (destination / relative).unlink(missing_ok=True)
+    return render, plan, stash_id
+
+
+def _read_time(evaluation_time: str | None) -> datetime:
+    read_at = (
+        datetime.now(UTC) if evaluation_time is None else datetime.fromisoformat(evaluation_time)
+    )
+    if read_at.tzinfo is None:
+        raise click.BadParameter("an evaluation time must carry an explicit offset")
+    return read_at
+
+
 @native_group.command("render")
 @click.option("--output", required=True, type=click.Path(file_okay=False))
 @click.option(
@@ -1336,53 +1651,11 @@ def render_native(
     --stash it, or --discard it.
     """
 
-    read_at = (
-        datetime.now(UTC) if evaluation_time is None else datetime.fromisoformat(evaluation_time)
-    )
-    if read_at.tzinfo is None:
-        raise click.BadParameter("an evaluation time must carry an explicit offset")
-    state = _server_call(_native_state, command_name="playbill native render")
-    ctx = native.whole_scope_context(
-        instance_id=state.instance_id,
-        at=state.at,
-        evaluation_time=read_at,
-        access_profile=CoverageAccessProfileV1(profile_id=state.boundary.access_profile_id),
-    )
-    render = native.build_native_render(state, ctx)
-
+    read_at = _read_time(evaluation_time)
     destination = Path(output).expanduser()
-    existing = _read_native_tree(destination) if destination.is_dir() else {}
-    stash_id: str | None = None
-    if native.NATIVE_RENDER_MANIFEST_PATH in existing:
-        existing_manifest = _native_manifest(destination)
-        plan = native.plan_native_render(
-            existing,
-            manifest=existing_manifest,
-            render=render,
-            discard=discard,
-            stash=stash,
-        )
-        if plan.stashed_region_ids:
-            # Captured before a byte of the re-render lands: a stash that ran
-            # after the overwrite would be a stash of the overwrite.
-            body = native.native_stash_body(existing, manifest=existing_manifest)
-            if body is not None:
-                stash_id = _write_stash(destination, body, written_at=read_at.isoformat())
-    else:
-        plan = native.NativeRenderPlanV1(
-            write_paths=tuple(sorted(render.files, key=lambda item: item.encode("utf-8")))
-        )
-
-    root = destination.resolve()
-    destination.mkdir(parents=True, exist_ok=True)
-    for relative in plan.write_paths:
-        target = (destination / relative).resolve()
-        if not target.is_relative_to(root):
-            raise click.ClickException(f"Refusing to write outside the render root: {relative}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(render.files[relative])
-    for relative in plan.delete_paths:
-        (destination / relative).unlink(missing_ok=True)
+    render, plan, stash_id = _write_native_render(
+        destination, read_at=read_at, stash=stash, discard=discard
+    )
 
     if output_json:
         _emit_json(

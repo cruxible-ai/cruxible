@@ -1,0 +1,82 @@
+{
+  "admission_policy": {
+    "actor_requirements": [],
+    "evidence_requirements": [],
+    "freeze_requirements": [],
+    "tag": "playbill-claim-admission-policy-v1",
+    "transition_requirements": []
+  },
+  "allowed_object_subject_kinds": [],
+  "allowed_subject_kinds": [
+    "project.work_item"
+  ],
+  "artifact_format": "playbill-claim-type-v1",
+  "authority": {
+    "approve_roles": [
+      "owner"
+    ],
+    "propose_roles": [
+      "owner"
+    ]
+  },
+  "cardinality": "one",
+  "evidence_admission_policy": {
+    "rules": [
+      {
+        "admission": "direct",
+        "allowed_reducer_digests": [],
+        "attestation_requirement": "none",
+        "capture_contract_digests": [
+          "sha256:84b7e6eca1a9c18084e4805df07c07eeb8f6465b6234d8205c382102fce1165e"
+        ],
+        "claim_roles": [
+          "normative",
+          "observation"
+        ],
+        "evidence_kinds": [
+          "self_asserted"
+        ],
+        "rule_id": "direct-self-asserted",
+        "subject_binding": "exact_claim_subject",
+        "tag": "playbill-claim-evidence-admission-rule-v1"
+      }
+    ],
+    "tag": "playbill-claim-evidence-admission-policy-v1"
+  },
+  "identity": {
+    "kind": "ClaimType",
+    "name": "project.work_item.status"
+  },
+  "lifecycle": {
+    "predecessor_digest": null,
+    "state": "live"
+  },
+  "literal_schema": {
+    "enum": [
+      "blocked",
+      "done",
+      "ready"
+    ],
+    "type": "string"
+  },
+  "object_kind": "literal",
+  "permitted_roles": [
+    "normative",
+    "observation"
+  ],
+  "pins": [],
+  "predicate": "project.work_item.status",
+  "referent_sensitivity": "identity",
+  "resolution_policy": {
+    "authority_rule_digest": null,
+    "cardinality": "one",
+    "conflict_result": "unresolved",
+    "eligible_verdicts": [
+      "supported"
+    ],
+    "require_current": true,
+    "required_basis_kinds": [],
+    "selector": "only_contender",
+    "tag": "playbill-claim-resolution-policy-v1"
+  }
+}
