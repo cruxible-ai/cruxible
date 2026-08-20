@@ -1,16 +1,20 @@
-"""PC-F3-S1: the render lens, the typed region grammar, and the round-trip laws.
+"""PC-F3-S1: the render lens and the typed region grammar.
 
-The §11.9.6 laws that S1 must already satisfy are render determinism and
-parse/render idempotency; the rest of this file pins the §11.9.2/§11.9.3
-semantics the grammar exists to carry. What is deliberately *not* pinned is a
-spelling: no test here asserts a heading, a bullet, or a marker syntax, because
-those are class-3 through the dogfood. The tests read the typed region
-structure, which is the contract.
+This file pins the §11.9.2/§11.9.3 semantics the grammar exists to carry:
+rendered honesty, locator verification, ambiguity, move-preserves-identity, the
+manifest as a §11.6.3 profile, and the explicit-sync plan. What is deliberately
+*not* pinned is a spelling: no test here asserts a heading, a bullet, or a marker
+syntax, because those are class-3 through the dogfood. The tests read the typed
+region structure, which is the contract.
+
+The §11.9.6 round-trip laws are not here either. They live as one frozen block in
+``test_native_round_trip_laws.py``, so the five laws and their two preconditions
+have one canonical home rather than a copy beside each surface that satisfies
+them.
 """
 
 from __future__ import annotations
 
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -26,7 +30,6 @@ from cruxible_core.playbill.native import (
     native_status,
     parse_native_tree,
     plan_native_render,
-    render_native_tree,
     resolve_native_invalidation,
     verify_native_locator,
 )
@@ -48,55 +51,21 @@ def _edit_value(content: bytes, *, old: bytes, new: bytes) -> bytes:
     return edited
 
 
-# -- §11.9.6 round-trip laws ----------------------------------------------
+# -- §11.9.2 typed regions -------------------------------------------------
 
 
-def test_render_is_a_deterministic_function_of_state_and_context(tmp_path: Path) -> None:
-    """Same accepted state, same context, byte-identical bytes. No clock anywhere."""
+def test_the_rendered_read_time_is_the_one_the_context_supplied(tmp_path: Path) -> None:
+    """The read time a file displays is the context's, not a time read anywhere.
 
-    state, ctx, render = seeded_render(tmp_path)
-
-    again = render_native_tree(state, ctx)
-
-    assert again == render.files
-    assert build_native_render(state, ctx).manifest == render.manifest
-
-
-def test_every_time_in_a_render_comes_from_the_context(tmp_path: Path) -> None:
-    """Two contexts differing only in read time produce two different renders.
-
-    That is the observable half of "render never samples wall clock"; the
-    structural half -- that the package holds no clock call at all -- is an
-    architecture guardrail.
+    The law that no clock is sampled is frozen in the round-trip block; what is
+    checked here is that the qualified read time the lens *prints* is the same
+    instant the manifest binds, so the two halves of one render cannot disagree.
     """
 
-    state, ctx, render = seeded_render(tmp_path)
+    _state, ctx, render = seeded_render(tmp_path)
 
-    body = render.files[WI_42].decode("utf-8")
-
-    assert ctx.evaluation_time.isoformat() in body
+    assert ctx.evaluation_time.isoformat() in render.files[WI_42].decode("utf-8")
     assert render.manifest.evaluation_time == ctx.evaluation_time
-    later = ctx.model_copy(update={"evaluation_time": ctx.evaluation_time + timedelta(hours=1)})
-    assert render_native_tree(state, later) != render.files
-
-
-def test_parsing_a_fresh_render_reproduces_the_baseline_with_nothing_dirty(
-    tmp_path: Path,
-) -> None:
-    """`render(parse(render(x))) == render(x)`, as a fixed point of the grammar."""
-
-    _state, _ctx, render = seeded_render(tmp_path)
-
-    parsed = parse_native_tree(render.files, manifest=render.manifest)
-
-    assert parsed.dirty_region_ids == ()
-    assert parsed.tampered_region_ids == ()
-    assert parsed.refusals == ()
-    assert {item.region_id for item in parsed.regions} == {
-        region.region_id for file in render.manifest.files for region in file.regions
-    }
-    assert all(item.state == "clean" for item in parsed.regions)
-    assert all(item.observed_digest == item.baseline_digest for item in parsed.regions)
 
 
 def test_regions_are_typed_and_the_split_is_the_frozen_one(tmp_path: Path) -> None:
@@ -208,31 +177,6 @@ def test_an_untouched_claim_keeps_its_derived_display(tmp_path: Path) -> None:
 
     assert invalidation.intact_region_ids
     assert set(invalidation.intact_region_ids).isdisjoint(invalidation.invalidated_region_ids)
-
-
-def test_editing_a_derived_field_is_a_typed_refusal_with_a_regeneration_instruction(
-    tmp_path: Path,
-) -> None:
-    """§11.9.3: tampering is never given a semantic reading."""
-
-    _state, _ctx, render = seeded_render(tmp_path)
-    tampered = dict(render.files)
-    tampered[WI_42] = _edit_value(
-        render.files[WI_42],
-        old=b"- role: observation",
-        new=b"- role: normative",
-    )
-
-    parsed = parse_native_tree(tampered, manifest=render.manifest)
-
-    assert parsed.dirty_region_ids == ()
-    assert len(parsed.tampered_region_ids) == 1
-    refusals = [item for item in parsed.refusals if item.code == "derived_region_tampered"]
-    assert len(refusals) == 1
-    assert refusals[0].severity == "refusal"
-    assert refusals[0].instruction is not None and "Re-render" in refusals[0].instruction
-    tampered_region = parsed.region(parsed.tampered_region_ids[0])
-    assert tampered_region is not None and not tampered_region.editable
 
 
 # -- §11.9.3 locator semantics --------------------------------------------
@@ -384,10 +328,15 @@ def test_the_manifest_baseline_matches_the_bytes_that_were_rendered(tmp_path: Pa
             assert raw.locator.baseline_digest == baseline.body_digest
 
 
-def test_a_rerender_over_a_dirty_region_refuses_without_an_explicit_discard(
+def test_the_dirty_rerender_refusal_names_the_field_and_not_only_the_file(
     tmp_path: Path,
 ) -> None:
-    """§11.9.5: a re-render never overwrites dirty regions without stash or discard."""
+    """The refusal itself is frozen in the round-trip block; this pins its detail.
+
+    "There are local edits somewhere" is not an answer a caller can act on. The
+    refusal names the field kind beside the file, which is what makes it
+    actionable without a second command.
+    """
 
     _state, _ctx, render = seeded_render(tmp_path)
     edited = dict(render.files)

@@ -9,6 +9,13 @@ fixture.
 
 The two laws that shape the whole file: **editing never proposes and compiling
 never accepts**, and **no compile path ever infers a retirement.**
+
+The §11.9.6 round-trip laws themselves are not here. They live as one frozen
+block in ``test_native_round_trip_laws.py`` -- including the two that run through
+this contract, "compile of a render is a no-op" and "editing a derived field is a
+typed refusal" -- so that the five laws have one canonical home rather than a
+copy per surface. What stays here is everything §11.9.3/§11.9.4 asks of compile
+that is not one of those five.
 """
 
 from __future__ import annotations
@@ -165,20 +172,6 @@ def _move_head(
 
 
 # -- the three gates -------------------------------------------------------
-
-
-def test_compiling_an_unedited_render_proposes_nothing(tmp_path: Path) -> None:
-    """§11.9.6: `compile(render(accepted_state, ctx))` is a no-op, not an error."""
-
-    instance, _owner, files, manifest = _seeded(tmp_path)
-
-    result = _compiled(instance, files, manifest)
-
-    assert result.members == ()
-    assert result.refusals == ()
-    assert result.three_way == ()
-    assert result.drafts == ()
-    assert result.compilable is False
 
 
 def test_an_edit_stays_local_and_a_compile_accepts_nothing(tmp_path: Path) -> None:
@@ -399,20 +392,6 @@ def test_deleting_a_locator_is_never_inferred_as_retirement(tmp_path: Path) -> N
     assert result.members == ()
     assert all(item.code != "derived_region_tampered" for item in result.refusals)
     assert _accepted_value(instance, _claim_path(native_state(instance), "wi-42")) == "ready"
-
-
-def test_a_tampered_derived_region_refuses_with_its_regeneration_instruction(
-    tmp_path: Path,
-) -> None:
-    instance, _owner, files, manifest = _seeded(tmp_path)
-    edited = _edit(files, WI_42, b"- role: observation", b"- role: normative")
-
-    result = _compiled(instance, edited, manifest)
-
-    assert [item.code for item in result.refusals] == ["derived_region_tampered"]
-    assert "Re-render" in result.refusals[0].required_action
-    assert result.members == ()
-    assert result.compilable is False
 
 
 def test_a_duplicated_locator_refuses_as_ambiguity(tmp_path: Path) -> None:

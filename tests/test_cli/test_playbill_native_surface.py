@@ -211,6 +211,56 @@ def test_status_reports_a_local_edit_and_a_rerender_refuses_to_eat_it(
     assert after["invalidation"]["invalidated_region_ids"] == []
 
 
+def test_stashing_keeps_the_edit_a_rerender_would_have_eaten(
+    served_cli: _Cli,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The third answer to the dirty-re-render refusal, end to end.
+
+    `--discard` was the only way past the refusal that a person could actually
+    type, which made the default outcome "lose the edit". Stashing keeps the
+    bytes beside the render, re-renders over them, and hands back an identifier
+    that puts them back -- and none of it goes anywhere near accepted state.
+    """
+
+    cruxible = served_cli
+    _seed(cruxible, tmp_path)
+    output = tmp_path / "knowledge"
+    _render(cruxible, output)
+    page = output / WI_42
+    page.write_bytes(page.read_bytes().replace(b'\n"ready"\n', b'\n"shipped"\n'))
+    edited = page.read_bytes()
+
+    stashed = _render(cruxible, output, "--stash")
+
+    assert stashed["plan"]["stashed_region_ids"]
+    assert stashed["plan"]["discarded_region_ids"] == []
+    assert stashed["stash_id"] is not None
+    assert page.read_bytes() != edited
+    assert b'"ready"' in page.read_bytes()
+
+    listed = cruxible.json("playbill", "native", "stash", "list", str(output))["stashes"]
+    assert [item["stash_digest"] for item in listed] == [stashed["stash_id"]]
+
+    shown = cruxible.json("playbill", "native", "stash", "show", str(output), stashed["stash_id"])
+    assert shown["stash_digest"] == stashed["stash_id"]
+    assert [item["region_kind"] for item in shown["body"]["regions"]] == ["statement_value"]
+
+    restored = cruxible.json(
+        "playbill", "native", "stash", "restore", str(output), stashed["stash_id"], "--drop"
+    )
+    assert restored["restore"]["write_paths"] == [WI_42]
+    assert restored["restore"]["unresolved_region_ids"] == []
+    assert restored["dropped"] is True
+    assert page.read_bytes() == edited
+
+    after = cruxible.json("playbill", "native", "status", str(output))
+    rows = {item["path"]: item for item in after["status"]["files"]}
+    assert rows[WI_42]["dirty_regions"] == 1
+    # Nothing accepted moved through any of it.
+    assert cruxible.json("playbill", "claim", "list")["claims"]
+
+
 def test_status_refuses_a_tampered_derived_field_and_never_interprets_it(
     served_cli: _Cli,  # noqa: F811
     tmp_path: Path,

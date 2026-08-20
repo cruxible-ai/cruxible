@@ -369,6 +369,8 @@ class NativeReviewCurrencyV1(_StrictCompileModel):
             or self.bound_candidate_digest == self.candidate_digest
         ):
             raise ValueError("superseded review evidence must bind a different candidate")
+        if self.superseded_signer_ids and self.status != "superseded_by_rebase":
+            raise ValueError("only superseded review evidence names superseded signers")
         return self
 
 
@@ -1274,6 +1276,7 @@ def native_review_currency(
     parent_semantic_root: str,
     attestation_signer_ids: Sequence[str] = (),
     bound_candidate_digest: str | None = None,
+    superseded_signer_ids: Sequence[str] = (),
 ) -> NativeReviewCurrencyV1:
     """Answer whether review evidence binds the candidate that would settle.
 
@@ -1284,9 +1287,23 @@ def native_review_currency(
     evidence at the current one, it is absent from it, so nothing on the current
     candidate could report the earlier act. Naming it is how the earlier act
     re-enters the conversation, and the answer is then exact.
+
+    ``superseded_signer_ids`` names who signed that earlier candidate, so a
+    report can say *whose* approval has to be collected again rather than only
+    that some approval must be. The caller reads it from the earlier proposal
+    through the ordinary review operation; no read here, and no operation added
+    for it.
+
+    The one thing neither input can do is *discover* the earlier proposal.
+    Admissions for one lineage share a ``target_ref``, and the served reads
+    resolve a proposal by identity rather than enumerating them, so "which
+    proposals preceded this one" is a question the current surface cannot ask.
+    That gap is deliberate and recorded: it wants one read operation over
+    admissions, and adding a served operation is not this batch's to do.
     """
 
     signers = byte_sorted(tuple(attestation_signer_ids))
+    superseded = byte_sorted(tuple(superseded_signer_ids))
     if bound_candidate_digest is not None and bound_candidate_digest != candidate_digest:
         return NativeReviewCurrencyV1(
             proposal_id=proposal_id,
@@ -1295,11 +1312,16 @@ def native_review_currency(
             bound_candidate_digest=bound_candidate_digest,
             status="superseded_by_rebase",
             binding_signer_ids=signers,
-            superseded_signer_ids=(),
+            superseded_signer_ids=superseded,
             required_action=(
                 f"Fresh approval must bind candidate {candidate_digest} at parent semantic "
                 f"root {parent_semantic_root}; approval of {bound_candidate_digest} does "
                 "not verify against the rebased candidate."
+                + (
+                    " Approvals that no longer verify: " + ", ".join(superseded) + "."
+                    if superseded
+                    else ""
+                )
             ),
         )
     if not signers:

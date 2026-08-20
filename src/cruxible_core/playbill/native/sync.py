@@ -11,10 +11,14 @@ filesystem, so there is no seam through which a render could write one.
 The second half of the law is that a re-render never overwrites dirty regions
 without an explicit stash or discard. :func:`plan_native_render` refuses by
 default, naming every dirty region and the file it is in, and proceeds only when
-the caller passes ``discard=True`` -- an act, not a flag that happens to be set.
-Stash mechanics are deliberately minimal here: the plan reports exactly what
-would be lost, which is what a stash needs to capture, and S3 can carry those
-bytes somewhere instead of dropping them without changing this refusal.
+the caller passes ``stash=True`` or ``discard=True`` -- an act, not a flag that
+happens to be set. Both are explicit and they are not interchangeable: a stash
+keeps the bytes (:mod:`.stash` captures them; the caller writes them), a discard
+drops them, and passing both is a contradiction rather than a preference.
+
+There are three answers to a dirty re-render and the refusal names all three,
+because "stash or discard" hides the one an author usually wants: compile the
+edits into a proposal and re-render onto the acceptance.
 
 Tampered and ambiguous regions do not block a re-render. A derived region that
 was edited has nothing to preserve -- it regenerates by definition -- and a
@@ -27,7 +31,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.native.context import RenderContextV1
@@ -132,14 +136,27 @@ class NativeRenderPlanV1(_StrictSyncModel):
     unchanged_paths: tuple[str, ...] = ()
     delete_paths: tuple[str, ...] = ()
     discarded_region_ids: tuple[str, ...] = ()
+    stashed_region_ids: tuple[str, ...] = ()
     stash_required: bool = False
 
-    @field_validator("write_paths", "unchanged_paths", "delete_paths", "discarded_region_ids")
+    @field_validator(
+        "write_paths",
+        "unchanged_paths",
+        "delete_paths",
+        "discarded_region_ids",
+        "stashed_region_ids",
+    )
     @classmethod
     def _sorted(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if value != byte_sorted(value):
             raise ValueError("render plan lists must be sorted and unique")
         return value
+
+    @model_validator(mode="after")
+    def _one_disposition(self) -> "NativeRenderPlanV1":
+        if self.discarded_region_ids and self.stashed_region_ids:
+            raise ValueError("a re-render stashes dirty regions or discards them, never both")
+        return self
 
 
 def native_status(
@@ -201,17 +218,25 @@ def plan_native_render(
     manifest: NativeRenderManifestV1,
     render: NativeRenderV1,
     discard: bool = False,
+    stash: bool = False,
 ) -> NativeRenderPlanV1:
     """Plan an explicit sync, refusing to overwrite dirty regions without consent.
 
     The refusal names every dirty region and its file, because "there are local
     edits" is not an answer a caller can act on and "these three fields in these
-    two files" is.
+    two files" is. It also names all three ways forward, because an author who is
+    told only "stash or discard" has been steered away from the one that keeps
+    the work: compiling it.
     """
 
+    if stash and discard:
+        raise NativeSyncRefusal(
+            "a re-render stashes dirty regions or discards them, never both; "
+            "choose which the local edits are worth"
+        )
     tree = parse_native_tree(files, manifest=manifest)
     dirty = tree.dirty_region_ids
-    if dirty and not discard:
+    if dirty and not (discard or stash):
         located = sorted(
             f"{region.path}#{region.region_kind}"
             for region in tree.regions
@@ -220,7 +245,8 @@ def plan_native_render(
         raise NativeSyncRefusal(
             "re-rendering would overwrite "
             f"{len(dirty)} dirty region(s): {', '.join(located)}. "
-            "Stash or discard them explicitly; a re-render never overwrites local edits."
+            "Compile them into a proposal, stash them, or discard them explicitly; "
+            "a re-render never overwrites local edits."
         )
 
     next_paths = set(render.files)
@@ -237,6 +263,7 @@ def plan_native_render(
         unchanged_paths=unchanged,
         delete_paths=deletes,
         discarded_region_ids=byte_sorted(dirty) if discard else (),
+        stashed_region_ids=byte_sorted(dirty) if stash else (),
         stash_required=bool(dirty),
     )
 

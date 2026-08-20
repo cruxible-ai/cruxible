@@ -520,6 +520,24 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "native_review_current",
                         "Check that review evidence binds the current candidate.",
                     ),
+                    "stash": _group(
+                        "Keep and restore local edits a re-render would overwrite.",
+                        {
+                            "list": _command(
+                                "playbill", "native_stash_list", "List stashed local edits."
+                            ),
+                            "show": _command(
+                                "playbill", "native_stash_show", "Show one stashed local edit."
+                            ),
+                            "restore": _command(
+                                "playbill",
+                                "native_stash_restore",
+                                "Re-apply stashed edits by region identity.",
+                            ),
+                        },
+                        module="playbill",
+                        attr="native_stash_group",
+                    ),
                 },
                 module="playbill",
                 attr="native_group",

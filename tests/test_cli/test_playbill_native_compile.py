@@ -307,6 +307,108 @@ def test_review_current_reports_superseded_by_rebase_after_the_head_moves(
     assert json.loads(unreviewed.stdout)["status"] == "not_reviewed"
 
 
+def test_review_current_names_the_superseded_signers_through_the_earlier_proposal(
+    served_cli: _Cli,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    """The lineage-assisted form of the same headless answer, and its guard.
+
+    `--bound` needs a digest the caller kept. Naming the earlier *proposal*
+    instead reads its candidate digest and its signers through the ordinary
+    review operation, so the report can say whose approval no longer verifies --
+    and refuses a proposal admitted against a different proposal ref, because a
+    proposal from another lineage is not evidence about this one. No served
+    operation was added for either form.
+    """
+
+    cruxible = served_cli
+    _seed(cruxible, tmp_path)
+    output = tmp_path / "knowledge"
+    _render(cruxible, output)
+    _edit(output / WI_42, b'\n"ready"\n', b'\n"done"\n')
+
+    # Both submissions use one proposal name, which is what puts them in one
+    # lineage: proposals sharing a target ref are successive attempts at one
+    # change, and proposals under different names are different work.
+    first = _compile(cruxible, output, "--submit", "--name", "native-lineage")
+    first_id = first["proposal"]["admission"]["proposal_id"]
+    first_digest = first["proposal"]["evaluation"]["candidate_digest"]
+    cruxible.run(
+        "playbill",
+        "proposal",
+        "approve",
+        first_id,
+        "--signer-id",
+        SIGNER_ID,
+        "--key",
+        str(cruxible.private_key),
+        "--yes",
+        "--json",
+    )
+
+    from tests.test_playbill._knowledge_loop_support import subject_shell
+
+    proposed = cruxible.json(
+        "playbill",
+        "subject",
+        "propose",
+        "--envelope",
+        _write(tmp_path / "wi-88.json", subject_shell("wi-88").model_dump(mode="json")),
+        "--name",
+        "unrelated-lineage-subject",
+    )
+    cruxible.accept(_proposal_id(proposed))
+
+    second = _compile(cruxible, output, "--submit", "--name", "native-lineage")
+    second_id = second["proposal"]["admission"]["proposal_id"]
+    second_digest = second["proposal"]["evaluation"]["candidate_digest"]
+    assert second["proposal"]["evaluation"]["rebased"] is True
+    assert second_digest != first_digest
+
+    lineage = _raw(
+        "playbill",
+        "native",
+        "review-current",
+        second_id,
+        "--superseded-proposal",
+        first_id,
+        "--json",
+    )
+    assert lineage.exit_code != 0
+    answer = json.loads(lineage.stdout)
+    assert answer["status"] == "superseded_by_rebase"
+    assert answer["candidate_digest"] == second_digest
+    assert answer["bound_candidate_digest"] == first_digest
+    assert answer["superseded_signer_ids"] == [SIGNER_ID]
+    assert answer["binding_signer_ids"] == []
+    assert SIGNER_ID in answer["required_action"]
+
+    # A proposal from another proposal ref is not superseded evidence here.
+    foreign = _raw(
+        "playbill",
+        "native",
+        "review-current",
+        second_id,
+        "--superseded-proposal",
+        _proposal_id(proposed),
+    )
+    assert foreign.exit_code != 0
+    assert "another lineage" in foreign.output
+
+    both = _raw(
+        "playbill",
+        "native",
+        "review-current",
+        second_id,
+        "--bound",
+        first_digest,
+        "--superseded-proposal",
+        first_id,
+    )
+    assert both.exit_code != 0
+    assert "once" in both.output
+
+
 def test_compile_refuses_a_tampered_derived_field_without_interpreting_it(
     served_cli: _Cli,  # noqa: F811
     tmp_path: Path,

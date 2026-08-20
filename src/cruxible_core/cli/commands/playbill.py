@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import secrets
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1231,12 +1233,73 @@ def _native_manifest(root: Path) -> native.NativeRenderManifestV1:
         raise click.ClickException(str(exc)) from exc
 
 
+def _write_atomically(target: Path, content: bytes) -> None:
+    """Publish one local file whole, or not at all.
+
+    A reader of a stash directory either sees a complete entry or does not see
+    it; there is no window in which half an entry could be read back as the
+    edits somebody asked to keep.
+    """
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.parent / f".{target.name}.{secrets.token_hex(12)}.tmp"
+    try:
+        temporary.write_bytes(content)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _stash_entries(root: Path) -> list[native.NativeStashFileV1]:
+    """Read every stash entry under a render root, deleting any that do not verify.
+
+    A stash is a disposable local cache, so an entry whose digest no longer
+    reproduces is removed rather than reported: it cannot be restored, and
+    keeping it would only offer bytes nobody can vouch for.
+    """
+
+    directory = root / native.NATIVE_STASH_DIRECTORY
+    if not directory.is_dir():
+        return []
+    entries: list[native.NativeStashFileV1] = []
+    for path in sorted(directory.glob(f"{native.NATIVE_STASH_FILE_PREFIX}*.json")):
+        try:
+            entries.append(native.parse_native_stash(path.read_bytes()))
+        except (OSError, native.NativeStashError):
+            path.unlink(missing_ok=True)
+    return entries
+
+
+def _write_stash(root: Path, body: native.NativeStashBodyV1, *, written_at: str) -> str:
+    """Capture one stash entry under the render root and return its identity."""
+
+    stash_id = native.native_stash_digest(body).tagged
+    _write_atomically(
+        root / native.native_stash_entry_path(stash_id),
+        native.render_native_stash(body, written_at=written_at),
+    )
+    return stash_id
+
+
+def _resolve_stash(root: Path, stash_id: str) -> native.NativeStashFileV1:
+    try:
+        return native.resolve_native_stash(_stash_entries(root), stash_id)
+    except native.NativeStashError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+
 @native_group.command("render")
 @click.option("--output", required=True, type=click.Path(file_okay=False))
 @click.option(
     "--evaluation-time",
     default=None,
     help="Explicit ISO-8601 read time. Defaults to now; the renderer never reads a clock.",
+)
+@click.option(
+    "--stash",
+    "stash",
+    is_flag=True,
+    help="Keep local edits in editable regions in the stash, then re-render over them.",
 )
 @click.option(
     "--discard",
@@ -1248,6 +1311,7 @@ def _native_manifest(root: Path) -> native.NativeRenderManifestV1:
 def render_native(
     output: str,
     evaluation_time: str | None,
+    stash: bool,
     discard: bool,
     output_json: bool,
 ) -> None:
@@ -1255,7 +1319,8 @@ def render_native(
 
     Rendering and writing are separate acts. The lens returns bytes; this command
     writes them, and it refuses to overwrite an editable region you have edited
-    unless you pass --discard.
+    unless you say what should happen to the edit: compile it into a proposal,
+    --stash it, or --discard it.
     """
 
     read_at = (
@@ -1274,13 +1339,22 @@ def render_native(
 
     destination = Path(output).expanduser()
     existing = _read_native_tree(destination) if destination.is_dir() else {}
+    stash_id: str | None = None
     if native.NATIVE_RENDER_MANIFEST_PATH in existing:
+        existing_manifest = _native_manifest(destination)
         plan = native.plan_native_render(
             existing,
-            manifest=_native_manifest(destination),
+            manifest=existing_manifest,
             render=render,
             discard=discard,
+            stash=stash,
         )
+        if plan.stashed_region_ids:
+            # Captured before a byte of the re-render lands: a stash that ran
+            # after the overwrite would be a stash of the overwrite.
+            body = native.native_stash_body(existing, manifest=existing_manifest)
+            if body is not None:
+                stash_id = _write_stash(destination, body, written_at=read_at.isoformat())
     else:
         plan = native.NativeRenderPlanV1(
             write_paths=tuple(sorted(render.files, key=lambda item: item.encode("utf-8")))
@@ -1302,11 +1376,17 @@ def render_native(
             {
                 "manifest": render.manifest.model_dump(mode="json"),
                 "plan": plan.model_dump(mode="json"),
+                "stash_id": stash_id,
             }
         )
         return
     click.echo(f"Rendered {len(render.files)} file(s) into {destination}")
     click.echo(f"Wrote {len(plan.write_paths)}, unchanged {len(plan.unchanged_paths)}")
+    if stash_id is not None:
+        click.echo(
+            f"Stashed {len(plan.stashed_region_ids)} dirty region(s) as {stash_id}; "
+            "restore them with `playbill native stash restore`."
+        )
     click.echo(f"Generation: {render.manifest.coordinate.generation_root}")
     click.echo(f"Lens: {render.manifest.lens.lens_id} v{render.manifest.lens.lens_version}")
     click.echo(f"Render digest: {render.manifest.render_digest}")
@@ -1373,6 +1453,112 @@ def native_status_cmd(directory: str, output_json: bool) -> None:
             f"beside {len(invalidation.drifted_addresses)} edited statement(s); "
             "no governance fact reaches the edited material"
         )
+
+
+@native_group.group("stash")
+def native_stash_group() -> None:
+    """Keep and restore the local edits a re-render would otherwise overwrite."""
+
+
+@native_stash_group.command("list")
+@click.argument("directory", type=click.Path(file_okay=False))
+@json_option
+@handle_errors
+def native_stash_list(directory: str, output_json: bool) -> None:
+    """List the stashed edits held beside a rendered knowledge directory.
+
+    A working-tree question with no daemon in it: the stash is local material
+    under the render root, and nothing accepted refers to it.
+    """
+
+    root = Path(directory).expanduser()
+    if not root.is_dir():
+        raise click.ClickException(f"Not a rendered knowledge directory: {root}")
+    entries = _stash_entries(root)
+    if output_json:
+        _emit_json({"stashes": [item.model_dump(mode="json") for item in entries]})
+        return
+    if not entries:
+        click.echo(f"No stashed edits under {root / native.NATIVE_STASH_DIRECTORY}")
+        return
+    for entry in entries:
+        click.echo(
+            f"{entry.stash_id}  {len(entry.body.regions)} region(s)  "
+            f"generation {entry.body.at.generation_root}  written {entry.written_at or '(unset)'}"
+        )
+        for region in entry.body.regions:
+            click.echo(f"    {region.region_kind:>19}  {region.path}  {region.byte_length} byte(s)")
+
+
+@native_stash_group.command("show")
+@click.argument("directory", type=click.Path(file_okay=False))
+@click.argument("stash_id")
+@json_option
+@handle_errors
+def native_stash_show(directory: str, stash_id: str, output_json: bool) -> None:
+    """Show one stashed edit, including the exact bytes it kept."""
+
+    entry = _resolve_stash(Path(directory).expanduser(), stash_id)
+    if output_json:
+        _emit_json(entry.model_dump(mode="json"))
+        return
+    click.echo(f"stash: {entry.stash_id}")
+    click.echo(f"generation: {entry.body.at.generation_root}")
+    click.echo(f"lens: {entry.body.lens.lens_id} v{entry.body.lens.lens_version}")
+    click.echo(f"render digest: {entry.body.render_digest}")
+    for region in entry.body.regions:
+        click.echo(f"--- {region.region_kind}  {region.path}  ({region.region_id})")
+        click.echo(region.body.decode("utf-8", errors="replace").rstrip("\n"))
+
+
+@native_stash_group.command("restore")
+@click.argument("directory", type=click.Path(file_okay=False))
+@click.argument("stash_id")
+@click.option(
+    "--drop",
+    is_flag=True,
+    help="Delete the stash entry once every region in it was restored.",
+)
+@json_option
+@handle_errors
+def native_stash_restore(directory: str, stash_id: str, drop: bool, output_json: bool) -> None:
+    """Re-apply stashed edits to the current render, by region identity.
+
+    Region identity carries no path, so a stashed edit lands correctly even
+    after the field moved to another file. A stashed field the current render no
+    longer has -- or one that no longer binds unambiguously -- is reported and
+    left in the stash rather than placed somewhere it might not belong.
+    """
+
+    root = Path(directory).expanduser()
+    files = _read_native_tree(root)
+    manifest = _native_manifest(root)
+    entry = _resolve_stash(root, stash_id)
+    restored = native.restore_native_stash(files, manifest=manifest, stash=entry)
+
+    for relative in restored.write_paths:
+        (root / relative).write_bytes(restored.files[relative])
+    dropped = bool(drop and not restored.unresolved_region_ids)
+    if dropped:
+        (root / native.native_stash_entry_path(entry.stash_digest)).unlink(missing_ok=True)
+
+    if output_json:
+        _emit_json(
+            {
+                "restore": restored.model_dump(mode="json", exclude={"files"}),
+                "dropped": dropped,
+            }
+        )
+    else:
+        click.echo(f"Restored {len(restored.restored_region_ids)} region(s) from {entry.stash_id}")
+        for relative in restored.write_paths:
+            click.echo(f"    wrote  {relative}")
+        for diagnostic in restored.diagnostics:
+            click.echo(f"  {diagnostic.severity:>9}  {diagnostic.code}  {diagnostic.message}")
+        if dropped:
+            click.echo("Dropped the stash entry: every region in it was restored.")
+    if restored.unresolved_region_ids:
+        raise SystemExit(1)
 
 
 def _read_dispositions(path: str | None) -> tuple[native.NativeDraftDispositionV1, ...]:
@@ -1555,6 +1741,28 @@ def compile_native(
         raise SystemExit(1)
 
 
+def _signer_ids(review: contracts.PlaybillProposalReview) -> tuple[str, ...]:
+    attestations = review.attestation_coverage.get("attestations") or ()
+    return tuple(str(item["signer_id"]) for item in attestations)
+
+
+def _proposal_target_ref(proposal_id: str) -> str:
+    """Read the proposal ref one proposal was admitted against.
+
+    Admissions in one lineage share a target ref, so this is what makes "an
+    earlier proposal for the same work" a checked statement rather than a claim
+    the caller makes. It is read through the ordinary proposal inspection; no
+    operation was added for it.
+    """
+
+    inspection = _server_call(
+        lambda client, instance_id: client.inspect_playbill_proposal(instance_id, proposal_id),
+        command_name="playbill native review-current",
+    )
+    admission = inspection.proposal.get("admission") or {}
+    return str(admission.get("target_ref", ""))
+
+
 @native_group.command("review-current")
 @click.argument("proposal_id")
 @click.option(
@@ -1563,32 +1771,78 @@ def compile_native(
     default=None,
     help="The candidate digest the collected review evidence was signed against.",
 )
+@click.option(
+    "--superseded-proposal",
+    "superseded_proposal_id",
+    default=None,
+    help="An earlier proposal in this lineage; its candidate digest and signers are read.",
+)
 @json_option
 @handle_errors
 def native_review_current(
     proposal_id: str,
     bound_candidate_digest: str | None,
+    superseded_proposal_id: str | None,
     output_json: bool,
 ) -> None:
     """Check headlessly that review evidence binds the candidate that would settle.
 
     Approvals are stored under the exact candidate digest they signed, so a
     rebase does not weaken prior evidence -- it moves the candidate out from
-    under it. Naming the digest an earlier review bound is how that earlier act
-    re-enters the answer, which is then reported as superseded_by_rebase.
+    under it. Naming the earlier act is how it re-enters the answer, which is
+    then reported as superseded_by_rebase.
+
+    There are two ways to name it. `--bound` states the digest directly, which
+    needs nothing but the digest. `--superseded-proposal` names the earlier
+    proposal instead, and this command reads its candidate digest *and* its
+    signers through the ordinary review operation, refusing a proposal admitted
+    against a different target ref -- a proposal from another lineage is not
+    evidence about this one.
+
+    Neither can enumerate the lineage. Admissions for one target ref are not
+    listable through any served read, so an earlier proposal has to be named;
+    closing that gap wants one read operation over admissions, which is a served
+    surface this batch does not add.
     """
+
+    if bound_candidate_digest is not None and superseded_proposal_id is not None:
+        raise click.BadParameter("name the superseded evidence once: --bound or its proposal")
+
+    superseded_signer_ids: tuple[str, ...] = ()
+    if superseded_proposal_id is not None:
+        if superseded_proposal_id == proposal_id:
+            raise click.BadParameter("a proposal does not supersede itself")
+        lineage = _proposal_target_ref(proposal_id)
+        earlier_ref = _proposal_target_ref(superseded_proposal_id)
+        if not lineage or lineage != earlier_ref:
+            raise click.ClickException(
+                f"Proposal {superseded_proposal_id} was admitted against {earlier_ref or '(none)'} "
+                f"and {proposal_id} against {lineage or '(none)'}; a proposal from another "
+                "lineage is not superseded review evidence for this one."
+            )
+        earlier = _server_call(
+            lambda client, instance_id: client.review_playbill_proposal(
+                instance_id, str(superseded_proposal_id)
+            ),
+            command_name="playbill native review-current",
+        )
+        bound_candidate_digest = earlier.candidate_digest
+        superseded_signer_ids = _signer_ids(earlier)
 
     review = _server_call(
         lambda client, instance_id: client.review_playbill_proposal(instance_id, proposal_id),
         command_name="playbill native review-current",
     )
-    attestations = review.attestation_coverage.get("attestations") or ()
+    binding = _signer_ids(review)
     currency = native.native_review_currency(
         proposal_id=proposal_id,
         candidate_digest=review.candidate_digest,
         parent_semantic_root=review.parent_semantic_root,
-        attestation_signer_ids=tuple(str(item["signer_id"]) for item in attestations),
+        attestation_signer_ids=binding,
         bound_candidate_digest=bound_candidate_digest,
+        superseded_signer_ids=(
+            superseded_signer_ids if bound_candidate_digest != review.candidate_digest else ()
+        ),
     )
     if output_json:
         _emit_json(currency.model_dump(mode="json"))
@@ -1600,6 +1854,8 @@ def native_review_current(
             click.echo(f"binding approvals: {', '.join(currency.binding_signer_ids)}")
         if currency.bound_candidate_digest is not None:
             click.echo(f"evidence bound: {currency.bound_candidate_digest}")
+        if currency.superseded_signer_ids:
+            click.echo(f"superseded approvals: {', '.join(currency.superseded_signer_ids)}")
         click.echo(f"action: {currency.required_action}")
     if currency.status != "current":
         raise SystemExit(1)

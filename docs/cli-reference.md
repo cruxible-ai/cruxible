@@ -181,11 +181,15 @@ like every other floor file.
 
 ~~~text
 cruxible playbill native render --output DIR
-  [--evaluation-time ISO-8601] [--discard]
+  [--evaluation-time ISO-8601] [--stash | --discard]
 cruxible playbill native status DIR
 cruxible playbill native compile DIR [--preview | --submit --name NAME]
   [--dispositions FILE]
-cruxible playbill native review-current PROPOSAL_ID [--bound DIGEST]
+cruxible playbill native stash list DIR
+cruxible playbill native stash show DIR STASH_ID
+cruxible playbill native stash restore DIR STASH_ID [--drop]
+cruxible playbill native review-current PROPOSAL_ID
+  [--bound DIGEST | --superseded-proposal PROPOSAL_ID]
 ~~~
 
 The ledger is the semantic object store; the rendered directory is its editable
@@ -203,8 +207,23 @@ rendered generation- and time-qualified, and regenerate rather than accept an
 edit. Editing changes nothing accepted: compile is a separate gate.
 
 `render` writes the bytes -- the daemon never writes into a repository -- and
-refuses to overwrite an editable field you have edited unless you pass
-`--discard`, naming every dirty field it would otherwise have lost.
+refuses to overwrite an editable field you have edited, naming every dirty field
+it would otherwise have lost and the three things you may do about it: compile
+the edits into a proposal, `--stash` them, or `--discard` them.
+
+`--stash` captures the dirty fields' exact bytes under `.playbill-stash/` beside
+the render and then re-renders over them, so the default answer to "I edited
+this and the head moved" keeps the work. A stash entry is disposable local
+material: it commits to its own digest, it is written whole or not at all, and
+deleting the directory loses only the edits somebody chose to stash.
+
+`stash list` and `stash show` read those entries without a daemon. `stash
+restore` re-applies one to the current render **by region identity**, which
+carries no path -- so a stashed edit lands correctly even after its field moved
+to another file. A stashed field the current render no longer has, or one that
+no longer binds unambiguously, is reported and left in the stash rather than
+placed somewhere it might not belong; `restore` exits non-zero when anything was
+left behind, and `--drop` deletes the entry only when nothing was.
 
 `status` compares a rendered directory against its own baseline and needs no
 daemon:
@@ -243,6 +262,15 @@ candidate digest, so approvals collected against the old one no longer verify;
 `review-current` reports that as `superseded_by_rebase` and names the digest
 fresh approval must bind. It exits non-zero until review evidence binds the
 candidate that would settle.
+
+Approvals are stored under the digest they signed, so nothing on the current
+candidate can report the earlier act -- the earlier act has to be named. `--bound`
+names the digest directly. `--superseded-proposal` names the earlier proposal
+instead and reads its candidate digest *and* its signers, refusing a proposal
+admitted against a different proposal ref, so the report can say whose approval
+must be collected again. Neither form enumerates a lineage: proposals sharing a
+ref are not listable through any served read, so an earlier proposal is named
+rather than discovered.
 
 Deleting a rendered file or directory loses uncompiled local edits and nothing
 else; removal is never inferred as retirement, and no compile path produces a
