@@ -225,4 +225,187 @@ def register_tools(
             instance_id, principal, proposal_name
         )
 
+    @_tool
+    def cruxible_playbill_propose_subject(
+        instance_id: str,
+        shell: dict[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        """Propose one identity-only governed Subject."""
+        return handlers.handle_playbill_propose_subject(instance_id, shell, proposal_name)
+
+    @_tool
+    def cruxible_playbill_list_subjects(
+        instance_id: str,
+    ) -> contracts.PlaybillSubjectList:
+        """List accepted Subjects at the current coordinate."""
+        return handlers.handle_playbill_list_subjects(instance_id)
+
+    @_tool
+    def cruxible_playbill_get_subject(
+        instance_id: str, subject_kind: str, subject_id: str
+    ) -> contracts.PlaybillSubjectView:
+        """Read one accepted Subject envelope and facts."""
+        return handlers.handle_playbill_get_subject(instance_id, subject_kind, subject_id)
+
+    @_tool
+    def cruxible_playbill_subject_history(
+        instance_id: str, subject_kind: str, subject_id: str
+    ) -> contracts.PlaybillSubjectHistory:
+        """Read one Subject's accepted lineage."""
+        return handlers.handle_playbill_subject_history(instance_id, subject_kind, subject_id)
+
+    @_tool
+    def cruxible_playbill_propose_claim_type(
+        instance_id: str,
+        claim_type: dict[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        """Propose one governed ClaimType interface."""
+        return handlers.handle_playbill_propose_claim_type(instance_id, claim_type, proposal_name)
+
+    @_tool
+    def cruxible_playbill_list_claim_types(
+        instance_id: str,
+    ) -> contracts.PlaybillClaimTypeList:
+        """List accepted ClaimType interfaces."""
+        return handlers.handle_playbill_list_claim_types(instance_id)
+
+    @_tool
+    def cruxible_playbill_get_claim_type(
+        instance_id: str, predicate: str
+    ) -> contracts.PlaybillClaimTypeView:
+        """Read one accepted ClaimType by predicate."""
+        return handlers.handle_playbill_get_claim_type(instance_id, predicate)
+
+    @_tool
+    def cruxible_playbill_propose_claim(
+        instance_id: str,
+        authoring: dict[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillClaimProposal:
+        """Propose one direct Claim with its inert Capture."""
+        return handlers.handle_playbill_propose_claim(instance_id, authoring, proposal_name)
+
+    @_tool
+    def cruxible_playbill_list_claims(
+        instance_id: str,
+        subject_path: str | None = None,
+        predicate: str | None = None,
+        include_retired: bool = False,
+    ) -> contracts.PlaybillClaimList:
+        """List accepted Claims, optionally by Subject or predicate."""
+        return handlers.handle_playbill_list_claims(
+            instance_id,
+            subject_path=subject_path,
+            predicate=predicate,
+            include_retired=include_retired,
+        )
+
+    @_tool
+    def cruxible_playbill_get_claim(instance_id: str, identity: str) -> contracts.PlaybillClaimView:
+        """Read one accepted Claim envelope and facts."""
+        return handlers.handle_playbill_get_claim(instance_id, identity)
+
+    @_tool
+    def cruxible_playbill_claim_history(
+        instance_id: str, identity: str
+    ) -> contracts.PlaybillClaimHistory:
+        """Read one Claim's accepted lineage."""
+        return handlers.handle_playbill_claim_history(instance_id, identity)
+
+    @_tool
+    def cruxible_playbill_explain_claim(
+        instance_id: str,
+        identity: str,
+        evaluation_time: str | None = None,
+    ) -> contracts.PlaybillClaimExplanation:
+        """Explain one Claim's verdict, law evidence, and sources."""
+        return handlers.handle_playbill_explain_claim(
+            instance_id, identity, evaluation_time=evaluation_time
+        )
+
+    @_tool
+    def cruxible_playbill_propose_query_definition(
+        instance_id: str,
+        query: dict[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        """Propose one governed QueryDefinition entrypoint."""
+        return handlers.handle_playbill_propose_query_definition(instance_id, query, proposal_name)
+
+    @_tool
+    def cruxible_playbill_list_query_definitions(
+        instance_id: str,
+    ) -> contracts.PlaybillQueryDefinitionList:
+        """List accepted QueryDefinition entrypoints."""
+        return handlers.handle_playbill_list_query_definitions(instance_id)
+
+    @_tool
+    def cruxible_playbill_get_query_definition(
+        instance_id: str, name: str
+    ) -> contracts.PlaybillQueryDefinitionView:
+        """Read one accepted QueryDefinition and its contract."""
+        return handlers.handle_playbill_get_query_definition(instance_id, name)
+
+    @_tool
+    def cruxible_playbill_run_query(
+        instance_id: str,
+        name: str,
+        parameters: dict[str, Any] | None = None,
+        evaluation_time: str | None = None,
+        budgets: dict[str, Any] | None = None,
+    ) -> contracts.PlaybillQueryRun:
+        """Execute an accepted QueryDefinition and return its execution receipt."""
+        return handlers.handle_playbill_run_query(
+            instance_id,
+            name,
+            parameters=parameters,
+            evaluation_time=evaluation_time,
+            budgets=budgets,
+        )
+
+    @_tool
+    def cruxible_playbill_discover(
+        instance_id: str,
+        query: str | None = None,
+        entrypoint: str | None = None,
+        evaluation_time: str | None = None,
+        profile: Literal["interfaces", "subjects", "all"] = "interfaces",
+        budget: dict[str, Any] | None = None,
+    ) -> contracts.PlaybillDiscoveryResult:
+        """Find accepted interfaces and Subjects by exact or lexical match."""
+        return handlers.handle_playbill_discover(
+            instance_id,
+            query=query,
+            entrypoint=entrypoint,
+            evaluation_time=evaluation_time,
+            profile=profile,
+            budget=budget,
+        )
+
+    @_tool
+    def cruxible_playbill_expand(
+        instance_id: str,
+        address: dict[str, Any],
+        facets: list[str] | None = None,
+        evaluation_time: str | None = None,
+        budget: dict[str, Any] | None = None,
+    ) -> contracts.PlaybillContextCapsule:
+        """Expand one accepted address into a bounded context capsule."""
+        return handlers.handle_playbill_expand(
+            instance_id,
+            address,
+            evaluation_time=evaluation_time,
+            facets=facets or [],
+            budget=budget,
+        )
+
+    @_tool
+    def cruxible_playbill_export_floor(
+        instance_id: str,
+    ) -> contracts.PlaybillFloorExport:
+        """Export the deterministic greppable floor as base64 bytes per path."""
+        return handlers.handle_playbill_export_floor(instance_id)
+
     return registered

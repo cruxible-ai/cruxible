@@ -8,7 +8,10 @@ typed Playbill services.
 from __future__ import annotations
 
 import base64
-from typing import Literal
+import json
+from collections.abc import Mapping
+from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import ValidationError
 
@@ -18,9 +21,22 @@ from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.attestations import ApprovalAttestation
 from cruxible_core.playbill.candidates import canonical_candidate_timestamp
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.claim_types import ClaimType
+from cruxible_core.playbill.discovery import (
+    DiscoveryBudgetV1,
+    ExpandRequestV1,
+    ExpansionBudgetV1,
+)
 from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.query.definitions import QueryDefinitionV1
+from cruxible_core.playbill.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.semantic import SemanticAddress
+from cruxible_core.playbill.service.claim_types import (
+    service_get_playbill_claim_type,
+    service_list_playbill_claim_types,
+    service_propose_playbill_claim_type,
+)
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_dereference_playbill_document,
@@ -36,6 +52,11 @@ from cruxible_core.playbill.service.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.playbill.service.explain import service_explain_playbill_subject
+from cruxible_core.playbill.service.query_definitions import (
+    service_get_playbill_query_definition,
+    service_list_playbill_query_definitions,
+    service_propose_playbill_query_definition,
+)
 from cruxible_core.playbill.service.review import (
     service_prepare_playbill_approval,
     service_review_playbill_proposal,
@@ -45,7 +66,14 @@ from cruxible_core.playbill.service.source_catalog import (
     service_playbill_source_context,
     service_propose_playbill_source_bundle,
 )
+from cruxible_core.playbill.service.subjects import (
+    service_get_playbill_subject,
+    service_list_playbill_subjects,
+    service_playbill_subject_history,
+    service_propose_playbill_subject,
+)
 from cruxible_core.playbill.source_catalog import SourceCompilationBundle
+from cruxible_core.playbill.subjects import SubjectShell
 from cruxible_core.playbill.types import OperatingProfile, PrincipalRecord
 from cruxible_core.primitives import new_id
 from cruxible_core.runtime.permissions import check_permission
@@ -56,6 +84,18 @@ from cruxible_core.server.auth import (
     set_current_operation_id,
 )
 from cruxible_core.server.config import is_server_auth_enabled
+from cruxible_core.service.playbill_claims import (
+    DirectClaimAuthoringV1,
+    service_expand_playbill_semantic,
+    service_explain_playbill_claim,
+    service_get_playbill_claim,
+    service_list_playbill_claims,
+    service_playbill_claim_history,
+    service_propose_playbill_claim,
+)
+from cruxible_core.service.playbill_discovery import service_discover_playbill_semantic
+from cruxible_core.service.playbill_floor import MANIFEST_PATH, service_export_playbill_floor
+from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.temporal import utc_now
 
 
@@ -387,6 +427,344 @@ def playbill_propose_source_bundle(
         timestamp=canonical_candidate_timestamp(utc_now()),
     )
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
+
+
+def _accepted_coordinate(instance_id: str, at: AcceptedCoordinate | None) -> AcceptedCoordinate:
+    """Resolve the caller's coordinate, defaulting to the accepted head."""
+
+    if at is not None:
+        return at
+    instance = get_playbill_manager().get(instance_id)
+    return AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+
+def _evaluation_time(value: datetime | None) -> datetime:
+    return utc_now() if value is None else value
+
+
+def _evaluation_timestamp(value: str | None) -> str:
+    return canonical_candidate_timestamp(utc_now()) if value is None else value
+
+
+def playbill_propose_subject(
+    instance_id: str,
+    *,
+    shell: SubjectShell,
+    proposal_name: str,
+    base: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillProposalInspection:
+    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    result = service_propose_playbill_subject(
+        get_playbill_manager().get(instance_id),
+        shell=shell,
+        actor_id=_actor_id(),
+        proposal_name=proposal_name,
+        timestamp=canonical_candidate_timestamp(utc_now()),
+        base=base,
+    )
+    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_list_subjects(
+    instance_id: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillSubjectList:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_list_playbill_subjects(get_playbill_manager().get(instance_id), at=at)
+    return contracts.PlaybillSubjectList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_get_subject(
+    instance_id: str,
+    identity: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillSubjectView:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_get_playbill_subject(
+        get_playbill_manager().get(instance_id), identity=identity, at=at
+    )
+    return contracts.PlaybillSubjectView.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_subject_history(
+    instance_id: str,
+    identity: str,
+) -> contracts.PlaybillSubjectHistory:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_playbill_subject_history(
+        get_playbill_manager().get(instance_id), identity=identity
+    )
+    return contracts.PlaybillSubjectHistory.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_propose_claim_type(
+    instance_id: str,
+    *,
+    claim_type: ClaimType,
+    proposal_name: str,
+    base: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillProposalInspection:
+    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    result = service_propose_playbill_claim_type(
+        get_playbill_manager().get(instance_id),
+        claim_type=claim_type,
+        actor_id=_actor_id(),
+        proposal_name=proposal_name,
+        timestamp=canonical_candidate_timestamp(utc_now()),
+        base=base,
+    )
+    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_list_claim_types(
+    instance_id: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillClaimTypeList:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_list_playbill_claim_types(get_playbill_manager().get(instance_id), at=at)
+    return contracts.PlaybillClaimTypeList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_get_claim_type(
+    instance_id: str,
+    predicate: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillClaimTypeView:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_get_playbill_claim_type(
+        get_playbill_manager().get(instance_id), predicate=predicate, at=at
+    )
+    return contracts.PlaybillClaimTypeView.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_propose_claim(
+    instance_id: str,
+    *,
+    authoring: DirectClaimAuthoringV1,
+    proposal_name: str,
+    base: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillClaimProposal:
+    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    result = service_propose_playbill_claim(
+        get_playbill_manager().get(instance_id),
+        authoring=authoring,
+        actor_id=_actor_id(),
+        proposal_name=proposal_name,
+        timestamp=canonical_candidate_timestamp(utc_now()),
+        base=base,
+    )
+    return contracts.PlaybillClaimProposal.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_list_claims(
+    instance_id: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+    subject: SemanticAddress | None = None,
+    predicate: str | None = None,
+    include_retired: bool = False,
+) -> contracts.PlaybillClaimList:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_list_playbill_claims(
+        get_playbill_manager().get(instance_id),
+        at=at,
+        subject=subject,
+        predicate=predicate,
+        include_retired=include_retired,
+    )
+    return contracts.PlaybillClaimList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_get_claim(
+    instance_id: str,
+    identity: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillClaimView:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_get_playbill_claim(
+        get_playbill_manager().get(instance_id), identity=identity, at=at
+    )
+    return contracts.PlaybillClaimView.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_claim_history(
+    instance_id: str,
+    identity: str,
+) -> contracts.PlaybillClaimHistory:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_playbill_claim_history(
+        get_playbill_manager().get(instance_id), identity=identity
+    )
+    return contracts.PlaybillClaimHistory.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_explain_claim(
+    instance_id: str,
+    identity: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
+) -> contracts.PlaybillClaimExplanation:
+    check_permission("cruxible_playbill_explain", instance_id=instance_id)
+    result = service_explain_playbill_claim(
+        get_playbill_manager().get(instance_id),
+        identity=identity,
+        at=at,
+        evaluation_time=_evaluation_time(evaluation_time),
+    )
+    return contracts.PlaybillClaimExplanation.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_propose_query_definition(
+    instance_id: str,
+    *,
+    query: QueryDefinitionV1,
+    proposal_name: str,
+    base: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillProposalInspection:
+    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    result = service_propose_playbill_query_definition(
+        get_playbill_manager().get(instance_id),
+        query=query,
+        actor_id=_actor_id(),
+        proposal_name=proposal_name,
+        timestamp=canonical_candidate_timestamp(utc_now()),
+        base=base,
+    )
+    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_list_query_definitions(
+    instance_id: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillQueryDefinitionList:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_list_playbill_query_definitions(get_playbill_manager().get(instance_id), at=at)
+    return contracts.PlaybillQueryDefinitionList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_get_query_definition(
+    instance_id: str,
+    name: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillQueryDefinitionView:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_get_playbill_query_definition(
+        get_playbill_manager().get(instance_id), name=name, at=at
+    )
+    return contracts.PlaybillQueryDefinitionView.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_run_query(
+    instance_id: str,
+    name: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
+    parameters: Mapping[str, Any] | None = None,
+    budgets: QueryBudgetsV1 | None = None,
+) -> contracts.PlaybillQueryRun:
+    """Execute one accepted QueryDefinition and return its result and receipt.
+
+    No receipt journal is opened here: the journal backend is caller-owned
+    exactly as it is for Procedure exhaust, so ``journal_record_digest`` is
+    absent at this surface until PC-G wires a daemon-owned journal.
+    """
+
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_run_playbill_query(
+        get_playbill_manager().get(instance_id),
+        name=name,
+        evaluation_time=_evaluation_time(evaluation_time),
+        parameters=parameters,
+        at=at,
+        budgets=budgets,
+    )
+    return contracts.PlaybillQueryRun.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_discover(
+    instance_id: str,
+    *,
+    query: str | None = None,
+    entrypoint: str | None = None,
+    at: AcceptedCoordinate | None = None,
+    evaluation_time: str | None = None,
+    profile: Literal["interfaces", "subjects", "all"] = "interfaces",
+    budget: DiscoveryBudgetV1 | None = None,
+) -> contracts.PlaybillDiscoveryResult:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_discover_playbill_semantic(
+        get_playbill_manager().get(instance_id),
+        evaluation_time=_evaluation_timestamp(evaluation_time),
+        query=query,
+        entrypoint=entrypoint,
+        at=at,
+        profile=profile,
+        budget=budget or DiscoveryBudgetV1(),
+    )
+    return contracts.PlaybillDiscoveryResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_expand(
+    instance_id: str,
+    *,
+    address: SemanticAddress,
+    at: AcceptedCoordinate | None = None,
+    evaluation_time: str | None = None,
+    facets: tuple[str, ...] = (),
+    budget: ExpansionBudgetV1 | None = None,
+) -> contracts.PlaybillContextCapsule:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_expand_playbill_semantic(
+        get_playbill_manager().get(instance_id),
+        request=ExpandRequestV1(
+            address=address,
+            at=_accepted_coordinate(instance_id, at),
+            evaluation_time=_evaluation_timestamp(evaluation_time),
+            facets=facets,
+            budget=budget or ExpansionBudgetV1(),
+        ),
+    )
+    return contracts.PlaybillContextCapsule.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_export_floor(
+    instance_id: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillFloorExport:
+    """Return the deterministic floor as base64 bytes keyed by floor path.
+
+    The service returns a path-to-bytes map and writes nothing; materializing a
+    directory from this contract is the client's act, never the daemon's.
+    """
+
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    files = service_export_playbill_floor(
+        get_playbill_manager().get(instance_id),
+        at=at,
+        access=_access(instance_id, include_body=False),
+    )
+    manifest = json.loads(files[MANIFEST_PATH])
+    return contracts.PlaybillFloorExport(
+        coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(manifest["coordinate"]),
+        manifest=manifest,
+        files=[
+            contracts.PlaybillFloorFile(
+                path=path,
+                content_base64=base64.b64encode(content).decode("ascii"),
+            )
+            for path, content in files.items()
+        ],
+    )
 
 
 __all__ = [name for name in globals() if name.startswith("playbill_")]

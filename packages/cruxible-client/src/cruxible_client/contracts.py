@@ -253,3 +253,204 @@ class PlaybillSourceCheckResult(BaseModel):
     compilation_digest: str
     accepted_coordinate: PlaybillAcceptedCoordinate
     alignments: list[dict[str, Any]]
+
+
+class PlaybillSubjectView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-subject-read-v1"] = "playbill-subject-read-v1"
+    coordinate_kind: Literal["canonical"] = "canonical"
+    coordinate: PlaybillAcceptedCoordinate
+    envelope: dict[str, Any]
+    facts: list[dict[str, Any]]
+
+
+class PlaybillSubjectList(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-subject-list-v1"] = "playbill-subject-list-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    subjects: list[PlaybillSubjectView]
+
+
+class PlaybillSubjectHistory(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-subject-history-v1"] = "playbill-subject-history-v1"
+    identity: str
+    entries: list[dict[str, Any]]
+
+
+class PlaybillClaimTypeView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-type-read-v1"] = "playbill-claim-type-read-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    path: str
+    predicate: str
+    identity: str
+    artifact_digest: str
+    envelope: dict[str, Any]
+
+
+class PlaybillClaimTypeList(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-type-list-v1"] = "playbill-claim-type-list-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    claim_types: list[PlaybillClaimTypeView]
+
+
+class PlaybillClaimView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-read-v1"] = "playbill-claim-read-v1"
+    coordinate_kind: Literal["canonical"] = "canonical"
+    coordinate: PlaybillAcceptedCoordinate
+    envelope: dict[str, Any]
+    facts: list[dict[str, Any]]
+
+
+class PlaybillClaimList(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-list-v1"] = "playbill-claim-list-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    claims: list[PlaybillClaimView]
+
+
+class PlaybillClaimHistory(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-history-v1"] = "playbill-claim-history-v1"
+    identity: str
+    entries: list[dict[str, Any]]
+
+
+class PlaybillClaimProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-direct-claim-proposal-v1"] = "playbill-direct-claim-proposal-v1"
+    proposal: PlaybillProposalInspection
+    claim_identity: str
+    claim_path: str
+    statement_digest: str
+    artifact_digest: str
+    capture_digest: str
+    capture_digests: list[str]
+    observed_at: str
+    existing_statements: list[dict[str, Any]]
+    handoffs: list[dict[str, Any]]
+
+
+class PlaybillClaimExplanation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-explanation-v1"] = "playbill-claim-explanation-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: str
+    claim: PlaybillClaimView
+    law_evidence: dict[str, Any]
+    verdict: dict[str, Any]
+    exact_attestations: list[dict[str, Any]]
+    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
+    source_handles: list[dict[str, Any]]
+    coverage: dict[str, Any]
+
+
+class PlaybillQueryDefinitionView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-query-definition-read-v1"] = "playbill-query-definition-read-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    path: str
+    name: str
+    identity: str
+    artifact_digest: str
+    envelope: dict[str, Any]
+
+
+class PlaybillQueryDefinitionList(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-query-definition-list-v1"] = "playbill-query-definition-list-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    query_definitions: list[PlaybillQueryDefinitionView]
+
+
+class PlaybillQueryRun(BaseModel):
+    """One executed query: its replayable result beside its execution receipt.
+
+    ``receipt`` carries the whole ``playbill-query-execution-receipt-v1``; its
+    ``result_digest`` is the receipt's content identity, and
+    ``journal_record_digest`` is present only when the caller owned a journal.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-query-run-v1"] = "playbill-query-run-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    name: str
+    definition_path: str
+    definition_digest: str
+    result: dict[str, Any]
+    receipt: dict[str, Any]
+    journal_record_digest: str | None = None
+
+
+class PlaybillDiscoveryResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-discovery-result-v1"] = "playbill-discovery-result-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    page: dict[str, Any]
+    vocabulary_entry_count: int
+
+
+class PlaybillContextCapsule(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-context-capsule-v1"] = "playbill-context-capsule-v1"
+    address: dict[str, Any]
+    at: PlaybillAcceptedCoordinate
+    evaluation_time: str
+    canonical_summary: Any = None
+    governance: Any = None
+    provenance: Any = None
+    attestation_coverage: Literal[
+        "exact_subject",
+        "containing_artifact",
+        "containing_change_set",
+    ]
+    claim_context: Any = None
+    procedure_context: Any = None
+    claim_type_card: Any = None
+    subject_profile: Any = None
+    source_material: list[dict[str, Any]] = Field(default_factory=list)
+    relations: list[Any] = Field(default_factory=list)
+    next_reads: list[dict[str, Any]] = Field(default_factory=list)
+    coverage: dict[str, Any]
+    receipt_digest: str
+
+
+class PlaybillFloorFile(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    content_base64: str
+
+
+class PlaybillFloorExport(BaseModel):
+    """The deterministic greppable floor as base64 bytes keyed by floor path.
+
+    ``manifest`` is the decoded root ``manifest.json``: it binds every file to
+    the accepted coordinate it was projected from. The service is
+    filesystem-free, so materializing the directory is the client's act.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-floor-export-v1"] = "playbill-floor-export-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    manifest: dict[str, Any]
+    files: list[PlaybillFloorFile]

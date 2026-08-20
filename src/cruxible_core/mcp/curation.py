@@ -37,6 +37,21 @@ _COMMON_READS = {
     "cruxible_playbill_source_context",
     "cruxible_playbill_check_source_bundle",
     "cruxible_playbill_list_principals",
+    "cruxible_playbill_list_subjects",
+    "cruxible_playbill_get_subject",
+    "cruxible_playbill_subject_history",
+    "cruxible_playbill_list_claim_types",
+    "cruxible_playbill_get_claim_type",
+    "cruxible_playbill_list_claims",
+    "cruxible_playbill_get_claim",
+    "cruxible_playbill_claim_history",
+    "cruxible_playbill_explain_claim",
+    "cruxible_playbill_list_query_definitions",
+    "cruxible_playbill_get_query_definition",
+    "cruxible_playbill_run_query",
+    "cruxible_playbill_discover",
+    "cruxible_playbill_expand",
+    "cruxible_playbill_export_floor",
 }
 
 _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
@@ -47,6 +62,10 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_playbill_store_body",
             "cruxible_playbill_propose_document",
             "cruxible_playbill_propose_source_bundle",
+            "cruxible_playbill_propose_subject",
+            "cruxible_playbill_propose_claim_type",
+            "cruxible_playbill_propose_claim",
+            "cruxible_playbill_propose_query_definition",
         }
     ),
     PROFILE_REVIEW: frozenset(

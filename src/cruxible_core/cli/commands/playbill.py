@@ -66,6 +66,37 @@ def _read_model(path: str, model: type[ResultT]) -> ResultT:
     return cast(ResultT, validator(payload))
 
 
+def _read_mapping(path: str) -> dict[str, Any]:
+    source = Path(path).expanduser()
+    try:
+        payload = yaml.safe_load(source.read_text())
+    except (OSError, yaml.YAMLError) as exc:
+        raise click.ClickException(f"Could not read {source}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise click.ClickException(f"{source} must contain one mapping")
+    return cast(dict[str, Any], payload)
+
+
+def _write_floor(destination: Path, export: contracts.PlaybillFloorExport, *, force: bool) -> None:
+    """Materialize the floor bytes; the daemon never writes a client path."""
+
+    import base64
+
+    if destination.exists() and any(destination.iterdir()) and not force:
+        raise click.ClickException(
+            f"Refusing to write the floor into a non-empty directory: {destination}. "
+            "Pass --force to overwrite."
+        )
+    destination.mkdir(parents=True, exist_ok=True)
+    root = destination.resolve()
+    for item in export.files:
+        target = (destination / item.path).resolve()
+        if not target.is_relative_to(root):
+            raise click.ClickException(f"Refusing to write outside the export root: {item.path}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(base64.b64decode(item.content_base64, validate=True))
+
+
 def _write_bundle(path: str, bundle: SourceCompilationBundle) -> None:
     output = Path(path).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -641,6 +672,398 @@ def revoke_principal(principal_id: str, proposal_name: str, output_json: bool) -
 
     result = _server_call(call, command_name="playbill principal revoke")
     _emit_json(result.model_dump(mode="json"))
+
+
+@playbill_group.group("subject")
+def subject_group() -> None:
+    """Propose and read identity-only governed Subjects."""
+
+
+@subject_group.command("propose")
+@click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--name", "proposal_name", required=True)
+@json_option
+@handle_errors
+def propose_subject(envelope: str, proposal_name: str, output_json: bool) -> None:
+    shell = _read_mapping(envelope)
+    result = _server_call(
+        lambda client, instance_id: client.propose_playbill_subject(
+            instance_id,
+            shell=shell,
+            proposal_name=proposal_name,
+        ),
+        command_name="playbill subject propose",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@subject_group.command("list")
+@json_option
+@handle_errors
+def list_subjects(output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.list_playbill_subjects(instance_id),
+        command_name="playbill subject list",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for subject in result.subjects:
+        click.echo(f"{subject.envelope['identity']}  {subject.envelope['path']}")
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
+@subject_group.command("get")
+@click.argument("subject_kind")
+@click.argument("subject_id")
+@json_option
+@handle_errors
+def get_subject(subject_kind: str, subject_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.get_playbill_subject(
+            instance_id, subject_kind, subject_id
+        ),
+        command_name="playbill subject get",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@subject_group.command("history")
+@click.argument("subject_kind")
+@click.argument("subject_id")
+@json_option
+@handle_errors
+def subject_history(subject_kind: str, subject_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.playbill_subject_history(
+            instance_id, subject_kind, subject_id
+        ),
+        command_name="playbill subject history",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@playbill_group.group("claim-type")
+def claim_type_group() -> None:
+    """Propose and read the governed predicate vocabulary."""
+
+
+@claim_type_group.command("propose")
+@click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--name", "proposal_name", required=True)
+@json_option
+@handle_errors
+def propose_claim_type(envelope: str, proposal_name: str, output_json: bool) -> None:
+    claim_type = _read_mapping(envelope)
+    result = _server_call(
+        lambda client, instance_id: client.propose_playbill_claim_type(
+            instance_id,
+            claim_type=claim_type,
+            proposal_name=proposal_name,
+        ),
+        command_name="playbill claim-type propose",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@claim_type_group.command("list")
+@json_option
+@handle_errors
+def list_claim_types(output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.list_playbill_claim_types(instance_id),
+        command_name="playbill claim-type list",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for claim_type in result.claim_types:
+        click.echo(f"{claim_type.predicate}  {claim_type.artifact_digest}")
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
+@claim_type_group.command("get")
+@click.argument("predicate")
+@json_option
+@handle_errors
+def get_claim_type(predicate: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.get_playbill_claim_type(instance_id, predicate),
+        command_name="playbill claim-type get",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@playbill_group.group("claim")
+def claim_group() -> None:
+    """Propose, read, and explain first-class governed Claims."""
+
+
+@claim_group.command("propose")
+@click.option("--authoring", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--name", "proposal_name", required=True)
+@json_option
+@handle_errors
+def propose_claim(authoring: str, proposal_name: str, output_json: bool) -> None:
+    request = _read_mapping(authoring)
+    result = _server_call(
+        lambda client, instance_id: client.propose_playbill_claim(
+            instance_id,
+            authoring=request,
+            proposal_name=proposal_name,
+        ),
+        command_name="playbill claim propose",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@claim_group.command("list")
+@click.option("--subject", "subject_path", default=None, help="Subject artifact path filter.")
+@click.option("--predicate", default=None)
+@click.option("--include-retired", is_flag=True)
+@json_option
+@handle_errors
+def list_claims(
+    subject_path: str | None,
+    predicate: str | None,
+    include_retired: bool,
+    output_json: bool,
+) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.list_playbill_claims(
+            instance_id,
+            subject_path=subject_path,
+            predicate=predicate,
+            include_retired=include_retired,
+        ),
+        command_name="playbill claim list",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for claim in result.claims:
+        click.echo(f"{claim.envelope['identity']}  {claim.envelope['path']}")
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
+@claim_group.command("get")
+@click.argument("identity")
+@json_option
+@handle_errors
+def get_claim(identity: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.get_playbill_claim(instance_id, identity),
+        command_name="playbill claim get",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@claim_group.command("history")
+@click.argument("identity")
+@json_option
+@handle_errors
+def claim_history(identity: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.playbill_claim_history(instance_id, identity),
+        command_name="playbill claim history",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@claim_group.command("explain")
+@click.argument("identity")
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def explain_claim(identity: str, evaluation_time: str | None, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.explain_playbill_claim(
+            instance_id, identity, evaluation_time=evaluation_time
+        ),
+        command_name="playbill claim explain",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@playbill_group.group("query")
+def query_group() -> None:
+    """Propose, read, and execute governed named entrypoints."""
+
+
+@query_group.command("propose")
+@click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--name", "proposal_name", required=True)
+@json_option
+@handle_errors
+def propose_query_definition(envelope: str, proposal_name: str, output_json: bool) -> None:
+    definition = _read_mapping(envelope)
+    result = _server_call(
+        lambda client, instance_id: client.propose_playbill_query_definition(
+            instance_id,
+            query=definition,
+            proposal_name=proposal_name,
+        ),
+        command_name="playbill query propose",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@query_group.command("list")
+@json_option
+@handle_errors
+def list_query_definitions(output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.list_playbill_query_definitions(instance_id),
+        command_name="playbill query list",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for definition in result.query_definitions:
+        click.echo(f"{definition.name}  {definition.artifact_digest}")
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
+@query_group.command("get")
+@click.argument("name")
+@json_option
+@handle_errors
+def get_query_definition(name: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.get_playbill_query_definition(instance_id, name),
+        command_name="playbill query get",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@query_group.command("run")
+@click.argument("name")
+@click.option(
+    "--parameters",
+    "parameters_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Mapping of resolved query parameters.",
+)
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def run_query(
+    name: str,
+    parameters_path: str | None,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    parameters = None if parameters_path is None else _read_mapping(parameters_path)
+    result = _server_call(
+        lambda client, instance_id: client.run_playbill_query(
+            instance_id,
+            name,
+            parameters=parameters,
+            evaluation_time=evaluation_time,
+        ),
+        command_name="playbill query run",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    receipt = result.receipt
+    rows = result.result.get("rows") or []
+    click.echo(f"{result.name}: {receipt['verdict']} with {len(rows)} row(s)")
+    click.echo(f"Receipt definition: {receipt['definition_digest']}")
+    click.echo(f"Receipt parameters: {receipt['parameter_digest']}")
+    click.echo(f"Receipt result digest: {receipt['result_digest']}")
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
+@playbill_group.command("discover")
+@click.option("--query", "query_text", default=None, help="Exact or lexical match term.")
+@click.option("--entrypoint", default=None, help="Named QueryDefinition entrypoint.")
+@click.option(
+    "--profile",
+    type=click.Choice(["interfaces", "subjects", "all"]),
+    default="interfaces",
+)
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def discover(
+    query_text: str | None,
+    entrypoint: str | None,
+    profile: str,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """Find accepted interfaces and Subjects without knowing their names."""
+
+    result = _server_call(
+        lambda client, instance_id: client.discover_playbill(
+            instance_id,
+            query=query_text,
+            entrypoint=entrypoint,
+            profile=cast(Any, profile),
+            evaluation_time=evaluation_time,
+        ),
+        command_name="playbill discover",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for hit in result.page.get("hits", []):
+        click.echo(f"{hit['kind']}  {hit['label']}  {hit['address']['artifact_path']}")
+    click.echo(f"Vocabulary entries: {result.vocabulary_entry_count}")
+
+
+@playbill_group.command("expand")
+@click.argument("artifact_path")
+@click.option("--facet", "facets", multiple=True, help="Repeat to request one facet.")
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def expand(
+    artifact_path: str,
+    facets: tuple[str, ...],
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """Expand one accepted address into a bounded context capsule."""
+
+    address = SemanticAddress.whole_artifact(artifact_path).model_dump(mode="json")
+    result = _server_call(
+        lambda client, instance_id: client.expand_playbill(
+            instance_id,
+            address=address,
+            facets=sorted(set(facets), key=lambda item: item.encode("utf-8")),
+            evaluation_time=evaluation_time,
+        ),
+        command_name="playbill expand",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@playbill_group.group("floor")
+def floor_group() -> None:
+    """Materialize the deterministic greppable floor of accepted state."""
+
+
+@floor_group.command("export")
+@click.option("--output", required=True, type=click.Path(file_okay=False))
+@click.option("--force", is_flag=True, help="Overwrite a non-empty output directory.")
+@json_option
+@handle_errors
+def export_floor(output: str, force: bool, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.export_playbill_floor(instance_id),
+        command_name="playbill floor export",
+    )
+    destination = Path(output).expanduser()
+    _write_floor(destination, result, force=force)
+    if output_json:
+        _emit_json(result.manifest)
+        return
+    click.echo(f"Wrote {len(result.files)} floor file(s) to {destination}")
+    click.echo(f"Floor digest: {result.manifest['floor_digest']}")
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
 __all__ = ["playbill_group"]

@@ -61,6 +61,42 @@ MCP receives canonical path-free bundles.
 | `cruxible_playbill_list_principals` | List accepted public principals | `READ_ONLY` |
 | `cruxible_playbill_propose_principal_change` | Propose rotation, revocation, or recovery | `ADMIN` |
 
+## Subjects, ClaimTypes, and Claims
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_propose_subject` | Propose an identity-only Subject | `GOVERNED_WRITE` |
+| `cruxible_playbill_list_subjects` | List accepted Subjects and coordinate | `READ_ONLY` |
+| `cruxible_playbill_get_subject` | Read one accepted Subject | `READ_ONLY` |
+| `cruxible_playbill_subject_history` | Read one Subject's accepted lineage | `READ_ONLY` |
+| `cruxible_playbill_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
+| `cruxible_playbill_list_claim_types` | List the accepted predicate vocabulary | `READ_ONLY` |
+| `cruxible_playbill_get_claim_type` | Read one accepted ClaimType | `READ_ONLY` |
+| `cruxible_playbill_propose_claim` | Propose a direct Claim and its Capture | `GOVERNED_WRITE` |
+| `cruxible_playbill_list_claims` | List accepted Claims by Subject or predicate | `READ_ONLY` |
+| `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
+| `cruxible_playbill_claim_history` | Read one Claim's accepted lineage | `READ_ONLY` |
+| `cruxible_playbill_explain_claim` | Explain a Claim's verdict and evidence | `READ_ONLY` |
+
+A proposal is not accepted state. A Claim's verdict is computed at read time
+from accepted law evidence, never carried forward from acceptance.
+
+## Queries, discovery, and the floor
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_propose_query_definition` | Propose a named entrypoint | `GOVERNED_WRITE` |
+| `cruxible_playbill_list_query_definitions` | List accepted entrypoints | `READ_ONLY` |
+| `cruxible_playbill_get_query_definition` | Read one entrypoint's contract | `READ_ONLY` |
+| `cruxible_playbill_run_query` | Execute an entrypoint with a replay receipt | `READ_ONLY` |
+| `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
+| `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
+| `cruxible_playbill_export_floor` | Export the greppable floor as base64 bytes | `READ_ONLY` |
+
+Query execution is a read: it returns the result together with its
+`playbill-query-execution-receipt-v1`, and it writes nothing. The floor export
+returns bytes keyed by floor path; materializing a directory is a client act.
+
 ## Permission tiers
 
 Read operations require read_only. CAS/proposal operations require

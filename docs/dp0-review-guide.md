@@ -28,12 +28,23 @@ credential recover-admin
 credential revoke
 credential rotate
 playbill body store
+playbill claim explain
+playbill claim get
+playbill claim history
+playbill claim list
+playbill claim propose
+playbill claim-type get
+playbill claim-type list
+playbill claim-type propose
+playbill discover
 playbill document body
 playbill document get
 playbill document history
 playbill document list
 playbill document propose
+playbill expand
 playbill explain
+playbill floor export
 playbill host create
 playbill init
 playbill principal list
@@ -45,9 +56,17 @@ playbill proposal approve
 playbill proposal inspect
 playbill proposal refusal
 playbill proposal review
+playbill query get
+playbill query list
+playbill query propose
+playbill query run
 playbill sources check
 playbill sources compile
 playbill sources propose
+playbill subject get
+playbill subject history
+playbill subject list
+playbill subject propose
 server info
 server restart
 server start
@@ -93,6 +112,25 @@ POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate
 GET  /api/v1/{instance_id}/playbill/sources/context
 POST /api/v1/{instance_id}/playbill/sources/check
 POST /api/v1/{instance_id}/playbill/sources/proposals
+POST /api/v1/{instance_id}/playbill/subjects/proposals
+GET  /api/v1/{instance_id}/playbill/subjects
+GET  /api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}
+GET  /api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history
+POST /api/v1/{instance_id}/playbill/claim-types/proposals
+GET  /api/v1/{instance_id}/playbill/claim-types
+GET  /api/v1/{instance_id}/playbill/claim-types/{predicate}
+POST /api/v1/{instance_id}/playbill/claims/proposals
+GET  /api/v1/{instance_id}/playbill/claims
+GET  /api/v1/{instance_id}/playbill/claims/{identity}
+GET  /api/v1/{instance_id}/playbill/claims/{identity}/history
+POST /api/v1/{instance_id}/playbill/claims/{identity}/explanation
+POST /api/v1/{instance_id}/playbill/queries/proposals
+GET  /api/v1/{instance_id}/playbill/queries
+GET  /api/v1/{instance_id}/playbill/queries/{name}
+POST /api/v1/{instance_id}/playbill/queries/{name}/run
+POST /api/v1/{instance_id}/playbill/discover
+POST /api/v1/{instance_id}/playbill/expand
+POST /api/v1/{instance_id}/playbill/floor/export
 ```
 
 ## Surviving public MCP tool inventory
@@ -122,10 +160,88 @@ cruxible_playbill_check_source_bundle
 cruxible_playbill_propose_source_bundle
 cruxible_playbill_list_principals
 cruxible_playbill_propose_principal_change
+cruxible_playbill_propose_subject
+cruxible_playbill_list_subjects
+cruxible_playbill_get_subject
+cruxible_playbill_subject_history
+cruxible_playbill_propose_claim_type
+cruxible_playbill_list_claim_types
+cruxible_playbill_get_claim_type
+cruxible_playbill_propose_claim
+cruxible_playbill_list_claims
+cruxible_playbill_get_claim
+cruxible_playbill_claim_history
+cruxible_playbill_explain_claim
+cruxible_playbill_propose_query_definition
+cruxible_playbill_list_query_definitions
+cruxible_playbill_get_query_definition
+cruxible_playbill_run_query
+cruxible_playbill_discover
+cruxible_playbill_expand
+cruxible_playbill_export_floor
 ```
 
 The permission catalog and MCP registration catalog are equality-tested. See
 the [MCP reference](mcp-tools.md) for permissions and payload intent.
+
+## PC-G-S1b: the served-surface expansion
+
+PC-G-S1a landed the knowledge-loop services with no public surface. PC-G-S1b
+serves them. The facade operation inventory moves from 19 to 38, and every new
+operation delegates to a service that already existed and is untouched here: no
+service, law, or wire format changed in this slice.
+
+The 19 added operations are the knowledge loop an instance is driven through:
+
+| Group | Operations |
+|---|---|
+| Subjects | `playbill_propose_subject`, `playbill_list_subjects`, `playbill_get_subject`, `playbill_subject_history` |
+| ClaimTypes | `playbill_propose_claim_type`, `playbill_list_claim_types`, `playbill_get_claim_type` |
+| Claims | `playbill_propose_claim`, `playbill_list_claims`, `playbill_get_claim`, `playbill_claim_history`, `playbill_explain_claim` |
+| Queries | `playbill_propose_query_definition`, `playbill_list_query_definitions`, `playbill_get_query_definition`, `playbill_run_query` |
+| Semantic reads | `playbill_discover`, `playbill_expand` |
+| Floor | `playbill_export_floor` |
+
+Each one is registered on all four public surfaces — facade, HTTP route,
+`cruxible-client` contract plus client method, and MCP tool — and reaches the
+CLI, so the whole loop is drivable from `cruxible playbill ...` alone. The
+permission posture is unchanged vocabulary: the four proposal operations check
+`cruxible_playbill_propose` (`GOVERNED_WRITE`) exactly as the Document and
+source-bundle proposals do, `playbill_explain_claim` checks
+`cruxible_playbill_explain`, and every remaining new operation is a read
+checking `cruxible_playbill_read` (`READ_ONLY`). No new tier was minted, and no
+operation accepts a caller-supplied actor context: writer identity is still
+derived from the authenticated credential at the facade.
+
+Two surface-shaped notes a reviewer should not have to re-derive:
+
+- **Floor export stays filesystem-free below the CLI.** The service returns a
+  path-to-bytes map; the contract carries it base64 per path beside the decoded
+  coordinate manifest; only the CLI writes a directory, and it refuses a
+  non-empty destination without `--force`. The daemon never receives or writes a
+  client path.
+- **Query receipts are returned, not journaled.** `playbill_run_query` returns
+  the `playbill-query-execution-receipt-v1` with its result digest, and
+  `journal_record_digest` is null at this surface. The journal backend is
+  caller-owned exactly as it is for Procedure exhaust, and the daemon does not
+  open one yet. Wiring a daemon-owned query-receipt journal is a PC-G seam.
+
+### The authorized golden re-pin
+
+Two frozen served-surface goldens and the generated client contract snapshot
+were re-pinned in this slice, under explicit maintainer authorization, because
+they pin the *size and shape of the served surface* and this slice deliberately
+expands it:
+
+| Golden | What changed |
+|---|---|
+| `tests/goldens/playbill/served-surface-dp0b-v1.json` | `facade_operations` 19 → 38; `http_delegate_count` and `mcp_delegate_count` 19 → 38 |
+| `tests/goldens/http_surface/http_surface_snapshot.json` | 19 added paths, all under `/playbill/`; zero existing paths removed or changed |
+| `tests/goldens/cruxible_client/contracts_snapshot.json` | 17 added models; zero existing models removed or changed |
+
+All three diffs are strictly additive, and each was produced through that
+artifact's own regeneration path rather than a blanket golden refresh. Every
+other golden in this repository is byte-identical across the slice.
 
 ## Deleted directory and service inventory
 

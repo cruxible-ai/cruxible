@@ -92,6 +92,86 @@ cruxible playbill document body IDENTITY [--output FILE]
 cruxible playbill document history IDENTITY
 ~~~
 
+## playbill subject
+
+~~~text
+cruxible playbill subject propose --envelope FILE --name NAME
+cruxible playbill subject list
+cruxible playbill subject get KIND ID
+cruxible playbill subject history KIND ID
+~~~
+
+A Subject is an identity-only referent. KIND and ID are the two halves of its
+`Subject:<kind>/<id>` identity.
+
+## playbill claim-type
+
+~~~text
+cruxible playbill claim-type propose --envelope FILE --name NAME
+cruxible playbill claim-type list
+cruxible playbill claim-type get PREDICATE
+~~~
+
+A ClaimType is the governed interface a predicate must satisfy before any Claim
+may state it.
+
+## playbill claim
+
+~~~text
+cruxible playbill claim propose --authoring FILE --name NAME
+cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
+cruxible playbill claim get IDENTITY
+cruxible playbill claim history IDENTITY
+cruxible playbill claim explain IDENTITY [--evaluation-time TS]
+~~~
+
+propose creates one inert Capture and one dependency-closed Claim in a single
+governed proposal. explain returns the verdict together with the law evidence
+and source handles it was computed from.
+
+## playbill query
+
+~~~text
+cruxible playbill query propose --envelope FILE --name NAME
+cruxible playbill query list
+cruxible playbill query get NAME
+cruxible playbill query run NAME [--parameters FILE] [--evaluation-time TS]
+~~~
+
+run executes one accepted QueryDefinition and prints its
+`playbill-query-execution-receipt-v1`: the definition digest, the resolved
+parameter digest, and the result digest that replays it.
+
+## playbill discover
+
+~~~text
+cruxible playbill discover [--query TEXT] [--entrypoint NAME]
+  [--profile interfaces|subjects|all]
+  [--evaluation-time TS]
+~~~
+
+Exactly one of --query or --entrypoint selects the page. Matching is exact and
+lexical over the accepted naming layer; it is never a similarity score.
+
+## playbill expand
+
+~~~text
+cruxible playbill expand ARTIFACT_PATH [--facet NAME]... [--evaluation-time TS]
+~~~
+
+Returns one bounded context capsule for an accepted address. Repeat --facet to
+narrow what the capsule carries.
+
+## playbill floor
+
+~~~text
+cruxible playbill floor export --output DIR [--force]
+~~~
+
+Writes the deterministic greppable floor of accepted state. The daemon returns
+bytes keyed by floor path and never writes a client path; export refuses a
+non-empty output directory unless --force is given.
+
 ## playbill proposal
 
 ~~~text

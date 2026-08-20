@@ -74,6 +74,63 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_propose_principal_change": (
         "Use when you need a governed principal registration, rotation, revocation, or recovery."
     ),
+    "cruxible_playbill_propose_subject": (
+        "Use when you need a governed identity-only Subject to hang Claims on."
+    ),
+    "cruxible_playbill_list_subjects": (
+        "Use when you need accepted Subjects and their exact coordinate."
+    ),
+    "cruxible_playbill_get_subject": (
+        "Use when you need one accepted Subject envelope and its structured facts."
+    ),
+    "cruxible_playbill_subject_history": (
+        "Use when you need one Subject's accepted lineage across generations."
+    ),
+    "cruxible_playbill_propose_claim_type": (
+        "Use when you need a governed ClaimType before any Claim can state that predicate."
+    ),
+    "cruxible_playbill_list_claim_types": (
+        "Use when you need the accepted predicate vocabulary an instance admits."
+    ),
+    "cruxible_playbill_get_claim_type": (
+        "Use when you need one predicate's accepted structure, cardinality, and policy."
+    ),
+    "cruxible_playbill_propose_claim": (
+        "Use when you need to state one governed fact about a Subject with its rationale."
+    ),
+    "cruxible_playbill_list_claims": (
+        "Use when you need accepted Claims, optionally narrowed to a Subject or predicate."
+    ),
+    "cruxible_playbill_get_claim": (
+        "Use when you need one accepted Claim envelope and its structured facts."
+    ),
+    "cruxible_playbill_claim_history": (
+        "Use when you need one Claim's accepted lineage across generations."
+    ),
+    "cruxible_playbill_explain_claim": (
+        "Use when you need why one Claim holds: its verdict, law evidence, and sources."
+    ),
+    "cruxible_playbill_propose_query_definition": (
+        "Use when you need a governed named entrypoint others can execute and replay."
+    ),
+    "cruxible_playbill_list_query_definitions": (
+        "Use when you need the accepted named entrypoints an instance publishes."
+    ),
+    "cruxible_playbill_get_query_definition": (
+        "Use when you need one entrypoint's parameters, budgets, and result contract."
+    ),
+    "cruxible_playbill_run_query": (
+        "Use when you need accepted state answered by a named entrypoint with a replay receipt."
+    ),
+    "cruxible_playbill_discover": (
+        "Use when you do not yet know which interface or Subject names the state you want."
+    ),
+    "cruxible_playbill_expand": (
+        "Use when you need one address's bounded governance, provenance, and relation context."
+    ),
+    "cruxible_playbill_export_floor": (
+        "Use when you need the whole accepted floor as greppable files rather than one read."
+    ),
 }
 
 

@@ -11,6 +11,33 @@
   "/api/v1/{instance_id}/playbill/bodies": {
     "POST": "PlaybillCasObjectResult"
   },
+  "/api/v1/{instance_id}/playbill/claim-types": {
+    "GET": "PlaybillClaimTypeList"
+  },
+  "/api/v1/{instance_id}/playbill/claim-types/proposals": {
+    "POST": "PlaybillProposalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/claim-types/{predicate}": {
+    "GET": "PlaybillClaimTypeView"
+  },
+  "/api/v1/{instance_id}/playbill/claims": {
+    "GET": "PlaybillClaimList"
+  },
+  "/api/v1/{instance_id}/playbill/claims/proposals": {
+    "POST": "PlaybillClaimProposal"
+  },
+  "/api/v1/{instance_id}/playbill/claims/{identity}": {
+    "GET": "PlaybillClaimView"
+  },
+  "/api/v1/{instance_id}/playbill/claims/{identity}/explanation": {
+    "POST": "PlaybillClaimExplanation"
+  },
+  "/api/v1/{instance_id}/playbill/claims/{identity}/history": {
+    "GET": "PlaybillClaimHistory"
+  },
+  "/api/v1/{instance_id}/playbill/discover": {
+    "POST": "PlaybillDiscoveryResult"
+  },
   "/api/v1/{instance_id}/playbill/documents": {
     "GET": "PlaybillDocumentList"
   },
@@ -26,8 +53,14 @@
   "/api/v1/{instance_id}/playbill/documents/{identity}/history": {
     "GET": "PlaybillDocumentHistory"
   },
+  "/api/v1/{instance_id}/playbill/expand": {
+    "POST": "PlaybillContextCapsule"
+  },
   "/api/v1/{instance_id}/playbill/explain": {
     "POST": "PlaybillExplainResult | PlaybillExplainUnsupportedDetail"
+  },
+  "/api/v1/{instance_id}/playbill/floor/export": {
+    "POST": "PlaybillFloorExport"
   },
   "/api/v1/{instance_id}/playbill/init": {
     "POST": "PlaybillInitResult"
@@ -56,6 +89,18 @@
   "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/review": {
     "POST": "PlaybillProposalReview"
   },
+  "/api/v1/{instance_id}/playbill/queries": {
+    "GET": "PlaybillQueryDefinitionList"
+  },
+  "/api/v1/{instance_id}/playbill/queries/proposals": {
+    "POST": "PlaybillProposalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/queries/{name}": {
+    "GET": "PlaybillQueryDefinitionView"
+  },
+  "/api/v1/{instance_id}/playbill/queries/{name}/run": {
+    "POST": "PlaybillQueryRun"
+  },
   "/api/v1/{instance_id}/playbill/sources/check": {
     "POST": "PlaybillSourceCheckResult"
   },
@@ -64,6 +109,18 @@
   },
   "/api/v1/{instance_id}/playbill/sources/proposals": {
     "POST": "PlaybillProposalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/subjects": {
+    "GET": "PlaybillSubjectList"
+  },
+  "/api/v1/{instance_id}/playbill/subjects/proposals": {
+    "POST": "PlaybillProposalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}": {
+    "GET": "PlaybillSubjectView"
+  },
+  "/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history": {
+    "GET": "PlaybillSubjectHistory"
   },
   "/api/v1/{instance_id}/runtime/bootstrap/claim": {
     "POST": "RuntimeCredentialBootstrapResult"

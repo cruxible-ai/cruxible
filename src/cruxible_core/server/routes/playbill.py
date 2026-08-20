@@ -7,15 +7,25 @@ from fastapi import APIRouter
 from cruxible_client import contracts
 from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.runtime import playbill_api
 from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,
     PlaybillApprovalRequest,
+    PlaybillClaimExplainRequest,
+    PlaybillDiscoverRequest,
+    PlaybillExpandRequest,
     PlaybillExplainRequest,
+    PlaybillFloorExportRequest,
     PlaybillInitRequest,
+    PlaybillProposeClaimRequest,
+    PlaybillProposeClaimTypeRequest,
     PlaybillProposeDocumentRequest,
     PlaybillProposePrincipalRequest,
+    PlaybillProposeQueryDefinitionRequest,
+    PlaybillProposeSubjectRequest,
     PlaybillReviewRequest,
+    PlaybillRunQueryRequest,
     PlaybillSourceBundleRequest,
     PlaybillSourceProposeRequest,
     PlaybillStoreBodyRequest,
@@ -318,6 +328,331 @@ async def propose_sources(
         source_name=req.source_name,
         proposal_name=req.proposal_name,
     )
+
+
+@router.post(
+    "/{instance_id}/playbill/subjects/proposals",
+    response_model=contracts.PlaybillProposalInspection,
+)
+async def propose_subject(
+    instance_id: str,
+    req: PlaybillProposeSubjectRequest,
+) -> contracts.PlaybillProposalInspection:
+    return playbill_api.playbill_propose_subject(
+        resolve_server_instance_id(instance_id),
+        shell=req.shell,
+        proposal_name=req.proposal_name,
+        base=req.base,
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/subjects",
+    response_model=contracts.PlaybillSubjectList,
+)
+async def list_subjects(
+    instance_id: str,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillSubjectList:
+    return playbill_api.playbill_list_subjects(
+        resolve_server_instance_id(instance_id),
+        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}",
+    response_model=contracts.PlaybillSubjectView,
+)
+async def get_subject(
+    instance_id: str,
+    subject_kind: str,
+    subject_id: str,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillSubjectView:
+    return playbill_api.playbill_get_subject(
+        resolve_server_instance_id(instance_id),
+        f"Subject:{subject_kind}/{subject_id}",
+        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history",
+    response_model=contracts.PlaybillSubjectHistory,
+)
+async def subject_history(
+    instance_id: str,
+    subject_kind: str,
+    subject_id: str,
+) -> contracts.PlaybillSubjectHistory:
+    return playbill_api.playbill_subject_history(
+        resolve_server_instance_id(instance_id),
+        f"Subject:{subject_kind}/{subject_id}",
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/claim-types/proposals",
+    response_model=contracts.PlaybillProposalInspection,
+)
+async def propose_claim_type(
+    instance_id: str,
+    req: PlaybillProposeClaimTypeRequest,
+) -> contracts.PlaybillProposalInspection:
+    return playbill_api.playbill_propose_claim_type(
+        resolve_server_instance_id(instance_id),
+        claim_type=req.claim_type,
+        proposal_name=req.proposal_name,
+        base=req.base,
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/claim-types",
+    response_model=contracts.PlaybillClaimTypeList,
+)
+async def list_claim_types(
+    instance_id: str,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillClaimTypeList:
+    return playbill_api.playbill_list_claim_types(
+        resolve_server_instance_id(instance_id),
+        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/claim-types/{predicate}",
+    response_model=contracts.PlaybillClaimTypeView,
+)
+async def get_claim_type(
+    instance_id: str,
+    predicate: str,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillClaimTypeView:
+    return playbill_api.playbill_get_claim_type(
+        resolve_server_instance_id(instance_id),
+        predicate,
+        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/claims/proposals",
+    response_model=contracts.PlaybillClaimProposal,
+)
+async def propose_claim(
+    instance_id: str,
+    req: PlaybillProposeClaimRequest,
+) -> contracts.PlaybillClaimProposal:
+    return playbill_api.playbill_propose_claim(
+        resolve_server_instance_id(instance_id),
+        authoring=req.authoring,
+        proposal_name=req.proposal_name,
+        base=req.base,
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/claims",
+    response_model=contracts.PlaybillClaimList,
+)
+async def list_claims(
+    instance_id: str,
+    subject_path: str | None = None,
+    predicate: str | None = None,
+    include_retired: bool = False,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillClaimList:
+    return playbill_api.playbill_list_claims(
+        resolve_server_instance_id(instance_id),
+        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+        subject=(None if subject_path is None else SemanticAddress.whole_artifact(subject_path)),
+        predicate=predicate,
+        include_retired=include_retired,
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/claims/{identity}",
+    response_model=contracts.PlaybillClaimView,
+)
+async def get_claim(
+    instance_id: str,
+    identity: str,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillClaimView:
+    return playbill_api.playbill_get_claim(
+        resolve_server_instance_id(instance_id),
+        identity,
+        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/claims/{identity}/history",
+    response_model=contracts.PlaybillClaimHistory,
+)
+async def claim_history(
+    instance_id: str,
+    identity: str,
+) -> contracts.PlaybillClaimHistory:
+    return playbill_api.playbill_claim_history(resolve_server_instance_id(instance_id), identity)
+
+
+@router.post(
+    "/{instance_id}/playbill/claims/{identity}/explanation",
+    response_model=contracts.PlaybillClaimExplanation,
+)
+async def explain_claim(
+    instance_id: str,
+    identity: str,
+    req: PlaybillClaimExplainRequest,
+) -> contracts.PlaybillClaimExplanation:
+    return playbill_api.playbill_explain_claim(
+        resolve_server_instance_id(instance_id),
+        identity,
+        at=req.at,
+        evaluation_time=req.evaluation_time,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/queries/proposals",
+    response_model=contracts.PlaybillProposalInspection,
+)
+async def propose_query_definition(
+    instance_id: str,
+    req: PlaybillProposeQueryDefinitionRequest,
+) -> contracts.PlaybillProposalInspection:
+    return playbill_api.playbill_propose_query_definition(
+        resolve_server_instance_id(instance_id),
+        query=req.query,
+        proposal_name=req.proposal_name,
+        base=req.base,
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/queries",
+    response_model=contracts.PlaybillQueryDefinitionList,
+)
+async def list_query_definitions(
+    instance_id: str,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillQueryDefinitionList:
+    return playbill_api.playbill_list_query_definitions(
+        resolve_server_instance_id(instance_id),
+        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/queries/{name}",
+    response_model=contracts.PlaybillQueryDefinitionView,
+)
+async def get_query_definition(
+    instance_id: str,
+    name: str,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillQueryDefinitionView:
+    return playbill_api.playbill_get_query_definition(
+        resolve_server_instance_id(instance_id),
+        name,
+        at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/queries/{name}/run",
+    response_model=contracts.PlaybillQueryRun,
+)
+async def run_query(
+    instance_id: str,
+    name: str,
+    req: PlaybillRunQueryRequest,
+) -> contracts.PlaybillQueryRun:
+    return playbill_api.playbill_run_query(
+        resolve_server_instance_id(instance_id),
+        name,
+        at=req.at,
+        evaluation_time=req.evaluation_time,
+        parameters=req.parameters,
+        budgets=req.budgets,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/discover",
+    response_model=contracts.PlaybillDiscoveryResult,
+)
+async def discover(
+    instance_id: str,
+    req: PlaybillDiscoverRequest,
+) -> contracts.PlaybillDiscoveryResult:
+    return playbill_api.playbill_discover(
+        resolve_server_instance_id(instance_id),
+        query=req.query,
+        entrypoint=req.entrypoint,
+        at=req.at,
+        evaluation_time=req.evaluation_time,
+        profile=req.profile,
+        budget=req.budget,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/expand",
+    response_model=contracts.PlaybillContextCapsule,
+)
+async def expand(
+    instance_id: str,
+    req: PlaybillExpandRequest,
+) -> contracts.PlaybillContextCapsule:
+    return playbill_api.playbill_expand(
+        resolve_server_instance_id(instance_id),
+        address=req.address,
+        at=req.at,
+        evaluation_time=req.evaluation_time,
+        facets=req.facets,
+        budget=req.budget,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/floor/export",
+    response_model=contracts.PlaybillFloorExport,
+)
+async def export_floor(
+    instance_id: str,
+    req: PlaybillFloorExportRequest,
+) -> contracts.PlaybillFloorExport:
+    return playbill_api.playbill_export_floor(resolve_server_instance_id(instance_id), at=req.at)
 
 
 __all__ = ["router"]

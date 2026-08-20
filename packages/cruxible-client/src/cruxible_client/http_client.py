@@ -458,3 +458,308 @@ class CruxibleClient:
             },
         )
         return self._parse_model(response, contracts.PlaybillProposalInspection)
+
+    @staticmethod
+    def _playbill_coordinate_body(
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if at is None:
+            return None
+        return at.model_dump(mode="json") if isinstance(at, BaseModel) else dict(at)
+
+    def _playbill_proposal_payload(
+        self,
+        *,
+        proposal_name: str,
+        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None,
+        **fields: Any,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"proposal_name": proposal_name, **fields}
+        base_payload = self._playbill_coordinate_body(base)
+        if base_payload is not None:
+            payload["base"] = base_payload
+        return payload
+
+    def propose_playbill_subject(
+        self,
+        instance_id: str,
+        *,
+        shell: Mapping[str, Any],
+        proposal_name: str,
+        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillProposalInspection:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/subjects/proposals",
+            json=self._playbill_proposal_payload(
+                proposal_name=proposal_name, base=base, shell=dict(shell)
+            ),
+        )
+        return self._parse_model(response, contracts.PlaybillProposalInspection)
+
+    def list_playbill_subjects(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillSubjectList:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/subjects",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillSubjectList)
+
+    def get_playbill_subject(
+        self,
+        instance_id: str,
+        subject_kind: str,
+        subject_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillSubjectView:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillSubjectView)
+
+    def playbill_subject_history(
+        self, instance_id: str, subject_kind: str, subject_id: str
+    ) -> contracts.PlaybillSubjectHistory:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history"
+        )
+        return self._parse_model(response, contracts.PlaybillSubjectHistory)
+
+    def propose_playbill_claim_type(
+        self,
+        instance_id: str,
+        *,
+        claim_type: Mapping[str, Any],
+        proposal_name: str,
+        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillProposalInspection:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claim-types/proposals",
+            json=self._playbill_proposal_payload(
+                proposal_name=proposal_name, base=base, claim_type=dict(claim_type)
+            ),
+        )
+        return self._parse_model(response, contracts.PlaybillProposalInspection)
+
+    def list_playbill_claim_types(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillClaimTypeList:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/claim-types",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillClaimTypeList)
+
+    def get_playbill_claim_type(
+        self,
+        instance_id: str,
+        predicate: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillClaimTypeView:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/claim-types/{predicate}",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillClaimTypeView)
+
+    def propose_playbill_claim(
+        self,
+        instance_id: str,
+        *,
+        authoring: Mapping[str, Any],
+        proposal_name: str,
+        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillClaimProposal:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claims/proposals",
+            json=self._playbill_proposal_payload(
+                proposal_name=proposal_name, base=base, authoring=dict(authoring)
+            ),
+        )
+        return self._parse_model(response, contracts.PlaybillClaimProposal)
+
+    def list_playbill_claims(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        subject_path: str | None = None,
+        predicate: str | None = None,
+        include_retired: bool = False,
+    ) -> contracts.PlaybillClaimList:
+        params: dict[str, Any] = {
+            **self._playbill_coordinate_params(at),
+            "include_retired": include_retired,
+        }
+        if subject_path is not None:
+            params["subject_path"] = subject_path
+        if predicate is not None:
+            params["predicate"] = predicate
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/claims",
+            params=params,
+        )
+        return self._parse_model(response, contracts.PlaybillClaimList)
+
+    def get_playbill_claim(
+        self,
+        instance_id: str,
+        identity: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillClaimView:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/claims/{identity}",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillClaimView)
+
+    def playbill_claim_history(
+        self, instance_id: str, identity: str
+    ) -> contracts.PlaybillClaimHistory:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/claims/{identity}/history")
+        return self._parse_model(response, contracts.PlaybillClaimHistory)
+
+    def explain_playbill_claim(
+        self,
+        instance_id: str,
+        identity: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        evaluation_time: str | None = None,
+    ) -> contracts.PlaybillClaimExplanation:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claims/{identity}/explanation",
+            json={
+                "at": self._playbill_coordinate_body(at),
+                "evaluation_time": evaluation_time,
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillClaimExplanation)
+
+    def propose_playbill_query_definition(
+        self,
+        instance_id: str,
+        *,
+        query: Mapping[str, Any],
+        proposal_name: str,
+        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillProposalInspection:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/queries/proposals",
+            json=self._playbill_proposal_payload(
+                proposal_name=proposal_name, base=base, query=dict(query)
+            ),
+        )
+        return self._parse_model(response, contracts.PlaybillProposalInspection)
+
+    def list_playbill_query_definitions(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillQueryDefinitionList:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/queries",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillQueryDefinitionList)
+
+    def get_playbill_query_definition(
+        self,
+        instance_id: str,
+        name: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillQueryDefinitionView:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/queries/{name}",
+            params=self._playbill_coordinate_params(at),
+        )
+        return self._parse_model(response, contracts.PlaybillQueryDefinitionView)
+
+    def run_playbill_query(
+        self,
+        instance_id: str,
+        name: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        evaluation_time: str | None = None,
+        parameters: Mapping[str, Any] | None = None,
+        budgets: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillQueryRun:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/queries/{name}/run",
+            json={
+                "at": self._playbill_coordinate_body(at),
+                "evaluation_time": evaluation_time,
+                "parameters": None if parameters is None else dict(parameters),
+                "budgets": None if budgets is None else dict(budgets),
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillQueryRun)
+
+    def discover_playbill(
+        self,
+        instance_id: str,
+        *,
+        query: str | None = None,
+        entrypoint: str | None = None,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        evaluation_time: str | None = None,
+        profile: Literal["interfaces", "subjects", "all"] = "interfaces",
+        budget: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillDiscoveryResult:
+        payload: dict[str, Any] = {
+            "query": query,
+            "entrypoint": entrypoint,
+            "at": self._playbill_coordinate_body(at),
+            "evaluation_time": evaluation_time,
+            "profile": profile,
+        }
+        if budget is not None:
+            payload["budget"] = dict(budget)
+        response = self._client.post(f"/api/v1/{instance_id}/playbill/discover", json=payload)
+        return self._parse_model(response, contracts.PlaybillDiscoveryResult)
+
+    def expand_playbill(
+        self,
+        instance_id: str,
+        *,
+        address: Mapping[str, Any],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        evaluation_time: str | None = None,
+        facets: Sequence[str] = (),
+        budget: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillContextCapsule:
+        payload: dict[str, Any] = {
+            "address": dict(address),
+            "at": self._playbill_coordinate_body(at),
+            "evaluation_time": evaluation_time,
+            "facets": list(facets),
+        }
+        if budget is not None:
+            payload["budget"] = dict(budget)
+        response = self._client.post(f"/api/v1/{instance_id}/playbill/expand", json=payload)
+        return self._parse_model(response, contracts.PlaybillContextCapsule)
+
+    def export_playbill_floor(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillFloorExport:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/floor/export",
+            json={"at": self._playbill_coordinate_body(at)},
+        )
+        return self._parse_model(response, contracts.PlaybillFloorExport)

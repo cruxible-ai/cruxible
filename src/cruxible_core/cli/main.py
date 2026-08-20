@@ -36,6 +36,10 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "init"): "active",
     ("playbill", "body", "store"): "active",
     ("playbill", "document", "propose"): "active",
+    ("playbill", "subject", "propose"): "active",
+    ("playbill", "claim-type", "propose"): "active",
+    ("playbill", "claim", "propose"): "active",
+    ("playbill", "query", "propose"): "active",
     ("playbill", "proposal", "approve"): "active",
     ("playbill", "proposal", "activate"): "active",
     ("playbill", "sources", "propose"): "active",
@@ -374,6 +378,84 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="proposal_group",
+            ),
+            "subject": _group(
+                "Propose and read identity-only governed Subjects.",
+                {
+                    "propose": _command("playbill", "propose_subject", "Propose a Subject shell."),
+                    "list": _command("playbill", "list_subjects", "List accepted Subjects."),
+                    "get": _command("playbill", "get_subject", "Read an accepted Subject."),
+                    "history": _command(
+                        "playbill", "subject_history", "Read accepted Subject history."
+                    ),
+                },
+                module="playbill",
+                attr="subject_group",
+            ),
+            "claim-type": _group(
+                "Propose and read the governed predicate vocabulary.",
+                {
+                    "propose": _command(
+                        "playbill", "propose_claim_type", "Propose a ClaimType interface."
+                    ),
+                    "list": _command("playbill", "list_claim_types", "List accepted ClaimTypes."),
+                    "get": _command("playbill", "get_claim_type", "Read one accepted ClaimType."),
+                },
+                module="playbill",
+                attr="claim_type_group",
+            ),
+            "claim": _group(
+                "Propose, read, and explain first-class Claims.",
+                {
+                    "propose": _command(
+                        "playbill", "propose_claim", "Propose a direct Claim and its Capture."
+                    ),
+                    "list": _command("playbill", "list_claims", "List accepted Claims."),
+                    "get": _command("playbill", "get_claim", "Read an accepted Claim."),
+                    "history": _command(
+                        "playbill", "claim_history", "Read accepted Claim history."
+                    ),
+                    "explain": _command(
+                        "playbill", "explain_claim", "Explain one Claim's verdict and evidence."
+                    ),
+                },
+                module="playbill",
+                attr="claim_group",
+            ),
+            "query": _group(
+                "Propose, read, and execute governed named entrypoints.",
+                {
+                    "propose": _command(
+                        "playbill", "propose_query_definition", "Propose a QueryDefinition."
+                    ),
+                    "list": _command(
+                        "playbill", "list_query_definitions", "List accepted entrypoints."
+                    ),
+                    "get": _command(
+                        "playbill", "get_query_definition", "Read one accepted entrypoint."
+                    ),
+                    "run": _command(
+                        "playbill", "run_query", "Execute an entrypoint with a replay receipt."
+                    ),
+                },
+                module="playbill",
+                attr="query_group",
+            ),
+            "discover": _command(
+                "playbill", "discover", "Find accepted interfaces and Subjects by name."
+            ),
+            "expand": _command(
+                "playbill", "expand", "Expand one address into a bounded context capsule."
+            ),
+            "floor": _group(
+                "Materialize the deterministic greppable floor.",
+                {
+                    "export": _command(
+                        "playbill", "export_floor", "Write the accepted floor to a directory."
+                    )
+                },
+                module="playbill",
+                attr="floor_group",
             ),
             "explain": _command(
                 "playbill", "explain", "Explain governance at an accepted coordinate."
