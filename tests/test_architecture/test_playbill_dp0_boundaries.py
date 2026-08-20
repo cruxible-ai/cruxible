@@ -670,9 +670,11 @@ def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
     assert modules == [
         "__init__",
         "adapter",
+        "claude_code",
         "contracts",
         "indexes",
         "manifest",
+        "middleware",
         "render",
         "resolver",
     ]
@@ -688,6 +690,7 @@ def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
         "cruxible_core.playbill.coverage.contracts",
         "cruxible_core.playbill.coverage.indexes",
         "cruxible_core.playbill.coverage.manifest",
+        "cruxible_core.playbill.coverage.middleware",
         "cruxible_core.playbill.coverage.render",
         "cruxible_core.playbill.coverage.resolver",
         "cruxible_core.playbill.discovery",

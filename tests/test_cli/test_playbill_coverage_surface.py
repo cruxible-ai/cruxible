@@ -143,7 +143,12 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
     return str(proposal["claim_identity"])
 
 
-def _govern_a_foreign_span(cruxible: _Cli, tmp_path: Path) -> str:
+def _govern_a_foreign_span(
+    cruxible: _Cli,
+    tmp_path: Path,
+    *,
+    identity: str = FOREIGN_IDENTITY,
+) -> str:
     """Accept one Claim whose Capture binds a span of a foreign *logical* source.
 
     The proposer presents the whole foreign file's bytes through the ordinary
@@ -151,6 +156,12 @@ def _govern_a_foreign_span(cruxible: _Cli, tmp_path: Path) -> str:
     fetched nothing, so the Capture it builds is self-asserted -- but it cites
     `external:corpus.handbook` rather than a content digest, which is what makes
     the span's later fate measurable.
+
+    ``identity`` is the logical source the Claim is authored against, and it is
+    a parameter because it is exactly the string a working binding must later
+    declare: the coverage hook suite governs a span under the identity its
+    configured normalizer produces, and the two sides agreeing is the whole
+    coupling.
     """
 
     claim_type = _claim_type()
@@ -182,7 +193,7 @@ def _govern_a_foreign_span(cruxible: _Cli, tmp_path: Path) -> str:
         rationale="The foreign handbook records the reviewer's acceptance.",
         subject_shell=subject_shell("wi-77"),
         source_selection=DirectForeignSourceSelectionV1(
-            logical_source_identity=FOREIGN_IDENTITY,
+            logical_source_identity=identity,
             span=ContentSpan(
                 content_digest=stored["digest"],
                 start_byte=start,

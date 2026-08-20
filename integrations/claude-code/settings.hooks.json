@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Read|Grep|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cruxible playbill hook post-tool-use --root \"$CLAUDE_PROJECT_DIR\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

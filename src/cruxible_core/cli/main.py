@@ -480,6 +480,18 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="coverage_group",
             ),
+            "hook": _group(
+                "Deliver coverage into a harness's own tool results.",
+                {
+                    "post-tool-use": _command(
+                        "playbill",
+                        "post_tool_use_hook",
+                        "Annotate a Claude Code tool result with coverage.",
+                    ),
+                },
+                module="playbill",
+                attr="hook_group",
+            ),
             "explain": _command(
                 "playbill", "explain", "Explain governance at an accepted coordinate."
             ),

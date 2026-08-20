@@ -6,7 +6,8 @@ import base64
 import json
 import os
 import secrets
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -36,10 +37,22 @@ from cruxible_core.playbill.coverage.adapter import (
     read_working_path,
     selection_for_lines,
 )
+from cruxible_core.playbill.coverage.claude_code import (
+    annotated_tool_output,
+    post_tool_use_response,
+    read_post_tool_use_event,
+)
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageResultV1,
     LogicalSourceIdentityV1,
+)
+from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.playbill.coverage.middleware import (
+    CoverageWorkspaceConfigV1,
+    ResolveCoverage,
+    coverage_middleware,
+    load_coverage_config,
 )
 from cruxible_core.playbill.coverage.render import (
     render_coverage_manifest,
@@ -1988,11 +2001,13 @@ def _resolved_coverage(
     observations: tuple[WorkingSourceObservationV1, ...],
     *,
     command_name: str,
+    scan_budget: CoverageScanBudgetV1 | None = None,
 ) -> CoverageResultV1:
     result = _server_call(
         lambda client, instance_id: client.resolve_playbill_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
+            scan_budget=None if scan_budget is None else scan_budget.model_dump(mode="json"),
         ),
         command_name=command_name,
     )
@@ -2073,6 +2088,72 @@ def coverage_status(
         return
     for line in render_coverage_manifest(result):
         click.echo(line)
+
+
+@playbill_group.group("hook")
+def hook_group() -> None:
+    """Deliver coverage into a harness's own tool results."""
+
+
+def _hook_resolver(config: CoverageWorkspaceConfigV1) -> ResolveCoverage:
+    """Resolve through the served operation, as every other coverage caller does.
+
+    The workspace's declared scan budget rides along here rather than inside the
+    middleware, because bounding how many bytes are hashed looking for relocated
+    content is a property of the operation, not of the adapter that calls it.
+    """
+
+    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV1:
+        return _resolved_coverage(
+            tuple(observations),
+            command_name="playbill hook post-tool-use",
+            scan_budget=config.scan_budget,
+        )
+
+    return resolve
+
+
+@hook_group.command("post-tool-use")
+@click.option(
+    "--root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace root holding .playbill/coverage.json.",
+)
+def post_tool_use_hook(root: str) -> None:
+    """Annotate a Claude Code tool result with coverage, reading the hook JSON on stdin.
+
+    Wire this as a PostToolUse hook for Read, Grep, Edit, and Write; the
+    settings fragment is in `integrations/claude-code/`. Grep content-mode
+    results are annotated in place. Read, Edit, and Write are observed -- which
+    refreshes the local freshness manifest so the next Grep answers against a
+    current snapshot -- and their output is returned unchanged, because those
+    tools' result shapes cannot carry an annotation without fabricating file
+    content. The middleware API is the full-fidelity path for a harness that
+    owns its tool executor.
+
+    Always exits 0 and always emits one JSON object: a coverage failure may
+    never break the agent's tool call.
+    """
+
+    payload: Any = None
+    text = ""
+    try:
+        payload = json.loads(sys.stdin.read() or "null")
+        workspace = Path(root).expanduser()
+        event = read_post_tool_use_event(payload, workspace_root=workspace)
+        if event is not None:
+            config = load_coverage_config(workspace)
+            middleware = coverage_middleware(
+                root=workspace,
+                config=config,
+                resolve=_hook_resolver(config),
+            )
+            text = middleware.after_tool(event).appended_coverage_text
+    except Exception:  # noqa: BLE001 - fail open; a broken hook is not the agent's problem
+        text = ""
+    _emit_json(post_tool_use_response(annotated_tool_output(payload, text)))
 
 
 __all__ = ["playbill_group"]

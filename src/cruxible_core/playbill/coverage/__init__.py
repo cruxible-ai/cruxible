@@ -15,6 +15,14 @@ line, because "coverage adds no authority" is the whole contract.
 * :mod:`.manifest` -- the local atomic manifest and its monotonic epoch, which
   is what lets freshness fail closed without a live socket.
 * :mod:`.resolver` -- one side-effect-free entry point over all three.
+* :mod:`.adapter` -- the harness-facing half: working paths in, observations out.
+* :mod:`.render` -- the reference rendering every adapter reproduces.
+* :mod:`.middleware` -- the §11.7 owned-harness adapter, taking its resolve
+  callable by injection so that embedding it never requires reaching the
+  service layer, and returning the original tool output and the appended
+  coverage text as two separate strings so the caller does the splice.
+* :mod:`.claude_code` -- the one Claude Code PostToolUse translation table,
+  pinned to a named envelope version and carrying that vendor's limits.
 """
 
 from __future__ import annotations

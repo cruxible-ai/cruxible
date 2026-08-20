@@ -48,6 +48,7 @@ playbill document propose
 playbill expand
 playbill explain
 playbill floor export
+playbill hook post-tool-use
 playbill host create
 playbill init
 playbill native compile
@@ -404,6 +405,60 @@ carrying the complete §11.6.2 binding, and put the identical bytes under a
 different logical source to get a labeled `content_equivalent` candidate that
 inherits nothing. The resolver, the coverage indexes, and the render package are
 unchanged; they were built for exactly this input and this slice supplies it.
+
+## PC-G-H2: coverage delivered into a harness's tool results
+
+Two adapters over the same operation, and the split between them is a finding of
+this slice rather than a design preference.
+
+**The maintainer-adjudicated amendment.** §11.7's Claude Code disposition asked
+for transparent coverage on Read, Grep, Edit, and Write via `updatedToolOutput`.
+Implementation against the shipped harness (2.1.234) established that
+`updatedToolOutput` is not appended text: it is validated against each tool's
+own output schema and then rendered by that tool's own mapper, which builds the
+model-visible string from typed fields. Grep's content mode has a free-text
+`content` field; Read's `file.content` is passed through a line numberer, so
+appending would present cards as numbered file lines that do not exist in the
+file; Edit and Write synthesize their result from `filePath`/`type`/
+`userModified` with no free-text slot at all. The one channel reaching all four,
+`additionalContext`, is rendered inside a `<system-reminder>` -- the §11.4
+instruction channel §11.7 forbids for ordinary cards. The maintainer adjudicated
+§11.7's disposition amended to these findings: the owned-harness middleware is
+the arm-4 route (which is what §11.8 already prescribed for a benchmark owning
+its tool executor), with the Claude Code plugin shipping as a Grep-only dogfood.
+
+**`coverage/middleware.py` is the primary surface.** `before_tool`,
+`after_tool`, and `after_filesystem_change` over a four-kind event model, taking
+its resolve callable by *injection* -- which is what lets it embed in TauBench's
+executor without the coverage package ever reaching the service layer, and is
+therefore the architecture boundary paying for itself rather than costing.
+Every entry point returns the original tool output and the appended coverage
+text as **two separate strings**; the caller splices. That makes "original tool
+output is preserved and annotated, not replaced or suppressed" structural: a
+middleware returning one blob could silently drop the tool's own output and no
+test could detect it.
+
+**Bindings are declared in `.playbill/coverage.json`,** as exact entries or as
+prefix rules whose normalizer is *named* rather than assumed.
+`playbill-coverage-path-identity-v1` is deliberately non-lossy -- strip the
+declared prefix, `/` to `.`, prepend the identity prefix, stop -- because every
+lossy step (case folding, extension dropping) is a way for two working files to
+collide onto one accepted source. `corpus/handbook.md` is `corpus.handbook.md`,
+and that string must be exactly the `logical_source_identity` the PC-G-H1
+Capture was authored against. A produced identity outside the frozen grammar
+binds nothing, silently, as does any unbound path.
+
+**The §11.8 flagship scenario** is in
+`tests/test_cli/test_playbill_coverage_hook.py`: edit a governed span after
+reading it, and edit one without reading it first, both exposing the affected
+Claim within the same turn against a served instance, with the accepted
+coordinate identical across the transcript and no compile, proposal, or
+acceptance anywhere in it.
+
+**Zero served-surface delta.** No operation, route, MCP tool, client method, or
+golden moves; the only added surface is the `playbill hook post-tool-use` CLI
+command, and the coverage package's no-authority import allowlist still holds
+over both new modules.
 
 ## PC-F3-S1b: the multi-Claim proposal operation
 

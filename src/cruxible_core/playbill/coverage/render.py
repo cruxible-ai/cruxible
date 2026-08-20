@@ -30,9 +30,22 @@ are zero, so a reader never has to infer from silence that nothing was clipped.
 
 Nothing here reads a clock, and nothing here decides anything: every value
 printed is already in the result.
+
+One line that renders no result
+-------------------------------
+:func:`render_unavailable_note` is the exception that proves the rule. An
+adapter that fails open has no `CoverageResultV1` to render -- that is what
+failing open means -- and it still owes the reader one line saying so, because
+silence would let an infrastructure outage read as "nothing here is governed,"
+which is the §11.6.3 false-`none` failure arriving through the back door. It
+lives here rather than in the adapter that needs it so that every byte of
+rendered coverage has exactly one spelling, and an adapter can be held to the
+stronger law that it emits nothing this module did not produce.
 """
 
 from __future__ import annotations
+
+from typing import Literal
 
 from cruxible_core.playbill.coverage.contracts import (
     CoverageCardV1,
@@ -43,6 +56,15 @@ from cruxible_core.playbill.coverage.contracts import (
 
 BATCH_SUMMARY_PREFIX = "Playbill coverage:"
 MANIFEST_SUMMARY_PREFIX = "Playbill coverage manifest:"
+UNAVAILABLE_NOTE_PREFIX = "Playbill coverage: unavailable"
+
+# The closed set of reasons an adapter may fail open. Deterministic by
+# construction: a note carries the class of failure and never an exception
+# string, so the same stdin against the same state renders the same byte.
+CoverageUnavailableCodeV1 = Literal[
+    "working_source_unreadable",
+    "coverage_operation_unavailable",
+]
 
 
 def source_label(source: LogicalSourceIdentityV1) -> str:
@@ -163,13 +185,27 @@ def render_coverage_manifest(result: CoverageResultV1) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def render_unavailable_note(code: CoverageUnavailableCodeV1) -> tuple[str, ...]:
+    """The one line an adapter that failed open is allowed to emit.
+
+    It states a class of failure, never an exception message, so a reader learns
+    that the answer is missing rather than that nothing is governed, and two runs
+    over the same inputs still render the same bytes.
+    """
+
+    return (f"{UNAVAILABLE_NOTE_PREFIX}  [{code}]",)
+
+
 __all__ = [
     "BATCH_SUMMARY_PREFIX",
     "MANIFEST_SUMMARY_PREFIX",
+    "UNAVAILABLE_NOTE_PREFIX",
+    "CoverageUnavailableCodeV1",
     "render_batch_summary",
     "render_card",
     "render_coverage_manifest",
     "render_coverage_result",
     "render_span",
+    "render_unavailable_note",
     "source_label",
 ]

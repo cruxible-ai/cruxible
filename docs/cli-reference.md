@@ -316,6 +316,34 @@ health, completeness, and the sources a `none` would have been factual inside.
 
 Resolving coverage changes no accepted state and appends no receipt.
 
+## playbill hook
+
+~~~text
+cruxible playbill hook post-tool-use [--root DIR]
+~~~
+
+Reads one Claude Code PostToolUse payload on stdin and writes the hook response
+on stdout, binding working paths through `.playbill/coverage.json` at the
+workspace root. Wire it with the settings fragment in
+`integrations/claude-code/`.
+
+Grep content-mode results are annotated in place: the cards are appended to the
+result's own text and every other field is passed through unchanged. Read, Edit,
+and Write are observed only -- their paths are resolved, which refreshes the
+local freshness manifest so the next Grep answers against a current snapshot --
+and their output is returned unmodified, because those tools' result shapes
+carry no field that can hold an annotation without fabricating file content.
+`additionalContext` is never used: it would arrive as a system reminder, which
+is the instruction channel rather than the data channel.
+
+The command always exits 0 and always emits one JSON object. A coverage failure
+degrades to the original output plus, where a channel exists, one
+`Playbill coverage: unavailable` line; it never breaks the agent's tool call.
+
+For a harness that owns its tool executor, the vendor-neutral middleware in
+`cruxible_core.playbill.coverage.middleware` is the full-fidelity path and
+covers all four tool kinds, including same-turn edit drift.
+
 ## playbill proposal
 
 ~~~text
