@@ -463,6 +463,29 @@ tests/goldens/playbill/changeset-v3.json
 tests/goldens/playbill/claim-type-v1.json
 tests/goldens/playbill/depgraph-v3.json
 tests/goldens/playbill/discovery-index-v1.json
+tests/goldens/playbill/journal_corpus/index.json
+tests/goldens/playbill/journal_corpus/negative/export-duplicated-record.json
+tests/goldens/playbill/journal_corpus/negative/export-false-oversized-claim.json
+tests/goldens/playbill/journal_corpus/negative/export-forked-chain.json
+tests/goldens/playbill/journal_corpus/negative/export-missing-record.json
+tests/goldens/playbill/journal_corpus/negative/export-missing-segment.json
+tests/goldens/playbill/journal_corpus/negative/export-overlapping-segments.json
+tests/goldens/playbill/journal_corpus/negative/export-reordered-segments.json
+tests/goldens/playbill/journal_corpus/negative/export-tampered-head-signature.json
+tests/goldens/playbill/journal_corpus/negative/export-tampered-head-vector.json
+tests/goldens/playbill/journal_corpus/negative/export-unknown-boundary-rule.json
+tests/goldens/playbill/journal_corpus/vectors/export-alpha-a-1-3.json
+tests/goldens/playbill/journal_corpus/vectors/export-alpha-a-4-6.json
+tests/goldens/playbill/journal_corpus/vectors/export-segment-boundary.json
+tests/goldens/playbill/journal_corpus/vectors/export-two-partitions.json
+tests/goldens/playbill/journal_corpus/vectors/head-manifest-two-partitions.json
+tests/goldens/playbill/journal_corpus/vectors/head-vector-two-partitions.json
+tests/goldens/playbill/journal_corpus/vectors/journal-range-alpha-a-1-3.json
+tests/goldens/playbill/journal_corpus/vectors/partition-head-alpha-a-3.json
+tests/goldens/playbill/journal_corpus/vectors/partition-head-genesis.json
+tests/goldens/playbill/journal_corpus/vectors/stored-record-alpha-a-1.json
+tests/goldens/playbill/journal_corpus/vectors/stream-identity-alpha.json
+tests/goldens/playbill/journal_corpus/vectors/stream-identity-beta.json
 tests/goldens/playbill/merkle-manifest-v1.json
 tests/goldens/playbill/oracles-v1.json
 tests/goldens/playbill/projection-v1.json
@@ -482,6 +505,19 @@ four versions the ones a proposal produces. `tests/goldens/state_cross_section/`
 and `tests/goldens/kev/` are frozen records whose readers left in earlier
 batches; a frozen golden is deleted deliberately by the batch that retires the
 contract it pins, never as a side effect of deleting its last reader.
+
+`tests/goldens/playbill/journal_corpus/` is the frozen journal conformance
+corpus: twelve positive canonical vectors, ten malformed negative fixtures, and
+an index naming each fixture's law category and the stage that must refuse it.
+Its bytes were produced elsewhere by calling only the pure encoders in
+`cruxible_core.playbill.exhaust`, and they are committed verbatim -- this
+repository holds no generator for them, and `index.json` plus every vector is
+read-only test data. `tests/test_playbill/test_journal_conformance_corpus.py`
+replays the committed bytes through Core's own parser, head verifier, and
+`LocalJournalBackend`, and pins each file's SHA-256 against a registered digest
+so an edit or a regeneration fails loudly. A positive vector that stops
+verifying, or a negative fixture that starts importing, is a persisted-format
+break reviewed under a new format tag, never a regeneration event.
 
 `tests/goldens/playbill/claim-type-v1.json` preserves the canonical policy-bearing
 ClaimType v1 wire and digest contract.

@@ -1,0 +1,1 @@
+{"partition_id":"partition-a","record_digest":"sha256:20185b0a4451a61add101b10e58dcff3de8b16e65fa3b349bdcd7f78c3620026","sequence":3,"stream":{"instance_id":"inst-cj0-conformance","journal_family":"procedure-exhaust-v1","stream_id":"cloud-cj0-alpha","tag":"playbill-journal-stream-identity-v1"},"tag":"playbill-journal-partition-head-v1"}
