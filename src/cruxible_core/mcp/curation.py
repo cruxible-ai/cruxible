@@ -66,6 +66,7 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_playbill_propose_subject",
             "cruxible_playbill_propose_claim_type",
             "cruxible_playbill_propose_claim",
+            "cruxible_playbill_propose_claims",
             "cruxible_playbill_propose_query_definition",
         }
     ),

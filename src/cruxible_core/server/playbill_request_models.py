@@ -97,6 +97,12 @@ class PlaybillProposeClaimRequest(_StrictPlaybillRequest):
     base: AcceptedCoordinate | None = None
 
 
+class PlaybillProposeClaimsRequest(_StrictPlaybillRequest):
+    authorings: tuple[DirectClaimAuthoringV1, ...]
+    proposal_name: str
+    base: AcceptedCoordinate | None = None
+
+
 class PlaybillProposeQueryDefinitionRequest(_StrictPlaybillRequest):
     query: QueryDefinitionV1
     proposal_name: str

@@ -20,6 +20,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "subject", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim", "propose"): "active",
+    ("playbill", "claim", "propose-batch"): "active",
     ("playbill", "query", "propose"): "active",
     ("playbill", "proposal", "approve"): "active",
     ("playbill", "proposal", "activate"): "active",

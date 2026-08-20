@@ -677,6 +677,207 @@
         "submitted_by"
       ]
     },
+    "PlaybillAuthoredClaim": {
+      "fields": {
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Artifact Digest",
+            "type": "string"
+          }
+        },
+        "capture_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "capture_digest",
+          "required": true,
+          "schema": {
+            "title": "Capture Digest",
+            "type": "string"
+          }
+        },
+        "capture_digests": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "capture_digests",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capture Digests",
+            "type": "array"
+          }
+        },
+        "claim_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_identity",
+          "required": true,
+          "schema": {
+            "title": "Claim Identity",
+            "type": "string"
+          }
+        },
+        "claim_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_path",
+          "required": true,
+          "schema": {
+            "title": "Claim Path",
+            "type": "string"
+          }
+        },
+        "existing_statements": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "existing_statements",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Existing Statements",
+            "type": "array"
+          }
+        },
+        "handoffs": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "handoffs",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Handoffs",
+            "type": "array"
+          }
+        },
+        "observed_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observed_at",
+          "required": true,
+          "schema": {
+            "title": "Observed At",
+            "type": "string"
+          }
+        },
+        "statement_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "statement_digest",
+          "required": true,
+          "schema": {
+            "title": "Statement Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-authored-claim-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-authored-claim-v1",
+            "default": "playbill-authored-claim-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "capture_digest": {
+            "title": "Capture Digest",
+            "type": "string"
+          },
+          "capture_digests": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capture Digests",
+            "type": "array"
+          },
+          "claim_identity": {
+            "title": "Claim Identity",
+            "type": "string"
+          },
+          "claim_path": {
+            "title": "Claim Path",
+            "type": "string"
+          },
+          "existing_statements": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Existing Statements",
+            "type": "array"
+          },
+          "handoffs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Handoffs",
+            "type": "array"
+          },
+          "observed_at": {
+            "title": "Observed At",
+            "type": "string"
+          },
+          "statement_digest": {
+            "title": "Statement Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-authored-claim-v1",
+            "default": "playbill-authored-claim-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_identity",
+          "claim_path",
+          "statement_digest",
+          "artifact_digest",
+          "capture_digest",
+          "capture_digests",
+          "observed_at",
+          "existing_statements",
+          "handoffs"
+        ],
+        "title": "PlaybillAuthoredClaim",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_digest",
+        "capture_digest",
+        "capture_digests",
+        "claim_identity",
+        "claim_path",
+        "existing_statements",
+        "handoffs",
+        "observed_at",
+        "statement_digest"
+      ]
+    },
     "PlaybillBodyRead": {
       "fields": {
         "body_digest": {
@@ -922,6 +1123,214 @@
         "digest",
         "present",
         "redacted"
+      ]
+    },
+    "PlaybillClaimBatchProposal": {
+      "fields": {
+        "claims": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claims",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillAuthoredClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          }
+        },
+        "proposal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillProposalInspection"
+          }
+        },
+        "tag": {
+          "default": "playbill-direct-claim-batch-proposal-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-direct-claim-batch-proposal-v1",
+            "default": "playbill-direct-claim-batch-proposal-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillAuthoredClaim": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "capture_digest": {
+                "title": "Capture Digest",
+                "type": "string"
+              },
+              "capture_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Capture Digests",
+                "type": "array"
+              },
+              "claim_identity": {
+                "title": "Claim Identity",
+                "type": "string"
+              },
+              "claim_path": {
+                "title": "Claim Path",
+                "type": "string"
+              },
+              "existing_statements": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Existing Statements",
+                "type": "array"
+              },
+              "handoffs": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Handoffs",
+                "type": "array"
+              },
+              "observed_at": {
+                "title": "Observed At",
+                "type": "string"
+              },
+              "statement_digest": {
+                "title": "Statement Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-authored-claim-v1",
+                "default": "playbill-authored-claim-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_identity",
+              "claim_path",
+              "statement_digest",
+              "artifact_digest",
+              "capture_digest",
+              "capture_digests",
+              "observed_at",
+              "existing_statements",
+              "handoffs"
+            ],
+            "title": "PlaybillAuthoredClaim",
+            "type": "object"
+          },
+          "PlaybillProposalInspection": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "proposal": {
+                "additionalProperties": true,
+                "title": "Proposal",
+                "type": "object"
+              },
+              "tag": {
+                "const": "playbill-proposal-inspection-v1",
+                "default": "playbill-proposal-inspection-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal",
+              "accepted_coordinate"
+            ],
+            "title": "PlaybillProposalInspection",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "claims": {
+            "items": {
+              "$ref": "#/$defs/PlaybillAuthoredClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
+          "proposal": {
+            "$ref": "#/$defs/PlaybillProposalInspection"
+          },
+          "tag": {
+            "const": "playbill-direct-claim-batch-proposal-v1",
+            "default": "playbill-direct-claim-batch-proposal-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal",
+          "claims"
+        ],
+        "title": "PlaybillClaimBatchProposal",
+        "type": "object"
+      },
+      "required_fields": [
+        "claims",
+        "proposal"
       ]
     },
     "PlaybillClaimExplanation": {

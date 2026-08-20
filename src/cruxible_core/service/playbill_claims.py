@@ -199,6 +199,21 @@ class DirectClaimAuthoringV1(_StrictClaimServiceModel):
         return value
 
 
+class AuthoredClaimV1(_StrictClaimServiceModel):
+    """One authored Claim's result, independent of how many shared its proposal."""
+
+    tag: Literal["playbill-authored-claim-v1"] = "playbill-authored-claim-v1"
+    claim_identity: str
+    claim_path: str
+    statement_digest: str
+    artifact_digest: str
+    capture_digest: str
+    capture_digests: tuple[str, ...]
+    observed_at: datetime
+    existing_statements: tuple[ExistingClaimStatementHandleV1, ...]
+    handoffs: tuple[ExistingStatementHandoffV1, ...]
+
+
 class DirectClaimProposalV1(_StrictClaimServiceModel):
     tag: Literal["playbill-direct-claim-proposal-v1"] = "playbill-direct-claim-proposal-v1"
     proposal: PlaybillProposalInspection
@@ -211,6 +226,16 @@ class DirectClaimProposalV1(_StrictClaimServiceModel):
     observed_at: datetime
     existing_statements: tuple[ExistingClaimStatementHandleV1, ...]
     handoffs: tuple[ExistingStatementHandoffV1, ...]
+
+
+class DirectClaimBatchProposalV1(_StrictClaimServiceModel):
+    """One proposal carrying every authored Claim as ordinary change-set members."""
+
+    tag: Literal["playbill-direct-claim-batch-proposal-v1"] = (
+        "playbill-direct-claim-batch-proposal-v1"
+    )
+    proposal: PlaybillProposalInspection
+    claims: tuple[AuthoredClaimV1, ...]
 
 
 class PlaybillClaimView(_StrictClaimServiceModel):
@@ -405,43 +430,105 @@ def _direct_referent(
     raise ProposalIntegrityError("direct Claim referent kind is not admitted by this ClaimType")
 
 
-def service_propose_playbill_claim(
+def _write_shared_member(
+    candidate_tree: dict[str, bytes],
+    authored: dict[str, bytes],
+    *,
+    path: str,
+    content: bytes,
+    conflict: str,
+) -> None:
+    """Write one candidate path, refusing only a conflict with a sibling authoring.
+
+    An authoring may always restate an artifact the accepted base already holds:
+    the acceptance laws adjudicate that succession. What it may never do is
+    contradict another authoring inside the same change set, because a change
+    set settles as one indivisible generation and there is no later moment at
+    which the two byte strings could be reconciled.
+    """
+
+    if authored.get(path, content) != content:
+        raise ProposalIntegrityError(conflict)
+    candidate_tree[path] = content
+    authored[path] = content
+
+
+def _write_dependency_member(
+    candidate_tree: dict[str, bytes],
+    authored: dict[str, bytes],
+    *,
+    path: str,
+    content: bytes,
+    conflict: str,
+) -> None:
+    """Write one declared dependency artifact, which may never contradict the candidate.
+
+    A dependency is stated so the change set closes over it, not to change it,
+    so identical bytes deduplicate silently against both the accepted base and
+    every sibling authoring while differing bytes are a typed refusal.
+    """
+
+    if candidate_tree.get(path, content) != content:
+        raise ProposalIntegrityError(conflict)
+    candidate_tree[path] = content
+    authored[path] = content
+
+
+def _author_direct_claim(
     instance: PlaybillInstance,
     *,
     authoring: DirectClaimAuthoringV1,
     actor_id: str,
-    proposal_name: str,
     timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
-) -> DirectClaimProposalV1:
-    """Create one inert Capture and dependency-closed Claim proposal in one operation."""
+    proposed_base: AcceptedProjectionCoordinate,
+    base_tree: dict[str, bytes],
+    candidate_tree: dict[str, bytes],
+    authored: dict[str, bytes],
+) -> AuthoredClaimV1:
+    """Write one Capture and one dependency-closed Claim into a shared candidate."""
 
-    proposed_base = _resolve_coordinate(instance, base)
-    candidate_tree = instance.tree_at(proposed_base.git_oid)
     if authoring.subject_shell is not None:
         shell_path = subject_path(
             authoring.subject_shell.subject_kind,
             authoring.subject_shell.subject_id,
         )
-        candidate_tree[shell_path] = render_subject(authoring.subject_shell)
+        _write_shared_member(
+            candidate_tree,
+            authored,
+            path=shell_path,
+            content=render_subject(authoring.subject_shell),
+            conflict="Claim authorings in one proposal disagree on their Subject bytes",
+        )
     for dependency_subject in authoring.dependency_subject_shells:
         dependency_path = subject_path(
             dependency_subject.subject_kind,
             dependency_subject.subject_id,
         )
-        rendered = render_subject(dependency_subject)
-        if dependency_path in candidate_tree and candidate_tree[dependency_path] != rendered:
-            raise ProposalIntegrityError("dependency Subject bytes conflict with the candidate")
-        candidate_tree[dependency_path] = rendered
+        _write_dependency_member(
+            candidate_tree,
+            authored,
+            path=dependency_path,
+            content=render_subject(dependency_subject),
+            conflict="dependency Subject bytes conflict with the candidate",
+        )
     if authoring.claim_type_artifact is not None:
         type_path = claim_type_path(authoring.claim_type_artifact.predicate)
-        candidate_tree[type_path] = render_claim_type(authoring.claim_type_artifact)
+        _write_shared_member(
+            candidate_tree,
+            authored,
+            path=type_path,
+            content=render_claim_type(authoring.claim_type_artifact),
+            conflict="Claim authorings in one proposal disagree on their ClaimType bytes",
+        )
     for dependency_type in authoring.dependency_claim_types:
         dependency_path = claim_type_path(dependency_type.predicate)
-        rendered = render_claim_type(dependency_type)
-        if dependency_path in candidate_tree and candidate_tree[dependency_path] != rendered:
-            raise ProposalIntegrityError("dependency ClaimType bytes conflict with the candidate")
-        candidate_tree[dependency_path] = rendered
+        _write_dependency_member(
+            candidate_tree,
+            authored,
+            path=dependency_path,
+            content=render_claim_type(dependency_type),
+            conflict="dependency ClaimType bytes conflict with the candidate",
+        )
 
     statement = authoring.statement
     type_path = claim_type_path(statement.predicate)
@@ -486,7 +573,7 @@ def service_propose_playbill_claim(
             update={"shell_context_digest": claim_referent_context_digest(context).tagged}
         )
 
-    existing = _existing_statements(instance.tree_at(proposed_base.git_oid), statement)
+    existing = _existing_statements(base_tree, statement)
     expected_handoffs = {item.statement_digest for item in existing}
     supplied_handoffs = {item.statement_digest for item in authoring.existing_statement_handoffs}
     if expected_handoffs != supplied_handoffs:
@@ -498,7 +585,7 @@ def service_propose_playbill_claim(
     claim_id = authoring.claim_id or new_claim_id()
     path = claim_path(claim_id)
     predecessor: ClaimArtifact | None = None
-    predecessor_content = instance.tree_at(proposed_base.git_oid).get(path)
+    predecessor_content = base_tree.get(path)
     if predecessor_content is not None:
         predecessor = parse_claim(predecessor_content, path=path)
         actual_predecessor_digest = claim_artifact_digest(predecessor).tagged
@@ -534,11 +621,13 @@ def service_propose_playbill_claim(
         )
     )
     contract_path = capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)
-    existing_contract = candidate_tree.get(contract_path)
-    rendered_contract = render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
-    if existing_contract is not None and existing_contract != rendered_contract:
-        raise ProposalIntegrityError("accepted direct CaptureContract seed bytes differ")
-    candidate_tree[contract_path] = rendered_contract
+    _write_dependency_member(
+        candidate_tree,
+        authored,
+        path=contract_path,
+        content=render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT),
+        conflict="accepted direct CaptureContract seed bytes differ",
+    )
 
     mapping_members: list[SourceMapping] = []
     if authoring.materialize_source:
@@ -638,23 +727,14 @@ def service_propose_playbill_claim(
             ),
         ),
     )
-    candidate_tree[path] = render_claim(claim)
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id),
-        request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{proposal_name}",
-            proposed_base_oid=proposed_base.git_oid,
-        ),
-        candidate_tree=candidate_tree,
-        timestamp=timestamp,
+    _write_shared_member(
+        candidate_tree,
+        authored,
+        path=path,
+        content=render_claim(claim),
+        conflict="two Claim authorings in one proposal write the same Claim path",
     )
-    return DirectClaimProposalV1(
-        proposal=PlaybillProposalInspection(
-            proposal=result,
-            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-                instance.accepted_coordinate()
-            ),
-        ),
+    return AuthoredClaimV1(
         claim_identity=claim.identity.qualified,
         claim_path=path,
         statement_digest=claim_statement_digest(claim.statement).tagged,
@@ -664,6 +744,98 @@ def service_propose_playbill_claim(
         observed_at=observed_at,
         existing_statements=existing,
         handoffs=authoring.existing_statement_handoffs,
+    )
+
+
+def service_propose_playbill_claims(
+    instance: PlaybillInstance,
+    *,
+    authorings: tuple[DirectClaimAuthoringV1, ...],
+    actor_id: str,
+    proposal_name: str,
+    timestamp: str,
+    base: PlaybillAcceptedCoordinate | None = None,
+) -> DirectClaimBatchProposalV1:
+    """Author every supplied Claim into one candidate tree and one proposal.
+
+    The change set this produces is ordinary: nothing about settlement,
+    evaluation, or the wire format distinguishes a proposal carrying five Claims
+    from one carrying a single Claim. What the plural entrypoint adds is the
+    atomicity guarantee callers need when a Claim is only meaningful beside its
+    siblings -- the whole set is admitted as one generation or none of it is.
+    """
+
+    if not authorings:
+        raise ProposalIntegrityError("a Claim proposal must author at least one Claim")
+
+    proposed_base = _resolve_coordinate(instance, base)
+    base_tree = instance.tree_at(proposed_base.git_oid)
+    candidate_tree = instance.tree_at(proposed_base.git_oid)
+    authored: dict[str, bytes] = {}
+    claims = tuple(
+        _author_direct_claim(
+            instance,
+            authoring=authoring,
+            actor_id=actor_id,
+            timestamp=timestamp,
+            proposed_base=proposed_base,
+            base_tree=base_tree,
+            candidate_tree=candidate_tree,
+            authored=authored,
+        )
+        for authoring in authorings
+    )
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id=actor_id),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/{actor_id}/{proposal_name}",
+            proposed_base_oid=proposed_base.git_oid,
+        ),
+        candidate_tree=candidate_tree,
+        timestamp=timestamp,
+    )
+    return DirectClaimBatchProposalV1(
+        proposal=PlaybillProposalInspection(
+            proposal=result,
+            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
+                instance.accepted_coordinate()
+            ),
+        ),
+        claims=claims,
+    )
+
+
+def service_propose_playbill_claim(
+    instance: PlaybillInstance,
+    *,
+    authoring: DirectClaimAuthoringV1,
+    actor_id: str,
+    proposal_name: str,
+    timestamp: str,
+    base: PlaybillAcceptedCoordinate | None = None,
+) -> DirectClaimProposalV1:
+    """Create one inert Capture and dependency-closed Claim proposal in one operation."""
+
+    batch = service_propose_playbill_claims(
+        instance,
+        authorings=(authoring,),
+        actor_id=actor_id,
+        proposal_name=proposal_name,
+        timestamp=timestamp,
+        base=base,
+    )
+    authored = batch.claims[0]
+    return DirectClaimProposalV1(
+        proposal=batch.proposal,
+        claim_identity=authored.claim_identity,
+        claim_path=authored.claim_path,
+        statement_digest=authored.statement_digest,
+        artifact_digest=authored.artifact_digest,
+        capture_digest=authored.capture_digest,
+        capture_digests=authored.capture_digests,
+        observed_at=authored.observed_at,
+        existing_statements=authored.existing_statements,
+        handoffs=authored.handoffs,
     )
 
 
@@ -1458,7 +1630,9 @@ def service_open_playbill_source(
 
 
 __all__ = [
+    "AuthoredClaimV1",
     "DirectClaimAuthoringV1",
+    "DirectClaimBatchProposalV1",
     "DirectClaimProposalV1",
     "ExistingClaimStatementHandleV1",
     "ExistingStatementHandoffV1",
@@ -1475,5 +1649,6 @@ __all__ = [
     "service_open_playbill_source",
     "service_playbill_claim_history",
     "service_propose_playbill_claim",
+    "service_propose_playbill_claims",
     "service_query_playbill_claims",
 ]

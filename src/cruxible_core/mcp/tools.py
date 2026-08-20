@@ -288,6 +288,15 @@ def register_tools(
         return handlers.handle_playbill_propose_claim(instance_id, authoring, proposal_name)
 
     @_tool
+    def cruxible_playbill_propose_claims(
+        instance_id: str,
+        authorings: list[dict[str, Any]],
+        proposal_name: str,
+    ) -> contracts.PlaybillClaimBatchProposal:
+        """Propose several direct Claims as one indivisible change set."""
+        return handlers.handle_playbill_propose_claims(instance_id, authorings, proposal_name)
+
+    @_tool
     def cruxible_playbill_list_claims(
         instance_id: str,
         subject_path: str | None = None,

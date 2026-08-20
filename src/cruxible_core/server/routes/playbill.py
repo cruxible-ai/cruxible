@@ -19,6 +19,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillFloorExportRequest,
     PlaybillInitRequest,
     PlaybillProposeClaimRequest,
+    PlaybillProposeClaimsRequest,
     PlaybillProposeClaimTypeRequest,
     PlaybillProposeDocumentRequest,
     PlaybillProposePrincipalRequest,
@@ -462,6 +463,22 @@ async def propose_claim(
     return playbill_api.playbill_propose_claim(
         resolve_server_instance_id(instance_id),
         authoring=req.authoring,
+        proposal_name=req.proposal_name,
+        base=req.base,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/claims/proposals/batch",
+    response_model=contracts.PlaybillClaimBatchProposal,
+)
+async def propose_claims(
+    instance_id: str,
+    req: PlaybillProposeClaimsRequest,
+) -> contracts.PlaybillClaimBatchProposal:
+    return playbill_api.playbill_propose_claims(
+        resolve_server_instance_id(instance_id),
+        authorings=req.authorings,
         proposal_name=req.proposal_name,
         base=req.base,
     )

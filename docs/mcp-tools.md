@@ -73,6 +73,7 @@ MCP receives canonical path-free bundles.
 | `cruxible_playbill_list_claim_types` | List the accepted predicate vocabulary | `READ_ONLY` |
 | `cruxible_playbill_get_claim_type` | Read one accepted ClaimType | `READ_ONLY` |
 | `cruxible_playbill_propose_claim` | Propose a direct Claim and its Capture | `GOVERNED_WRITE` |
+| `cruxible_playbill_propose_claims` | Propose several Claims as one change set | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_claims` | List accepted Claims by Subject or predicate | `READ_ONLY` |
 | `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
 | `cruxible_playbill_claim_history` | Read one Claim's accepted lineage | `READ_ONLY` |

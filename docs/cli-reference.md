@@ -119,6 +119,7 @@ may state it.
 
 ~~~text
 cruxible playbill claim propose --authoring FILE --name NAME
+cruxible playbill claim propose-batch --authoring FILE [--authoring FILE ...] --name NAME
 cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
 cruxible playbill claim get IDENTITY
 cruxible playbill claim history IDENTITY
@@ -126,8 +127,10 @@ cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
 
 propose creates one inert Capture and one dependency-closed Claim in a single
-governed proposal. explain returns the verdict together with the law evidence
-and source handles it was computed from.
+governed proposal. propose-batch does the same for several Claims at once, and
+the whole set is admitted as one generation or none of it is -- use it when a
+Claim is only meaningful beside its siblings. explain returns the verdict
+together with the law evidence and source handles it was computed from.
 
 ## playbill query
 

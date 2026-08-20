@@ -26,6 +26,9 @@
   "/api/v1/{instance_id}/playbill/claims/proposals": {
     "POST": "PlaybillClaimProposal"
   },
+  "/api/v1/{instance_id}/playbill/claims/proposals/batch": {
+    "POST": "PlaybillClaimBatchProposal"
+  },
   "/api/v1/{instance_id}/playbill/claims/{identity}": {
     "GET": "PlaybillClaimView"
   },

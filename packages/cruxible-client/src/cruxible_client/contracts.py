@@ -343,6 +343,31 @@ class PlaybillClaimProposal(BaseModel):
     handoffs: list[dict[str, Any]]
 
 
+class PlaybillAuthoredClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-authored-claim-v1"] = "playbill-authored-claim-v1"
+    claim_identity: str
+    claim_path: str
+    statement_digest: str
+    artifact_digest: str
+    capture_digest: str
+    capture_digests: list[str]
+    observed_at: str
+    existing_statements: list[dict[str, Any]]
+    handoffs: list[dict[str, Any]]
+
+
+class PlaybillClaimBatchProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-direct-claim-batch-proposal-v1"] = (
+        "playbill-direct-claim-batch-proposal-v1"
+    )
+    proposal: PlaybillProposalInspection
+    claims: list[PlaybillAuthoredClaim]
+
+
 class PlaybillClaimExplanation(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

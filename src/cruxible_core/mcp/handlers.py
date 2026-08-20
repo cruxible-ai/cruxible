@@ -507,6 +507,27 @@ def handle_playbill_propose_claim(
     )
 
 
+def handle_playbill_propose_claims(
+    instance_id: str,
+    authorings: list[dict[str, Any]],
+    proposal_name: str,
+) -> contracts.PlaybillClaimBatchProposal:
+    requests = tuple(DirectClaimAuthoringV1.model_validate(item) for item in authorings)
+    return _dispatch_remote_or_local(
+        lambda client: client.propose_playbill_claims(
+            instance_id,
+            authorings=[item.model_dump(mode="json") for item in requests],
+            proposal_name=proposal_name,
+        ),
+        lambda: playbill_api.playbill_propose_claims(
+            instance_id,
+            authorings=requests,
+            proposal_name=proposal_name,
+        ),
+        operation_name="cruxible_playbill_propose_claims",
+    )
+
+
 def handle_playbill_list_claims(
     instance_id: str,
     *,

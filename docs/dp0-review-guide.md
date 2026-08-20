@@ -33,6 +33,7 @@ playbill claim get
 playbill claim history
 playbill claim list
 playbill claim propose
+playbill claim propose-batch
 playbill claim-type get
 playbill claim-type list
 playbill claim-type propose
@@ -124,6 +125,7 @@ POST /api/v1/{instance_id}/playbill/claim-types/proposals
 GET  /api/v1/{instance_id}/playbill/claim-types
 GET  /api/v1/{instance_id}/playbill/claim-types/{predicate}
 POST /api/v1/{instance_id}/playbill/claims/proposals
+POST /api/v1/{instance_id}/playbill/claims/proposals/batch
 GET  /api/v1/{instance_id}/playbill/claims
 GET  /api/v1/{instance_id}/playbill/claims/{identity}
 GET  /api/v1/{instance_id}/playbill/claims/{identity}/history
@@ -173,6 +175,7 @@ cruxible_playbill_propose_claim_type
 cruxible_playbill_list_claim_types
 cruxible_playbill_get_claim_type
 cruxible_playbill_propose_claim
+cruxible_playbill_propose_claims
 cruxible_playbill_list_claims
 cruxible_playbill_get_claim
 cruxible_playbill_claim_history
@@ -332,6 +335,76 @@ operation:
 | `tests/goldens/playbill/served-surface-dp0b-v1.json` | `facade_operations` 38 → 39 (`playbill_resolve_coverage`); `http_delegate_count` and `mcp_delegate_count` 38 → 39 |
 | `tests/goldens/http_surface/http_surface_snapshot.json` | one added path, `POST /api/v1/{instance_id}/playbill/coverage/resolve`; zero existing paths removed or changed |
 | `tests/goldens/cruxible_client/contracts_snapshot.json` | one added model, `PlaybillCoverageResult`; zero existing models removed or changed |
+
+Each was produced through its own regeneration path, and every other golden in
+this repository is byte-identical across the slice.
+
+## PC-F3-S1b: the multi-Claim proposal operation
+
+A change set already settles as one indivisible generation, and the evaluator,
+the candidate record, and the closure proof have always been multi-member. What
+the served surface lacked was a way for an *author* to reach that atomicity:
+`playbill_propose_claim` wrote exactly one `claims/...` path per proposal, so a
+Claim that is only meaningful beside its siblings -- a relation and the
+vocabulary it discriminates, a reading and the metric it is a reading of -- had
+to be split across generations that could each be accepted without the other.
+This slice adds the plural operation. The facade operation inventory moves from
+39 to 40.
+
+**The change set it produces is ordinary.** Nothing about settlement,
+evaluation, admission, or the wire format distinguishes a proposal carrying five
+Claims from one carrying a single Claim, and no evaluator or law changed here.
+The plural entrypoint loops the existing per-Claim authoring body over one
+shared candidate tree and submits it once. `service_propose_claim_attestation`
+has written a successor plus N competing Claims through the same ordinary path
+since PC-B; this slice generalizes the authoring side to match.
+
+**The singular operation is now a delegation, and that is asserted rather than
+assumed.** `service_propose_playbill_claim` calls the plural service with a
+one-element tuple and re-wraps the result in its unchanged contract. Its
+per-authoring capture, pin, predecessor, and handoff handling is the same code
+that ran before, so a single authoring produces the same candidate digest,
+proposal id, and Claim artifact digest it produced at the previous head; a test
+pins that identity by digest across the two entrypoints rather than by
+inspection.
+
+**Cross-authoring conflicts refuse before submit, and only cross-authoring
+ones.** An authoring may always restate an artifact the accepted base already
+holds -- the acceptance laws adjudicate that succession, and narrowing it would
+change single-Claim behavior. What an authoring may never do is contradict a
+*sibling* in the same change set, because there is no later moment at which two
+byte strings at one path could be reconciled. So identical dependency artifacts
+deduplicate silently across authorings, differing ones raise a typed
+`ProposalIntegrityError` before the proposal service is reached, and two
+authorings naming the same Claim path are refused outright. An empty authoring
+set is likewise a typed refusal rather than an empty proposal.
+
+**Deliberately unchanged: existing-statement disposition still reads the
+accepted base.** The handoff law makes an author disposition every *accepted*
+same-subject/predicate statement before stating an adjacent one. Sibling Claims
+inside the same proposal are not accepted state, so they are not handoff
+subjects -- competing Claims in one change set are exactly what the attestation
+path already writes, and the resolution policy, not the author, adjudicates
+them.
+
+**The CLI adds a command rather than a flag.** `playbill claim propose` keeps
+its single `--authoring` and its single-Claim result shape unchanged; the plural
+form is `playbill claim propose-batch --authoring A --authoring B --name NAME`,
+whose repeated flag names the set and whose distinct result shape does not
+depend on how many files the caller passed. The route is a sub-resource of the
+collection the Claims settle into, `POST .../playbill/claims/proposals/batch`,
+rather than a sibling collection.
+
+### The authorized golden re-pin
+
+The same three served-surface pins move, additively, for the one added
+operation:
+
+| Golden | What changed |
+|---|---|
+| `tests/goldens/playbill/served-surface-dp0b-v1.json` | `facade_operations` 39 → 40 (`playbill_propose_claims`); `http_delegate_count` and `mcp_delegate_count` 39 → 40 |
+| `tests/goldens/http_surface/http_surface_snapshot.json` | one added path, `POST /api/v1/{instance_id}/playbill/claims/proposals/batch`; zero existing paths removed or changed |
+| `tests/goldens/cruxible_client/contracts_snapshot.json` | two added models, `PlaybillAuthoredClaim` and `PlaybillClaimBatchProposal`; zero existing models removed or changed |
 
 Each was produced through its own regeneration path, and every other golden in
 this repository is byte-identical across the slice.

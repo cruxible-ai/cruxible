@@ -841,6 +841,31 @@ def propose_claim(authoring: str, proposal_name: str, output_json: bool) -> None
     _emit_json(result.model_dump(mode="json"))
 
 
+@claim_group.command("propose-batch")
+@click.option(
+    "--authoring",
+    "authorings",
+    required=True,
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Repeat once per Claim; the whole set settles as one generation.",
+)
+@click.option("--name", "proposal_name", required=True)
+@json_option
+@handle_errors
+def propose_claims(authorings: tuple[str, ...], proposal_name: str, output_json: bool) -> None:
+    requests = [_read_mapping(path) for path in authorings]
+    result = _server_call(
+        lambda client, instance_id: client.propose_playbill_claims(
+            instance_id,
+            authorings=requests,
+            proposal_name=proposal_name,
+        ),
+        command_name="playbill claim propose-batch",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
 @claim_group.command("list")
 @click.option("--subject", "subject_path", default=None, help="Subject artifact path filter.")
 @click.option("--predicate", default=None)

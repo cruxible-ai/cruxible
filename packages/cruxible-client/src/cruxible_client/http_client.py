@@ -587,6 +587,24 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillClaimProposal)
 
+    def propose_playbill_claims(
+        self,
+        instance_id: str,
+        *,
+        authorings: Sequence[Mapping[str, Any]],
+        proposal_name: str,
+        base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillClaimBatchProposal:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claims/proposals/batch",
+            json=self._playbill_proposal_payload(
+                proposal_name=proposal_name,
+                base=base,
+                authorings=[dict(item) for item in authorings],
+            ),
+        )
+        return self._parse_model(response, contracts.PlaybillClaimBatchProposal)
+
     def list_playbill_claims(
         self,
         instance_id: str,

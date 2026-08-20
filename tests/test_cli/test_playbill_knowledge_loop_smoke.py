@@ -342,3 +342,67 @@ def test_cli_floor_export_refuses_to_overwrite_a_non_empty_directory(
     assert refused.exit_code != 0
     assert "Refusing to write the floor into a non-empty directory" in refused.output
     assert (floor / "occupied.txt").read_text(encoding="utf-8") == "not the floor\n"
+
+
+def test_cli_batch_propose_settles_every_claim_in_one_generation(
+    served_cli: _Cli,
+    tmp_path: Path,
+) -> None:
+    """The plural command drives CLI -> HTTP -> facade -> service in one call.
+
+    The load-bearing observation is the generation count: two Claims arrive
+    through one proposal id, one approval, and one activation, so the accepted
+    ledger gains exactly one generation carrying both.
+    """
+
+    cruxible = served_cli
+    cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    cruxible.json(
+        "playbill",
+        "init",
+        "--key-dir",
+        str(tmp_path / "custody"),
+        "--principal-id",
+        SIGNER_ID,
+    )
+    proposed = cruxible.json(
+        "playbill",
+        "claim-type",
+        "propose",
+        "--envelope",
+        _write(tmp_path / "claim-type.json", _claim_type().model_dump(mode="json")),
+        "--name",
+        "seed-claim-type",
+    )
+    seeded = cruxible.accept(_proposal_id(proposed))
+
+    batch = cruxible.json(
+        "playbill",
+        "claim",
+        "propose-batch",
+        "--authoring",
+        _write(
+            tmp_path / "claim-wi-50.json",
+            _claim_authoring("wi-50", "ready", seed_subject=True).model_dump(mode="json"),
+        ),
+        "--authoring",
+        _write(
+            tmp_path / "claim-wi-51.json",
+            _claim_authoring("wi-51", "blocked", seed_subject=True).model_dump(mode="json"),
+        ),
+        "--name",
+        "seed-both-claims",
+    )
+
+    assert batch["tag"] == "playbill-direct-claim-batch-proposal-v1"
+    assert len(batch["claims"]) == 2
+    accepted = cruxible.accept(_proposal_id(batch["proposal"]))
+    assert accepted["accepted_coordinate"] != seeded["accepted_coordinate"]
+
+    claims = cruxible.json("playbill", "claim", "list", "--predicate", PREDICATE)
+    assert {item["envelope"]["identity"] for item in claims["claims"]} == {
+        str(item["claim_identity"]) for item in batch["claims"]
+    }
+    for authored in batch["claims"]:
+        history = cruxible.json("playbill", "claim", "history", str(authored["claim_identity"]))
+        assert [entry["sequence"] for entry in history["entries"]] == [2]

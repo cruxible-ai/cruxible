@@ -28,6 +28,7 @@
     "playbill_prepare_approval",
     "playbill_propose_claim",
     "playbill_propose_claim_type",
+    "playbill_propose_claims",
     "playbill_propose_document",
     "playbill_propose_principal_change",
     "playbill_propose_query_definition",
@@ -41,6 +42,6 @@
     "playbill_subject_history",
     "playbill_submit_approval"
   ],
-  "http_delegate_count": 39,
-  "mcp_delegate_count": 39
+  "http_delegate_count": 40,
+  "mcp_delegate_count": 40
 }

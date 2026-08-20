@@ -95,6 +95,7 @@ from cruxible_core.service.playbill_claims import (
     service_list_playbill_claims,
     service_playbill_claim_history,
     service_propose_playbill_claim,
+    service_propose_playbill_claims,
 )
 from cruxible_core.service.playbill_coverage import service_resolve_playbill_coverage
 from cruxible_core.service.playbill_discovery import service_discover_playbill_semantic
@@ -562,6 +563,25 @@ def playbill_propose_claim(
         base=base,
     )
     return contracts.PlaybillClaimProposal.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_propose_claims(
+    instance_id: str,
+    *,
+    authorings: tuple[DirectClaimAuthoringV1, ...],
+    proposal_name: str,
+    base: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillClaimBatchProposal:
+    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    result = service_propose_playbill_claims(
+        get_playbill_manager().get(instance_id),
+        authorings=authorings,
+        actor_id=_actor_id(),
+        proposal_name=proposal_name,
+        timestamp=canonical_candidate_timestamp(utc_now()),
+        base=base,
+    )
+    return contracts.PlaybillClaimBatchProposal.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_list_claims(

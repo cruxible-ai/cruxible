@@ -98,6 +98,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_propose_claim": (
         "Use when you need to state one governed fact about a Subject with its rationale."
     ),
+    "cruxible_playbill_propose_claims": (
+        "Use when several Claims must be admitted together or not at all."
+    ),
     "cruxible_playbill_list_claims": (
         "Use when you need accepted Claims, optionally narrowed to a Subject or predicate."
     ),
