@@ -48,16 +48,21 @@ NATIVE_LENS_ID: Final = "playbill-native-markdown"
 """The one default in-repo lens (§11.9.1). Additional lenses are cloud-side
 additive presentation and never enter canonical identity."""
 
-NATIVE_LENS_VERSION: Final = 1
+NATIVE_LENS_VERSION: Final = 2
 """Bumped whenever a spelling below changes. Not a compatibility promise: the
 grammar is class-3, and the version exists so a render can say which grammar
-produced it rather than so old spellings can be preserved."""
+produced it rather than so old spellings can be preserved.
+
+Version 2 adds the draft marker: the one spelling by which an author states, in
+the file, what an unlocated draft is meant to be. It is versioned rather than
+frozen for the same reason every other spelling here is."""
 
 NATIVE_GRAMMAR_CLASS: Final = "experimental"
 
 REGION_OPEN_PREFIX: Final = "<!--playbill:region "
 REGION_CLOSE: Final = "<!--playbill:/region-->"
 FILE_MARKER_PREFIX: Final = "<!--playbill:file "
+DRAFT_MARKER_PREFIX: Final = "<!--playbill:draft "
 MARKER_SUFFIX: Final = "-->"
 
 REGION_IDENTITY_DIGEST_DOMAIN: Final = "playbill-native-region-identity-v1"
@@ -103,6 +108,21 @@ DERIVED_REGENERATION_INSTRUCTION: Final = (
     "restore it; the edited text is not interpreted as a proposal."
 )
 
+NativeDraftDisposition = Literal["reuse", "extend", "new_distinct", "withdraw"]
+
+NATIVE_DRAFT_DISPOSITIONS: Final[tuple[str, ...]] = (
+    "extend",
+    "new_distinct",
+    "reuse",
+    "withdraw",
+)
+"""The four things an author may say about an unlocated draft (§11.9.3).
+
+They are the §11.3 reuse dispositions plus `withdraw`, which is the disposition
+that produces nothing: a draft the author has decided against is local material
+the compiler drops, never a retirement of anything accepted.
+"""
+
 
 class NativeRenderError(PlaybillError):
     """A native render, parse, or locator operation could not proceed."""
@@ -139,6 +159,8 @@ def native_renderer_digest() -> str:
         Sha256Value,
         RENDERER_DIGEST_DOMAIN,
         {
+            "draft_dispositions": list(NATIVE_DRAFT_DISPOSITIONS),
+            "draft_marker_prefix": DRAFT_MARKER_PREFIX,
             "editable": dict(sorted(NATIVE_REGION_EDITABLE.items())),
             "file_marker_prefix": FILE_MARKER_PREFIX,
             "kinds": list(NATIVE_REGION_KINDS),
@@ -262,6 +284,49 @@ class NativeFileMarkerV1(_StrictNativeModel):
         return self
 
 
+class NativeDraftMarkerV1(_StrictNativeModel):
+    """The author's explicit disposition for unlocated prose in one file.
+
+    §11.9.3 forbids the compiler from inventing semantic identity, so everything
+    it would otherwise have to guess lives here and is stated: which of the four
+    dispositions applies, which accepted artifact a reuse or extension targets,
+    and -- for a genuinely new item -- the exact name being claimed. The prose
+    around the marker stays free-form and becomes the rationale.
+
+    A draft with no marker is still a draft. It is detected from the text, it
+    still gets deterministic candidates, and it refuses for want of a
+    disposition; the marker is how an author answers that refusal, not how the
+    draft becomes visible.
+    """
+
+    tag: Literal["playbill-native-draft-marker-v1"] = "playbill-native-draft-marker-v1"
+    disposition: NativeDraftDisposition
+    predicate: str | None = None
+    value: str | None = None
+    subject_kind: str | None = None
+    subject_id: str | None = None
+    target_path: str | None = None
+    alias: str | None = None
+
+    @model_validator(mode="after")
+    def _disposition_shape(self) -> "NativeDraftMarkerV1":
+        if self.disposition in {"reuse", "extend"}:
+            if self.target_path is None:
+                raise ValueError("a reuse or extend disposition requires an exact target path")
+            if self.subject_kind is not None or self.subject_id is not None:
+                raise ValueError("a reuse or extend disposition names no new Subject")
+        elif self.disposition == "new_distinct":
+            if self.target_path is not None:
+                raise ValueError("a new_distinct disposition carries no reuse target")
+            if self.subject_kind is None or self.subject_id is None:
+                raise ValueError("a new_distinct disposition must name the Subject it claims")
+        if self.disposition == "extend" and self.alias is None:
+            raise ValueError("an extend disposition must state the alternate term it adds")
+        if self.disposition != "withdraw" and (self.predicate is None or self.value is None):
+            raise ValueError("a compiling draft disposition must state its predicate and value")
+        return self
+
+
 class NativeDiagnosticV1(_StrictNativeModel):
     """One typed thing the grammar has to say about a parsed file.
 
@@ -316,6 +381,33 @@ def parse_region_open(line: str) -> NativeLocatorV1 | None:
         return NativeLocatorV1.model_validate_json(payload)
     except ValidationError as exc:
         raise NativeRenderError(f"native region locator is malformed: {exc.error_count()} error(s)")
+
+
+def render_draft_marker(marker: NativeDraftMarkerV1) -> str:
+    """Emit one draft disposition as a single invisible line.
+
+    The lens never renders one of these -- accepted state has no drafts. It
+    exists so that a disposition an author writes by hand round-trips exactly,
+    and so that tooling can offer to write one rather than asking a human to
+    hand-assemble canonical JSON.
+    """
+
+    payload = canonical_bytes(marker.model_dump(mode="json")).decode("utf-8")
+    _reject_comment_escape(payload, label="draft marker")
+    return DRAFT_MARKER_PREFIX + payload + MARKER_SUFFIX
+
+
+def parse_draft_marker(line: str) -> NativeDraftMarkerV1 | None:
+    """Read one draft disposition, or return nothing when the line is ordinary text."""
+
+    stripped = line.strip()
+    if not stripped.startswith(DRAFT_MARKER_PREFIX) or not stripped.endswith(MARKER_SUFFIX):
+        return None
+    payload = stripped[len(DRAFT_MARKER_PREFIX) : -len(MARKER_SUFFIX)]
+    try:
+        return NativeDraftMarkerV1.model_validate_json(payload)
+    except ValidationError as exc:
+        raise NativeRenderError(f"native draft marker is malformed: {exc.error_count()} error(s)")
 
 
 def parse_file_marker(line: str) -> NativeFileMarkerV1 | None:
@@ -486,9 +578,114 @@ def extract_regions(
     return marker, tuple(regions), tuple(diagnostics)
 
 
+@dataclass(frozen=True)
+class NativeProseV1:
+    """One file's text outside every region: what the lens did not put there.
+
+    Region bodies are the governed material; everything else in a rendered file
+    is prose the lens emitted (headings, the preamble, the editable/derived
+    notes) or prose an author added. This record does not know which is which --
+    that is a comparison against the baseline render, and it belongs to the
+    compiler -- so it reports the lines and lets the caller subtract.
+    """
+
+    lines: tuple[tuple[int, str], ...]
+    draft_marker: NativeDraftMarkerV1 | None = None
+    draft_marker_line: int | None = None
+    diagnostics: tuple[NativeDiagnosticV1, ...] = ()
+
+
+def extract_prose(content: bytes, *, path: str | None = None) -> NativeProseV1:
+    """Read every line of one file that sits outside a region and outside a marker.
+
+    Marker lines are dropped rather than reported: they are the invisible
+    channel, not text anybody wrote as prose, and a draft marker that survived
+    into the prose would make the disposition part of its own draft.
+    """
+
+    marker_seen = False
+    inside = False
+    collected: list[tuple[int, str]] = []
+    diagnostics: list[NativeDiagnosticV1] = []
+    draft: NativeDraftMarkerV1 | None = None
+    draft_line: int | None = None
+
+    for index, raw in enumerate(content.split(b"\n"), start=1):
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        stripped = text.strip()
+
+        if stripped == REGION_CLOSE:
+            inside = False
+            continue
+        if stripped.startswith(REGION_OPEN_PREFIX):
+            inside = True
+            continue
+        if not marker_seen and not inside and stripped.startswith(FILE_MARKER_PREFIX):
+            marker_seen = True
+            continue
+        if stripped.startswith(DRAFT_MARKER_PREFIX):
+            if inside:
+                diagnostics.append(
+                    NativeDiagnosticV1(
+                        code="draft_marker_inside_region",
+                        severity="refusal",
+                        path=path,
+                        message=(
+                            f"line {index} states a draft disposition inside a region; a "
+                            "region is already bound and carries no draft"
+                        ),
+                    )
+                )
+                continue
+            try:
+                parsed = parse_draft_marker(text)
+            except NativeRenderError as exc:
+                diagnostics.append(
+                    NativeDiagnosticV1(
+                        code="draft_marker_malformed",
+                        severity="refusal",
+                        path=path,
+                        message=str(exc),
+                    )
+                )
+                continue
+            if parsed is None:
+                continue
+            if draft is not None:
+                diagnostics.append(
+                    NativeDiagnosticV1(
+                        code="draft_marker_duplicated",
+                        severity="refusal",
+                        path=path,
+                        message=(
+                            f"line {index} states a second draft disposition in one file; "
+                            "one file carries at most one unlocated draft"
+                        ),
+                    )
+                )
+                continue
+            draft = parsed
+            draft_line = index
+            continue
+        if not inside:
+            collected.append((index, text))
+
+    return NativeProseV1(
+        lines=tuple(collected),
+        draft_marker=draft,
+        draft_marker_line=draft_line,
+        diagnostics=tuple(diagnostics),
+    )
+
+
 __all__ = [
     "DERIVED_REGENERATION_INSTRUCTION",
+    "DRAFT_MARKER_PREFIX",
     "FILE_MARKER_PREFIX",
+    "NATIVE_DRAFT_DISPOSITIONS",
     "MARKER_SUFFIX",
     "NATIVE_GRAMMAR_CLASS",
     "NATIVE_LENS_ID",
@@ -500,19 +697,25 @@ __all__ = [
     "REGION_OPEN_PREFIX",
     "RENDERER_DIGEST_DOMAIN",
     "NativeDiagnosticV1",
+    "NativeDraftDisposition",
+    "NativeDraftMarkerV1",
     "NativeFileMarkerV1",
     "NativeLensV1",
     "NativeLocatorV1",
+    "NativeProseV1",
     "NativeRawRegionV1",
     "NativeRegionKind",
     "NativeRenderError",
     "body_commitment",
     "default_native_lens",
+    "extract_prose",
     "extract_regions",
     "native_renderer_digest",
+    "parse_draft_marker",
     "parse_file_marker",
     "parse_region_open",
     "region_identity_digest",
+    "render_draft_marker",
     "render_file_marker",
     "render_region_open",
 ]

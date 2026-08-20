@@ -53,6 +53,7 @@ from cruxible_core.playbill.coverage.contracts import LogicalSourceIdentityV1
 from cruxible_core.playbill.native.context import RenderContextV1
 from cruxible_core.playbill.native.grammar import (
     DERIVED_REGENERATION_INSTRUCTION,
+    DRAFT_MARKER_PREFIX,
     FILE_MARKER_PREFIX,
     NATIVE_REGION_EDITABLE,
     REGION_CLOSE,
@@ -132,6 +133,7 @@ def _reject_marker_collision(lines: Sequence[str], *, path: str) -> None:
             stripped == REGION_CLOSE
             or stripped.startswith(REGION_OPEN_PREFIX)
             or stripped.startswith(FILE_MARKER_PREFIX)
+            or stripped.startswith(DRAFT_MARKER_PREFIX)
         ):
             raise NativeRenderError(
                 f"rendered content in {path} would collide with the marker channel; "

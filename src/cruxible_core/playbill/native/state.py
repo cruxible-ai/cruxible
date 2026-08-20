@@ -37,6 +37,7 @@ from cruxible_core.playbill.canonical import Sha256Value
 from cruxible_core.playbill.claim_verdicts import ClaimVerdictResultV1
 from cruxible_core.playbill.claims import ClaimArtifact
 from cruxible_core.playbill.coverage.contracts import (
+    CoverageManifestProfileV1,
     LogicalSourceIdentityV1,
     logical_sources_sorted,
 )
@@ -324,6 +325,27 @@ def native_boundary_from_floor(manifest: Mapping[str, Any]) -> NativeCoverageBou
         raise NativeRenderError(f"floor coverage boundary is not readable: {exc}") from exc
 
 
+def native_boundary_from_manifest(
+    manifest: CoverageManifestProfileV1,
+) -> NativeCoverageBoundaryV1:
+    """Recover the boundary a committed render was computed over, from itself.
+
+    The render manifest is a §11.6.3 profile, so it already carries every field
+    of the boundary it inherited. Recovering it here rather than re-exporting the
+    floor is what lets a compile reconstruct its baseline at the generation the
+    tree was rendered from even after the head has moved: a fresh floor export
+    answers about the head, which is the wrong question to ask of a baseline.
+    """
+
+    return NativeCoverageBoundaryV1(
+        index_digest=manifest.index_digest,
+        access_profile_id=manifest.access_profile_id,
+        completeness=manifest.completeness,
+        truncation_reason_codes=manifest.truncation_reason_codes,
+        scope=manifest.scope,
+    )
+
+
 def build_native_state(
     *,
     instance_id: str,
@@ -369,5 +391,6 @@ __all__ = [
     "claim_from_projection",
     "claim_record_from_projection",
     "native_boundary_from_floor",
+    "native_boundary_from_manifest",
     "verdict_from_projection",
 ]

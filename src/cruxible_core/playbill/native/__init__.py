@@ -21,6 +21,19 @@ A grammar change moves the version and the renderer digest; it does not break a
 frozen contract, because the spellings never became one.
 """
 
+from cruxible_core.playbill.native.compile import (
+    NativeCompileDraftV1,
+    NativeCompileError,
+    NativeCompileMemberV1,
+    NativeCompileRefusalV1,
+    NativeCompileResultV1,
+    NativeDraftCandidateV1,
+    NativeDraftDispositionV1,
+    NativeReviewCurrencyV1,
+    NativeThreeWayV1,
+    compile_native_tree,
+    native_review_currency,
+)
 from cruxible_core.playbill.native.context import (
     NATIVE_WHOLE_SCOPE,
     RenderContextV1,
@@ -28,12 +41,14 @@ from cruxible_core.playbill.native.context import (
     whole_scope_context,
 )
 from cruxible_core.playbill.native.grammar import (
+    NATIVE_DRAFT_DISPOSITIONS,
     NATIVE_GRAMMAR_CLASS,
     NATIVE_LENS_ID,
     NATIVE_LENS_VERSION,
     NATIVE_REGION_EDITABLE,
     NATIVE_REGION_KINDS,
     NativeDiagnosticV1,
+    NativeDraftMarkerV1,
     NativeFileMarkerV1,
     NativeLensV1,
     NativeLocatorV1,
@@ -41,9 +56,11 @@ from cruxible_core.playbill.native.grammar import (
     NativeRenderError,
     body_commitment,
     default_native_lens,
+    extract_prose,
     extract_regions,
     native_renderer_digest,
     region_identity_digest,
+    render_draft_marker,
 )
 from cruxible_core.playbill.native.lens import (
     NativeRenderV1,
@@ -74,6 +91,7 @@ from cruxible_core.playbill.native.state import (
     claim_from_projection,
     claim_record_from_projection,
     native_boundary_from_floor,
+    native_boundary_from_manifest,
 )
 from cruxible_core.playbill.native.sync import (
     NativeFileStatusV1,
@@ -101,6 +119,7 @@ from cruxible_core.playbill.native.verify import (
 
 __all__ = [
     "NATIVE_CARD_BUDGET",
+    "NATIVE_DRAFT_DISPOSITIONS",
     "NATIVE_GRAMMAR_CLASS",
     "NATIVE_LENS_ID",
     "NATIVE_LENS_VERSION",
@@ -111,8 +130,16 @@ __all__ = [
     "NativeAcceptedStateV1",
     "NativeArtifactRecordV1",
     "NativeClaimRecordV1",
+    "NativeCompileDraftV1",
+    "NativeCompileError",
+    "NativeCompileMemberV1",
+    "NativeCompileRefusalV1",
+    "NativeCompileResultV1",
     "NativeCoverageBoundaryV1",
     "NativeDiagnosticV1",
+    "NativeDraftCandidateV1",
+    "NativeDraftDispositionV1",
+    "NativeDraftMarkerV1",
     "NativeFileMarkerV1",
     "NativeFileParseV1",
     "NativeFileStatusV1",
@@ -128,7 +155,9 @@ __all__ = [
     "NativeRenderManifestV1",
     "NativeRenderPlanV1",
     "NativeRenderV1",
+    "NativeReviewCurrencyV1",
     "NativeSyncRefusal",
+    "NativeThreeWayV1",
     "NativeTreeParseV1",
     "NativeTreeStatusV1",
     "RenderContextV1",
@@ -138,11 +167,14 @@ __all__ = [
     "build_native_state",
     "claim_from_projection",
     "claim_record_from_projection",
+    "compile_native_tree",
     "default_native_lens",
+    "extract_prose",
     "extract_regions",
     "locator_handle_digest",
     "native_baseline_snapshot",
     "native_boundary_from_floor",
+    "native_boundary_from_manifest",
     "native_freshness_manifest",
     "native_invalidation_index",
     "native_invalidation_observations",
@@ -150,6 +182,7 @@ __all__ = [
     "native_invalidation_spans",
     "native_render_digest",
     "native_renderer_digest",
+    "native_review_currency",
     "native_scope_digest",
     "native_status",
     "parse_native_file",
@@ -157,6 +190,7 @@ __all__ = [
     "plan_native_render",
     "region_identity_digest",
     "render_context_from_manifest",
+    "render_draft_marker",
     "render_native_tree",
     "resolve_native_invalidation",
     "verify_native_locator",

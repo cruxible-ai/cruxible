@@ -724,18 +724,28 @@ def test_pc_f3_native_render_adds_no_authority_and_reads_no_clock() -> None:
 
     Two statements, both structural. The lens imports from an explicit read-side
     allowlist, so there is no name in scope through which a render could propose,
-    compile, accept, activate, settle, or reach the ledger -- and in particular
-    it never imports the coverage *resolver's* forbidden set either, because
-    §11.9 forbids a second compiler, index, or state authority rather than
-    merely discouraging one. And no module in the package calls a clock, which is
-    the §11.9.6 "render never samples wall clock" law: the read time arrives in
-    the explicit render context, and the CLI is the only place a clock is read.
+    accept, activate, settle, or reach the ledger -- and in particular it never
+    imports the coverage *resolver's* forbidden set either, because §11.9 forbids
+    a second compiler, index, or state authority rather than merely discouraging
+    one. And no module in the package calls a clock, which is the §11.9.6
+    "render never samples wall clock" law: the read time arrives in the explicit
+    render context, and the CLI is the only place a clock is read.
+
+    The compile contract joined this package under the *same* forbidden set
+    rather than an exemption from it. Compile prepares proposal input and emits
+    it as canonical wire mappings, so `cruxible_core.service` and
+    `cruxible_core.playbill.service` stay out of scope here: there is no name in
+    this package through which a compile could submit, admit, or settle its own
+    output. The caller carries it to the served operation, and that separation is
+    what "compile prepares proposal input, it never bypasses proposal receive"
+    means when it is a property of the import graph instead of a promise.
     """
 
     package = CORE / "playbill" / "native"
     modules = sorted(path.stem for path in package.glob("*.py"))
     assert modules == [
         "__init__",
+        "compile",
         "context",
         "grammar",
         "lens",
@@ -749,7 +759,10 @@ def test_pc_f3_native_render_adds_no_authority_and_reads_no_clock() -> None:
     permitted = {
         "cruxible_core",
         "cruxible_core.playbill",
+        "cruxible_core.playbill.artifacts",
         "cruxible_core.playbill.canonical",
+        "cruxible_core.playbill.claim_type_structure",
+        "cruxible_core.playbill.claim_types",
         "cruxible_core.playbill.claim_verdicts",
         "cruxible_core.playbill.claims",
         "cruxible_core.playbill.coverage",
@@ -758,8 +771,11 @@ def test_pc_f3_native_render_adds_no_authority_and_reads_no_clock() -> None:
         "cruxible_core.playbill.coverage.indexes",
         "cruxible_core.playbill.coverage.manifest",
         "cruxible_core.playbill.coverage.resolver",
+        "cruxible_core.playbill.descriptor_claim_types",
+        "cruxible_core.playbill.discovery",
         "cruxible_core.playbill.errors",
         "cruxible_core.playbill.native",
+        "cruxible_core.playbill.native.compile",
         "cruxible_core.playbill.native.context",
         "cruxible_core.playbill.native.grammar",
         "cruxible_core.playbill.native.lens",
@@ -772,6 +788,7 @@ def test_pc_f3_native_render_adds_no_authority_and_reads_no_clock() -> None:
         "cruxible_core.playbill.query",
         "cruxible_core.playbill.query.grammar",
         "cruxible_core.playbill.semantic",
+        "cruxible_core.playbill.subjects",
     }
     forbidden = (
         "cruxible_core.playbill.activation",

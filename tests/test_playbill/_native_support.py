@@ -17,6 +17,7 @@ from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.keys import GeneratedKeyMaterial
 from cruxible_core.playbill.native import (
     NativeAcceptedStateV1,
+    NativeCoverageBoundaryV1,
     NativeRenderV1,
     RenderContextV1,
     artifact_record_from_projection,
@@ -28,7 +29,10 @@ from cruxible_core.playbill.native import (
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.claim_types import service_list_playbill_claim_types
-from cruxible_core.playbill.service.documents import service_list_playbill_documents
+from cruxible_core.playbill.service.documents import (
+    PlaybillAcceptedCoordinate,
+    service_list_playbill_documents,
+)
 from cruxible_core.playbill.service.query_definitions import (
     service_list_playbill_query_definitions,
     service_propose_playbill_query_definition,
@@ -67,18 +71,34 @@ def seed_native_instance(tmp_path: Path) -> tuple[PlaybillInstance, GeneratedKey
     return instance, owner
 
 
-def native_state(instance: PlaybillInstance) -> NativeAcceptedStateV1:
-    """Assemble the render input from the served reads, exactly as the CLI does."""
+def native_state(
+    instance: PlaybillInstance,
+    *,
+    at: PlaybillAcceptedCoordinate | None = None,
+    boundary: NativeCoverageBoundaryV1 | None = None,
+) -> NativeAcceptedStateV1:
+    """Assemble the render input from the served reads, exactly as the CLI does.
 
-    floor = service_export_playbill_floor(instance)
-    accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    ``at`` and ``boundary`` are the compile-side read: reconstructing a baseline
+    means reading an older generation and inheriting the boundary that
+    generation's own render already committed to, because a fresh floor export
+    answers about the head.
+    """
+
+    if boundary is None:
+        floor = service_export_playbill_floor(instance)
+        boundary = native_boundary_from_floor(json.loads(floor[COVERAGE_MANIFEST_PATH]))
+        accepted = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    else:
+        assert at is not None
+        accepted = AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
     return build_native_state(
         instance_id=instance.descriptor.instance_id,
         at=accepted,
-        boundary=native_boundary_from_floor(json.loads(floor[COVERAGE_MANIFEST_PATH])),
+        boundary=boundary,
         subjects=[
             artifact_record_from_projection("Subject", view.envelope)
-            for view in service_list_playbill_subjects(instance).subjects
+            for view in service_list_playbill_subjects(instance, at=at).subjects
         ],
         claim_types=[
             artifact_record_from_projection(
@@ -88,7 +108,7 @@ def native_state(instance: PlaybillInstance) -> NativeAcceptedStateV1:
                 identity=view.identity,
                 artifact_digest=view.artifact_digest,
             )
-            for view in service_list_playbill_claim_types(instance).claim_types
+            for view in service_list_playbill_claim_types(instance, at=at).claim_types
         ],
         query_definitions=[
             artifact_record_from_projection(
@@ -98,18 +118,19 @@ def native_state(instance: PlaybillInstance) -> NativeAcceptedStateV1:
                 identity=view.identity,
                 artifact_digest=view.artifact_digest,
             )
-            for view in service_list_playbill_query_definitions(instance).query_definitions
+            for view in service_list_playbill_query_definitions(instance, at=at).query_definitions
         ],
         documents=[
             artifact_record_from_projection("Document", view.envelope)
             for view in service_list_playbill_documents(
                 instance,
+                at=at,
                 access=BodyAccessContext(principal_id="playbill-native"),
             ).documents
         ],
         claims=[
             claim_record_from_projection(view.envelope, list(view.facts))
-            for view in service_list_playbill_claims(instance).claims
+            for view in service_list_playbill_claims(instance, at=at).claims
         ],
     )
 
