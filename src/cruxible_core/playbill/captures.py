@@ -989,6 +989,42 @@ class DirectCaptureBuildResult(_StrictCaptureModel):
     source_body_materialized: bool
 
 
+def capture_is_direct_self_source(
+    envelope: CaptureEnvelopeV1,
+    *,
+    contract: CaptureContractV1,
+    store: CaptureObjectStoreProtocol,
+    claim_id: str,
+) -> bool:
+    """Recognize only the direct body builder's Claim-bound source shape."""
+
+    if (
+        contract.identity.name != DIRECT_SELF_ASSERTED_CONTRACT_ID
+        or envelope.run_coordinate.run_id != f"direct:{claim_id.casefold()}"
+    ):
+        return False
+    if isinstance(envelope.source, ExternalSourceReferenceV1):
+        return (
+            envelope.source.coordinate_type == "authenticated-request-v1"
+            and envelope.source.selector_type == "direct-claim-source-v1"
+            and isinstance(envelope.source.selector, dict)
+            and envelope.source.selector.get("claim_id") == claim_id
+        )
+    if not isinstance(envelope.source, CasSourceReferenceV1):
+        return False
+    try:
+        content = store.read(
+            envelope.source.content_digest,
+            access=BodyAccessContext(principal_id="playbill-compiler", can_read_body=True),
+        )
+        source = DirectClaimSourceV1.model_validate_json(content)
+    except (PlaybillCasError, ValidationError):
+        return False
+    return (
+        source.claim_id == claim_id and canonical_bytes(source.model_dump(mode="json")) == content
+    )
+
+
 class CaptureBuildResult(_StrictCaptureModel):
     contract_digest: str
     envelope: CaptureEnvelopeV1
@@ -1681,6 +1717,7 @@ __all__ = [
     "build_ledger_capture",
     "capture_contract_digest",
     "capture_contract_is_self_asserted",
+    "capture_is_direct_self_source",
     "capture_contract_path",
     "capture_component_pin",
     "capture_digest",

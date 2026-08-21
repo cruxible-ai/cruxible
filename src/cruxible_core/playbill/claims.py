@@ -29,9 +29,11 @@ from cruxible_core.playbill.canonical import (
 from cruxible_core.playbill.captures import (
     AcceptedCaptureContract,
     CaptureContractV1,
+    CaptureEnvelopeV1,
     CaptureObjectStoreProtocol,
     LedgerMaterialResolverProtocol,
     capture_contract_is_self_asserted,
+    capture_is_direct_self_source,
     verify_capture,
 )
 from cruxible_core.playbill.claim_attestations import (
@@ -837,6 +839,65 @@ def _required_pin(
     )
 
 
+def _capture_is_explicitly_eligible(
+    claim: ClaimArtifactAny,
+    *,
+    capture_digest: str,
+) -> bool:
+    """Keep v1/implicit-legacy evidence semantics; gate only explicit v2 associations."""
+
+    if isinstance(claim, ClaimArtifact):
+        return True
+    associations = tuple(
+        item for item in claim.backing.citations if item.capture_digest == capture_digest
+    )
+    if not associations:
+        return True
+    return any(item.role == "evidence" and item.origin == "independent" for item in associations)
+
+
+def _citation_origin_refusal(
+    claim: ClaimArtifactAny,
+    *,
+    capture_digest: str,
+    envelope: CaptureEnvelopeV1,
+    contract: CaptureContractV1,
+    store: CaptureObjectStoreProtocol,
+) -> tuple[str, str] | None:
+    """Validate caller-authored origin against mechanically proven Capture shape."""
+
+    if isinstance(claim, ClaimArtifact):
+        return None
+    associations = tuple(
+        item for item in claim.backing.citations if item.capture_digest == capture_digest
+    )
+    if not associations:
+        return None
+    direct_self_source = capture_is_direct_self_source(
+        envelope,
+        contract=contract,
+        store=store,
+        claim_id=claim.identity.name,
+    )
+    for association in associations:
+        if association.origin == "self_published" and association.role != "copy":
+            return (
+                "playbill.claim.self_published_role_invalid",
+                "A self-published association must be a non-evidentiary copy.",
+            )
+        if direct_self_source and association.origin != "self_source":
+            return (
+                "playbill.claim.self_source_origin_mismatch",
+                "A direct self-source tied to this Claim must declare self_source origin.",
+            )
+        if not direct_self_source and association.origin == "self_source":
+            return (
+                "playbill.claim.self_source_origin_mismatch",
+                "self_source origin requires a verified self-source Capture tied to this Claim.",
+            )
+    return None
+
+
 def evaluate_claim_law(
     claim: ClaimArtifactAny,
     *,
@@ -1261,6 +1322,19 @@ def evaluate_claim_law(
                 "A backing CaptureContract is not pinned by the Claim.",
                 path=path,
             )
+        origin_refusal = _citation_origin_refusal(
+            claim,
+            capture_digest=capture_digest_value,
+            envelope=envelope,
+            contract=resolved_contract.contract,
+            store=capture_store,
+        )
+        if origin_refusal is not None:
+            return _diagnostic(
+                origin_refusal[0],
+                origin_refusal[1],
+                path=path,
+            )
         verified_commitments[envelope.commitment.digest] = envelope.commitment
         relevant_spans = tuple(
             span
@@ -1279,6 +1353,32 @@ def evaluate_claim_law(
             contract=resolved_contract.contract,
             subject=statement.subject,
         )
+        producer_provider = resolved_providers.get(envelope.producer.qualified)
+        executable_provider = resolved_providers.get(
+            envelope.run_coordinate.executable_identity.qualified
+        )
+        required_providers = {
+            item.identity.qualified: item
+            for item in (producer_provider, executable_provider)
+            if item is not None
+        }
+        for required_provider in required_providers.values():
+            if not _required_pin(
+                claim,
+                role="provider",
+                identity=required_provider.identity,
+                digest=provider_digest(required_provider).tagged,
+            ):
+                return _diagnostic(
+                    "playbill.claim.provider_pin_missing",
+                    "A Provider-produced Capture requires every exact accepted Provider pin.",
+                    path=path,
+                )
+        if not _capture_is_explicitly_eligible(
+            claim,
+            capture_digest=capture_digest_value,
+        ):
+            continue
         capture_admissions: set[Literal["origin_only", "direct", "derivational"]] = set()
         capture_attestations = tuple(
             item
@@ -1325,27 +1425,6 @@ def evaluate_claim_law(
             capture_admission = "direct"
         else:
             capture_admission = "origin_only"
-        producer_provider = resolved_providers.get(envelope.producer.qualified)
-        executable_provider = resolved_providers.get(
-            envelope.run_coordinate.executable_identity.qualified
-        )
-        required_providers = {
-            item.identity.qualified: item
-            for item in (producer_provider, executable_provider)
-            if item is not None
-        }
-        for required_provider in required_providers.values():
-            if not _required_pin(
-                claim,
-                role="provider",
-                identity=required_provider.identity,
-                digest=provider_digest(required_provider).tagged,
-            ):
-                return _diagnostic(
-                    "playbill.claim.provider_pin_missing",
-                    "A Provider-produced Capture requires every exact accepted Provider pin.",
-                    path=path,
-                )
         control_domain = (
             producer_provider.control_domain
             if producer_provider is not None

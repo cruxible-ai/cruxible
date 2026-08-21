@@ -12,7 +12,9 @@ from cruxible_core.playbill.candidates import CandidateRecordV3
 from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    DirectByteSpanSelectionV1,
     build_direct_claim_capture,
+    build_direct_claim_selection_capture,
     capture_contract_path,
     render_capture_contract,
 )
@@ -21,6 +23,7 @@ from cruxible_core.playbill.claims import (
     ClaimArtifact,
     ClaimArtifactV2,
     ClaimBackingV2,
+    ClaimLawEvidenceV1,
     LegacyCitationReferenceV1,
     build_claim_citation,
     claim_artifact_digest,
@@ -32,6 +35,7 @@ from cruxible_core.playbill.claims import (
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.playbill.semantic import ContentSpan
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.playbill.subjects import render_subject, subject_path
 from tests.test_playbill._support import initialize_local
@@ -111,6 +115,14 @@ def test_claim_v2_round_trips_and_rejects_a_forged_citation_id() -> None:
                     )
                 }
             ).model_dump(mode="json")
+        )
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        claim.backing.citations[0].__class__.model_validate(
+            {
+                **claim.backing.citations[0].model_dump(mode="json"),
+                "observation_trust": "provider_receipted",
+            }
         )
 
 
@@ -235,8 +247,31 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     citation = build_claim_citation(
         legacy.identity,
         capture_digest=second_capture.capture_digest,
-        role="copy",
+        role="evidence",
         origin="self_source",
+    )
+    substrate = b"status: ready\n"
+    substrate_digest = instance.body_store().store(substrate).digest
+    selection_capture = build_direct_claim_selection_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=CLAIM_ID,
+        rationale="existing source copy",
+        observed_at=datetime(2026, 8, 20, 12, 1, tzinfo=timezone.utc),
+        accepted_coordinate=AcceptedCoordinate.from_internal(accepted_v1),
+        selection=DirectByteSpanSelectionV1(
+            span=ContentSpan(
+                content_digest=substrate_digest,
+                start_byte=0,
+                end_byte=len(substrate),
+            )
+        ),
+    )
+    copy_citation = build_claim_citation(
+        legacy.identity,
+        capture_digest=selection_capture.capture_digest,
+        role="copy",
+        origin="independent",
     )
     v2 = ClaimArtifactV2(
         identity=legacy.identity,
@@ -246,9 +281,15 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
                 update={"observed_at": datetime(2026, 8, 20, 12, 1, tzinfo=timezone.utc)}
             ),
             capture_digests=tuple(
-                sorted((first_capture.capture_digest, second_capture.capture_digest))
+                sorted(
+                    (
+                        first_capture.capture_digest,
+                        second_capture.capture_digest,
+                        selection_capture.capture_digest,
+                    )
+                )
             ),
-            citations=(citation,),
+            citations=merge_claim_citations((citation,), (copy_citation,)),
             source_mappings=legacy.backing.source_mappings,
         ),
         authority=legacy.authority,
@@ -258,6 +299,38 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     successor_tree = {
         **instance.tree_at(accepted_v1.git_oid),
         claim_path(CLAIM_ID): render_claim(v2),
+    }
+    forged_origin = v2.model_copy(
+        update={
+            "backing": v2.backing.model_copy(
+                update={
+                    "citations": merge_claim_citations(
+                        (
+                            build_claim_citation(
+                                legacy.identity,
+                                capture_digest=second_capture.capture_digest,
+                                role="copy",
+                                origin="independent",
+                            ),
+                        ),
+                        (copy_citation,),
+                    )
+                }
+            )
+        }
+    )
+    forged = _submit(
+        instance,
+        {
+            **instance.tree_at(accepted_v1.git_oid),
+            claim_path(CLAIM_ID): render_claim(forged_origin),
+        },
+        accepted_v1.git_oid,
+        "citation-v2-forged-origin",
+        "2026-08-20T12:01:00.000000Z",
+    )
+    assert {item.code for item in forged.evaluation.diagnostics} == {
+        "playbill.claim.self_source_origin_mismatch"
     }
     first_evaluation = _submit(
         instance,
@@ -277,6 +350,23 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     assert first_evaluation.candidate is not None
     assert second_evaluation.candidate is not None
     assert first_evaluation.candidate.law_evidence == second_evaluation.candidate.law_evidence
+    initial_evidence = _claim_evidence(initial.candidate)
+    successor_evidence = _claim_evidence(first_evaluation.candidate)
+    assert tuple(item.capture_digest for item in successor_evidence.verdict_captures) == (
+        first_capture.capture_digest,
+    )
+    assert successor_evidence.evidence_basis == initial_evidence.evidence_basis
+    assert successor_evidence.verdict_result is not None
+    assert initial_evidence.verdict_result is not None
+    assert successor_evidence.verdict_result.supporting_evidence_digests == (
+        initial_evidence.verdict_result.supporting_evidence_digests
+    )
+    assert successor_evidence.verdict_result.provenance_grades == (
+        initial_evidence.verdict_result.provenance_grades
+    )
+    assert successor_evidence.verdict_result.control_components == (
+        initial_evidence.verdict_result.control_components
+    )
     _activate(
         instance,
         owner,
@@ -331,3 +421,13 @@ def _activate(instance, owner, candidate, evaluated_oid, *, sequence: int) -> No
     projection = publisher.prebuild(bundle, base=base)
     assert publisher.activate(bundle, projection, base=base).status == "accepted"
     instance.refresh()
+
+
+def _claim_evidence(candidate: CandidateRecordV3) -> ClaimLawEvidenceV1:
+    return ClaimLawEvidenceV1.model_validate(
+        next(
+            item.result["claim_evidence"]
+            for item in candidate.law_evidence
+            if item.path == claim_path(CLAIM_ID)
+        )
+    )

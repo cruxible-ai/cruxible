@@ -18,6 +18,7 @@ from cruxible_core.playbill.claim_verdicts import (
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
     evidence_control_components,
+    observation_trust_grade,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
@@ -303,3 +304,10 @@ def test_future_evidence_is_uncovered_and_pre_effective_claim_is_not_applicable(
     assert verdict.currency == "current"
     assert not_effective.verdict == "uncovered"
     assert not_effective.currency == "not_applicable"
+
+
+def test_observation_trust_presentation_is_a_separate_fixed_axis() -> None:
+    assert observation_trust_grade("self-asserted") == "proposer_observed"
+    assert observation_trust_grade("daemon-fetched") == "daemon_fetched"
+    assert observation_trust_grade("provider-signed") == "provider_receipted"
+    assert observation_trust_grade("witnessed") == "witnessed"

@@ -24,6 +24,12 @@ EvidenceBasisKind = Literal[
     "authority_ruled",
 ]
 EvidenceProvenanceGrade = Literal["self-asserted", "daemon-fetched", "provider-signed", "witnessed"]
+ObservationTrustGrade = Literal[
+    "proposer_observed",
+    "daemon_fetched",
+    "provider_receipted",
+    "witnessed",
+]
 EvidenceEpistemicGrade = Literal["observed", "derived", "predicted"]
 EvidenceCurrency = Literal["current", "stale", "not_applicable"]
 EvidenceRelativeClaimVerdict = Literal[
@@ -33,6 +39,20 @@ EvidenceRelativeClaimVerdict = Literal[
 
 class _StrictVerdictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def observation_trust_grade(
+    provenance_grade: EvidenceProvenanceGrade,
+) -> ObservationTrustGrade:
+    """Present observation trust separately without rewriting verdict receipt values."""
+
+    values: dict[EvidenceProvenanceGrade, ObservationTrustGrade] = {
+        "self-asserted": "proposer_observed",
+        "daemon-fetched": "daemon_fetched",
+        "provider-signed": "provider_receipted",
+        "witnessed": "witnessed",
+    }
+    return values[provenance_grade]
 
 
 def _policy_digest(policy: ClaimEvidenceAdmissionPolicyV1) -> str:
@@ -475,8 +495,10 @@ __all__ = [
     "EvidenceEpistemicGrade",
     "EvidenceProvenanceGrade",
     "EvidenceRelativeClaimVerdict",
+    "ObservationTrustGrade",
     "claim_adjudication_rule",
     "claim_adjudication_rule_digest",
     "evaluate_claim_verdict",
     "evidence_control_components",
+    "observation_trust_grade",
 ]
