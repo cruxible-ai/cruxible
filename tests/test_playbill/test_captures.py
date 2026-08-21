@@ -4,14 +4,20 @@ from pathlib import Path
 
 from cruxible_core.playbill.artifacts import ArtifactIdentity
 from cruxible_core.playbill.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CaptureRunCoordinateV1,
     InputReceiptSetManifestV1,
     build_cas_capture,
+    build_coordinator_self_source_capture,
     build_derived_cas_capture,
     build_ledger_capture,
     capture_contract_digest,
+    capture_contract_is_self_asserted,
+    capture_is_coordinator_self_source,
+    evaluate_capture_contract_law,
     verify_capture,
 )
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_references import LedgerSourceReferenceV1
@@ -167,3 +173,66 @@ def test_contract_run_can_produce_capture_without_claiming_provider_identity(
         observed_at=NOW,
     )
     assert result.envelope.producer.kind == "Watcher"
+
+
+def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: Path) -> None:
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    store = body_store(tmp_path)
+    claim_id = "CLM-0123456789abcdef0123456789abcdef"
+    body = b"The work item is ready."
+    result = build_coordinator_self_source_capture(
+        store=store,
+        actor_id="owner",
+        claim_id=claim_id,
+        body=body,
+        observed_at=NOW,
+        accepted_coordinate=_accepted_coordinate(),
+    )
+
+    assert contract.identity.qualified == ("CaptureContract:playbill.coordinator-self-source-v1")
+    assert contract.logical_source_identities == ("playbill.coordinator-authoring",)
+    assert contract.allowed_source_kinds == ("cas",)
+    assert contract.allowed_materialization_modes == ("cas",)
+    assert contract.retention_erasure_policy.erasure == "prohibited"
+    assert capture_contract_is_self_asserted(contract)
+    assert result.source_body_materialized is True
+    assert store.verify(result.commitment_digest)
+    assert store.verify(result.capture_digest)
+    assert (
+        store.read(
+            result.commitment_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+        == body
+    )
+    assert verify_capture(result.capture_digest, store=store, contract=contract) == result.envelope
+    assert capture_is_coordinator_self_source(
+        result.envelope,
+        contract=contract,
+        claim_id=claim_id,
+    )
+    assert not capture_is_coordinator_self_source(
+        result.envelope,
+        contract=contract,
+        claim_id="CLM-abcdefabcdefabcdefabcdefabcdefab",
+    )
+    assert (
+        evaluate_capture_contract_law(
+            contract,
+            path="capture-contracts/playbill.coordinator-self-source-v1.yaml",
+            actor_roles=("owner",),
+            predecessor=None,
+        ).verdict
+        == "accepted"
+    )
+    rewritten = contract.model_copy(
+        update={"authority": contract.authority.model_copy(update={"approve_roles": ("security",)})}
+    )
+    refused = evaluate_capture_contract_law(
+        rewritten,
+        path="capture-contracts/playbill.coordinator-self-source-v1.yaml",
+        actor_roles=("owner",),
+        predecessor=None,
+    )
+    assert refused.verdict == "refused"
+    assert refused.diagnostics[0].code == ("playbill.capture_contract.coordinator_profile_mismatch")

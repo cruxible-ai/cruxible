@@ -7,14 +7,17 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactLifecycle
+from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_core.playbill.candidates import CandidateRecordV3
 from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     DirectByteSpanSelectionV1,
+    build_coordinator_self_source_capture,
     build_direct_claim_capture,
     build_direct_claim_selection_capture,
+    capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
 )
@@ -235,12 +238,11 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     _activate(instance, owner, initial.candidate, initial.evaluation.evaluated_tree_oid, sequence=1)
 
     accepted_v1 = instance.accepted_coordinate()
-    second_capture = build_direct_claim_capture(
+    second_capture = build_coordinator_self_source_capture(
         store=instance.body_store(),
         actor_id="owner",
         claim_id=CLAIM_ID,
-        value="ready",
-        rationale="new v2 backing",
+        body=b"new v2 backing",
         observed_at=datetime(2026, 8, 20, 12, 1, tzinfo=timezone.utc),
         accepted_coordinate=AcceptedCoordinate.from_internal(accepted_v1),
     )
@@ -293,11 +295,28 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
             source_mappings=legacy.backing.source_mappings,
         ),
         authority=legacy.authority,
-        pins=legacy.pins,
+        pins=tuple(
+            sorted(
+                (
+                    *legacy.pins,
+                    ArtifactPin(
+                        role="capture-contract",
+                        target=COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity,
+                        artifact_digest=capture_contract_digest(
+                            COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+                        ).tagged,
+                    ),
+                ),
+                key=lambda item: (item.role.encode(), item.target.qualified.encode()),
+            )
+        ),
         lifecycle=ArtifactLifecycle(predecessor_digest=claim_artifact_digest(legacy).tagged),
     )
     successor_tree = {
         **instance.tree_at(accepted_v1.git_oid),
+        capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
+            render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
+        ),
         claim_path(CLAIM_ID): render_claim(v2),
     }
     forged_origin = v2.model_copy(
@@ -323,6 +342,9 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
         instance,
         {
             **instance.tree_at(accepted_v1.git_oid),
+            capture_contract_path(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.identity.name): (
+                render_capture_contract(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT)
+            ),
             claim_path(CLAIM_ID): render_claim(forged_origin),
         },
         accepted_v1.git_oid,

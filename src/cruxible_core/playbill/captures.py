@@ -67,6 +67,12 @@ DIRECT_EXTERNAL_SELECTOR_TYPES = (
     "resource-key-v1",
 )
 
+COORDINATOR_SELF_SOURCE_CONTRACT_ID = "playbill.coordinator-self-source-v1"
+COORDINATOR_SELF_SOURCE_IDENTITY = "playbill.coordinator-authoring"
+COORDINATOR_SELF_SOURCE_REPLAY_POLICY = "playbill.coordinator-retained-cas-v1"
+COORDINATOR_SELF_SOURCE_PROVENANCE_RULE = "playbill.coordinator-proposer-observed-v1"
+COORDINATOR_SELF_SOURCE_SUBJECT_MAPPING = "playbill.coordinator-claim-self-source-v1"
+
 FOREIGN_SOURCE_CONTRACT_PREFIX = "playbill.foreign-source."
 FOREIGN_SOURCE_COORDINATE_TYPE = "foreign-source-snapshot-v1"
 FOREIGN_SOURCE_SELECTOR_TYPE = "foreign-source-span-v1"
@@ -260,13 +266,16 @@ _CAPTURE_COMPONENT_PIN_NAMES: tuple[tuple[str, str], ...] = (
     ("erasure-rule", "playbill.capture-erasure-authority-v1"),
     ("proof-adapter", "playbill.database-snapshot-proof-v1"),
     ("provenance-rule", "playbill.external.daemon-fetched-v1"),
+    ("provenance-rule", COORDINATOR_SELF_SOURCE_PROVENANCE_RULE),
     ("provenance-rule", FOREIGN_SOURCE_PROVENANCE_RULE),
     ("replay-policy", "playbill.external.exact-replay-v1"),
+    ("replay-policy", COORDINATOR_SELF_SOURCE_REPLAY_POLICY),
     ("replay-policy", FOREIGN_SOURCE_REPLAY_POLICY),
     ("selector-schema", FOREIGN_SOURCE_SELECTOR_TYPE),
     ("selector-schema", "query-result-v1"),
     ("selector-schema", "relation-primary-key-v1"),
     ("source-subject-mapping", FOREIGN_SOURCE_SUBJECT_MAPPING),
+    ("source-subject-mapping", COORDINATOR_SELF_SOURCE_SUBJECT_MAPPING),
     ("source-subject-mapping", "playbill.external.record-subject-v1"),
 )
 
@@ -342,6 +351,65 @@ DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContractV1(
     authority=ArtifactAuthority(
         propose_roles=("owner",),
         approve_roles=("owner",),
+    ),
+)
+
+
+_COORDINATOR_REPLAY_PIN = capture_component_pin(
+    "replay-policy",
+    COORDINATOR_SELF_SOURCE_REPLAY_POLICY,
+)
+_COORDINATOR_PROVENANCE_PIN = capture_component_pin(
+    "provenance-rule",
+    COORDINATOR_SELF_SOURCE_PROVENANCE_RULE,
+)
+_COORDINATOR_MAPPING_PIN = capture_component_pin(
+    "source-subject-mapping",
+    COORDINATOR_SELF_SOURCE_SUBJECT_MAPPING,
+)
+
+COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT = CaptureContractV1(
+    identity=ArtifactIdentity(
+        kind="CaptureContract",
+        name=COORDINATOR_SELF_SOURCE_CONTRACT_ID,
+    ),
+    allowed_source_kinds=("cas",),
+    logical_source_identities=(COORDINATOR_SELF_SOURCE_IDENTITY,),
+    coordinate_schema_pins=(),
+    selector_schema_pins=(),
+    commitment_canonicalizer=capture_component_pin(
+        "commitment-canonicalizer",
+        "sha256-bytes-v1",
+    ),
+    allowed_materialization_modes=("cas",),
+    selection_budget=CaptureSelectionBudgetV1(
+        max_bytes=1024 * 1024,
+        max_rows=1,
+        max_items=1,
+    ),
+    retention_erasure_policy=CaptureRetentionErasurePolicyV1(
+        body_retention="optional",
+        erasure="prohibited",
+        selector_privacy="direct_allowed",
+    ),
+    replay_policy_digest=_COORDINATOR_REPLAY_PIN.artifact_digest,
+    epistemic_grade="observed",
+    provenance_rule_digest=_COORDINATOR_PROVENANCE_PIN.artifact_digest,
+    evidence_kinds=("self_asserted",),
+    source_subject_mapping_digest=_COORDINATOR_MAPPING_PIN.artifact_digest,
+    authority=ArtifactAuthority(
+        propose_roles=("owner",),
+        approve_roles=("owner",),
+    ),
+    pins=tuple(
+        sorted(
+            (
+                _COORDINATOR_MAPPING_PIN,
+                _COORDINATOR_PROVENANCE_PIN,
+                _COORDINATOR_REPLAY_PIN,
+            ),
+            key=_pin_key,
+        )
     ),
 )
 
@@ -426,6 +494,7 @@ def foreign_source_capture_contract(logical_source_identity: str) -> CaptureCont
 _SELF_ASSERTED_PROVENANCE_RULE_DIGESTS: frozenset[str] = frozenset(
     {
         DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.provenance_rule_digest,
+        COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.provenance_rule_digest,
         capture_component_pin("provenance-rule", FOREIGN_SOURCE_PROVENANCE_RULE).artifact_digest,
     }
 )
@@ -551,6 +620,21 @@ def evaluate_capture_contract_law(
             verdict="refused",
             diagnostics=(
                 _diagnostic("playbill.capture_contract.path_mismatch", str(exc), path=path),
+            ),
+        )
+    if (
+        contract.identity.name == COORDINATOR_SELF_SOURCE_CONTRACT_ID
+        and contract != COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    ):
+        return CaptureContractLawResult(
+            verdict="refused",
+            diagnostics=(
+                _diagnostic(
+                    "playbill.capture_contract.coordinator_profile_mismatch",
+                    "The coordinator self-source identity is reserved for its exact "
+                    "retained profile.",
+                    path=path,
+                ),
             ),
         )
     if predecessor is None and contract.lifecycle.predecessor_digest is not None:
@@ -1025,6 +1109,24 @@ def capture_is_direct_self_source(
     )
 
 
+def capture_is_coordinator_self_source(
+    envelope: CaptureEnvelopeV1,
+    *,
+    contract: CaptureContractV1,
+    claim_id: str,
+) -> bool:
+    """Recognize the mandatory-retained coordinator profile at its Claim binding."""
+
+    return (
+        contract == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+        and isinstance(envelope.source, CasSourceReferenceV1)
+        and envelope.commitment.materialization == "cas"
+        and envelope.run_coordinate.run_id == f"coordinator-self-source:{claim_id.casefold()}"
+        and envelope.run_coordinate.executable_identity == contract.identity
+        and envelope.run_coordinate.executable_digest == capture_contract_digest(contract).tagged
+    )
+
+
 class CaptureBuildResult(_StrictCaptureModel):
     contract_digest: str
     envelope: CaptureEnvelopeV1
@@ -1441,6 +1543,60 @@ def build_cas_capture(
     )
 
 
+def build_coordinator_self_source_capture(
+    *,
+    store: CaptureObjectStoreProtocol,
+    actor_id: str,
+    claim_id: str,
+    body: bytes,
+    observed_at: datetime,
+    accepted_coordinate: AcceptedCoordinate,
+) -> CaptureBuildResult:
+    """Retain exact self-source bytes before minting their coordinator envelope."""
+
+    governance_identifier(actor_id, label="coordinator self-source actor")
+    if not re.fullmatch(r"CLM-[0-9a-f]{32}", claim_id):
+        raise CaptureFormatError("coordinator self-source requires a Claim identity")
+    contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    contract_digest_value = capture_contract_digest(contract).tagged
+    body_digest = CasDigest(hashlib.sha256(body).hexdigest()).tagged
+    producer_binding_digest = typed_digest(
+        Sha256Value,
+        "playbill-coordinator-self-source-binding-v1",
+        {
+            "actor_id": actor_id,
+            "claim_id": claim_id,
+            "generation_root": accepted_coordinate.generation_root,
+        },
+    ).tagged
+    receipt_digest = typed_digest(
+        Sha256Value,
+        "playbill-coordinator-self-source-receipt-v1",
+        {
+            "actor_id": actor_id,
+            "body_digest": body_digest,
+            "claim_id": claim_id,
+            "observed_at": _canonical_datetime(observed_at),
+        },
+    ).tagged
+    return build_cas_capture(
+        store=store,
+        contract=contract,
+        source_body=body,
+        run_coordinate=CaptureRunCoordinateV1(
+            run_kind="provider",
+            run_id=f"coordinator-self-source:{claim_id.casefold()}",
+            bound_generation=accepted_coordinate.generation_root,
+            executable_identity=contract.identity,
+            executable_digest=contract_digest_value,
+        ),
+        run_receipt_digest=receipt_digest,
+        producer=ArtifactIdentity(kind="Principal", name=actor_id),
+        producer_binding_digest=producer_binding_digest,
+        observed_at=observed_at,
+    )
+
+
 def build_ledger_capture(
     *,
     store: CaptureObjectStoreProtocol,
@@ -1688,6 +1844,9 @@ __all__ = [
     "CaptureRetentionErasurePolicyV1",
     "CaptureRunCoordinateV1",
     "CaptureSelectionBudgetV1",
+    "COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT",
+    "COORDINATOR_SELF_SOURCE_CONTRACT_ID",
+    "COORDINATOR_SELF_SOURCE_IDENTITY",
     "DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT",
     "DIRECT_SELF_ASSERTED_CONTRACT_ID",
     "DIRECT_EXTERNAL_COORDINATE_TYPES",
@@ -1711,12 +1870,14 @@ __all__ = [
     "SourceEffectiveTimeV1",
     "build_direct_claim_capture",
     "build_direct_claim_selection_capture",
+    "build_coordinator_self_source_capture",
     "build_cas_capture",
     "build_derived_cas_capture",
     "build_foreign_source_capture",
     "build_ledger_capture",
     "capture_contract_digest",
     "capture_contract_is_self_asserted",
+    "capture_is_coordinator_self_source",
     "capture_is_direct_self_source",
     "capture_contract_path",
     "capture_component_pin",

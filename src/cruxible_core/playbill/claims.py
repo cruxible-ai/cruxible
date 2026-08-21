@@ -27,12 +27,14 @@ from cruxible_core.playbill.canonical import (
     typed_digest,
 )
 from cruxible_core.playbill.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     AcceptedCaptureContract,
     CaptureContractV1,
     CaptureEnvelopeV1,
     CaptureObjectStoreProtocol,
     LedgerMaterialResolverProtocol,
     capture_contract_is_self_asserted,
+    capture_is_coordinator_self_source,
     capture_is_direct_self_source,
     verify_capture,
 )
@@ -879,18 +881,30 @@ def _citation_origin_refusal(
         store=store,
         claim_id=claim.identity.name,
     )
+    coordinator_contract = contract == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
+    coordinator_self_source = capture_is_coordinator_self_source(
+        envelope,
+        contract=contract,
+        claim_id=claim.identity.name,
+    )
+    if coordinator_contract and not coordinator_self_source:
+        return (
+            "playbill.claim.self_source_capture_unbound",
+            "The coordinator self-source Capture is not bound to this Claim.",
+        )
+    verified_self_source = direct_self_source or coordinator_self_source
     for association in associations:
         if association.origin == "self_published" and association.role != "copy":
             return (
                 "playbill.claim.self_published_role_invalid",
                 "A self-published association must be a non-evidentiary copy.",
             )
-        if direct_self_source and association.origin != "self_source":
+        if verified_self_source and association.origin != "self_source":
             return (
                 "playbill.claim.self_source_origin_mismatch",
                 "A direct self-source tied to this Claim must declare self_source origin.",
             )
-        if not direct_self_source and association.origin == "self_source":
+        if not verified_self_source and association.origin == "self_source":
             return (
                 "playbill.claim.self_source_origin_mismatch",
                 "self_source origin requires a verified self-source Capture tied to this Claim.",
