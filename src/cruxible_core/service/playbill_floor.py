@@ -30,7 +30,10 @@ from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import claim_type_path, parse_claim_type
 from cruxible_core.playbill.claims import ClaimArtifactAny
-from cruxible_core.playbill.coverage.contracts import CoverageManifestProfileV1
+from cruxible_core.playbill.coverage.contracts import (
+    CoverageManifestProfileV1,
+    CoverageManifestProfileV2,
+)
 from cruxible_core.playbill.coverage.indexes import evidence_citation_index_digest
 from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -57,7 +60,7 @@ from cruxible_core.service.playbill_claims import (
 from cruxible_core.service.playbill_coverage import (
     COVERAGE_ACCESS_PROFILE_ID,
     accepted_evidence_sources,
-    build_accepted_evidence_index,
+    build_accepted_evidence_index_v2,
 )
 from cruxible_core.service.playbill_discovery import (
     accepted_claim_types,
@@ -122,6 +125,20 @@ class PlaybillFloorCoverageManifestV1(CoverageManifestProfileV1):
 
     @model_validator(mode="after")
     def _export_observes_no_snapshot(self) -> "PlaybillFloorCoverageManifestV1":
+        if self.epoch is not None or self.watcher_health != "absent":
+            raise ValueError("an exported floor observes no working snapshot and proves no epoch")
+        return self
+
+
+class PlaybillFloorCoverageManifestV2(CoverageManifestProfileV2):
+    """Association-native coverage boundary for a point-in-time floor export."""
+
+    tag: Literal["playbill-floor-coverage-manifest-v2"] = "playbill-floor-coverage-manifest-v2"
+    cited_commitment_count: int
+    exact_bytes_commitment_count: int
+
+    @model_validator(mode="after")
+    def _export_observes_no_snapshot(self) -> "PlaybillFloorCoverageManifestV2":
         if self.epoch is not None or self.watcher_health != "absent":
             raise ValueError("an exported floor observes no working snapshot and proves no epoch")
         return self
@@ -244,7 +261,7 @@ def _coverage_manifest(
     instance: PlaybillInstance,
     *,
     at: PlaybillAcceptedCoordinate,
-) -> PlaybillFloorCoverageManifestV1:
+) -> PlaybillFloorCoverageManifestV2:
     """Summarize the coverage boundary of this export from the evidence index.
 
     Only identities, digests, and counts leave here. The index is built over
@@ -253,8 +270,8 @@ def _coverage_manifest(
     same access class the floor itself already is.
     """
 
-    index = build_accepted_evidence_index(instance, at=at)
-    return PlaybillFloorCoverageManifestV1(
+    index = build_accepted_evidence_index_v2(instance, at=at)
+    return PlaybillFloorCoverageManifestV2(
         instance_id=instance.descriptor.instance_id,
         coordinate=at,
         index_digest=evidence_citation_index_digest(index),
@@ -358,6 +375,7 @@ __all__ = [
     "COVERAGE_MANIFEST_PATH",
     "MANIFEST_PATH",
     "PlaybillFloorCoverageManifestV1",
+    "PlaybillFloorCoverageManifestV2",
     "PlaybillFloorFileV1",
     "PlaybillFloorManifestV1",
     "service_export_playbill_floor",

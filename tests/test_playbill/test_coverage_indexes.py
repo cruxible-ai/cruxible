@@ -15,14 +15,25 @@ from __future__ import annotations
 
 import pytest
 
+from cruxible_core.playbill.claims import (
+    AcceptedClaim,
+    ClaimArtifactV2,
+    ClaimBackingV2,
+    build_claim_citation,
+    claim_artifact_digest,
+    claim_path,
+    claim_statement_digest,
+)
 from cruxible_core.playbill.coverage.contracts import (
     CoverageError,
     occurrence_identity_digest,
 )
 from cruxible_core.playbill.coverage.indexes import (
+    CaptureCitationInputV2,
     CoverageScanBudgetV1,
     accepted_logical_source,
     build_evidence_citation_index,
+    build_evidence_citation_index_v2,
     build_working_occurrence_overlay,
     evidence_citation_index_digest,
     working_occurrence_overlay_digest,
@@ -42,6 +53,7 @@ from tests.test_playbill._coverage_support import (
     source_reference,
     working,
 )
+from tests.test_playbill.test_claims import _claim
 
 # -- the reverse evidence index -------------------------------------------
 
@@ -86,6 +98,70 @@ def test_several_captures_of_one_commitment_collapse_to_the_strictest_access() -
     row = citations.citations[0]
     assert row.access_class == "restricted"
     assert len(row.capture_digests) == 2
+
+
+def test_v2_index_keeps_two_claim_roles_on_one_capture_as_distinct_associations() -> None:
+    legacy_capture = capture(HANDBOOK, CITED)
+    v2_capture = CaptureCitationInputV2.model_validate(
+        {
+            **legacy_capture.model_dump(mode="json"),
+            "tag": "playbill-coverage-capture-citation-input-v2",
+            "observation_trust": "provider_receipted",
+        }
+    )
+
+    accepted: list[AcceptedClaim] = []
+    for claim_id, role in (
+        ("CLM-" + "11" * 16, "evidence"),
+        ("CLM-" + "22" * 16, "copy"),
+    ):
+        legacy = _claim(
+            claim_id=claim_id,
+            capture_digest=legacy_capture.capture_digest,
+            source_digest=sha256(CITED),
+            source_length=len(CITED),
+        )
+        artifact = ClaimArtifactV2(
+            identity=legacy.identity,
+            statement=legacy.statement,
+            backing=ClaimBackingV2(
+                referent_context=legacy.backing.referent_context,
+                capture_digests=legacy.backing.capture_digests,
+                citations=(
+                    build_claim_citation(
+                        legacy.identity,
+                        capture_digest=legacy_capture.capture_digest,
+                        role=role,  # type: ignore[arg-type]
+                        origin="independent",
+                    ),
+                ),
+                source_mappings=legacy.backing.source_mappings,
+            ),
+            authority=legacy.authority,
+            pins=legacy.pins,
+        )
+        accepted.append(
+            AcceptedClaim(
+                path=claim_path(claim_id),
+                claim=artifact,
+                statement_digest=claim_statement_digest(artifact.statement).tagged,
+                artifact_digest=claim_artifact_digest(artifact).tagged,
+            )
+        )
+
+    citations = build_evidence_citation_index_v2(
+        at=coordinate(),
+        captures=(v2_capture,),
+        claims=accepted,
+    )
+    associations = citations.citations[0].citation_associations
+
+    assert {item.reference.role for item in associations} == {"copy", "evidence"}
+    assert {item.claim_address.artifact_path for item in associations} == {
+        claim_path("CLM-" + "11" * 16),
+        claim_path("CLM-" + "22" * 16),
+    }
+    assert {item.observation_trust for item in associations} == {"provider_receipted"}
 
 
 # -- the working-source occurrence overlay ---------------------------------

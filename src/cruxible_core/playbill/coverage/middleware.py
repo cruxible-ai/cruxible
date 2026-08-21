@@ -79,7 +79,7 @@ from cruxible_core.playbill.coverage.adapter import (
 )
 from cruxible_core.playbill.coverage.contracts import (
     CoverageError,
-    CoverageResultV1,
+    CoverageResultAny,
     CoverageSelectionV1,
     LogicalSourceIdentityV1,
 )
@@ -362,7 +362,7 @@ class CoverageDeliveryV1(_StrictMiddlewareModel):
     tag: Literal["playbill-coverage-delivery-v1"] = "playbill-coverage-delivery-v1"
     original_output: str = ""
     lines: tuple[str, ...] = ()
-    result: CoverageResultV1 | None = None
+    result: CoverageResultAny | None = None
     unbound_paths: tuple[str, ...] = ()
     observed_sources: int = Field(default=0, ge=0)
     failure_code: CoverageUnavailableCodeV1 | None = None
@@ -387,7 +387,7 @@ class CoverageDeliveryV1(_StrictMiddlewareModel):
         return self.original_output + separator + self.appended_coverage_text
 
 
-ResolveCoverage = Callable[[Sequence[WorkingSourceObservationV1]], CoverageResultV1]
+ResolveCoverage = Callable[[Sequence[WorkingSourceObservationV1]], CoverageResultAny]
 
 
 class CoverageMiddlewareV1:

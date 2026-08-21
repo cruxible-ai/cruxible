@@ -45,8 +45,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.playbill.captures import CaptureEnvelopeV1
-from cruxible_core.playbill.claims import AcceptedClaim
+from cruxible_core.playbill.claim_verdicts import ObservationTrustGrade
+from cruxible_core.playbill.claims import (
+    AcceptedClaim,
+    ClaimCitationReference,
+    claim_citation_references,
+)
 from cruxible_core.playbill.coverage.contracts import (
+    CoverageClaimCitationV2,
     CoverageError,
     CoverageLineOverlayV1,
     LogicalSourceIdentityV1,
@@ -67,6 +73,7 @@ from cruxible_core.playbill.source_references import (
 )
 
 EVIDENCE_INDEX_DIGEST_DOMAIN = "playbill-coverage-evidence-index-v1"
+EVIDENCE_INDEX_V2_DIGEST_DOMAIN = "playbill-coverage-evidence-index-v2"
 OCCURRENCE_OVERLAY_DIGEST_DOMAIN = "playbill-coverage-occurrence-overlay-v1"
 
 DEFAULT_MAX_SCANNED_BYTES = 32 * 1024 * 1024
@@ -136,6 +143,13 @@ class CaptureCitationInputV1(_StrictCoverageIndexModel):
         return self
 
 
+class CaptureCitationInputV2(CaptureCitationInputV1):
+    tag: Literal["playbill-coverage-capture-citation-input-v2"] = (
+        "playbill-coverage-capture-citation-input-v2"  # type: ignore[assignment]
+    )
+    observation_trust: ObservationTrustGrade
+
+
 class EvidenceCitationV1(_StrictCoverageIndexModel):
     """Every accepted citation of one evidence commitment, in one row."""
 
@@ -177,6 +191,36 @@ class EvidenceCitationV1(_StrictCoverageIndexModel):
         )
 
 
+class EvidenceCitationV2(EvidenceCitationV1):
+    tag: Literal["playbill-coverage-evidence-citation-v2"] = (
+        "playbill-coverage-evidence-citation-v2"  # type: ignore[assignment]
+    )
+    citation_associations: tuple[CoverageClaimCitationV2, ...] = ()
+
+    @field_validator("citation_associations")
+    @classmethod
+    def _associations(
+        cls,
+        value: tuple[CoverageClaimCitationV2, ...],
+    ) -> tuple[CoverageClaimCitationV2, ...]:
+        keys = tuple(item.sort_key for item in value)
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError("evidence citation associations must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _association_projection(self) -> "EvidenceCitationV2":
+        if not {item.capture_digest for item in self.citation_associations}.issubset(
+            self.capture_digests
+        ):
+            raise ValueError("evidence citation associations must name its Capture set")
+        if not {item.claim_address for item in self.citation_associations}.issubset(
+            self.claim_addresses
+        ):
+            raise ValueError("evidence citation associations must name its Claim set")
+        return self
+
+
 class EvidenceCitationIndexV1(_StrictCoverageIndexModel):
     """`evidence commitment digest -> citing Captures/Claims` at one coordinate."""
 
@@ -215,6 +259,11 @@ class EvidenceCitationIndexV1(_StrictCoverageIndexModel):
             if item.digest_kind == "exact_bytes" and item.byte_length is not None
         }
         return tuple(sorted(wanted))
+
+
+class EvidenceCitationIndexV2(EvidenceCitationIndexV1):
+    tag: Literal["playbill-coverage-evidence-index-v2"] = "playbill-coverage-evidence-index-v2"  # type: ignore[assignment]
+    citations: tuple[EvidenceCitationV2, ...] = ()
 
 
 @dataclass
@@ -299,6 +348,83 @@ def build_evidence_citation_index(
     return EvidenceCitationIndexV1(at=at, citations=citations, truncated=truncated)
 
 
+def build_evidence_citation_index_v2(
+    *,
+    at: AcceptedCoordinate,
+    captures: Iterable[CaptureCitationInputV2],
+    claims: Iterable[AcceptedClaim] = (),
+    truncated: bool = False,
+) -> EvidenceCitationIndexV2:
+    """Build the association-native reverse index without changing v1 interpretation."""
+
+    claim_references: dict[
+        str,
+        list[tuple[SemanticAddress, ClaimCitationReference]],
+    ] = {}
+    for accepted in claims:
+        if accepted.claim.lifecycle.state != "live":
+            continue
+        address = SemanticAddress.claim_statement(accepted.path)
+        for reference in claim_citation_references(accepted.claim):
+            claim_references.setdefault(reference.capture_digest, []).append((address, reference))
+
+    rows: dict[tuple[bytes, bytes], _CitationRow] = {}
+    associations: dict[tuple[bytes, bytes], dict[tuple[bytes, bytes], CoverageClaimCitationV2]] = {}
+    for entry in captures:
+        envelope = entry.envelope
+        source = accepted_logical_source(envelope.source)
+        key = (
+            envelope.commitment.digest.encode("ascii"),
+            source.sort_key if source is not None else b"",
+        )
+        row = rows.get(key)
+        if row is None:
+            row = _CitationRow(
+                commitment_digest=envelope.commitment.digest,
+                digest_kind=envelope.commitment.digest_kind,
+                byte_length=envelope.commitment.byte_length,
+                accepted_source=source,
+                access_class=entry.access_class,
+            )
+            rows[key] = row
+        row.capture_digests.add(entry.capture_digest)
+        for claim_address, raw_reference in claim_references.get(entry.capture_digest, ()):
+            association = CoverageClaimCitationV2.model_validate(
+                {
+                    "claim_address": claim_address.model_dump(mode="json"),
+                    "capture_digest": entry.capture_digest,
+                    "reference": raw_reference.model_dump(mode="json"),
+                    "observation_trust": entry.observation_trust,
+                }
+            )
+            associations.setdefault(key, {})[association.sort_key] = association
+            row.claim_paths.add(claim_address.artifact_path)
+        if entry.source_handle is not None and row.dereference_handle_digest is None:
+            row.dereference_handle_digest = source_handle_digest(entry.source_handle)
+        row.access_class = _strictest_access(row.access_class, entry.access_class)
+
+    citations = tuple(
+        EvidenceCitationV2(
+            commitment_digest=row.commitment_digest,
+            digest_kind=row.digest_kind,
+            byte_length=row.byte_length,
+            accepted_source=row.accepted_source,
+            access_class=row.access_class,
+            capture_digests=byte_sorted(tuple(row.capture_digests)),
+            claim_addresses=tuple(
+                SemanticAddress.claim_statement(path) for path in sorted(row.claim_paths)
+            ),
+            dereference_handle_digest=row.dereference_handle_digest,
+            citation_associations=tuple(
+                associations.get(key, {})[association_key]
+                for association_key in sorted(associations.get(key, {}))
+            ),
+        )
+        for key, row in sorted(rows.items())
+    )
+    return EvidenceCitationIndexV2(at=at, citations=citations, truncated=truncated)
+
+
 _ACCESS_STRICTNESS: Mapping[str, int] = {"public": 0, "instance": 1, "restricted": 2}
 
 
@@ -306,12 +432,19 @@ def _strictest_access(left: SourceAccessClass, right: SourceAccessClass) -> Sour
     return left if _ACCESS_STRICTNESS[left] >= _ACCESS_STRICTNESS[right] else right
 
 
-def evidence_citation_index_digest(index: EvidenceCitationIndexV1) -> str:
+def evidence_citation_index_digest(
+    index: EvidenceCitationIndexV1 | EvidenceCitationIndexV2,
+) -> str:
     """Digest the index so a manifest can name exactly which generation it bound."""
 
     payload = index.model_dump(mode="json")
     payload.pop("tag")
-    return typed_digest(Sha256Value, EVIDENCE_INDEX_DIGEST_DOMAIN, payload).tagged
+    domain = (
+        EVIDENCE_INDEX_V2_DIGEST_DOMAIN
+        if isinstance(index, EvidenceCitationIndexV2)
+        else EVIDENCE_INDEX_DIGEST_DOMAIN
+    )
+    return typed_digest(Sha256Value, domain, payload).tagged
 
 
 # -- working-source occurrence overlay -------------------------------------
@@ -605,17 +738,22 @@ def working_occurrence_overlay_digest(overlay: WorkingOccurrenceOverlayV1) -> st
 __all__ = [
     "DEFAULT_MAX_SCANNED_BYTES",
     "EVIDENCE_INDEX_DIGEST_DOMAIN",
+    "EVIDENCE_INDEX_V2_DIGEST_DOMAIN",
     "OCCURRENCE_OVERLAY_DIGEST_DOMAIN",
     "CaptureCitationInputV1",
+    "CaptureCitationInputV2",
     "CoverageScanBudgetV1",
     "EvidenceCitationIndexV1",
+    "EvidenceCitationIndexV2",
     "EvidenceCitationV1",
+    "EvidenceCitationV2",
     "WorkingOccurrenceOverlayV1",
     "WorkingOccurrenceV1",
     "WorkingSourceCommitmentV1",
     "WorkingSourceContent",
     "accepted_logical_source",
     "build_evidence_citation_index",
+    "build_evidence_citation_index_v2",
     "build_working_occurrence_overlay",
     "evidence_citation_index_digest",
     "working_occurrence_overlay_digest",

@@ -273,7 +273,7 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     exported = cruxible.json("playbill", "floor", "export", "--output", str(floor))
     boundary = json.loads((floor / "coverage-manifest.json").read_text(encoding="utf-8"))
     assert "coverage-manifest.json" in {item["path"] for item in exported["files"]}
-    assert boundary["format"] == "playbill-coverage-manifest-v1"
+    assert boundary["format"] == "playbill-coverage-manifest-v2"
     assert boundary["coordinate"] == exported["coordinate"]
     assert boundary["completeness"] == "complete"
     assert boundary["epoch"] is None
@@ -287,9 +287,9 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
 
     human, payload = _resolve(cruxible, workspace)
 
-    assert payload["tag"] == "playbill-coverage-result-v1"
+    assert payload["tag"] == "playbill-coverage-result-v2"
     assert payload["summary"] == {
-        "tag": "playbill-coverage-batch-summary-v1",
+        "tag": "playbill-coverage-batch-summary-v2",
         "exact": 0,
         "drifted": 0,
         "candidate": 1,
@@ -304,6 +304,9 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     assert card["at"] == payload["at"]
     assert card["grants_mutation_authority"] is False
     assert card["resolves_equivalence"] is False
+    assert card["tag"] == "playbill-coverage-card-v2"
+    assert len(card["citation_associations"]) == 1
+    assert card["citation_associations"][0]["reference"]["legacy_semantics"] is True
     # Content-addressed accepted evidence names no logical source, so identical
     # bytes at a working occurrence are labeled, never inherited.
     assert card["match_basis"] == "content_equivalent"
@@ -421,7 +424,7 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     drifted = _card_for(drifted_payload, FOREIGN_SOURCE)
 
     assert drifted_payload["summary"] == {
-        "tag": "playbill-coverage-batch-summary-v1",
+        "tag": "playbill-coverage-batch-summary-v2",
         "exact": 0,
         "drifted": 1,
         "candidate": 0,

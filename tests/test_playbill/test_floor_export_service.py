@@ -12,7 +12,7 @@ from cruxible_core.playbill.service.query_definitions import (
 from cruxible_core.service.playbill_floor import (
     COVERAGE_MANIFEST_PATH,
     MANIFEST_PATH,
-    PlaybillFloorCoverageManifestV1,
+    PlaybillFloorCoverageManifestV2,
     PlaybillFloorManifestV1,
     service_export_playbill_floor,
 )
@@ -148,7 +148,7 @@ def test_floor_carries_its_coverage_boundary_and_enumerates_it(tmp_path: Path) -
 
     assert COVERAGE_MANIFEST_PATH in floor
     assert COVERAGE_MANIFEST_PATH in {item.path for item in _manifest(floor).files}
-    boundary = PlaybillFloorCoverageManifestV1.model_validate(
+    boundary = PlaybillFloorCoverageManifestV2.model_validate(
         json.loads(floor[COVERAGE_MANIFEST_PATH])
     )
     assert boundary.coordinate == accepted

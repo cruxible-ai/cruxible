@@ -31,14 +31,17 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Mapping
-from typing import Literal
+from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import (
-    Sha256Value,
-    normalize_ledger_path,
-    typed_digest,
+from cruxible_core.playbill.artifacts import ArtifactIdentity
+from cruxible_core.playbill.canonical import Sha256Value, normalize_ledger_path, typed_digest
+from cruxible_core.playbill.claim_verdicts import ObservationTrustGrade
+from cruxible_core.playbill.claims import (
+    ClaimCitationV1,
+    LegacyCitationReferenceV1,
+    claim_citation_id,
 )
 from cruxible_core.playbill.discovery import DiscoveryMatchBasis
 from cruxible_core.playbill.errors import CanonicalEncodingError, PlaybillError
@@ -412,6 +415,87 @@ class CoverageCardV1(_StrictCoverageModel):
         )
 
 
+CoverageCitationReferenceV2: TypeAlias = Annotated[
+    ClaimCitationV1 | LegacyCitationReferenceV1,
+    Field(discriminator="tag"),
+]
+
+
+class CoverageClaimCitationV2(_StrictCoverageModel):
+    """One Claim-to-Capture association retained by the disposable v2 index."""
+
+    tag: Literal["playbill-coverage-claim-citation-v2"] = "playbill-coverage-claim-citation-v2"
+    claim_address: SemanticAddress
+    capture_digest: str
+    reference: CoverageCitationReferenceV2
+    observation_trust: ObservationTrustGrade
+
+    @field_validator("capture_digest")
+    @classmethod
+    def _capture_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _reference_agrees(self) -> "CoverageClaimCitationV2":
+        if self.capture_digest != self.reference.capture_digest:
+            raise ValueError("coverage citation reference names a different Capture")
+        if self.claim_address.selector.scheme != "claim-statement-v1":
+            raise ValueError("coverage citation must address one exact Claim statement")
+        claim_name = self.claim_address.artifact_path.rsplit("/", 1)[-1].removesuffix(".yaml")
+        if not re.fullmatch(r"CLM-[0-9a-f]{32}", claim_name):
+            raise ValueError("coverage citation address has no Claim identity")
+        if isinstance(self.reference, LegacyCitationReferenceV1):
+            expected_path = self.claim_address.artifact_path
+            if not expected_path.endswith(f"/{self.reference.claim_identity.name}.yaml"):
+                raise ValueError("legacy coverage citation addresses a different Claim")
+        else:
+            expected = claim_citation_id(
+                ArtifactIdentity(kind="Claim", name=claim_name),
+                capture_digest=self.reference.capture_digest,
+                role=self.reference.role,
+                origin=self.reference.origin,
+            ).tagged
+            if self.reference.citation_id != expected:
+                raise ValueError("coverage citation ID does not match its Claim address")
+        return self
+
+    @property
+    def sort_key(self) -> tuple[bytes, bytes]:
+        return (
+            self.reference.citation_id.encode("ascii"),
+            self.claim_address.artifact_path.encode("utf-8"),
+        )
+
+
+class CoverageCardV2(CoverageCardV1):
+    tag: Literal["playbill-coverage-card-v2"] = "playbill-coverage-card-v2"  # type: ignore[assignment]
+    citation_associations: tuple[CoverageClaimCitationV2, ...] = ()
+
+    @field_validator("citation_associations")
+    @classmethod
+    def _associations(
+        cls,
+        value: tuple[CoverageClaimCitationV2, ...],
+    ) -> tuple[CoverageClaimCitationV2, ...]:
+        keys = tuple(item.sort_key for item in value)
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError("coverage citation associations must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _association_projection(self) -> "CoverageCardV2":
+        if not {item.capture_digest for item in self.citation_associations}.issubset(
+            self.capture_digests
+        ):
+            raise ValueError("coverage card associations must name its Capture set")
+        if not {item.claim_address for item in self.citation_associations}.issubset(
+            self.claim_addresses
+        ):
+            raise ValueError("coverage card associations must name its Claim set")
+        return self
+
+
 class CoverageSpanResultV1(_StrictCoverageModel):
     """One span's relationship and the trustworthiness of that answer."""
 
@@ -452,6 +536,11 @@ class CoverageSpanResultV1(_StrictCoverageModel):
         return self
 
 
+class CoverageSpanResultV2(CoverageSpanResultV1):
+    tag: Literal["playbill-coverage-span-result-v2"] = "playbill-coverage-span-result-v2"  # type: ignore[assignment]
+    cards: tuple[CoverageCardV2, ...] = ()
+
+
 class CoverageBatchSummaryV1(_StrictCoverageModel):
     """§11.6.4: one summary per operation, not one `none` beside every line."""
 
@@ -468,6 +557,10 @@ class CoverageBatchSummaryV1(_StrictCoverageModel):
         if self.exact + self.drifted + self.candidate + self.none != self.returned_spans:
             raise ValueError("coverage summary states must total the returned spans")
         return self
+
+
+class CoverageBatchSummaryV2(CoverageBatchSummaryV1):
+    tag: Literal["playbill-coverage-batch-summary-v2"] = "playbill-coverage-batch-summary-v2"  # type: ignore[assignment]
 
 
 class CoverageResultV1(_StrictCoverageModel):
@@ -535,6 +628,18 @@ class CoverageResultV1(_StrictCoverageModel):
         return self
 
 
+class CoverageResultV2(CoverageResultV1):
+    tag: Literal["playbill-coverage-result-v2"] = "playbill-coverage-result-v2"  # type: ignore[assignment]
+    spans: tuple[CoverageSpanResultV2, ...]
+    summary: CoverageBatchSummaryV2
+
+
+CoverageResultAny: TypeAlias = Annotated[
+    CoverageResultV1 | CoverageResultV2,
+    Field(discriminator="tag"),
+]
+
+
 # -- the manifest family --------------------------------------------------
 
 
@@ -598,6 +703,10 @@ class CoverageManifestProfileV1(_StrictCoverageModel):
         return self
 
 
+class CoverageManifestProfileV2(CoverageManifestProfileV1):
+    format: Literal["playbill-coverage-manifest-v2"] = "playbill-coverage-manifest-v2"  # type: ignore[assignment]
+
+
 def weakest_health(*values: CoverageHealthV1) -> CoverageHealthV1:
     """Combine health floors: the weakest wins, always."""
 
@@ -628,18 +737,25 @@ __all__ = [
     "OCCURRENCE_IDENTITY_DIGEST_DOMAIN",
     "CoverageAccessProfileV1",
     "CoverageBatchSummaryV1",
+    "CoverageBatchSummaryV2",
     "CoverageCardBudgetV1",
     "CoverageCardV1",
+    "CoverageCardV2",
+    "CoverageClaimCitationV2",
     "CoverageError",
     "CoverageHealthV1",
     "CoverageLineOverlayV1",
     "CoverageManifestProfileV1",
+    "CoverageManifestProfileV2",
     "CoverageMatchStateV1",
     "CoverageRequestV1",
     "CoverageResultV1",
+    "CoverageResultAny",
+    "CoverageResultV2",
     "CoverageSelectionV1",
     "CoverageSpanRequestV1",
     "CoverageSpanResultV1",
+    "CoverageSpanResultV2",
     "CoverageWatcherHealthV1",
     "LogicalSourceIdentityV1",
     "logical_sources_sorted",

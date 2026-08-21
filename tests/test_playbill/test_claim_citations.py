@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_core.playbill.candidates import CandidateRecordV3
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
+from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.playbill.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
@@ -39,8 +39,10 @@ from cruxible_core.playbill.claims import (
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.semantic import ContentSpan
+from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.playbill.subjects import render_subject, subject_path
+from cruxible_core.service.playbill_coverage import build_accepted_evidence_index_v2
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_claims import _claim, _claim_type, _subject
@@ -398,6 +400,31 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     )
 
     accepted_v2 = instance.accepted_coordinate()
+    coverage_index = build_accepted_evidence_index_v2(
+        instance,
+        at=PlaybillAcceptedCoordinate.from_internal(accepted_v2),
+    )
+    rebuilt_coverage_index = build_accepted_evidence_index_v2(
+        instance,
+        at=PlaybillAcceptedCoordinate.from_internal(accepted_v2),
+    )
+    assert canonical_bytes(coverage_index.model_dump(mode="json")) == canonical_bytes(
+        rebuilt_coverage_index.model_dump(mode="json")
+    )
+    coverage_associations = {
+        association.reference.citation_id: association
+        for row in coverage_index.citations
+        for association in row.citation_associations
+    }
+    assert set(coverage_associations) == {
+        reference.citation_id for reference in claim_citation_references(v2)
+    }
+    assert coverage_associations[citation.citation_id].reference.role == "evidence"
+    assert coverage_associations[citation.citation_id].reference.origin == "self_source"
+    assert coverage_associations[copy_citation.citation_id].reference.role == "copy"
+    assert coverage_associations[copy_citation.citation_id].observation_trust == (
+        "proposer_observed"
+    )
     dropped = v2.model_copy(
         update={
             "backing": v2.backing.model_copy(update={"citations": ()}),

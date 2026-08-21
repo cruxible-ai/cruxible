@@ -64,6 +64,7 @@ from cruxible_core.playbill.coverage.contracts import (
 )
 from cruxible_core.playbill.coverage.indexes import (
     EvidenceCitationIndexV1,
+    EvidenceCitationIndexV2,
     WorkingOccurrenceOverlayV1,
     WorkingSourceCommitmentV1,
     evidence_citation_index_digest,
@@ -75,6 +76,8 @@ from cruxible_core.playbill.query.grammar import byte_sorted
 COVERAGE_DIRECTORY: Final = "coverage"
 COVERAGE_MANIFEST_FILE: Final = "coverage-manifest-v1.json"
 COVERAGE_MANIFEST_TAG: Final = "playbill-coverage-manifest-v1"
+COVERAGE_MANIFEST_FILE_V2: Final = "coverage-manifest-v2.json"
+COVERAGE_MANIFEST_TAG_V2: Final = "playbill-coverage-manifest-v2"
 
 _INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
@@ -224,6 +227,24 @@ class CoverageManifestFileV1(_StrictManifestModel):
         return value
 
 
+class CoverageManifestBodyV2(CoverageManifestBodyV1):
+    tag: Literal["playbill-coverage-manifest-v2"] = COVERAGE_MANIFEST_TAG_V2  # type: ignore[assignment]
+    format_version: Literal[2] = 2  # type: ignore[assignment]
+
+
+class CoverageManifestFileV2(_StrictManifestModel):
+    tag: Literal["playbill-coverage-manifest-file-v2"] = "playbill-coverage-manifest-file-v2"
+    body: CoverageManifestBodyV2
+    manifest_digest: str
+    written_at: str
+
+    @field_validator("manifest_digest")
+    @classmethod
+    def _manifest_digest(cls, value: str) -> str:
+        CoverageManifestDigest.from_tagged(value)
+        return value
+
+
 def coverage_manifest_digest(body: CoverageManifestBodyV1) -> CoverageManifestDigest:
     return typed_digest(
         CoverageManifestDigest,
@@ -284,6 +305,58 @@ def coverage_manifest_body(
     )
 
 
+def coverage_manifest_digest_v2(body: CoverageManifestBodyV2) -> CoverageManifestDigest:
+    return typed_digest(
+        CoverageManifestDigest,
+        COVERAGE_MANIFEST_TAG_V2,
+        {key: value for key, value in body.model_dump(mode="json").items() if key != "tag"},
+    )
+
+
+def render_coverage_manifest_v2(body: CoverageManifestBodyV2, *, written_at: str) -> bytes:
+    record = CoverageManifestFileV2(
+        body=body,
+        manifest_digest=coverage_manifest_digest_v2(body).tagged,
+        written_at=written_at,
+    )
+    return canonical_bytes(record.model_dump(mode="json")) + b"\n"
+
+
+def coverage_manifest_body_v2(
+    *,
+    instance_id: str,
+    index: EvidenceCitationIndexV2,
+    overlay: WorkingOccurrenceOverlayV1,
+    access_profile: CoverageAccessProfileV1,
+    epoch: int = 0,
+    watcher_health: CoverageWatcherHealthV1 = "absent",
+    scope: CoverageWorkingSetScopeV1 | None = None,
+) -> CoverageManifestBodyV2:
+    reasons = set(overlay.truncation_reason_codes)
+    if index.truncated:
+        reasons.add("evidence_index_truncated")
+    declared = scope or CoverageWorkingSetScopeV1(
+        sources=overlay.scope,
+        complete=not reasons,
+        truncation_reason_codes=byte_sorted(tuple(reasons)),
+    )
+    if not declared.complete:
+        reasons.update(declared.truncation_reason_codes)
+    return CoverageManifestBodyV2(
+        instance_id=instance_id,
+        at=index.at,
+        index_digest=evidence_citation_index_digest(index),
+        overlay_digest=working_occurrence_overlay_digest(overlay),
+        scope=declared,
+        sources=overlay.sources,
+        access_profile=access_profile,
+        epoch=epoch,
+        watcher_health=watcher_health,
+        completeness="partial" if reasons else "complete",
+        truncation_reason_codes=byte_sorted(tuple(reasons)),
+    )
+
+
 def advance_coverage_manifest(
     previous: CoverageManifestBodyV1,
     *,
@@ -308,6 +381,10 @@ def advance_coverage_manifest(
 
 def coverage_manifest_path(directory: Path) -> Path:
     return directory / COVERAGE_MANIFEST_FILE
+
+
+def coverage_manifest_path_v2(directory: Path) -> Path:
+    return directory / COVERAGE_MANIFEST_FILE_V2
 
 
 def write_coverage_manifest(
@@ -339,6 +416,31 @@ def write_coverage_manifest(
     return target
 
 
+def write_coverage_manifest_v2(
+    directory: Path,
+    body: CoverageManifestBodyV2,
+    *,
+    written_at: str = "",
+) -> Path:
+    """Publish v2 atomically after discarding any superseded local v1 cache."""
+
+    coverage_manifest_path(directory).unlink(missing_ok=True)
+    existing = load_coverage_manifest_file_v2(directory)
+    if existing is not None and body.epoch <= existing.body.epoch:
+        raise CoverageManifestError(
+            "a coverage manifest epoch is monotonic; publishing must advance it"
+        )
+    directory.mkdir(parents=True, exist_ok=True)
+    target = coverage_manifest_path_v2(directory)
+    temporary = directory / f".coverage-manifest-v2-{secrets.token_hex(12)}.tmp"
+    try:
+        temporary.write_bytes(render_coverage_manifest_v2(body, written_at=written_at))
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return target
+
+
 def load_coverage_manifest_file(directory: Path) -> CoverageManifestFileV1 | None:
     """Load and re-verify the published manifest, deleting one that does not hold."""
 
@@ -358,6 +460,26 @@ def load_coverage_manifest_file(directory: Path) -> CoverageManifestFileV1 | Non
     return record
 
 
+def load_coverage_manifest_file_v2(directory: Path) -> CoverageManifestFileV2 | None:
+    """Read v2 only; a local v1 cache is discarded rather than migrated."""
+
+    coverage_manifest_path(directory).unlink(missing_ok=True)
+    target = coverage_manifest_path_v2(directory)
+    try:
+        content = target.read_bytes()
+    except FileNotFoundError:
+        return None
+    try:
+        record = CoverageManifestFileV2.model_validate_json(content)
+    except ValidationError:
+        target.unlink(missing_ok=True)
+        return None
+    if record.manifest_digest != coverage_manifest_digest_v2(record.body).tagged:
+        target.unlink(missing_ok=True)
+        return None
+    return record
+
+
 def discard_coverage_manifest(directory: Path) -> None:
     """Delete the manifest; the only cost is provable freshness."""
 
@@ -367,18 +489,28 @@ def discard_coverage_manifest(directory: Path) -> None:
 __all__ = [
     "COVERAGE_DIRECTORY",
     "COVERAGE_MANIFEST_FILE",
+    "COVERAGE_MANIFEST_FILE_V2",
     "COVERAGE_MANIFEST_TAG",
+    "COVERAGE_MANIFEST_TAG_V2",
     "CoverageManifestBodyV1",
+    "CoverageManifestBodyV2",
     "CoverageManifestDigest",
     "CoverageManifestError",
     "CoverageManifestFileV1",
+    "CoverageManifestFileV2",
     "CoverageWorkingSetScopeV1",
     "advance_coverage_manifest",
     "coverage_manifest_body",
+    "coverage_manifest_body_v2",
     "coverage_manifest_digest",
+    "coverage_manifest_digest_v2",
     "coverage_manifest_path",
+    "coverage_manifest_path_v2",
     "discard_coverage_manifest",
     "load_coverage_manifest_file",
+    "load_coverage_manifest_file_v2",
     "render_coverage_manifest",
+    "render_coverage_manifest_v2",
     "write_coverage_manifest",
+    "write_coverage_manifest_v2",
 ]

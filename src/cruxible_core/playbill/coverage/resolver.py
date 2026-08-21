@@ -39,26 +39,32 @@ question for this resolver, and skipping it costs no completeness.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, TypeAlias, cast
 
 from cruxible_core.playbill.coverage.contracts import (
     COVERAGE_HEALTH_PROVES_FRESHNESS,
     CoverageAccessProfileV1,
     CoverageBatchSummaryV1,
+    CoverageBatchSummaryV2,
     CoverageCardV1,
+    CoverageCardV2,
     CoverageHealthV1,
     CoverageMatchStateV1,
     CoverageRequestV1,
     CoverageResultV1,
+    CoverageResultV2,
     CoverageSpanRequestV1,
     CoverageSpanResultV1,
+    CoverageSpanResultV2,
     LogicalSourceIdentityV1,
     strongest_match_state,
     weakest_health,
 )
 from cruxible_core.playbill.coverage.indexes import (
     EvidenceCitationIndexV1,
+    EvidenceCitationIndexV2,
     EvidenceCitationV1,
+    EvidenceCitationV2,
     WorkingOccurrenceOverlayV1,
     WorkingOccurrenceV1,
     evidence_citation_index_digest,
@@ -66,7 +72,9 @@ from cruxible_core.playbill.coverage.indexes import (
 )
 from cruxible_core.playbill.coverage.manifest import (
     CoverageManifestBodyV1,
+    CoverageManifestBodyV2,
     coverage_manifest_digest,
+    coverage_manifest_digest_v2,
 )
 from cruxible_core.playbill.discovery import DiscoveryMatchBasis
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -75,9 +83,16 @@ from cruxible_core.playbill.source_references import CoverageDescriptorV1
 
 COVERAGE_FACET = "coverage"
 
+CoverageIndexAny: TypeAlias = EvidenceCitationIndexV1 | EvidenceCitationIndexV2
+CoverageCitationAny: TypeAlias = EvidenceCitationV1 | EvidenceCitationV2
+CoverageCardAny: TypeAlias = CoverageCardV1 | CoverageCardV2
+CoverageManifestAny: TypeAlias = CoverageManifestBodyV1 | CoverageManifestBodyV2
+CoverageSpanResultAny: TypeAlias = CoverageSpanResultV1 | CoverageSpanResultV2
+CoverageResultAny: TypeAlias = CoverageResultV1 | CoverageResultV2
+
 
 def _manifest_floor(
-    manifest: CoverageManifestBodyV1 | None,
+    manifest: CoverageManifestAny | None,
     *,
     request: CoverageRequestV1,
     index_digest: str,
@@ -108,7 +123,7 @@ def _manifest_floor(
 def _source_floor(
     span: CoverageSpanRequestV1,
     *,
-    manifest: CoverageManifestBodyV1 | None,
+    manifest: CoverageManifestAny | None,
     overlay: WorkingOccurrenceOverlayV1,
 ) -> tuple[CoverageHealthV1, tuple[str, ...]]:
     """The freshness floor for exactly one working source."""
@@ -147,7 +162,7 @@ def _selected(
 
 
 def _same_source(
-    citation: EvidenceCitationV1,
+    citation: CoverageCitationAny,
     source: LogicalSourceIdentityV1,
 ) -> bool:
     return (
@@ -157,13 +172,13 @@ def _same_source(
 
 
 def _budgeted(
-    cards: Sequence[CoverageCardV1],
+    cards: Sequence[CoverageCardAny],
     request: CoverageRequestV1,
-) -> tuple[tuple[CoverageCardV1, ...], int]:
+) -> tuple[tuple[CoverageCardAny, ...], int]:
     """Clip from the low-priority tail and report exactly what was dropped."""
 
     ordered = sorted(cards, key=lambda item: item.sort_key)
-    kept: list[CoverageCardV1] = []
+    kept: list[CoverageCardAny] = []
     candidates = 0
     for card in ordered:
         if len(kept) >= request.budget.max_cards_per_span:
@@ -180,13 +195,13 @@ def _resolve_span(
     span: CoverageSpanRequestV1,
     *,
     request: CoverageRequestV1,
-    index: EvidenceCitationIndexV1,
+    index: CoverageIndexAny,
     overlay: WorkingOccurrenceOverlayV1,
     access: CoverageAccessProfileV1,
     batch_floor: CoverageHealthV1,
     batch_reasons: tuple[str, ...],
-    manifest: CoverageManifestBodyV1 | None,
-) -> CoverageSpanResultV1:
+    manifest: CoverageManifestAny | None,
+) -> CoverageSpanResultAny:
     source_floor, source_reasons = _source_floor(span, manifest=manifest, overlay=overlay)
     health = weakest_health(batch_floor, source_floor)
     reasons = set(batch_reasons) | set(source_reasons)
@@ -204,7 +219,7 @@ def _resolve_span(
             duplicates.get(item.observed_commitment_digest, 0) + 1
         )
 
-    cards: list[CoverageCardV1] = []
+    cards: list[CoverageCardAny] = []
     ambiguous = 0
     withheld = False
 
@@ -274,18 +289,11 @@ def _resolve_span(
                 withheld = True
                 continue
             cards.append(
-                CoverageCardV1(
-                    match_state="drifted",
-                    at=request.at,
-                    claim_addresses=citation.claim_addresses,
-                    capture_digests=citation.capture_digests,
-                    expected_commitment_digest=citation.commitment_digest,
+                _drift_card(
+                    citation=citation,
                     observed_commitment_digest=whole.content_digest,
-                    accepted_source=span.source,
-                    observed_source=span.source,
-                    dereference_handle_digest=citation.dereference_handle_digest,
-                    dependent_claim_count=citation.dependent_claim_count,
-                    reason_codes=("commitment_superseded",),
+                    source=span.source,
+                    at=request.at,
                 )
             )
 
@@ -310,12 +318,11 @@ def _resolve_span(
 
     match_state: CoverageMatchStateV1 = strongest_match_state(card.match_state for card in kept)
 
-    return CoverageSpanResultV1(
+    payload = dict(
         request=span,
         match_state=match_state,
         health=health,
         absence_is_factual=match_state == "none" and health == "complete",
-        cards=kept,
         ambiguous_occurrence_count=ambiguous,
         omitted_card_count=omitted,
         coverage=CoverageDescriptorV1(
@@ -328,18 +335,23 @@ def _resolve_span(
             reason_codes=byte_sorted(tuple(reasons)),
         ),
     )
+    if isinstance(index, EvidenceCitationIndexV2):
+        return CoverageSpanResultV2.model_validate(
+            {**payload, "cards": cast(tuple[CoverageCardV2, ...], kept)}
+        )
+    return CoverageSpanResultV1.model_validate({**payload, "cards": kept})
 
 
 def _card(
     match_state: Literal["exact", "drifted", "candidate"],
     *,
-    citation: EvidenceCitationV1,
+    citation: CoverageCitationAny,
     occurrence: WorkingOccurrenceV1,
     at: AcceptedCoordinate,
     basis: DiscoveryMatchBasis | None = None,
     reason_codes: tuple[str, ...] = (),
-) -> CoverageCardV1:
-    return CoverageCardV1(
+) -> CoverageCardAny:
+    payload = dict(
         match_state=match_state,
         match_basis=basis,
         at=at,
@@ -355,21 +367,51 @@ def _card(
         dependent_claim_count=citation.dependent_claim_count,
         reason_codes=byte_sorted(reason_codes),
     )
+    if isinstance(citation, EvidenceCitationV2):
+        return CoverageCardV2.model_validate(
+            {**payload, "citation_associations": citation.citation_associations}
+        )
+    return CoverageCardV1.model_validate(payload)
 
 
-def resolve_coverage(
+def _drift_card(
+    *,
+    citation: CoverageCitationAny,
+    observed_commitment_digest: str,
+    source: LogicalSourceIdentityV1,
+    at: AcceptedCoordinate,
+) -> CoverageCardAny:
+    payload = dict(
+        match_state="drifted",
+        at=at,
+        claim_addresses=citation.claim_addresses,
+        capture_digests=citation.capture_digests,
+        expected_commitment_digest=citation.commitment_digest,
+        observed_commitment_digest=observed_commitment_digest,
+        accepted_source=source,
+        observed_source=source,
+        dereference_handle_digest=citation.dereference_handle_digest,
+        dependent_claim_count=citation.dependent_claim_count,
+        reason_codes=("commitment_superseded",),
+    )
+    if isinstance(citation, EvidenceCitationV2):
+        return CoverageCardV2.model_validate(
+            {**payload, "citation_associations": citation.citation_associations}
+        )
+    return CoverageCardV1.model_validate(payload)
+
+
+def _resolve_coverage_any(
     request: CoverageRequestV1,
     *,
-    index: EvidenceCitationIndexV1,
+    index: CoverageIndexAny,
     overlay: WorkingOccurrenceOverlayV1,
     access: CoverageAccessProfileV1,
-    manifest: CoverageManifestBodyV1 | None = None,
-) -> CoverageResultV1:
-    """Resolve every requested span against accepted state and the working snapshot.
-
-    Pure: the same request, index, overlay, access profile, and manifest always
-    produce byte-identical results, and producing them changes nothing anywhere.
-    """
+    manifest: CoverageManifestAny | None = None,
+) -> CoverageResultAny:
+    is_v2 = isinstance(index, EvidenceCitationIndexV2)
+    if is_v2 != isinstance(manifest, CoverageManifestBodyV2) and manifest is not None:
+        raise ValueError("coverage index and manifest versions must agree")
 
     index_digest = evidence_citation_index_digest(index)
     overlay_digest = working_occurrence_overlay_digest(overlay)
@@ -400,26 +442,22 @@ def resolve_coverage(
     reasons = {code for item in spans for code in item.coverage.reason_codes}
     truncated = any(item.coverage.truncated_facets for item in spans)
     withheld = any(item.coverage.omitted_for_access for item in spans)
+    manifest_digest = None
+    if isinstance(manifest, CoverageManifestBodyV2):
+        manifest_digest = coverage_manifest_digest_v2(manifest).tagged
+    elif manifest is not None:
+        manifest_digest = coverage_manifest_digest(manifest).tagged
 
-    return CoverageResultV1(
+    common = dict(
         at=request.at,
         instance_id=request.instance_id,
         index_digest=index_digest,
         overlay_digest=overlay_digest,
-        manifest_digest=(None if manifest is None else coverage_manifest_digest(manifest).tagged),
+        manifest_digest=manifest_digest,
         epoch=None if manifest is None else manifest.epoch,
         watcher_health="absent" if manifest is None else manifest.watcher_health,
         access_profile=access,
         scope=overlay.scope if manifest is None else manifest.scope.sources,
-        spans=spans,
-        summary=CoverageBatchSummaryV1(
-            exact=counts["exact"],
-            drifted=counts["drifted"],
-            candidate=counts["candidate"],
-            none=counts["none"],
-            returned_spans=len(spans),
-            omitted_card_count=sum(item.omitted_card_count for item in spans),
-        ),
         health=health,
         coverage=CoverageDescriptorV1(
             requested_facets=(COVERAGE_FACET,),
@@ -429,6 +467,74 @@ def resolve_coverage(
             reason_codes=byte_sorted(tuple(reasons)),
         ),
     )
+    summary = dict(
+        exact=counts["exact"],
+        drifted=counts["drifted"],
+        candidate=counts["candidate"],
+        none=counts["none"],
+        returned_spans=len(spans),
+        omitted_card_count=sum(item.omitted_card_count for item in spans),
+    )
+    if is_v2:
+        return CoverageResultV2.model_validate(
+            {
+                **common,
+                "spans": cast(tuple[CoverageSpanResultV2, ...], spans),
+                "summary": CoverageBatchSummaryV2.model_validate(summary),
+            }
+        )
+    return CoverageResultV1.model_validate(
+        {
+            **common,
+            "spans": spans,
+            "summary": CoverageBatchSummaryV1.model_validate(summary),
+        }
+    )
 
 
-__all__ = ["COVERAGE_FACET", "resolve_coverage"]
+def resolve_coverage(
+    request: CoverageRequestV1,
+    *,
+    index: EvidenceCitationIndexV1,
+    overlay: WorkingOccurrenceOverlayV1,
+    access: CoverageAccessProfileV1,
+    manifest: CoverageManifestBodyV1 | None = None,
+) -> CoverageResultV1:
+    """Resolve every requested span against accepted state and the working snapshot.
+
+    Pure: the same request, index, overlay, access profile, and manifest always
+    produce byte-identical results, and producing them changes nothing anywhere.
+    """
+
+    return _resolve_coverage_any(
+        request,
+        index=index,
+        overlay=overlay,
+        access=access,
+        manifest=manifest,
+    )
+
+
+def resolve_coverage_v2(
+    request: CoverageRequestV1,
+    *,
+    index: EvidenceCitationIndexV2,
+    overlay: WorkingOccurrenceOverlayV1,
+    access: CoverageAccessProfileV1,
+    manifest: CoverageManifestBodyV2 | None = None,
+) -> CoverageResultV2:
+    """Resolve association-native coverage through the same semantic pipeline."""
+
+    return cast(
+        CoverageResultV2,
+        _resolve_coverage_any(
+            request,
+            index=index,
+            overlay=overlay,
+            access=access,
+            manifest=manifest,
+        ),
+    )
+
+
+__all__ = ["COVERAGE_FACET", "resolve_coverage", "resolve_coverage_v2"]

@@ -26,8 +26,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from cruxible_core.playbill.captures import parse_capture_envelope
+from cruxible_core.playbill.captures import (
+    capture_contract_digest,
+    capture_contract_is_self_asserted,
+    parse_capture_contract,
+    parse_capture_envelope,
+)
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.claim_verdicts import observation_trust_grade
 from cruxible_core.playbill.claims import (
     AcceptedClaim,
     claim_artifact_digest,
@@ -42,24 +48,31 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageCardBudgetV1,
     CoverageRequestV1,
-    CoverageResultV1,
+    CoverageResultV2,
     LogicalSourceIdentityV1,
 )
 from cruxible_core.playbill.coverage.indexes import (
     CaptureCitationInputV1,
+    CaptureCitationInputV2,
     CoverageScanBudgetV1,
     EvidenceCitationIndexV1,
+    EvidenceCitationIndexV2,
     WorkingOccurrenceOverlayV1,
     build_evidence_citation_index,
+    build_evidence_citation_index_v2,
 )
 from cruxible_core.playbill.coverage.manifest import (
     COVERAGE_DIRECTORY,
     CoverageManifestBodyV1,
+    CoverageManifestBodyV2,
     coverage_manifest_body,
+    coverage_manifest_body_v2,
     load_coverage_manifest_file,
+    load_coverage_manifest_file_v2,
     write_coverage_manifest,
+    write_coverage_manifest_v2,
 )
-from cruxible_core.playbill.coverage.resolver import resolve_coverage
+from cruxible_core.playbill.coverage.resolver import resolve_coverage_v2
 from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
@@ -157,8 +170,65 @@ def build_accepted_evidence_index(
     )
 
 
+def build_accepted_evidence_index_v2(
+    instance: PlaybillInstance,
+    *,
+    at: PlaybillAcceptedCoordinate,
+) -> EvidenceCitationIndexV2:
+    """Rebuild the association-native index and its verifier-owned trust axis."""
+
+    listing = service_list_playbill_claims(instance, at=at, include_retired=True)
+    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
+    store = instance.body_store()
+    tree = instance.tree_at(at.git_oid)
+    contracts = {}
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not path.startswith("capture-contracts/"):
+            continue
+        contract = parse_capture_contract(tree[path], path=path)
+        contracts[capture_contract_digest(contract).tagged] = contract
+
+    claims: list[AcceptedClaim] = []
+    captures: dict[str, CaptureCitationInputV2] = {}
+    for view in listing.claims:
+        artifact = _claim_from_view(view)
+        path = view.envelope.get("path")
+        if not isinstance(path, str):
+            raise ProposalIntegrityError("Claim projection envelope has no path")
+        claims.append(
+            AcceptedClaim(
+                path=path,
+                claim=artifact,
+                statement_digest=claim_statement_digest(artifact.statement).tagged,
+                artifact_digest=claim_artifact_digest(artifact).tagged,
+            )
+        )
+        for digest in artifact.backing.capture_digests:
+            if digest in captures:
+                continue
+            envelope = parse_capture_envelope(store.read(digest, access=access))
+            contract = contracts.get(envelope.capture_contract_digest)
+            if contract is None:
+                raise ProposalIntegrityError("accepted CaptureContract is unavailable")
+            provenance = (
+                "self-asserted" if capture_contract_is_self_asserted(contract) else "daemon-fetched"
+            )
+            captures[digest] = CaptureCitationInputV2(
+                capture_digest=digest,
+                envelope=envelope,
+                access_class=COVERAGE_EVIDENCE_ACCESS_CLASS,
+                observation_trust=observation_trust_grade(provenance),
+            )
+
+    return build_evidence_citation_index_v2(
+        at=at,
+        captures=tuple(captures[digest] for digest in sorted(captures)),
+        claims=tuple(claims),
+    )
+
+
 def accepted_evidence_sources(
-    index: EvidenceCitationIndexV1,
+    index: EvidenceCitationIndexV1 | EvidenceCitationIndexV2,
 ) -> tuple[LogicalSourceIdentityV1, ...]:
     """The logical sources accepted evidence names, in canonical order."""
 
@@ -212,6 +282,40 @@ def _publish_manifest(
     return candidate
 
 
+def _publish_manifest_v2(
+    instance: PlaybillInstance,
+    *,
+    instance_id: str,
+    index: EvidenceCitationIndexV2,
+    overlay: WorkingOccurrenceOverlayV1,
+    access_profile: CoverageAccessProfileV1,
+) -> CoverageManifestBodyV2:
+    directory = instance.root / COVERAGE_DIRECTORY
+    existing = load_coverage_manifest_file_v2(directory)
+    epoch = 0 if existing is None else existing.body.epoch + 1
+    candidate = coverage_manifest_body_v2(
+        instance_id=instance_id,
+        index=index,
+        overlay=overlay,
+        access_profile=access_profile,
+        epoch=epoch,
+    )
+    if existing is not None:
+        previous = existing.body
+        unchanged = (
+            previous.instance_id == candidate.instance_id
+            and previous.at == candidate.at
+            and previous.index_digest == candidate.index_digest
+            and previous.overlay_digest == candidate.overlay_digest
+            and previous.scope == candidate.scope
+            and previous.access_profile == candidate.access_profile
+        )
+        if unchanged:
+            return previous
+    write_coverage_manifest_v2(directory, candidate)
+    return candidate
+
+
 def service_resolve_playbill_coverage(
     instance: PlaybillInstance,
     *,
@@ -220,7 +324,7 @@ def service_resolve_playbill_coverage(
     at: PlaybillAcceptedCoordinate | None = None,
     budget: CoverageCardBudgetV1 | None = None,
     scan_budget: CoverageScanBudgetV1 | None = None,
-) -> CoverageResultV1:
+) -> CoverageResultV2:
     """Resolve one batch of working-set observations against accepted state.
 
     The whole operation is: rebuild the index, hash the observed snapshot into
@@ -234,14 +338,14 @@ def service_resolve_playbill_coverage(
         raise ProposalIntegrityError("a coverage request must name at least one working source")
 
     coordinate = _resolve_coordinate(instance, at)
-    index = build_accepted_evidence_index(instance, at=coordinate)
+    index = build_accepted_evidence_index_v2(instance, at=coordinate)
     overlay = build_overlay(
         observations,
         wanted=index.wanted_selections(),
         budget=scan_budget,
     )
     access_profile = coverage_access_profile()
-    manifest = _publish_manifest(
+    manifest = _publish_manifest_v2(
         instance,
         instance_id=instance_id,
         index=index,
@@ -254,7 +358,7 @@ def service_resolve_playbill_coverage(
         spans=coverage_span_requests(observations),
         budget=budget or CoverageCardBudgetV1(),
     )
-    return resolve_coverage(
+    return resolve_coverage_v2(
         request,
         index=index,
         overlay=overlay,
@@ -267,6 +371,7 @@ __all__ = [
     "COVERAGE_ACCESS_PROFILE_ID",
     "accepted_evidence_sources",
     "build_accepted_evidence_index",
+    "build_accepted_evidence_index_v2",
     "coverage_access_profile",
     "service_resolve_playbill_coverage",
 ]

@@ -45,7 +45,7 @@ from cruxible_core.playbill.coverage.claude_code import (
     TOOL_KINDS,
     read_post_tool_use_event,
 )
-from cruxible_core.playbill.coverage.contracts import CoverageResultV1
+from cruxible_core.playbill.coverage.contracts import CoverageResultV2
 from cruxible_core.playbill.coverage.middleware import (
     CONFIG_RELATIVE_PATH,
     CoverageMiddlewareV1,
@@ -82,12 +82,12 @@ PREFIX_IDENTITY = "corpus.handbook.md"
 def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV1:
+    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV2:
         answered = client.resolve_playbill_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
         )
-        return CoverageResultV1.model_validate(answered.result)
+        return CoverageResultV2.model_validate(answered.result)
 
     return resolve
 

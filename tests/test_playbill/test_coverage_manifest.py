@@ -17,21 +17,28 @@ import pytest
 from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.coverage.contracts import CoverageWatcherHealthV1
 from cruxible_core.playbill.coverage.indexes import (
+    CaptureCitationInputV2,
     CoverageScanBudgetV1,
+    build_evidence_citation_index_v2,
     build_working_occurrence_overlay,
 )
 from cruxible_core.playbill.coverage.manifest import (
     COVERAGE_MANIFEST_FILE,
+    COVERAGE_MANIFEST_FILE_V2,
     CoverageManifestError,
     CoverageWorkingSetScopeV1,
     advance_coverage_manifest,
     coverage_manifest_body,
+    coverage_manifest_body_v2,
     coverage_manifest_digest,
     coverage_manifest_path,
+    coverage_manifest_path_v2,
     discard_coverage_manifest,
     load_coverage_manifest_file,
+    load_coverage_manifest_file_v2,
     render_coverage_manifest,
     write_coverage_manifest,
+    write_coverage_manifest_v2,
 )
 from cruxible_core.playbill.coverage.resolver import resolve_coverage
 from tests.test_playbill._coverage_support import (
@@ -92,6 +99,43 @@ def test_manifest_deletion_and_rebuild_reproduce_the_same_projection(tmp_path: P
     assert canonical_bytes(second.model_dump(mode="json")) == canonical_bytes(
         first.model_dump(mode="json")
     )
+
+
+def test_v2_manifest_discards_the_local_v1_cache_instead_of_migrating_it(
+    tmp_path: Path,
+) -> None:
+    legacy_capture = capture(HANDBOOK, CITED, with_handle=True)
+    legacy_index = index(legacy_capture)
+    snapshot = overlay(working(HANDBOOK, HANDBOOK_BODY), citations=legacy_index)
+    write_coverage_manifest(tmp_path, manifest(legacy_index, snapshot))
+
+    v2_capture = CaptureCitationInputV2.model_validate(
+        {
+            **legacy_capture.model_dump(mode="json"),
+            "tag": "playbill-coverage-capture-citation-input-v2",
+            "observation_trust": "proposer_observed",
+        }
+    )
+    v2_index = build_evidence_citation_index_v2(
+        at=legacy_index.at,
+        captures=(v2_capture,),
+    )
+    v2_body = coverage_manifest_body_v2(
+        instance_id=INSTANCE_ID,
+        index=v2_index,
+        overlay=snapshot,
+        access_profile=profile(),
+    )
+    written = write_coverage_manifest_v2(tmp_path, v2_body)
+    reloaded = load_coverage_manifest_file_v2(tmp_path)
+
+    assert written.name == COVERAGE_MANIFEST_FILE_V2
+    assert written == coverage_manifest_path_v2(tmp_path)
+    assert not coverage_manifest_path(tmp_path).exists()
+    assert load_coverage_manifest_file(tmp_path) is None
+    assert reloaded is not None
+    assert reloaded.body.tag == "playbill-coverage-manifest-v2"
+    assert reloaded.body.format_version == 2
 
 
 def test_publication_time_stays_outside_the_digest_preimage() -> None:

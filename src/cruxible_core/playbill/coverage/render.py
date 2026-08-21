@@ -49,8 +49,10 @@ from typing import Literal
 
 from cruxible_core.playbill.coverage.contracts import (
     CoverageCardV1,
-    CoverageResultV1,
+    CoverageCardV2,
+    CoverageResultAny,
     CoverageSpanResultV1,
+    CoverageSpanResultV2,
     LogicalSourceIdentityV1,
 )
 
@@ -77,7 +79,7 @@ def _reasons(codes: tuple[str, ...]) -> str:
     return "" if not codes else "  [" + " ".join(codes) + "]"
 
 
-def render_card(card: CoverageCardV1) -> str:
+def render_card(card: CoverageCardV1 | CoverageCardV2) -> str:
     """Render one card as a single greppable line.
 
     A drift line carries the whole §11.6.2 binding -- accepted Claim addresses,
@@ -101,6 +103,21 @@ def render_card(card: CoverageCardV1) -> str:
         parts.append("claims " + " ".join(item.artifact_path for item in card.claim_addresses))
     if card.capture_digests:
         parts.append("captures " + " ".join(card.capture_digests))
+    if isinstance(card, CoverageCardV2) and card.citation_associations:
+        parts.append(
+            "citations "
+            + " ".join(item.reference.citation_id for item in card.citation_associations)
+        )
+        parts.append(
+            "roles "
+            + " ".join(
+                (item.reference.role if hasattr(item.reference, "role") else "legacy_evidence")
+                for item in card.citation_associations
+            )
+        )
+        parts.append(
+            "trust " + " ".join(item.observation_trust for item in card.citation_associations)
+        )
     if card.dereference_handle_digest is not None:
         parts.append(f"handle {card.dereference_handle_digest}")
     parts.append(f"at generation {card.at.generation_root}")
@@ -109,7 +126,7 @@ def render_card(card: CoverageCardV1) -> str:
     return "  ".join(parts) + _reasons(card.reason_codes)
 
 
-def render_span(span: CoverageSpanResultV1) -> tuple[str, ...]:
+def render_span(span: CoverageSpanResultV1 | CoverageSpanResultV2) -> tuple[str, ...]:
     """Render one span: its cards, then whatever qualifies them.
 
     A `none` span inside a complete boundary renders nothing. That silence is
@@ -131,7 +148,7 @@ def render_span(span: CoverageSpanResultV1) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def render_batch_summary(result: CoverageResultV1) -> tuple[str, ...]:
+def render_batch_summary(result: CoverageResultAny) -> tuple[str, ...]:
     """The one summary an operation emits, in the §11.6.4 shape."""
 
     summary = result.summary
@@ -145,7 +162,7 @@ def render_batch_summary(result: CoverageResultV1) -> tuple[str, ...]:
     )
 
 
-def render_coverage_result(result: CoverageResultV1) -> tuple[str, ...]:
+def render_coverage_result(result: CoverageResultAny) -> tuple[str, ...]:
     """Render one whole coverage operation: annotations, then one summary."""
 
     lines: list[str] = []
@@ -155,7 +172,7 @@ def render_coverage_result(result: CoverageResultV1) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def render_coverage_manifest(result: CoverageResultV1) -> tuple[str, ...]:
+def render_coverage_manifest(result: CoverageResultAny) -> tuple[str, ...]:
     """Render the manifest a coverage answer was resolved against.
 
     Epoch, health, completeness, and scope, plus the digests that make the
