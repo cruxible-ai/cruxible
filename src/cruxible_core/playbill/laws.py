@@ -11,6 +11,7 @@ from cruxible_core.playbill.governance import AcceptanceLawCoordinate
 DOCUMENT_LAW_IDENTIFIER = "playbill.document.v1"
 CLAIM_TYPE_LAW_IDENTIFIER = "playbill.claim-type.v1"
 CLAIM_LAW_IDENTIFIER = "playbill.claim.v1"
+CLAIM_LAW_V2_IDENTIFIER = "playbill.claim.v2"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
 PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
 SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v1"
@@ -154,6 +155,10 @@ def _artifact_law_coordinate(identifier: str, artifact_tag: str) -> AcceptanceLa
     )
 
 
+CLAIM_LAW_V2 = _artifact_law_coordinate(
+    CLAIM_LAW_V2_IDENTIFIER,
+    "playbill-claim-v2",
+)
 PROVIDER_LAW = _artifact_law_coordinate(PROVIDER_LAW_IDENTIFIER, "playbill-provider-v1")
 SOURCE_ACQUISITION_POLICY_LAW = _artifact_law_coordinate(
     SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER,
@@ -255,6 +260,11 @@ CLAIM_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="claim",
     artifact_tag="playbill-claim-v1",
 )
+CLAIM_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW_V2,
+    artifact_kind="claim",
+    artifact_tag="playbill-claim-v2",
+)
 PROVIDER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROVIDER_LAW,
     artifact_kind="provider",
@@ -294,6 +304,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_ACCEPTANCE_LAW,
+        CLAIM_V2_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
@@ -320,6 +331,9 @@ __all__ = [
     "CLAIM_ACCEPTANCE_LAW",
     "CLAIM_LAW",
     "CLAIM_LAW_IDENTIFIER",
+    "CLAIM_LAW_V2",
+    "CLAIM_LAW_V2_IDENTIFIER",
+    "CLAIM_V2_ACCEPTANCE_LAW",
     "DOCUMENT_ACCEPTANCE_LAW",
     "DOCUMENT_LAW",
     "DOCUMENT_LAW_IDENTIFIER",

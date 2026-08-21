@@ -6,6 +6,8 @@ import pytest
 
 from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.laws import (
+    CLAIM_LAW,
+    CLAIM_LAW_V2,
     DOCUMENT_LAW,
     LINE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
@@ -41,6 +43,19 @@ def test_pc_d_procedure_and_line_laws_are_exact_historical_coordinates() -> None
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v1").coordinate
         == PROCEDURE_LAW
     )
+
+
+def test_claim_v1_and_v2_laws_remain_independently_replayable() -> None:
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-v1").coordinate
+        == CLAIM_LAW
+    )
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-v2").coordinate
+        == CLAIM_LAW_V2
+    )
+    assert CLAIM_LAW.identifier == "playbill.claim.v1"
+    assert CLAIM_LAW_V2.identifier == "playbill.claim.v2"
     assert (
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-line-v1").coordinate
         == LINE_LAW

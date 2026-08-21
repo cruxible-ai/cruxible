@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import claim_type_path, parse_claim_type
-from cruxible_core.playbill.claims import ClaimArtifact
+from cruxible_core.playbill.claims import ClaimArtifactAny
 from cruxible_core.playbill.coverage.contracts import CoverageManifestProfileV1
 from cruxible_core.playbill.coverage.indexes import evidence_citation_index_digest
 from cruxible_core.playbill.errors import ProposalIntegrityError
@@ -169,7 +169,7 @@ def _claim_type_cards(
     *,
     entries: Mapping[bytes, DiscoveryEntryV1],
     at: PlaybillAcceptedCoordinate,
-    claims: tuple[ClaimArtifact, ...],
+    claims: tuple[ClaimArtifactAny, ...],
     relations: RelationIndex,
 ) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
@@ -205,7 +205,7 @@ def _subject_profiles(
     *,
     entries: Mapping[bytes, DiscoveryEntryV1],
     at: PlaybillAcceptedCoordinate,
-    claims: tuple[ClaimArtifact, ...],
+    claims: tuple[ClaimArtifactAny, ...],
     relations: RelationIndex,
 ) -> dict[str, bytes]:
     cardinalities: dict[str, str] = {}

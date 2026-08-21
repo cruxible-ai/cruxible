@@ -35,6 +35,8 @@ from cruxible_core.playbill.claim_types import (
 from cruxible_core.playbill.claim_verdicts import ClaimVerdictResultV1
 from cruxible_core.playbill.claims import (
     ClaimArtifact,
+    ClaimArtifactAny,
+    ClaimArtifactV2,
     ClaimBacking,
     ClaimLawEvidenceV1,
     ClaimReferentContext,
@@ -326,7 +328,7 @@ def _public_claim(view: ClaimProjectionView) -> PlaybillClaimView:
     )
 
 
-def _claim_from_view(view: PlaybillClaimView) -> ClaimArtifact:
+def _claim_from_view(view: PlaybillClaimView) -> ClaimArtifactAny:
     path = view.envelope.get("path")
     if not isinstance(path, str):
         raise ProposalIntegrityError("Claim projection envelope has no path")
@@ -362,8 +364,11 @@ def _claim_from_view(view: PlaybillClaimView) -> ClaimArtifact:
         and isinstance(lifecycle, dict)
     ):
         raise ProposalIntegrityError("Claim projection lacks its complete canonical artifact")
-    return ClaimArtifact.model_validate(
+    artifact_format = view.envelope.get("format_tag")
+    model = ClaimArtifactV2 if artifact_format == "playbill-claim-v2" else ClaimArtifact
+    return model.model_validate(
         {
+            "artifact_format": artifact_format,
             "identity": {
                 "kind": "Claim",
                 "name": identity.removeprefix("Claim:"),
@@ -587,7 +592,7 @@ def _author_direct_claim(
 
     claim_id = authoring.claim_id or new_claim_id()
     path = claim_path(claim_id)
-    predecessor: ClaimArtifact | None = None
+    predecessor: ClaimArtifactAny | None = None
     predecessor_content = base_tree.get(path)
     if predecessor_content is not None:
         predecessor = parse_claim(predecessor_content, path=path)
@@ -1260,7 +1265,7 @@ def _subject_identity(tree: dict[str, bytes], path: str) -> str | None:
 def _claim_source_handles(
     instance: PlaybillInstance,
     *,
-    claim: ClaimArtifact,
+    claim: ClaimArtifactAny,
     coordinate: AcceptedProjectionCoordinate,
 ) -> tuple[SourceHandleV1, ...]:
     explanation = service_explain_playbill_claim(

@@ -31,6 +31,7 @@ def test_pc_e1_activates_procedure_line_run_input_and_promotion_tags() -> None:
         "playbill-capture-contract-v1",
         "playbill-capture-envelope-v1",
         "playbill-claim-v1",
+        "playbill-claim-v2",
         "playbill-exhaust-promotion-v1",
         "playbill-exhaust-run-input-v1",
         "playbill-landed-capture-run-input-v1",

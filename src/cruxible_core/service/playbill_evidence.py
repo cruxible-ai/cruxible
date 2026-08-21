@@ -33,8 +33,10 @@ from cruxible_core.playbill.claim_verdicts import (
 )
 from cruxible_core.playbill.claims import (
     AcceptedClaim,
-    ClaimArtifact,
+    ClaimArtifactAny,
+    ClaimArtifactV2,
     ClaimBacking,
+    ClaimBackingV2,
     ClaimLawEvidenceV1,
     SubjectClaimObject,
     claim_artifact_digest,
@@ -177,7 +179,7 @@ def _referent_digest(tree: Mapping[str, bytes], path: str) -> str:
 
 def _referent_digests(
     tree: Mapping[str, bytes],
-    claim: ClaimArtifact,
+    claim: ClaimArtifactAny,
 ) -> tuple[str, str | None]:
     subject_digest_value = _referent_digest(tree, claim.statement.subject.artifact_path)
     object_digest = (
@@ -250,7 +252,7 @@ def service_propose_claim_attestation(
     actor_id: str,
     proposal_name: str,
     timestamp: str,
-    competing_claims: tuple[ClaimArtifact, ...] = (),
+    competing_claims: tuple[ClaimArtifactAny, ...] = (),
     base: PlaybillAcceptedCoordinate | None = None,
 ) -> ClaimAttestationProposalV1:
     """Verify/store one inert signature and propose exact tested-statement backing."""
@@ -305,32 +307,43 @@ def service_propose_claim_attestation(
             provider = providers.get(provider_identity)
             if provider is not None:
                 pins[("provider", provider.identity.qualified)] = _provider_pin(provider)
+    new_capture_digests = set(attestation.capture_digests) - set(
+        accepted.claim.backing.capture_digests
+    )
+    if isinstance(accepted.claim, ClaimArtifactV2) and new_capture_digests:
+        raise ProposalIntegrityError(
+            "a v2 Claim must attach new attestation Captures through explicit citations"
+        )
+    backing_type = ClaimBackingV2 if isinstance(accepted.claim, ClaimArtifactV2) else ClaimBacking
+    backing_payload = {
+        "referent_context": accepted.claim.backing.referent_context.model_copy(
+            update={"observed_at": attestation.observed_at}
+        ),
+        "capture_digests": tuple(
+            sorted(
+                {
+                    *accepted.claim.backing.capture_digests,
+                    *attestation.capture_digests,
+                }
+            )
+        ),
+        "attestation_digests": tuple(
+            sorted(
+                {
+                    *accepted.claim.backing.attestation_digests,
+                    attestation_digest,
+                }
+            )
+        ),
+        "input_claim_digests": accepted.claim.backing.input_claim_digests,
+        "reducer_digest": accepted.claim.backing.reducer_digest,
+        "source_mappings": accepted.claim.backing.source_mappings,
+    }
+    if isinstance(accepted.claim, ClaimArtifactV2):
+        backing_payload["citations"] = accepted.claim.backing.citations
     successor = accepted.claim.model_copy(
         update={
-            "backing": ClaimBacking(
-                referent_context=accepted.claim.backing.referent_context.model_copy(
-                    update={"observed_at": attestation.observed_at}
-                ),
-                capture_digests=tuple(
-                    sorted(
-                        {
-                            *accepted.claim.backing.capture_digests,
-                            *attestation.capture_digests,
-                        }
-                    )
-                ),
-                attestation_digests=tuple(
-                    sorted(
-                        {
-                            *accepted.claim.backing.attestation_digests,
-                            attestation_digest,
-                        }
-                    )
-                ),
-                input_claim_digests=accepted.claim.backing.input_claim_digests,
-                reducer_digest=accepted.claim.backing.reducer_digest,
-                source_mappings=accepted.claim.backing.source_mappings,
-            ),
+            "backing": backing_type.model_validate(backing_payload),
             "pins": tuple(
                 sorted(
                     pins.values(),
