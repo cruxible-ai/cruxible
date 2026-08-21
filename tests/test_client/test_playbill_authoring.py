@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 
 from cruxible_client import CruxibleClient
+from cruxible_client.playbill_briefs import prepare_playbill_brief
 
 COORDINATE = {
     "tag": "playbill-accepted-coordinate-v1",
@@ -165,3 +166,24 @@ def test_client_speaks_frozen_insertion_confirm_and_abandon_requests() -> None:
         "observation": OBSERVATION,
     }
     assert json.loads(captured[1].content) == {"tag": "playbill-insertion-abandon-request-v1"}
+
+
+def test_prepare_brief_remains_an_ordinary_claim_payload() -> None:
+    subject = {
+        "tag": "playbill-semantic-address-v1",
+        "artifact_path": "subjects/work_item/wi-42.yaml",
+        "selector": {"scheme": "artifact-v1", "value": ""},
+    }
+
+    payload = prepare_playbill_brief(
+        subject=subject,
+        purpose="How should this be released?",
+        kind="guidance",
+        prose="Use the release checklist.",
+        rationale="Keep the release guidance governed.",
+    )
+
+    assert payload["tag"] == "playbill-claim-authoring-payload-v1"
+    assert payload["statement"]["predicate"] == "knowledge.brief"
+    assert payload["statement"]["qualifier"] is None
+    assert payload["statement"]["object"]["value"]["tag"] == ("playbill-knowledge-brief-value-v1")

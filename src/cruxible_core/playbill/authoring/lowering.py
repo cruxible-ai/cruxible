@@ -30,7 +30,12 @@ from cruxible_core.playbill.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_core.playbill.claim_types import claim_type_digest, claim_type_path, parse_claim_type
+from cruxible_core.playbill.claim_types import (
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+    render_claim_type,
+)
 from cruxible_core.playbill.claims import (
     CitationOrigin,
     CitationRole,
@@ -54,6 +59,12 @@ from cruxible_core.playbill.claims import (
 )
 from cruxible_core.playbill.compiler import projection_registry_for_compiler
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.knowledge_briefs import (
+    KNOWLEDGE_BRIEF_CLAIM_TYPE,
+    KNOWLEDGE_BRIEF_PREDICATE,
+    knowledge_brief_purpose_digest,
+    parse_knowledge_brief_value,
+)
 from cruxible_core.playbill.procedures.artifacts import (
     ProcedureArtifactV1,
     parse_procedure,
@@ -217,6 +228,13 @@ def _lower_claim(
     assert isinstance(payload, ClaimAuthoringPayloadV1)
     type_path = claim_type_path(payload.statement.predicate)
     type_content = base_tree.get(type_path)
+    candidate_base_tree = dict(base_tree)
+    installs_brief_type = (
+        type_content is None and payload.statement.predicate == KNOWLEDGE_BRIEF_PREDICATE
+    )
+    if installs_brief_type:
+        type_content = render_claim_type(KNOWLEDGE_BRIEF_CLAIM_TYPE)
+        candidate_base_tree[type_path] = type_content
     if type_content is None:
         _refuse(
             "playbill.authoring.claim_type_not_found",
@@ -236,6 +254,38 @@ def _lower_claim(
         base_tree, payload.statement.subject, descriptor=descriptor
     )
     statement_object = _exact_object(instance, payload.statement.object)
+    qualifier = payload.statement.qualifier
+    if payload.statement.predicate == KNOWLEDGE_BRIEF_PREDICATE:
+        if not isinstance(statement_object, LiteralClaimObject):
+            _refuse(
+                "playbill.authoring.knowledge_brief_object_invalid",
+                "statement.object",
+                "knowledge.brief requires its exact versioned literal value.",
+                repair_kind="replace_object",
+                repair_description="Supply a playbill-knowledge-brief-value-v1 literal.",
+            )
+        try:
+            brief = parse_knowledge_brief_value(statement_object.value)
+        except ValueError:
+            _refuse(
+                "playbill.authoring.knowledge_brief_value_invalid",
+                "statement.object.value",
+                "The Brief literal fails its frozen profile.",
+                repair_kind="replace_object",
+                repair_description="Supply a canonical playbill-knowledge-brief-value-v1.",
+            )
+        expected_qualifier = knowledge_brief_purpose_digest(brief.purpose)
+        if qualifier is not None and qualifier != expected_qualifier:
+            _refuse(
+                "playbill.authoring.knowledge_brief_qualifier_mismatch",
+                "statement.qualifier",
+                "The Brief qualifier differs from its purpose slot digest.",
+                repair_kind="omit_qualifier",
+                repair_description="Omit the qualifier so the coordinator derives it.",
+                replacement=None,
+            )
+        qualifier = expected_qualifier
+        statement_object = LiteralClaimObject(value=brief.model_dump(mode="json"))
     object_referent: tuple[ArtifactIdentity, str] | None = None
     if isinstance(statement_object, SubjectClaimObject):
         object_referent = _referent(base_tree, statement_object.address, descriptor=descriptor)
@@ -250,7 +300,7 @@ def _lower_claim(
         claim_type=claim_type.identity,
         claim_type_digest=claim_type_digest(claim_type).tagged,
         predicate=payload.statement.predicate,
-        qualifier=payload.statement.qualifier,
+        qualifier=qualifier,
         object=statement_object,
         role=payload.statement.role,
         effective_from=payload.statement.effective_from,
@@ -261,7 +311,9 @@ def _lower_claim(
             else None
         ),
     )
-    existing = _same_statement_claims(base_tree, statement)
+    existing = _same_statement_claims(candidate_base_tree, statement)
+    if claim_type.artifact_format == "playbill-claim-type-v2":
+        existing = tuple(item for item in existing if item.statement.qualifier == qualifier)
     expected = {item.identity.name for item in existing}
     supplied = {item.claim_id for item in payload.existing_claim_dispositions}
     if expected != supplied:
@@ -277,8 +329,8 @@ def _lower_claim(
     claim_id = intent.semantic_identity
     path = claim_path(claim_id)
     predecessor: ClaimArtifactAny | None = None
-    if path in base_tree:
-        predecessor = parse_claim(base_tree[path], path=path)
+    if path in candidate_base_tree:
+        predecessor = parse_claim(candidate_base_tree[path], path=path)
     elif payload.claim_ref is not None:
         _refuse(
             "playbill.authoring.claim_predecessor_not_found",
@@ -405,16 +457,20 @@ def _lower_claim(
             )
         ),
     )
-    candidate_tree = dict(base_tree)
+    candidate_tree = dict(candidate_base_tree)
     contract_member_path = capture_contract_path(contract.identity.name)
     contract_bytes = render_capture_contract(contract)
     claim_bytes = render_claim(claim)
     candidate_tree[contract_member_path] = contract_bytes
     candidate_tree[path] = claim_bytes
+    member_paths = {contract_member_path, path}
+    if installs_brief_type:
+        member_paths.add(type_path)
     changed = tuple(
         (member_path, candidate_tree[member_path])
         for member_path in sorted(
-            {contract_member_path, path}, key=lambda item: item.encode("utf-8")
+            member_paths,
+            key=lambda item: item.encode("utf-8"),
         )
         if base_tree.get(member_path) != candidate_tree[member_path]
     )

@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -33,17 +34,36 @@ from cruxible_core.playbill.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
+from cruxible_core.playbill.brief_health import (
+    KnowledgeBriefHealthEvaluator,
+    KnowledgeBriefHealthRequestV1,
+    KnowledgeBriefHealthResultV1,
+)
 from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import claim_type_path, parse_claim_type
-from cruxible_core.playbill.claims import ClaimArtifactAny
+from cruxible_core.playbill.claims import (
+    ClaimArtifactAny,
+    ClaimArtifactV2,
+    ClaimCitationV1,
+    LiteralClaimObject,
+    claim_path,
+    claim_statement_digest,
+)
 from cruxible_core.playbill.coverage.contracts import (
+    CoverageAccessProfileV1,
     CoverageManifestProfileV1,
     CoverageManifestProfileV2,
 )
 from cruxible_core.playbill.coverage.indexes import evidence_citation_index_digest
-from cruxible_core.playbill.errors import ProposalIntegrityError
+from cruxible_core.playbill.errors import PlaybillError, ProposalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.knowledge_briefs import (
+    KNOWLEDGE_BRIEF_PREDICATE,
+    KnowledgeBriefClaimRefV1,
+    KnowledgeBriefQueryRefV1,
+    parse_knowledge_brief_value,
+)
 from cruxible_core.playbill.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
@@ -76,9 +96,11 @@ from cruxible_core.playbill.service.documents import (
     service_list_playbill_documents,
 )
 from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
+from cruxible_core.playbill.source_references import SourceHandleV1
 from cruxible_core.playbill.subjects import parse_subject, subject_digest
 from cruxible_core.service.playbill_claims import (
     _claim_from_view,
+    service_explain_playbill_claim,
     service_list_playbill_claims,
 )
 from cruxible_core.service.playbill_coverage import (
@@ -90,7 +112,11 @@ from cruxible_core.service.playbill_discovery import (
     accepted_claim_types,
     build_accepted_discovery_vocabulary,
 )
-from cruxible_core.service.playbill_query import build_accepted_query_facts
+from cruxible_core.service.playbill_query import (
+    build_accepted_query_facts,
+    service_run_playbill_query,
+)
+from cruxible_core.temporal import parse_datetime
 
 FLOOR_FORMAT = "playbill-floor-export-v1"
 MANIFEST_PATH = "manifest.json"
@@ -223,6 +249,29 @@ class PlaybillProcedureFloorCardV1(_StrictFloorModel):
     hard_caps: ProcedureHardCapsV3
     governance: PlaybillProcedureGovernanceV1
     track_record: tuple[PlaybillProcedureTrackRecordEntryV1, ...]
+
+
+class PlaybillBriefFloorCardV1(_StrictFloorModel):
+    """Point-in-time human/agent card; never an editable canonical text plane."""
+
+    tag: Literal["playbill-knowledge-brief-floor-card-v1"] = (
+        "playbill-knowledge-brief-floor-card-v1"
+    )
+    identity: ArtifactIdentity
+    path: str
+    statement_digest: str
+    accepted_coordinate: PlaybillAcceptedCoordinate
+    subject: SemanticAddress
+    purpose: str
+    kind: Literal["brief", "guidance", "faq"]
+    prose: str
+    claim_refs: tuple[KnowledgeBriefClaimRefV1, ...]
+    query_refs: tuple[KnowledgeBriefQueryRefV1, ...]
+    health: KnowledgeBriefHealthResultV1
+    health_receipt_digest: str
+    slot_state: Literal["accepted", "conflicted"]
+    citations: tuple[ClaimCitationV1, ...]
+    source_handles: tuple[SourceHandleV1, ...]
 
 
 def _resolve_coordinate(
@@ -486,6 +535,135 @@ def _procedure_cards(
     return files
 
 
+def _floor_evaluation_time(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> datetime:
+    generation = next(
+        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
+    )
+    if generation.record is None:
+        raise ProposalIntegrityError("a floor containing Briefs requires an accepted timestamp")
+    parsed = parse_datetime(generation.record.candidate.timestamp)
+    if parsed is None:  # pragma: no cover - accepted candidate invariant
+        raise ProposalIntegrityError("accepted candidate timestamp is malformed")
+    return parsed
+
+
+def _resolved_brief_prose(
+    instance: PlaybillInstance,
+    *,
+    prose: str,
+    query_refs: tuple[KnowledgeBriefQueryRefV1, ...],
+    at: PlaybillAcceptedCoordinate,
+    evaluation_time: datetime,
+) -> str:
+    rendered = prose
+    for ref in query_refs:
+        placeholder = "{" + ref.query_id + "." + ref.render_field + "}"
+        try:
+            run = service_run_playbill_query(
+                instance,
+                name=ref.query_id,
+                evaluation_time=evaluation_time,
+                parameters=ref.parameters,
+                at=at,
+            )
+            values = tuple(
+                field.value
+                for row in run.result.rows
+                for field in row.fields
+                if field.name == ref.render_field and field.state == "present"
+            )
+            replacement = (
+                "<query-refused>"
+                if run.result.verdict == "refused"
+                else canonical_bytes(values[0] if len(values) == 1 else list(values)).decode(
+                    "utf-8"
+                )
+            )
+        except PlaybillError:
+            replacement = "<query-refused>"
+        rendered = rendered.replace(placeholder, replacement)
+    return rendered
+
+
+def _brief_cards(
+    instance: PlaybillInstance,
+    *,
+    claims: tuple[ClaimArtifactAny, ...],
+    coordinate: AcceptedProjectionCoordinate,
+    at: PlaybillAcceptedCoordinate,
+) -> dict[str, bytes]:
+    briefs = tuple(
+        claim
+        for claim in claims
+        if claim.lifecycle.state == "live"
+        and claim.statement.predicate == KNOWLEDGE_BRIEF_PREDICATE
+        and isinstance(claim, ClaimArtifactV2)
+        and isinstance(claim.statement.object, LiteralClaimObject)
+    )
+    if not briefs:
+        return {}
+    evaluation_time = _floor_evaluation_time(instance, coordinate)
+    access_profile = CoverageAccessProfileV1(
+        profile_id="floor-export",
+        permitted_access_classes=("instance", "public"),
+    )
+    evaluator = KnowledgeBriefHealthEvaluator(instance)
+    files: dict[str, bytes] = {}
+    for claim in briefs:
+        if not isinstance(claim.statement.object, LiteralClaimObject):  # pragma: no cover
+            raise ProposalIntegrityError("Brief candidate lost its literal object")
+        value = parse_knowledge_brief_value(claim.statement.object.value)
+        statement_digest = claim_statement_digest(claim.statement).tagged
+        evaluation = evaluator.evaluate(
+            KnowledgeBriefHealthRequestV1(
+                brief_statement_digest=statement_digest,
+                accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+                evaluation_time=evaluation_time,
+                access_profile=access_profile,
+            ),
+        )
+        explanation = service_explain_playbill_claim(
+            instance,
+            identity=claim.identity.qualified,
+            at=at,
+            evaluation_time=evaluation_time,
+        )
+        slot_count = sum(
+            item.statement.subject == claim.statement.subject
+            and item.statement.predicate == claim.statement.predicate
+            and item.statement.qualifier == claim.statement.qualifier
+            for item in briefs
+        )
+        card = PlaybillBriefFloorCardV1(
+            identity=claim.identity,
+            path=claim_path(claim.identity.name),
+            statement_digest=statement_digest,
+            accepted_coordinate=at,
+            subject=claim.statement.subject,
+            purpose=value.purpose,
+            kind=value.kind,
+            prose=_resolved_brief_prose(
+                instance,
+                prose=value.prose,
+                query_refs=value.query_refs,
+                at=at,
+                evaluation_time=evaluation_time,
+            ),
+            claim_refs=value.claim_refs,
+            query_refs=value.query_refs,
+            health=evaluation.result,
+            health_receipt_digest=evaluation.receipt.receipt_digest,
+            slot_state="conflicted" if slot_count > 1 else "accepted",
+            citations=claim.backing.citations,
+            source_handles=explanation.source_handles,
+        )
+        files[f"briefs/{claim.identity.name}.card.json"] = _render(card.model_dump(mode="json"))
+    return files
+
+
 def service_export_playbill_floor(
     instance: PlaybillInstance,
     *,
@@ -533,6 +711,14 @@ def service_export_playbill_floor(
         _subject_profiles(tree, entries=entries, at=accepted, claims=claims, relations=relations)
     )
     files.update(_procedure_cards(instance, tree=tree, coordinate=coordinate, at=accepted))
+    files.update(
+        _brief_cards(
+            instance,
+            claims=claims,
+            coordinate=coordinate,
+            at=accepted,
+        )
+    )
     files.update(_documents(instance, at=accepted, access=body_access))
     files[COVERAGE_MANIFEST_PATH] = _render(
         _coverage_manifest(instance, at=accepted).model_dump(mode="json")
@@ -571,5 +757,6 @@ __all__ = [
     "PlaybillProcedureGovernanceV1",
     "PlaybillProcedureInputContractV1",
     "PlaybillProcedureTrackRecordEntryV1",
+    "PlaybillBriefFloorCardV1",
     "service_export_playbill_floor",
 ]

@@ -95,6 +95,7 @@ from cruxible_core.playbill.claim_types import (
     AcceptedClaimType,
     ClaimType,
     ClaimTypeFormatError,
+    claim_type_accepts_subject,
     claim_type_digest,
     evaluate_claim_type_law,
     parse_claim_type,
@@ -1304,7 +1305,7 @@ def _claim_admission_evaluations(
                 (
                     item
                     for item in claim_types.values()
-                    if subject.shell.subject_kind in item.claim_type.allowed_subject_kinds
+                    if claim_type_accepts_subject(item.claim_type, subject.shell.subject_kind)
                     and _policy_has_requirements(item.claim_type.admission_policy)
                 ),
                 key=lambda item: item.claim_type.identity.qualified.encode("utf-8"),
@@ -1317,7 +1318,7 @@ def _claim_admission_evaluations(
                 {
                     item.claim_type.predicate
                     for item in claim_types.values()
-                    if subject.shell.subject_kind in item.claim_type.allowed_subject_kinds
+                    if claim_type_accepts_subject(item.claim_type, subject.shell.subject_kind)
                 },
                 key=lambda item: item.encode("utf-8"),
             )

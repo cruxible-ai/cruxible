@@ -5,9 +5,16 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
-from typing import Callable, Literal
+from typing import Any, Callable, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from cruxible_core.playbill.artifacts import (
     ArtifactAuthority,
@@ -38,8 +45,25 @@ class _StrictClaimTypeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+class ClaimSubjectScopeV1(_StrictClaimTypeModel):
+    tag: Literal["playbill-claim-subject-scope-v1"] = "playbill-claim-subject-scope-v1"
+    kind: Literal["any_existing_subject"] = "any_existing_subject"
+
+
+class ClaimSlotPolicyV1(_StrictClaimTypeModel):
+    tag: Literal["playbill-claim-slot-policy-v1"] = "playbill-claim-slot-policy-v1"
+    kind: Literal["literal_field_digest"] = "literal_field_digest"
+    json_pointer: Literal["/purpose"] = "/purpose"
+    digest_domain: Literal["playbill-knowledge-brief-purpose-v1"] = (
+        "playbill-knowledge-brief-purpose-v1"
+    )
+    per_slot_cardinality: Literal[1] = 1
+
+
 class ClaimType(_StrictClaimTypeModel):
-    artifact_format: Literal["playbill-claim-type-v1"] = "playbill-claim-type-v1"
+    artifact_format: Literal["playbill-claim-type-v1", "playbill-claim-type-v2"] = (
+        "playbill-claim-type-v1"
+    )
     identity: ArtifactIdentity
     predicate: str
     allowed_subject_kinds: tuple[str, ...]
@@ -57,6 +81,16 @@ class ClaimType(_StrictClaimTypeModel):
     authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
+    subject_scope: ClaimSubjectScopeV1 | None = None
+    slot_policy: ClaimSlotPolicyV1 | None = None
+
+    @model_serializer(mode="wrap")
+    def _versioned_wire(self, handler: Any) -> dict[str, object]:
+        payload = cast(dict[str, object], handler(self))
+        if self.artifact_format == "playbill-claim-type-v1":
+            payload.pop("subject_scope", None)
+            payload.pop("slot_policy", None)
+        return payload
 
     @field_validator("predicate")
     @classmethod
@@ -85,9 +119,21 @@ class ClaimType(_StrictClaimTypeModel):
             raise ValueError("ClaimType identity must equal ClaimType:<predicate>")
         # Reuse the deliberately policy-free PC-A1 validator so the final wire
         # cannot drift from the reviewed structural surface.
+        if self.artifact_format == "playbill-claim-type-v1":
+            if self.subject_scope is not None or self.slot_policy is not None:
+                raise ValueError("ClaimType v1 cannot carry v2 subject or slot policy")
+            structural_subject_kinds = self.allowed_subject_kinds
+        else:
+            if self.subject_scope is None or self.slot_policy is None:
+                raise ValueError("ClaimType v2 requires subject-scope and slot-policy contracts")
+            if self.allowed_subject_kinds:
+                raise ValueError("a v2 any-subject scope replaces finite allowed_subject_kinds")
+            if self.cardinality != "many":
+                raise ValueError("a slotted ClaimType v2 has many slots")
+            structural_subject_kinds = ("semantic.subject",)
         ClaimTypeStructure(
             predicate=self.predicate,
-            allowed_subject_kinds=self.allowed_subject_kinds,
+            allowed_subject_kinds=structural_subject_kinds,
             object_kind=self.object_kind,
             literal_schema=self.literal_schema,
             allowed_object_subject_kinds=self.allowed_object_subject_kinds,
@@ -101,9 +147,14 @@ class ClaimType(_StrictClaimTypeModel):
 
     @property
     def structure(self) -> ClaimTypeStructure:
+        subject_kinds = (
+            ("semantic.subject",)
+            if self.artifact_format == "playbill-claim-type-v2"
+            else self.allowed_subject_kinds
+        )
         return ClaimTypeStructure(
             predicate=self.predicate,
-            allowed_subject_kinds=self.allowed_subject_kinds,
+            allowed_subject_kinds=subject_kinds,
             object_kind=self.object_kind,
             literal_schema=self.literal_schema,
             allowed_object_subject_kinds=self.allowed_object_subject_kinds,
@@ -131,7 +182,11 @@ def validate_claim_type_path(claim_type: ClaimType, path: str) -> str:
 
 
 def render_claim_type(claim_type: ClaimType) -> bytes:
-    return canonical_bytes(claim_type.model_dump(mode="json")) + b"\n"
+    payload = claim_type.model_dump(mode="json")
+    if claim_type.artifact_format == "playbill-claim-type-v1":
+        payload.pop("subject_scope", None)
+        payload.pop("slot_policy", None)
+    return canonical_bytes(payload) + b"\n"
 
 
 def parse_claim_type(content: bytes, *, path: str) -> ClaimType:
@@ -139,13 +194,16 @@ def parse_claim_type(content: bytes, *, path: str) -> ClaimType:
         payload = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ClaimTypeFormatError("ClaimType is not strict JSON") from exc
-    if not isinstance(payload, dict) or payload.get("artifact_format") != "playbill-claim-type-v1":
+    if not isinstance(payload, dict) or payload.get("artifact_format") not in {
+        "playbill-claim-type-v1",
+        "playbill-claim-type-v2",
+    }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise ClaimTypeFormatError(f"unsupported ClaimType artifact format: {declared!r}")
     try:
         claim_type = ClaimType.model_validate(payload)
     except ValidationError as exc:
-        raise ClaimTypeFormatError("ClaimType failed strict v1 validation") from exc
+        raise ClaimTypeFormatError("ClaimType failed strict versioned validation") from exc
     if render_claim_type(claim_type) != content:
         raise ClaimTypeFormatError("ClaimType is not in canonical wire form")
     validate_claim_type_path(claim_type, path)
@@ -153,6 +211,17 @@ def parse_claim_type(content: bytes, *, path: str) -> ClaimType:
 
 
 def _claim_type_digest_v1(claim_type: ClaimType) -> ArtifactDigest:
+    payload = claim_type.model_dump(mode="json")
+    payload.pop("subject_scope", None)
+    payload.pop("slot_policy", None)
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-envelope-v1",
+        payload,
+    )
+
+
+def _claim_type_digest_v2(claim_type: ClaimType) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
@@ -162,11 +231,39 @@ def _claim_type_digest_v1(claim_type: ClaimType) -> ArtifactDigest:
 
 CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
     "playbill-claim-type-v1": _claim_type_digest_v1,
+    "playbill-claim-type-v2": _claim_type_digest_v2,
 }
 
 
 def claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
     return CLAIM_TYPE_DIGEST_FUNCTIONS[claim_type.artifact_format](claim_type)
+
+
+def claim_type_accepts_subject(claim_type: ClaimType, subject_kind: str) -> bool:
+    if claim_type.artifact_format == "playbill-claim-type-v2":
+        return (
+            claim_type.subject_scope is not None
+            and claim_type.subject_scope.kind == "any_existing_subject"
+        )
+    return subject_kind in claim_type.allowed_subject_kinds
+
+
+def claim_type_projection_structure(claim_type: ClaimType) -> dict[str, object]:
+    """Project v2 structure without treating JSON-Schema `$` keys as fact wrappers."""
+
+    structure = claim_type.structure.model_dump(mode="json")
+    if claim_type.artifact_format == "playbill-claim-type-v1":
+        return structure
+    structure["literal_schema"] = canonical_bytes(claim_type.literal_schema or {}).decode("utf-8")
+    structure["subject_scope"] = (
+        None
+        if claim_type.subject_scope is None
+        else claim_type.subject_scope.model_dump(mode="json")
+    )
+    structure["slot_policy"] = (
+        None if claim_type.slot_policy is None else claim_type.slot_policy.model_dump(mode="json")
+    )
+    return structure
 
 
 class AcceptedClaimType(_StrictClaimTypeModel):
@@ -235,6 +332,21 @@ def evaluate_claim_type_law(
     accepted_artifacts: Mapping[str, tuple[ArtifactIdentity, str]] | None = None,
 ) -> ClaimTypeLawResult:
     """Evaluate exact path, lifecycle, authority, and digest-pinned dependencies."""
+
+    if claim_type.artifact_format == "playbill-claim-type-v2":
+        from cruxible_core.playbill.knowledge_briefs import KNOWLEDGE_BRIEF_CLAIM_TYPE
+
+        if claim_type != KNOWLEDGE_BRIEF_CLAIM_TYPE:
+            return ClaimTypeLawResult(
+                verdict="refused",
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.claim_type.v2_profile_unregistered",
+                        "ClaimType v2 is reserved for the exact built-in knowledge.brief profile.",
+                        path=path,
+                    ),
+                ),
+            )
 
     try:
         validate_claim_type_path(claim_type, path)
@@ -376,10 +488,14 @@ __all__ = [
     "AcceptedClaimType",
     "CLAIM_TYPE_DIGEST_FUNCTIONS",
     "ClaimType",
+    "ClaimSlotPolicyV1",
+    "ClaimSubjectScopeV1",
     "ClaimTypeFormatError",
     "ClaimTypeLawResult",
     "claim_type_digest",
+    "claim_type_accepts_subject",
     "claim_type_path",
+    "claim_type_projection_structure",
     "evaluate_claim_type_law",
     "parse_claim_type",
     "render_claim_type",

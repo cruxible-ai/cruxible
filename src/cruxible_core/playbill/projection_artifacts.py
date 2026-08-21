@@ -28,6 +28,7 @@ from cruxible_core.playbill.cas import BodyAccessContext, BodyProjectionProtocol
 from cruxible_core.playbill.claim_types import (
     ClaimTypeFormatError,
     claim_type_digest,
+    claim_type_projection_structure,
     parse_claim_type,
 )
 from cruxible_core.playbill.documents import document_digest, parse_document
@@ -830,7 +831,9 @@ def parse_projection_tree(
                     (
                         ProjectionFact(
                             schema_id="playbill.claim_type.identity",
-                            schema_version=1,
+                            schema_version=(
+                                2 if claim_type.artifact_format == "playbill-claim-type-v2" else 1
+                            ),
                             subject_identity=identity,
                             fact_key="predicate_contract",
                             value={
@@ -840,7 +843,7 @@ def parse_projection_tree(
                                 "artifact_digest": {"$digest": artifact_digest},
                                 "identity": claim_type.identity.model_dump(mode="json"),
                                 "input_digest": {"$digest": input_digest},
-                                "structure": claim_type.structure.model_dump(mode="json"),
+                                "structure": claim_type_projection_structure(claim_type),
                             },
                         ),
                         ProjectionFact(

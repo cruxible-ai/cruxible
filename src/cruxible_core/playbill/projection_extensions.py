@@ -430,8 +430,21 @@ def playbill_claim_type_extension_registry() -> ProjectionExtensionRegistry:
             "playbill.claim_type.references",
         )
     )
+    claim_type_v2 = (
+        ProjectionFactDeclaration(
+            schema_id="playbill.claim_type.identity",
+            schema_version=2,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        ),
+    )
     return ProjectionExtensionRegistry(
-        (*prior.declarations("semantic"), *claim_type, *prior.declarations("presentation"))
+        (
+            *prior.declarations("semantic"),
+            *claim_type,
+            *claim_type_v2,
+            *prior.declarations("presentation"),
+        )
     )
 
 

@@ -44,7 +44,11 @@ from cruxible_core.playbill.claim_attestations import (
     verify_claim_attestation,
 )
 from cruxible_core.playbill.claim_type_structure import ClaimRole
-from cruxible_core.playbill.claim_types import AcceptedClaimType, ClaimType
+from cruxible_core.playbill.claim_types import (
+    AcceptedClaimType,
+    ClaimType,
+    claim_type_accepts_subject,
+)
 from cruxible_core.playbill.claim_verdicts import (
     CaptureVerdictEvidenceV1,
     ClaimVerdictResultV1,
@@ -976,7 +980,7 @@ def evaluate_claim_law(
             "The Claim subject does not resolve to an exact Subject shell.",
             path=path,
         )
-    if subject.semantic_kind not in contract.allowed_subject_kinds:
+    if not claim_type_accepts_subject(contract, subject.semantic_kind):
         return _diagnostic(
             "playbill.claim.subject_kind_forbidden",
             "The Claim subject kind is not admitted by its ClaimType.",
@@ -1015,6 +1019,27 @@ def evaluate_claim_law(
                 "The Claim literal fails its exact ClaimType schema.",
                 path=path,
             )
+        if statement.predicate == "knowledge.brief":
+            from cruxible_core.playbill.knowledge_briefs import (
+                KnowledgeBriefFormatError,
+                knowledge_brief_purpose_digest,
+                parse_knowledge_brief_value,
+            )
+
+            try:
+                brief = parse_knowledge_brief_value(statement.object.value)
+            except KnowledgeBriefFormatError:
+                return _diagnostic(
+                    "playbill.claim.knowledge_brief_value_invalid",
+                    "The Brief literal fails its frozen profile law.",
+                    path=path,
+                )
+            if statement.qualifier != knowledge_brief_purpose_digest(brief.purpose):
+                return _diagnostic(
+                    "playbill.claim.knowledge_brief_slot_mismatch",
+                    "The Brief statement qualifier differs from its purpose slot digest.",
+                    path=path,
+                )
         if claim.backing.referent_context.object_content_digest is not None:
             return _diagnostic(
                 "playbill.claim.object_context_unexpected",
