@@ -9,19 +9,29 @@ that never reads as an absence.
 
 from __future__ import annotations
 
+from cruxible_core.playbill.artifacts import ArtifactIdentity
+from cruxible_core.playbill.claims import (
+    build_claim_citation,
+    claim_path,
+    claim_statement_address,
+)
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageBatchSummaryV1,
     CoverageCardBudgetV1,
+    CoverageCardV2,
+    CoverageClaimCitationV2,
     CoverageRequestV1,
     CoverageResultV1,
     CoverageSpanRequestV1,
     CoverageSpanResultV1,
     LogicalSourceIdentityV1,
+    occurrence_identity_digest,
 )
 from cruxible_core.playbill.coverage.render import (
     BATCH_SUMMARY_PREFIX,
     render_batch_summary,
+    render_card,
     render_coverage_manifest,
     render_coverage_result,
 )
@@ -200,6 +210,80 @@ def test_a_drifted_card_names_the_accepted_claim_coordinate_and_both_commitments
     # earn a line of its own.
     assert "Playbill coverage: 0 exact, 1 drifted, 0 candidates, 1 none" in lines
     assert SCRATCH.identity not in "\n".join(lines)
+
+
+def _associated_v2_card(*, role: str, origin: str) -> CoverageCardV2:
+    captured = capture(HANDBOOK, CITED, name=f"{role}-{origin}")
+    identity = ArtifactIdentity(kind="Claim", name="CLM-" + "7a" * 16)
+    citation = build_claim_citation(
+        identity,
+        capture_digest=captured.capture_digest,
+        role=role,  # type: ignore[arg-type]
+        origin=origin,  # type: ignore[arg-type]
+    )
+    address = claim_statement_address(claim_path(identity.name))
+    return CoverageCardV2(
+        match_state="exact",
+        at=coordinate(),
+        claim_addresses=(address,),
+        capture_digests=(captured.capture_digest,),
+        expected_commitment_digest=sha256(CITED),
+        observed_commitment_digest=sha256(CITED),
+        accepted_source=HANDBOOK,
+        observed_source=HANDBOOK,
+        occurrence_identity_digest=occurrence_identity_digest(
+            source=HANDBOOK,
+            observed_commitment_digest=sha256(CITED),
+            ordinal=0,
+        ),
+        citation_associations=(
+            CoverageClaimCitationV2(
+                claim_address=address,
+                capture_digest=captured.capture_digest,
+                reference=citation,
+                observation_trust="proposer_observed",
+            ),
+        ),
+    )
+
+
+def test_only_explicit_self_published_copy_association_gets_the_publication_variant() -> None:
+    published = _associated_v2_card(role="copy", origin="self_published")
+    self_source = _associated_v2_card(role="copy", origin="self_source")
+    published_evidence = _associated_v2_card(role="evidence", origin="self_published")
+
+    rendered = render_card(published)
+
+    assert published.is_self_published_copy is True
+    assert "published copy" in rendered
+    assert "roles copy" in rendered
+    assert "origins self_published" in rendered
+    assert "not independent evidence" in rendered
+    assert self_source.is_self_published_copy is False
+    assert "published copy" not in render_card(self_source)
+    assert published_evidence.is_self_published_copy is False
+    assert "published copy" not in render_card(published_evidence)
+
+
+def test_v2_drift_variant_keeps_association_and_names_both_commitments() -> None:
+    exact = _associated_v2_card(role="copy", origin="self_published")
+    changed = sha256(b"changed publication bytes")
+    drifted = CoverageCardV2.model_validate(
+        {
+            **exact.model_dump(mode="json"),
+            "match_state": "drifted",
+            "observed_commitment_digest": changed,
+            "occurrence_identity_digest": None,
+            "reason_codes": ("commitment_superseded",),
+        }
+    )
+
+    rendered = render_card(drifted)
+
+    assert rendered.startswith("drifted  ")
+    assert f"expected {sha256(CITED)}" in rendered
+    assert f"observed {changed}" in rendered
+    assert "published copy" in rendered
 
 
 # -- clipped candidates are always reported --------------------------------

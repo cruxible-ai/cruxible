@@ -104,6 +104,8 @@ def render_card(card: CoverageCardV1 | CoverageCardV2) -> str:
     if card.capture_digests:
         parts.append("captures " + " ".join(card.capture_digests))
     if isinstance(card, CoverageCardV2) and card.citation_associations:
+        if card.is_self_published_copy:
+            parts.append("published copy")
         parts.append(
             "citations "
             + " ".join(item.reference.citation_id for item in card.citation_associations)
@@ -116,8 +118,17 @@ def render_card(card: CoverageCardV1 | CoverageCardV2) -> str:
             )
         )
         parts.append(
+            "origins "
+            + " ".join(
+                (item.reference.origin if hasattr(item.reference, "origin") else "legacy")
+                for item in card.citation_associations
+            )
+        )
+        parts.append(
             "trust " + " ".join(item.observation_trust for item in card.citation_associations)
         )
+        if card.is_self_published_copy:
+            parts.append("not independent evidence")
     if card.dereference_handle_digest is not None:
         parts.append(f"handle {card.dereference_handle_digest}")
     parts.append(f"at generation {card.at.generation_root}")

@@ -8,6 +8,28 @@
   "/api/v1/server/restart": {
     "POST": "ServerRestartResult"
   },
+  "/api/v1/{instance_id}/playbill/authoring/compile": {
+    "POST": "PlaybillAuthoringPreflightResult"
+  },
+  "/api/v1/{instance_id}/playbill/authoring/intents": {
+    "GET": "PlaybillAuthoringIntentList",
+    "POST": "PlaybillAuthoringIntentView"
+  },
+  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}": {
+    "GET": "PlaybillAuthoringIntentView"
+  },
+  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight": {
+    "POST": "PlaybillAuthoringPreflightResult"
+  },
+  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/resume": {
+    "GET": "PlaybillAuthoringIntentView"
+  },
+  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/status": {
+    "GET": "PlaybillCandidateStatus"
+  },
+  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit": {
+    "POST": "PlaybillAuthoringSubmitResult"
+  },
   "/api/v1/{instance_id}/playbill/bodies": {
     "POST": "PlaybillCasObjectResult"
   },

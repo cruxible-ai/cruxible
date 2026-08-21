@@ -82,6 +82,22 @@ MCP receives canonical path-free bundles.
 A proposal is not accepted state. A Claim's verdict is computed at read time
 from accepted law evidence, never carried forward from acceptance.
 
+## Authoring intents
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_authoring_create` | Create or recover a durable authoring intent | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_get` | Read one authoring intent | `READ_ONLY` |
+| `cruxible_playbill_authoring_resume` | Return an intent's durable continuation | `READ_ONLY` |
+| `cruxible_playbill_authoring_list_pending` | List the caller's pending intents | `READ_ONLY` |
+| `cruxible_playbill_authoring_compile` | Create or update an intent and preflight it | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
+
+The coordinator mints every identity, digest, base, timestamp, and proposal reference.
+It reports approval conditions but never obtains or impersonates an approval.
+
 ## Queries, discovery, and the floor
 
 | Tool | Purpose | Permission |

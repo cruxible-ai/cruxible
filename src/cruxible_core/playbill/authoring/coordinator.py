@@ -95,10 +95,15 @@ class AuthoringIntentCoordinator:
         return self.get(intent_id, actor=actor)
 
     def list_pending(self, *, actor: AuthenticatedActor) -> AuthoringIntentListV1:
+        reduced = tuple(
+            intent.model_copy(update={"candidate_status": self._reduce_status(intent)})
+            for intent in self.store.list_pending(actor_id=actor.actor_id)
+        )
         return AuthoringIntentListV1(
             intents=tuple(
-                intent.model_copy(update={"candidate_status": self._reduce_status(intent)})
-                for intent in self.store.list_pending(actor_id=actor.actor_id)
+                intent
+                for intent in reduced
+                if intent.candidate_status.state not in {"accepted", "superseded", "terminal"}
             )
         )
 

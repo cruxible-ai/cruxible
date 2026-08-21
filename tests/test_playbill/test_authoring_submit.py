@@ -69,6 +69,7 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     assert accepted.state == "accepted"
     assert accepted.accepted_generation == activated.accepted_coordinate
     assert coordinator.resume(intent.intent_id, actor=actor).intent.candidate_status == accepted
+    assert coordinator.list_pending(actor=actor).intents == ()
 
 
 def test_submit_response_loss_recovers_the_same_proposal(tmp_path: Path) -> None:

@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
+from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.models import ProcedureAuthoringPayloadV1
+from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.service.documents import (
+    PlaybillAcceptedCoordinate,
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
 from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
 )
@@ -14,6 +21,7 @@ from cruxible_core.service.playbill_floor import (
     MANIFEST_PATH,
     PlaybillFloorCoverageManifestV2,
     PlaybillFloorManifestV1,
+    PlaybillProcedureFloorCardV1,
     service_export_playbill_floor,
 )
 from tests.test_playbill._knowledge_loop_support import (
@@ -23,9 +31,15 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.test_playbill.test_activation import _sign
+from tests.test_playbill.test_authoring_procedures import (
+    AUTHORITY as PROCEDURE_AUTHORITY,
+)
+from tests.test_playbill.test_authoring_procedures import _slot_definition
 
 CARD_PATH = "claim-types/project.work_item/status.card.json"
 PROFILE_PATH = "subjects/project.work_item/wi-42.profile.json"
+PROCEDURE_CARD_PATH = "procedures/triage.card.json"
 
 
 def _instance_with_query(tmp_path: Path):
@@ -43,6 +57,37 @@ def _instance_with_query(tmp_path: Path):
 
 def _manifest(floor: dict[str, bytes]) -> PlaybillFloorManifestV1:
     return PlaybillFloorManifestV1.model_validate(json.loads(floor[MANIFEST_PATH]))
+
+
+def _instance_with_procedure(tmp_path: Path):
+    instance, owner = _instance_with_query(tmp_path)
+    actor = AuthenticatedActor(actor_id="owner")
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    intent = coordinator.create(
+        actor=actor,
+        payload=ProcedureAuthoringPayloadV1(
+            definition=_slot_definition().model_dump(mode="json", by_alias=True),
+            authority=PROCEDURE_AUTHORITY,
+            activation_policy="drain",
+        ),
+        canonical_timestamp="2026-08-21T12:00:00.000000Z",
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    approval = _sign(
+        owner,
+        submitted.status.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    service_activate_playbill_proposal(instance, proposal_id=submitted.status.proposal_id)
+    return instance
 
 
 def test_floor_carries_a_card_per_claim_type_and_a_profile_per_subject(tmp_path: Path) -> None:
@@ -161,3 +206,39 @@ def test_floor_carries_its_coverage_boundary_and_enumerates_it(tmp_path: Path) -
     # therefore carries no epoch and no watcher.
     assert boundary.epoch is None
     assert boundary.watcher_health == "absent"
+
+
+def test_procedure_floor_card_keeps_runnability_governance_and_track_record_separate(
+    tmp_path: Path,
+) -> None:
+    instance = _instance_with_procedure(tmp_path)
+
+    floor = service_export_playbill_floor(instance)
+    card = PlaybillProcedureFloorCardV1.model_validate_json(floor[PROCEDURE_CARD_PATH])
+
+    assert tuple(type(card).model_fields) == (
+        "tag",
+        "identity",
+        "path",
+        "artifact_digest",
+        "accepted_coordinate",
+        "input_contract",
+        "output_contract",
+        "binding_state",
+        "capabilities",
+        "budget",
+        "hard_caps",
+        "governance",
+        "track_record",
+    )
+    assert card.identity.qualified == "Procedure:triage"
+    assert card.binding_state == "binding_required"
+    assert card.capabilities.node_kinds == ("project", "state_tap")
+    assert card.capabilities.terminal_capability == 1
+    assert card.governance.authority == PROCEDURE_AUTHORITY
+    assert card.governance.lifecycle.state == "live"
+    assert card.track_record == ()
+    assert card.accepted_coordinate == PlaybillAcceptedCoordinate.from_internal(
+        instance.accepted_coordinate()
+    )
+    assert PROCEDURE_CARD_PATH in {item.path for item in _manifest(floor).files}

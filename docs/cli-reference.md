@@ -132,6 +132,24 @@ the whole set is admitted as one generation or none of it is -- use it when a
 Claim is only meaningful beside its siblings. explain returns the verdict
 together with the law evidence and source handles it was computed from.
 
+## playbill authoring
+
+~~~text
+cruxible playbill authoring create PAYLOAD
+cruxible playbill authoring get INTENT_ID
+cruxible playbill authoring resume INTENT_ID
+cruxible playbill authoring list
+cruxible playbill authoring compile PAYLOAD [--intent-id INTENT_ID]
+cruxible playbill authoring preflight INTENT_ID
+cruxible playbill authoring submit INTENT_ID
+cruxible playbill authoring status INTENT_ID
+~~~
+
+The authoring coordinator owns stable identities, timestamps, bases, and proposal
+references. `compile` creates or updates an intent and performs a binding preflight;
+`submit` is idempotent and never supplies approvals. `status` reports the remaining
+approval or activation conditions without impersonating the actors who own them.
+
 ## playbill query
 
 ~~~text
