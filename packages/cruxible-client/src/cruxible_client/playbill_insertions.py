@@ -97,7 +97,9 @@ def apply_playbill_insertion(
     selected_start = selector_start if operation == "replace_window" else selector_offset
     selected_end = selected_start + len(retained_body)
     if updated[selected_start:selected_end] != retained_body:
-        raise PlaybillInsertionApplyError("postimage does not contain the body at its committed span")
+        raise PlaybillInsertionApplyError(
+            "postimage does not contain the body at its committed span"
+        )
     expectation_id = expectation.get("expectation_id")
     source_id = patch.get("source_id")
     if not isinstance(expectation_id, str) or not isinstance(source_id, str):
