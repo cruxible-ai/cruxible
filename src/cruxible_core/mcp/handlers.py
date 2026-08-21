@@ -7,10 +7,13 @@ import threading
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
+from pydantic import TypeAdapter
+
 from cruxible_client import CruxibleClient, contracts
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.playbill.attestations import ApprovalAttestation
+from cruxible_core.playbill.authoring.models import AuthoringPayloadV1
 from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -33,6 +36,7 @@ _client_cache: CruxibleClient | None = None
 _client_cache_key: tuple[str | None, str | None, str | None] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
+_AUTHORING_PAYLOAD: TypeAdapter[AuthoringPayloadV1] = TypeAdapter(AuthoringPayloadV1)
 
 
 def reset_client_cache() -> None:
@@ -525,6 +529,107 @@ def handle_playbill_propose_claims(
             proposal_name=proposal_name,
         ),
         operation_name="cruxible_playbill_propose_claims",
+    )
+
+
+def handle_playbill_authoring_create(
+    instance_id: str,
+    payload: dict[str, Any],
+) -> contracts.PlaybillAuthoringIntentView:
+    request = _AUTHORING_PAYLOAD.validate_python(payload)
+    return _dispatch_remote_or_local(
+        lambda client: client.create_playbill_authoring_intent(
+            instance_id, payload=request.model_dump(mode="json")
+        ),
+        lambda: playbill_api.playbill_authoring_create(instance_id, payload=request),
+        operation_name="cruxible_playbill_authoring_create",
+    )
+
+
+def handle_playbill_authoring_get(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillAuthoringIntentView:
+    return _dispatch_remote_or_local(
+        lambda client: client.get_playbill_authoring_intent(instance_id, intent_id),
+        lambda: playbill_api.playbill_authoring_get(instance_id, intent_id),
+        operation_name="cruxible_playbill_authoring_get",
+    )
+
+
+def handle_playbill_authoring_resume(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillAuthoringIntentView:
+    return _dispatch_remote_or_local(
+        lambda client: client.resume_playbill_authoring_intent(instance_id, intent_id),
+        lambda: playbill_api.playbill_authoring_resume(instance_id, intent_id),
+        operation_name="cruxible_playbill_authoring_resume",
+    )
+
+
+def handle_playbill_authoring_list_pending(
+    instance_id: str,
+) -> contracts.PlaybillAuthoringIntentList:
+    return _dispatch_remote_or_local(
+        lambda client: client.list_pending_playbill_authoring_intents(instance_id),
+        lambda: playbill_api.playbill_authoring_list_pending(instance_id),
+        operation_name="cruxible_playbill_authoring_list_pending",
+    )
+
+
+def handle_playbill_authoring_compile(
+    instance_id: str,
+    payload: dict[str, Any],
+    *,
+    intent_id: str | None,
+) -> contracts.PlaybillAuthoringPreflightResult:
+    request = _AUTHORING_PAYLOAD.validate_python(payload)
+    return _dispatch_remote_or_local(
+        lambda client: client.compile_playbill_authoring(
+            instance_id,
+            payload=request.model_dump(mode="json"),
+            intent_id=intent_id,
+        ),
+        lambda: playbill_api.playbill_authoring_compile(
+            instance_id,
+            payload=request,
+            intent_id=intent_id,
+        ),
+        operation_name="cruxible_playbill_authoring_compile",
+    )
+
+
+def handle_playbill_authoring_preflight(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillAuthoringPreflightResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.preflight_playbill_authoring_intent(instance_id, intent_id),
+        lambda: playbill_api.playbill_authoring_preflight(instance_id, intent_id),
+        operation_name="cruxible_playbill_authoring_preflight",
+    )
+
+
+def handle_playbill_authoring_submit(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillAuthoringSubmitResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.submit_playbill_authoring_intent(instance_id, intent_id),
+        lambda: playbill_api.playbill_authoring_submit(instance_id, intent_id),
+        operation_name="cruxible_playbill_authoring_submit",
+    )
+
+
+def handle_playbill_authoring_status(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillCandidateStatus:
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_authoring_intent_status(instance_id, intent_id),
+        lambda: playbill_api.playbill_authoring_status(instance_id, intent_id),
+        operation_name="cruxible_playbill_authoring_status",
     )
 
 

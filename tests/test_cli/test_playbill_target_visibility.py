@@ -21,6 +21,10 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim", "propose"): "active",
     ("playbill", "claim", "propose-batch"): "active",
+    ("playbill", "authoring", "create"): "active",
+    ("playbill", "authoring", "compile"): "active",
+    ("playbill", "authoring", "preflight"): "active",
+    ("playbill", "authoring", "submit"): "active",
     ("playbill", "native", "compile"): "manual",
     ("playbill", "seed", "apply"): "manual",
     ("playbill", "query", "propose"): "active",
@@ -211,7 +215,7 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
             return contracts.PlaybillCoverageResult(
                 coordinate=coordinate,
                 result={
-                    "tag": "playbill-coverage-result-v1",
+                    "tag": "playbill-coverage-result-v2",
                     "at": coordinate.model_dump(mode="json"),
                     "instance_id": instance_id,
                     "index_digest": "sha256:" + "cc" * 32,
@@ -228,7 +232,7 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
                     "scope": [],
                     "spans": [],
                     "summary": {
-                        "tag": "playbill-coverage-batch-summary-v1",
+                        "tag": "playbill-coverage-batch-summary-v2",
                         "exact": 0,
                         "drifted": 0,
                         "candidate": 0,

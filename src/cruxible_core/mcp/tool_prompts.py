@@ -101,6 +101,31 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_propose_claims": (
         "Use when several Claims must be admitted together or not at all."
     ),
+    "cruxible_playbill_authoring_create": (
+        "Use when you need a durable machine-owned intent before iterating on a governed write."
+    ),
+    "cruxible_playbill_authoring_get": (
+        "Use when you need the current durable content and state of one authoring intent."
+    ),
+    "cruxible_playbill_authoring_resume": (
+        "Use when you need to continue an authoring flow after losing conversational context."
+    ),
+    "cruxible_playbill_authoring_list_pending": (
+        "Use when you need to find your incomplete authoring work without remembering handles."
+    ),
+    "cruxible_playbill_authoring_compile": (
+        "Use when you want to author or revise a Claim or Procedure and learn every "
+        "refusal at once."
+    ),
+    "cruxible_playbill_authoring_preflight": (
+        "Use when you need a complete binding check of an existing authoring intent."
+    ),
+    "cruxible_playbill_authoring_submit": (
+        "Use when an authoring intent has passed preflight and should become one candidate."
+    ),
+    "cruxible_playbill_authoring_status": (
+        "Use when you need exactly what still separates an authored candidate from acceptance."
+    ),
     "cruxible_playbill_list_claims": (
         "Use when you need accepted Claims, optionally narrowed to a Subject or predicate."
     ),

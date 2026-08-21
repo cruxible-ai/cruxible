@@ -12,6 +12,10 @@ from cruxible_core.runtime import playbill_api
 from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,
     PlaybillApprovalRequest,
+    PlaybillAuthoringCompileRequest,
+    PlaybillAuthoringCreateRequest,
+    PlaybillAuthoringPreflightRequest,
+    PlaybillAuthoringSubmitRequest,
     PlaybillClaimExplainRequest,
     PlaybillDiscoverRequest,
     PlaybillExpandRequest,
@@ -481,6 +485,109 @@ async def propose_claims(
         authorings=req.authorings,
         proposal_name=req.proposal_name,
         base=req.base,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/authoring/intents",
+    response_model=contracts.PlaybillAuthoringIntentView,
+)
+async def create_authoring_intent(
+    instance_id: str,
+    req: PlaybillAuthoringCreateRequest,
+) -> contracts.PlaybillAuthoringIntentView:
+    return playbill_api.playbill_authoring_create(
+        resolve_server_instance_id(instance_id), payload=req.payload
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/authoring/intents",
+    response_model=contracts.PlaybillAuthoringIntentList,
+)
+async def list_pending_authoring_intents(
+    instance_id: str,
+) -> contracts.PlaybillAuthoringIntentList:
+    return playbill_api.playbill_authoring_list_pending(resolve_server_instance_id(instance_id))
+
+
+@router.post(
+    "/{instance_id}/playbill/authoring/compile",
+    response_model=contracts.PlaybillAuthoringPreflightResult,
+)
+async def compile_authoring(
+    instance_id: str,
+    req: PlaybillAuthoringCompileRequest,
+) -> contracts.PlaybillAuthoringPreflightResult:
+    return playbill_api.playbill_authoring_compile(
+        resolve_server_instance_id(instance_id),
+        payload=req.payload,
+        intent_id=req.intent_id,
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/authoring/intents/{intent_id}",
+    response_model=contracts.PlaybillAuthoringIntentView,
+)
+async def get_authoring_intent(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillAuthoringIntentView:
+    return playbill_api.playbill_authoring_get(resolve_server_instance_id(instance_id), intent_id)
+
+
+@router.get(
+    "/{instance_id}/playbill/authoring/intents/{intent_id}/resume",
+    response_model=contracts.PlaybillAuthoringIntentView,
+)
+async def resume_authoring_intent(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillAuthoringIntentView:
+    return playbill_api.playbill_authoring_resume(
+        resolve_server_instance_id(instance_id), intent_id
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/authoring/intents/{intent_id}/preflight",
+    response_model=contracts.PlaybillAuthoringPreflightResult,
+)
+async def preflight_authoring_intent(
+    instance_id: str,
+    intent_id: str,
+    _req: PlaybillAuthoringPreflightRequest,
+) -> contracts.PlaybillAuthoringPreflightResult:
+    return playbill_api.playbill_authoring_preflight(
+        resolve_server_instance_id(instance_id), intent_id
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/authoring/intents/{intent_id}/submit",
+    response_model=contracts.PlaybillAuthoringSubmitResult,
+)
+async def submit_authoring_intent(
+    instance_id: str,
+    intent_id: str,
+    _req: PlaybillAuthoringSubmitRequest,
+) -> contracts.PlaybillAuthoringSubmitResult:
+    return playbill_api.playbill_authoring_submit(
+        resolve_server_instance_id(instance_id), intent_id
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/authoring/intents/{intent_id}/status",
+    response_model=contracts.PlaybillCandidateStatus,
+)
+async def authoring_intent_status(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillCandidateStatus:
+    return playbill_api.playbill_authoring_status(
+        resolve_server_instance_id(instance_id), intent_id
     )
 
 

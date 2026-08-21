@@ -24,6 +24,8 @@ def test_read_only_advertises_reads_but_hides_all_mutations(
 
     assert "cruxible_playbill_get_document" in names
     assert "cruxible_playbill_explain" in names
+    assert "cruxible_playbill_authoring_status" in names
+    assert "cruxible_playbill_authoring_compile" not in names
     assert "cruxible_playbill_store_body" not in names
     assert "cruxible_playbill_submit_approval" not in names
     assert "cruxible_playbill_init" not in names
@@ -37,6 +39,8 @@ def test_state_authoring_and_review_profiles_separate_proposal_from_settlement(
     reset_permissions()
     authoring = _tool_names()
     assert "cruxible_playbill_propose_document" in authoring
+    assert "cruxible_playbill_authoring_compile" in authoring
+    assert "cruxible_playbill_authoring_submit" in authoring
     assert "cruxible_playbill_submit_approval" not in authoring
     assert "cruxible_playbill_activate" not in authoring
 
@@ -44,6 +48,7 @@ def test_state_authoring_and_review_profiles_separate_proposal_from_settlement(
     reset_permissions()
     review = _tool_names()
     assert "cruxible_playbill_propose_document" not in review
+    assert "cruxible_playbill_authoring_compile" not in review
     assert "cruxible_playbill_submit_approval" in review
     assert "cruxible_playbill_activate" in review
 

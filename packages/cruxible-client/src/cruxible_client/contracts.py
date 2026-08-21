@@ -383,6 +383,62 @@ class PlaybillClaimExplanation(BaseModel):
     coverage: dict[str, Any]
 
 
+class PlaybillCandidateStatus(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-candidate-status-v1"] = "playbill-candidate-status-v1"
+    state: Literal[
+        "draft",
+        "preflight_refused",
+        "ready_to_submit",
+        "awaiting_external_approval",
+        "approval_invalid",
+        "ready_to_activate",
+        "conflicted_after_rebase",
+        "superseded",
+        "accepted",
+        "terminal",
+    ]
+    proposal_id: str | None = None
+    candidate_digest: str | None = None
+    current_accepted_coordinate: PlaybillAcceptedCoordinate
+    path_to_acceptance: list[dict[str, Any]] = Field(default_factory=list)
+    accepted_generation: PlaybillAcceptedCoordinate | None = None
+
+
+class PlaybillAuthoringIntentView(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-authoring-intent-view-v1"] = "playbill-authoring-intent-view-v1"
+    intent: dict[str, Any]
+
+
+class PlaybillAuthoringIntentList(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-authoring-intent-list-v1"] = "playbill-authoring-intent-list-v1"
+    intents: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PlaybillAuthoringPreflightResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-authoring-preflight-result-v1"] = (
+        "playbill-authoring-preflight-result-v1"
+    )
+    verdict: Literal["passed", "refused"]
+    certificate: dict[str, Any]
+    frontier: dict[str, Any]
+
+
+class PlaybillAuthoringSubmitResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
+    intent: dict[str, Any]
+    status: PlaybillCandidateStatus
+
+
 class PlaybillQueryDefinitionView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

@@ -605,6 +605,95 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillClaimBatchProposal)
 
+    def create_playbill_authoring_intent(
+        self,
+        instance_id: str,
+        *,
+        payload: Mapping[str, Any],
+    ) -> contracts.PlaybillAuthoringIntentView:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/authoring/intents",
+            json={
+                "tag": "playbill-authoring-intent-create-request-v1",
+                "payload": dict(payload),
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillAuthoringIntentView)
+
+    def get_playbill_authoring_intent(
+        self,
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillAuthoringIntentView:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}")
+        return self._parse_model(response, contracts.PlaybillAuthoringIntentView)
+
+    def resume_playbill_authoring_intent(
+        self,
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillAuthoringIntentView:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/resume"
+        )
+        return self._parse_model(response, contracts.PlaybillAuthoringIntentView)
+
+    def list_pending_playbill_authoring_intents(
+        self,
+        instance_id: str,
+    ) -> contracts.PlaybillAuthoringIntentList:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/authoring/intents")
+        return self._parse_model(response, contracts.PlaybillAuthoringIntentList)
+
+    def compile_playbill_authoring(
+        self,
+        instance_id: str,
+        *,
+        payload: Mapping[str, Any],
+        intent_id: str | None = None,
+    ) -> contracts.PlaybillAuthoringPreflightResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/authoring/compile",
+            json={
+                "tag": "playbill-authoring-intent-compile-request-v1",
+                "payload": dict(payload),
+                "intent_id": intent_id,
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillAuthoringPreflightResult)
+
+    def preflight_playbill_authoring_intent(
+        self,
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillAuthoringPreflightResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight",
+            json={"tag": "playbill-authoring-intent-preflight-request-v1"},
+        )
+        return self._parse_model(response, contracts.PlaybillAuthoringPreflightResult)
+
+    def submit_playbill_authoring_intent(
+        self,
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillAuthoringSubmitResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit",
+            json={"tag": "playbill-authoring-intent-submit-request-v1"},
+        )
+        return self._parse_model(response, contracts.PlaybillAuthoringSubmitResult)
+
+    def playbill_authoring_intent_status(
+        self,
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillCandidateStatus:
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/status"
+        )
+        return self._parse_model(response, contracts.PlaybillCandidateStatus)
+
     def list_playbill_claims(
         self,
         instance_id: str,

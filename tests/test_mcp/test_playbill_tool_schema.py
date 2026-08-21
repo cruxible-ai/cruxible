@@ -44,3 +44,15 @@ def test_playbill_tools_publish_typed_output_schemas() -> None:
         if name == "cruxible_version":
             continue
         assert tool.outputSchema is not None, name
+
+
+def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None:
+    schemas = _schemas()
+    compile_schema = schemas["cruxible_playbill_authoring_compile"].inputSchema
+    submit_schema = schemas["cruxible_playbill_authoring_submit"].inputSchema
+
+    assert set(compile_schema["properties"]) == {"instance_id", "payload", "intent_id"}
+    assert set(submit_schema["properties"]) == {"instance_id", "intent_id"}
+    forbidden = {"base", "claim_id", "candidate_digest", "predecessor_digest"}
+    assert forbidden.isdisjoint(compile_schema["properties"])
+    assert forbidden.isdisjoint(submit_schema["properties"])

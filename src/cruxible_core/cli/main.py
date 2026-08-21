@@ -40,6 +40,10 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim", "propose"): "active",
     ("playbill", "claim", "propose-batch"): "active",
+    ("playbill", "authoring", "create"): "active",
+    ("playbill", "authoring", "compile"): "active",
+    ("playbill", "authoring", "preflight"): "active",
+    ("playbill", "authoring", "submit"): "active",
     # Compile is two acts behind one command: --preview writes nothing at all,
     # so the notice belongs immediately before the submit rather than before
     # the command that might only be previewing.
@@ -434,6 +438,43 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="claim_group",
+            ),
+            "authoring": _group(
+                "Author, preflight, submit, and resume governed writes.",
+                {
+                    "create": _command(
+                        "playbill", "create_authoring_intent", "Create a durable intent."
+                    ),
+                    "get": _command(
+                        "playbill", "get_authoring_intent", "Read one authoring intent."
+                    ),
+                    "resume": _command(
+                        "playbill", "resume_authoring_intent", "Resume durable authoring."
+                    ),
+                    "list": _command(
+                        "playbill",
+                        "list_pending_authoring_intents",
+                        "List pending authoring intents.",
+                    ),
+                    "compile": _command(
+                        "playbill", "compile_authoring", "Author and preflight a payload."
+                    ),
+                    "preflight": _command(
+                        "playbill",
+                        "preflight_authoring_intent",
+                        "Recheck an authoring intent.",
+                    ),
+                    "submit": _command(
+                        "playbill", "submit_authoring_intent", "Submit a passing intent."
+                    ),
+                    "status": _command(
+                        "playbill",
+                        "authoring_intent_status",
+                        "Read the path to acceptance.",
+                    ),
+                },
+                module="playbill",
+                attr="authoring_group",
             ),
             "query": _group(
                 "Propose, read, and execute governed named entrypoints.",

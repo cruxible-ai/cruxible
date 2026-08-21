@@ -297,6 +297,74 @@ def register_tools(
         return handlers.handle_playbill_propose_claims(instance_id, authorings, proposal_name)
 
     @_tool
+    def cruxible_playbill_authoring_create(
+        instance_id: str,
+        payload: dict[str, Any],
+    ) -> contracts.PlaybillAuthoringIntentView:
+        """Create or recover a daemon-owned authoring intent."""
+        return handlers.handle_playbill_authoring_create(instance_id, payload)
+
+    @_tool
+    def cruxible_playbill_authoring_get(
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillAuthoringIntentView:
+        """Read one actor-scoped authoring intent."""
+        return handlers.handle_playbill_authoring_get(instance_id, intent_id)
+
+    @_tool
+    def cruxible_playbill_authoring_resume(
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillAuthoringIntentView:
+        """Resume one durable authoring continuation."""
+        return handlers.handle_playbill_authoring_resume(instance_id, intent_id)
+
+    @_tool
+    def cruxible_playbill_authoring_list_pending(
+        instance_id: str,
+    ) -> contracts.PlaybillAuthoringIntentList:
+        """List the authenticated writer's pending intents."""
+        return handlers.handle_playbill_authoring_list_pending(instance_id)
+
+    @_tool
+    def cruxible_playbill_authoring_compile(
+        instance_id: str,
+        payload: dict[str, Any],
+        intent_id: str | None = None,
+    ) -> contracts.PlaybillAuthoringPreflightResult:
+        """Create or update an intent and return its complete preflight."""
+        return handlers.handle_playbill_authoring_compile(
+            instance_id,
+            payload,
+            intent_id=intent_id,
+        )
+
+    @_tool
+    def cruxible_playbill_authoring_preflight(
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillAuthoringPreflightResult:
+        """Recompute one intent's complete binding preflight."""
+        return handlers.handle_playbill_authoring_preflight(instance_id, intent_id)
+
+    @_tool
+    def cruxible_playbill_authoring_submit(
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillAuthoringSubmitResult:
+        """Idempotently submit one passing authoring intent."""
+        return handlers.handle_playbill_authoring_submit(instance_id, intent_id)
+
+    @_tool
+    def cruxible_playbill_authoring_status(
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillCandidateStatus:
+        """Read exactly what separates an intent from acceptance."""
+        return handlers.handle_playbill_authoring_status(instance_id, intent_id)
+
+    @_tool
     def cruxible_playbill_list_claims(
         instance_id: str,
         subject_path: str | None = None,

@@ -882,6 +882,116 @@ def propose_claims(authorings: tuple[str, ...], proposal_name: str, output_json:
     _emit_json(result.model_dump(mode="json"))
 
 
+@playbill_group.group("authoring")
+def authoring_group() -> None:
+    """Author, preflight, submit, and resume ergonomic governed writes."""
+
+
+@authoring_group.command("create")
+@click.argument("payload", type=click.Path(exists=True, dir_okay=False))
+@json_option
+@handle_errors
+def create_authoring_intent(payload: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.create_playbill_authoring_intent(
+            instance_id,
+            payload=_read_mapping(payload),
+        ),
+        command_name="playbill authoring create",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@authoring_group.command("get")
+@click.argument("intent_id")
+@json_option
+@handle_errors
+def get_authoring_intent(intent_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.get_playbill_authoring_intent(instance_id, intent_id),
+        command_name="playbill authoring get",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@authoring_group.command("resume")
+@click.argument("intent_id")
+@json_option
+@handle_errors
+def resume_authoring_intent(intent_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.resume_playbill_authoring_intent(instance_id, intent_id),
+        command_name="playbill authoring resume",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@authoring_group.command("list")
+@json_option
+@handle_errors
+def list_pending_authoring_intents(output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.list_pending_playbill_authoring_intents(instance_id),
+        command_name="playbill authoring list",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@authoring_group.command("compile")
+@click.argument("payload", type=click.Path(exists=True, dir_okay=False))
+@click.option("--intent-id", default=None)
+@json_option
+@handle_errors
+def compile_authoring(payload: str, intent_id: str | None, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.compile_playbill_authoring(
+            instance_id,
+            payload=_read_mapping(payload),
+            intent_id=intent_id,
+        ),
+        command_name="playbill authoring compile",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@authoring_group.command("preflight")
+@click.argument("intent_id")
+@json_option
+@handle_errors
+def preflight_authoring_intent(intent_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.preflight_playbill_authoring_intent(
+            instance_id, intent_id
+        ),
+        command_name="playbill authoring preflight",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@authoring_group.command("submit")
+@click.argument("intent_id")
+@json_option
+@handle_errors
+def submit_authoring_intent(intent_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.submit_playbill_authoring_intent(instance_id, intent_id),
+        command_name="playbill authoring submit",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@authoring_group.command("status")
+@click.argument("intent_id")
+@json_option
+@handle_errors
+def authoring_intent_status(intent_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.playbill_authoring_intent_status(instance_id, intent_id),
+        command_name="playbill authoring status",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
 @claim_group.command("list")
 @click.option("--subject", "subject_path", default=None, help="Subject artifact path filter.")
 @click.option("--predicate", default=None)

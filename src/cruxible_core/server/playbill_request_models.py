@@ -8,6 +8,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_core.playbill.attestations import ApprovalAttestation
+from cruxible_core.playbill.authoring.models import AuthoringPayloadV1
 from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -101,6 +102,33 @@ class PlaybillProposeClaimsRequest(_StrictPlaybillRequest):
     authorings: tuple[DirectClaimAuthoringV1, ...]
     proposal_name: str
     base: AcceptedCoordinate | None = None
+
+
+class PlaybillAuthoringCreateRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-authoring-intent-create-request-v1"] = (
+        "playbill-authoring-intent-create-request-v1"
+    )
+    payload: AuthoringPayloadV1
+
+
+class PlaybillAuthoringCompileRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-authoring-intent-compile-request-v1"] = (
+        "playbill-authoring-intent-compile-request-v1"
+    )
+    payload: AuthoringPayloadV1
+    intent_id: str | None = None
+
+
+class PlaybillAuthoringPreflightRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-authoring-intent-preflight-request-v1"] = (
+        "playbill-authoring-intent-preflight-request-v1"
+    )
+
+
+class PlaybillAuthoringSubmitRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-authoring-intent-submit-request-v1"] = (
+        "playbill-authoring-intent-submit-request-v1"
+    )
 
 
 class PlaybillProposeQueryDefinitionRequest(_StrictPlaybillRequest):

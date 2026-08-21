@@ -53,6 +53,10 @@ _COMMON_READS = {
     "cruxible_playbill_expand",
     "cruxible_playbill_export_floor",
     "cruxible_playbill_resolve_coverage",
+    "cruxible_playbill_authoring_get",
+    "cruxible_playbill_authoring_resume",
+    "cruxible_playbill_authoring_list_pending",
+    "cruxible_playbill_authoring_status",
 }
 
 _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
@@ -68,6 +72,10 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_playbill_propose_claim",
             "cruxible_playbill_propose_claims",
             "cruxible_playbill_propose_query_definition",
+            "cruxible_playbill_authoring_create",
+            "cruxible_playbill_authoring_compile",
+            "cruxible_playbill_authoring_preflight",
+            "cruxible_playbill_authoring_submit",
         }
     ),
     PROFILE_REVIEW: frozenset(

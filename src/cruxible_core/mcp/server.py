@@ -38,10 +38,11 @@ accepted laws, principals, attestations, and compare-and-set settlement decide
 what becomes canonical.
 
 Start by allocating a host with cruxible_playbill_host_create, bootstrap public
-principals with cruxible_playbill_init, then use proposal, review, approval,
-activation, query, and explain tools. Body storage is inert. A proposal is not
-accepted state, an approval is not activation, and diagnostics never carry
-authority.
+principals with cruxible_playbill_init, then use authoring_compile followed by
+authoring_submit for ergonomic Claim or Procedure writes. The returned status
+names every remaining approval and activation step. Body storage is inert. A
+proposal is not accepted state, an approval is not activation, and diagnostics
+never carry authority.
 
 The daemon retains four temporary transport tiers while the destructive pivot
 is in progress: READ_ONLY, GOVERNED_WRITE, GRAPH_WRITE, and ADMIN. These only
