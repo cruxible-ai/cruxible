@@ -6,7 +6,7 @@ import base64
 import binascii
 import re
 from datetime import datetime
-from typing import Annotated, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
@@ -608,6 +608,22 @@ def preflight_certificate_digest(certificate: PreflightCertificateV1) -> str:
     ).tagged
 
 
+def build_preflight_certificate(**values: object) -> PreflightCertificateV1:
+    """Build the self-digesting frozen certificate without weakening validation."""
+
+    typed_values = cast(dict[str, Any], values)
+    provisional = PreflightCertificateV1.model_construct(
+        **typed_values,
+        certificate_digest="sha256:" + "0" * 64,
+    )
+    return PreflightCertificateV1.model_validate(
+        {
+            **values,
+            "certificate_digest": preflight_certificate_digest(provisional),
+        }
+    )
+
+
 class PreflightResultV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-preflight-result-v1"] = (
         "playbill-authoring-preflight-result-v1"
@@ -636,6 +652,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
     instance_id: str
     actor_id: str
     canonical_timestamp: str
+    base_coordinate: AcceptedCoordinate
     semantic_identity: str
     payload: AuthoringPayloadV1
     payload_digest: str
@@ -762,5 +779,6 @@ __all__ = [
     "WorkingSelectionObservationV1",
     "authoring_create_fingerprint",
     "authoring_payload_digest",
+    "build_preflight_certificate",
     "preflight_certificate_digest",
 ]

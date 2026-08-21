@@ -330,7 +330,13 @@ class AuthoringIntentStore:
 
     @staticmethod
     def _validate_transition(current: AuthoringIntentV1, updated: AuthoringIntentV1) -> None:
-        immutable = ("intent_id", "instance_id", "actor_id", "canonical_timestamp")
+        immutable = (
+            "intent_id",
+            "instance_id",
+            "actor_id",
+            "canonical_timestamp",
+            "base_coordinate",
+        )
         if any(getattr(current, name) != getattr(updated, name) for name in immutable):
             raise AuthoringIntentStoreError("AuthoringIntent transition changed immutable identity")
         if updated.intent_revision < current.intent_revision:

@@ -12,10 +12,12 @@ from cruxible_core.playbill.authoring.models import (
     AuthoringPayloadV1,
     CandidateStatusV1,
     ClaimAuthoringPayloadV1,
+    PreflightResultV1,
     ProcedureAuthoringPayloadV1,
     authoring_create_fingerprint,
     authoring_payload_digest,
 )
+from cruxible_core.playbill.authoring.preflight import compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.claims import new_claim_id
@@ -54,6 +56,7 @@ class AuthoringIntentCoordinator:
             instance_id=self.instance.descriptor.instance_id,
             actor_id=actor.actor_id,
             canonical_timestamp=canonical_timestamp,
+            base_coordinate=at,
             semantic_identity=semantic_identity,
             payload=payload,
             payload_digest=authoring_payload_digest(payload),
@@ -84,6 +87,55 @@ class AuthoringIntentCoordinator:
 
     def list_pending(self, *, actor: AuthenticatedActor) -> AuthoringIntentListV1:
         return AuthoringIntentListV1(intents=self.store.list_pending(actor_id=actor.actor_id))
+
+    def preflight(
+        self,
+        intent_id: str,
+        *,
+        actor: AuthenticatedActor,
+    ) -> PreflightResultV1:
+        current = self.store.get(intent_id, actor_id=actor.actor_id)
+        computed = compute_preflight(self.instance, intent=current, actor=actor)
+        operation_key = computed.result.certificate.certificate_digest
+
+        def bind_preflight(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+            if intent.payload_digest != current.payload_digest:
+                raise ValueError("AuthoringIntent payload changed during preflight")
+            return intent.model_copy(
+                update={
+                    "last_preflight": computed.result,
+                    "candidate_status": computed.status,
+                }
+            )
+
+        updated = self.store.transition(
+            intent_id,
+            actor_id=actor.actor_id,
+            operation_key=operation_key,
+            transform=bind_preflight,
+        )
+        if updated.last_preflight is None:  # pragma: no cover - transition invariant
+            raise RuntimeError("preflight transition omitted its result")
+        return updated.last_preflight
+
+    def compile(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        payload: AuthoringPayloadV1,
+        canonical_timestamp: str,
+        intent_id: str | None = None,
+    ) -> PreflightResultV1:
+        view = (
+            self.create(
+                actor=actor,
+                payload=payload,
+                canonical_timestamp=canonical_timestamp,
+            )
+            if intent_id is None
+            else self.replace_payload(intent_id, actor=actor, payload=payload)
+        )
+        return self.preflight(view.intent.intent_id, actor=actor)
 
     def replace_payload(
         self,

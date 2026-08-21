@@ -1478,6 +1478,89 @@ def build_foreign_source_capture(
     )
 
 
+def build_working_selection_capture(
+    *,
+    store: CaptureObjectStoreProtocol,
+    actor_id: str,
+    claim_id: str,
+    rationale: str,
+    observed_at: datetime,
+    accepted_coordinate: AcceptedCoordinate,
+    source_id: str,
+    coordinate: object,
+    selector: object,
+    selected_content: bytes,
+) -> DirectCaptureBuildResult:
+    """Commit the bounded bytes from one typed proposer-observed working selection.
+
+    The whole source is deliberately absent. The coordinate and selector record
+    exactly what the client observed, while the retained commitment is only over
+    the selected bytes that the daemon can reproduce.
+    """
+
+    contract = foreign_source_capture_contract(source_id)
+    if not selected_content:
+        raise CaptureFormatError("working source selection must retain at least one byte")
+    if len(selected_content) > contract.selection_budget.max_bytes:
+        raise CaptureFormatError("working source selection exceeds its accepted byte budget")
+    stored = store.store(selected_content)
+    binding_digest = _direct_binding_digest(
+        actor_id=actor_id,
+        accepted_coordinate=accepted_coordinate,
+    )
+    contract_digest_value = capture_contract_digest(contract).tagged
+    receipt_digest = typed_digest(
+        Sha256Value,
+        "playbill-working-selection-capture-receipt-v1",
+        {
+            "actor_id": actor_id,
+            "claim_id": claim_id,
+            "coordinate": coordinate,
+            "observed_at": _canonical_datetime(observed_at),
+            "rationale": rationale,
+            "selected_bytes_digest": stored.digest,
+            "selector": selector,
+            "source_id": source_id,
+        },
+    ).tagged
+    envelope = CaptureEnvelopeV1(
+        capture_contract_digest=contract_digest_value,
+        source=ExternalSourceReferenceV1(
+            source_identity=source_id,
+            producer_binding_digest=binding_digest,
+            coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
+            coordinate=coordinate,
+            selector_type=FOREIGN_SOURCE_SELECTOR_TYPE,
+            selector={"claim_id": claim_id, "working_selection": selector},
+            replayability="attested_only",
+        ),
+        commitment=EvidenceCommitmentV1(
+            digest_kind="exact_bytes",
+            digest=stored.digest,
+            byte_length=len(selected_content),
+            materialization="cas",
+        ),
+        run_coordinate=CaptureRunCoordinateV1(
+            run_kind="provider",
+            run_id=f"foreign-source:{claim_id.casefold()}",
+            bound_generation=accepted_coordinate.generation_root,
+            executable_identity=contract.identity,
+            executable_digest=contract_digest_value,
+        ),
+        run_receipt_digest=receipt_digest,
+        producer=ArtifactIdentity(kind="Principal", name=actor_id),
+        producer_binding_digest=binding_digest,
+        observed_at=observed_at,
+    )
+    return _store_capture_envelope(
+        store=store,
+        contract=contract,
+        envelope=envelope,
+        source_body_digest=stored.digest,
+        source_body_materialized=True,
+    )
+
+
 def _store_general_capture(
     *,
     store: CaptureObjectStoreProtocol,
@@ -1874,6 +1957,7 @@ __all__ = [
     "build_cas_capture",
     "build_derived_cas_capture",
     "build_foreign_source_capture",
+    "build_working_selection_capture",
     "build_ledger_capture",
     "capture_contract_digest",
     "capture_contract_is_self_asserted",
