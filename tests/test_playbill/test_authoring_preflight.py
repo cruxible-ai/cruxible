@@ -10,6 +10,8 @@ from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordina
 from cruxible_core.playbill.authoring.models import (
     AuthoringClaimStatementV1,
     ClaimAuthoringPayloadV1,
+    InsertionAnchorWindowV1,
+    InsertionTargetV1,
     SelfSourceBodyV1,
     WorkingAnchorWindowV1,
     WorkingDigestCoordinateV1,
@@ -174,8 +176,30 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
     _seed_claim_surface(instance, owner)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
+    preimage = b"Status: "
+    body = b"status: ready"
     payload = _working_payload(occurrence_count=2).model_copy(
-        update={"insertion_target": {"path": "README.md", "after": "Status"}}
+        update={
+            "insertion_target": InsertionTargetV1(
+                source_id="repo.work-items",
+                coordinate=WorkingDigestCoordinateV1(
+                    source_content_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
+                    source_byte_length=len(preimage),
+                ),
+                preimage_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
+                selector=InsertionAnchorWindowV1(
+                    anchor_content_base64=base64.b64encode(preimage).decode("ascii"),
+                    anchor_bytes_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
+                    start_byte=0,
+                    end_byte=len(preimage),
+                    insertion_offset=len(preimage),
+                    observed_occurrence_count=1,
+                ),
+                operation="insert_after",
+                postimage_digest="sha256:" + hashlib.sha256(preimage + body).hexdigest(),
+                postimage_byte_length=len(preimage + body),
+            )
+        }
     )
     intent = coordinator.create(
         actor=actor,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import re
 from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias, cast
@@ -45,6 +46,14 @@ AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN = "playbill-authoring-candidate-tree-v1"
 AUTHORING_FRONTIER_DIGEST_DOMAIN = "playbill-authoring-frontier-v1"
 AUTHORING_INSTANCE_DESCRIPTOR_DIGEST_DOMAIN = "playbill-instance-descriptor-v1"
 AUTHORING_PREFLIGHT_CERTIFICATE_DIGEST_DOMAIN = "playbill-authoring-preflight-certificate-v1"
+INSERTION_TARGET_DIGEST_DOMAIN = "playbill-insertion-target-v1"
+INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
+INSERTION_EXPECTATION_DIGEST_DOMAIN = "playbill-insertion-expectation-v1"
+INSERTION_PATCH_ENVELOPE_DIGEST_DOMAIN = "playbill-insertion-patch-envelope-v1"
+INSERTION_CONFIRMATION_OBSERVATION_DIGEST_DOMAIN = "playbill-insertion-confirmation-observation-v1"
+INSERTION_CONFIRM_OPERATION_DOMAIN = "playbill-insertion-confirm-operation-v1"
+INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
+INSERTION_TERMINAL_TOMBSTONE_DIGEST_DOMAIN = "playbill-insertion-terminal-tombstone-v1"
 
 MAX_DIAGNOSTICS = 128
 MAX_BLOCKED_CHECKS = 128
@@ -249,8 +258,6 @@ class WorkingSelectionObservationV1(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _internal_correspondence(self) -> "WorkingSelectionObservationV1":
-        import hashlib
-
         selected = self.selected_content
         if self.selector.end_byte > self.coordinate.source_byte_length:
             raise ValueError("working selection exceeds the observed whole-source length")
@@ -267,6 +274,135 @@ class WorkingSelectionObservationV1(_StrictAuthoringModel):
             self.selected_content_base64,
             label="working selected content",
         )
+
+
+class InsertionAnchorWindowV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-anchor-window-v1"] = "playbill-insertion-anchor-window-v1"
+    anchor_content_base64: str
+    anchor_bytes_digest: str
+    start_byte: int = Field(ge=0)
+    end_byte: int = Field(ge=0)
+    insertion_offset: int = Field(ge=0)
+    observed_occurrence_count: int = Field(ge=0)
+
+    @field_validator("anchor_content_base64")
+    @classmethod
+    def _content(cls, value: str) -> str:
+        content = _canonical_base64(value, label="insertion anchor content")
+        if len(content) > 4 * 1024:
+            raise ValueError("insertion anchor exceeds its 4 KiB byte limit")
+        return value
+
+    @field_validator("anchor_bytes_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _sha256(value, label="insertion anchor digest")
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> "InsertionAnchorWindowV1":
+        content = _canonical_base64(
+            self.anchor_content_base64,
+            label="insertion anchor content",
+        )
+        if self.end_byte < self.start_byte:
+            raise ValueError("insertion anchor window is decreasing")
+        if len(content) != self.end_byte - self.start_byte:
+            raise ValueError("insertion anchor bytes differ from the declared window")
+        expected = "sha256:" + hashlib.sha256(content).hexdigest()
+        if self.anchor_bytes_digest != expected:
+            raise ValueError("insertion anchor digest differs from its exact bytes")
+        return self
+
+    @property
+    def content(self) -> bytes:
+        return _canonical_base64(
+            self.anchor_content_base64,
+            label="insertion anchor content",
+        )
+
+
+InsertionOperation: TypeAlias = Literal[
+    "insert_before",
+    "insert_after",
+    "replace_window",
+    "append",
+]
+
+
+class InsertionTargetV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-target-v1"] = "playbill-insertion-target-v1"
+    source_id: str
+    coordinate: WorkingSelectionCoordinateV1
+    preimage_digest: str
+    selector: InsertionAnchorWindowV1
+    operation: InsertionOperation
+    postimage_digest: str
+    postimage_byte_length: int = Field(ge=0)
+
+    @field_validator("source_id")
+    @classmethod
+    def _source_id(cls, value: str) -> str:
+        if not _CANONICAL_NAME_RE.fullmatch(value):
+            raise ValueError("insertion source_id must be stable, locator-free, and canonical")
+        return value
+
+    @field_validator("preimage_digest", "postimage_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _sha256(value, label="insertion whole-source digest")
+
+    @model_validator(mode="after")
+    def _target_shape(self) -> "InsertionTargetV1":
+        source_length = self.coordinate.source_byte_length
+        selector = self.selector
+        if selector.end_byte > source_length or selector.insertion_offset > source_length:
+            raise ValueError("insertion target exceeds the proposer-observed source")
+        if isinstance(self.coordinate, WorkingDigestCoordinateV1) and (
+            self.coordinate.source_content_digest != self.preimage_digest
+        ):
+            raise ValueError("insertion preimage differs from its observed-digest coordinate")
+        empty_append = (
+            self.operation == "append"
+            and source_length == 0
+            and selector.start_byte == selector.end_byte == selector.insertion_offset == 0
+            and selector.content == b""
+        )
+        if selector.observed_occurrence_count != 1 and not (
+            empty_append and selector.observed_occurrence_count == 1
+        ):
+            raise ValueError("insertion anchor must have exactly one observed occurrence")
+        if self.operation == "insert_before" and selector.insertion_offset != selector.start_byte:
+            raise ValueError("insert_before offset must equal the anchor start")
+        if self.operation == "insert_after" and selector.insertion_offset != selector.end_byte:
+            raise ValueError("insert_after offset must equal the anchor end")
+        if self.operation == "replace_window" and selector.insertion_offset != selector.start_byte:
+            raise ValueError("replace_window offset must equal the window start")
+        if self.operation == "append" and selector.insertion_offset != source_length:
+            raise ValueError("append offset must equal the observed source length")
+        return self
+
+
+def insertion_target_digest(target: InsertionTargetV1) -> str:
+    payload = target.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(Sha256Value, INSERTION_TARGET_DIGEST_DOMAIN, payload).tagged
+
+
+def insertion_expectation_id(
+    *,
+    instance_id: str,
+    intent_id: str,
+    intent_revision: int,
+) -> str:
+    return typed_digest(
+        Sha256Value,
+        INSERTION_EXPECTATION_ID_DOMAIN,
+        {
+            "instance_id": instance_id,
+            "intent_id": intent_id,
+            "intent_revision": intent_revision,
+        },
+    ).tagged
 
 
 class SelfSourceBodyV1(_StrictAuthoringModel):
@@ -298,7 +434,7 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
     citation_role: Literal["evidence", "copy"] | None = None
     claim_ref: str | None = None
     existing_claim_dispositions: tuple[AuthoringExistingClaimDispositionV1, ...] = ()
-    insertion_target: object | None = None
+    insertion_target: InsertionTargetV1 | None = None
 
     @field_validator("rationale")
     @classmethod
@@ -313,11 +449,6 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
         if value is not None:
             claim_path(value)
         return value
-
-    @field_validator("insertion_target", mode="before")
-    @classmethod
-    def _target(cls, value: object | None) -> object | None:
-        return None if value is None else normalize_canonical(value)
 
     @field_validator("existing_claim_dispositions")
     @classmethod
@@ -542,6 +673,362 @@ class CandidateStatusV1(_StrictAuthoringModel):
         return self
 
 
+InsertionExpectationState: TypeAlias = Literal[
+    "awaiting_claim_acceptance",
+    "pending",
+    "confirming",
+    "bound",
+    "expired",
+    "abandoned",
+    "claim_currency_changed",
+]
+InsertionConfirmOutcome: TypeAlias = Literal[
+    "bound",
+    "already_bound",
+    "backing_candidate_pending",
+    "backing_candidate_refused",
+    "ambiguous",
+    "stale_target",
+    "expired",
+    "claim_currency_changed",
+]
+
+
+class InsertionPatchEnvelopeV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-patch-envelope-v1"] = "playbill-insertion-patch-envelope-v1"
+    source_id: str
+    preimage_digest: str
+    preimage_byte_length: int = Field(ge=0)
+    selector: InsertionAnchorWindowV1
+    operation: InsertionOperation
+    body_digest: str
+    body_byte_length: int = Field(ge=0)
+    postimage_digest: str
+    postimage_byte_length: int = Field(ge=0)
+    target_digest: str
+    expires_at: datetime
+    envelope_digest: str
+
+    @field_validator(
+        "preimage_digest",
+        "body_digest",
+        "postimage_digest",
+        "target_digest",
+        "envelope_digest",
+    )
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _sha256(value, label="insertion patch digest")
+
+    @field_validator("expires_at")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_serializer("expires_at", when_used="json")
+    def _serialize_time(self, value: datetime) -> str:
+        rendered = format_datetime(value)
+        assert rendered is not None
+        return rendered
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> "InsertionPatchEnvelopeV1":
+        removed = (
+            self.selector.end_byte - self.selector.start_byte
+            if self.operation == "replace_window"
+            else 0
+        )
+        expected_length = self.preimage_byte_length - removed + self.body_byte_length
+        if expected_length != self.postimage_byte_length:
+            raise ValueError("insertion patch byte-length arithmetic does not reproduce")
+        if self.envelope_digest != insertion_patch_envelope_digest(self):
+            raise ValueError("insertion patch envelope digest does not reproduce")
+        return self
+
+
+def insertion_patch_envelope_digest(envelope: InsertionPatchEnvelopeV1) -> str:
+    payload = envelope.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("envelope_digest")
+    return typed_digest(
+        Sha256Value,
+        INSERTION_PATCH_ENVELOPE_DIGEST_DOMAIN,
+        payload,
+    ).tagged
+
+
+def build_insertion_patch_envelope(**values: object) -> InsertionPatchEnvelopeV1:
+    provisional = InsertionPatchEnvelopeV1.model_construct(
+        **cast(dict[str, Any], values),
+        envelope_digest="sha256:" + "0" * 64,
+    )
+    return InsertionPatchEnvelopeV1.model_validate(
+        {
+            **values,
+            "envelope_digest": insertion_patch_envelope_digest(provisional),
+        }
+    )
+
+
+class InsertionConfirmationObservationV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-confirmation-observation-v1"] = (
+        "playbill-insertion-confirmation-observation-v1"
+    )
+    expectation_id: str
+    source_id: str
+    coordinate: WorkingSelectionCoordinateV1
+    observed_content_digest: str
+    selected_start_byte: int = Field(ge=0)
+    selected_end_byte: int = Field(ge=0)
+    selected_bytes_digest: str
+    observed_occurrence_count: int = Field(ge=0)
+
+    @field_validator("expectation_id", "observed_content_digest", "selected_bytes_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _sha256(value, label="insertion confirmation digest")
+
+    @field_validator("source_id")
+    @classmethod
+    def _source_id(cls, value: str) -> str:
+        if not _CANONICAL_NAME_RE.fullmatch(value):
+            raise ValueError("confirmation source_id must be stable and locator-free")
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "InsertionConfirmationObservationV1":
+        if self.selected_end_byte < self.selected_start_byte:
+            raise ValueError("confirmation selected span is decreasing")
+        if self.selected_end_byte > self.coordinate.source_byte_length:
+            raise ValueError("confirmation selected span exceeds its observed source")
+        if isinstance(self.coordinate, WorkingDigestCoordinateV1) and (
+            self.coordinate.source_content_digest != self.observed_content_digest
+        ):
+            raise ValueError("confirmation digest differs from its coordinate")
+        return self
+
+
+def insertion_confirmation_observation_digest(
+    observation: InsertionConfirmationObservationV1,
+) -> str:
+    payload = observation.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        INSERTION_CONFIRMATION_OBSERVATION_DIGEST_DOMAIN,
+        payload,
+    ).tagged
+
+
+class InsertionTerminalTombstoneV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-terminal-tombstone-v1"] = (
+        "playbill-insertion-terminal-tombstone-v1"
+    )
+    result_key: str
+    intent_id: str
+    expectation_id: str
+    final_state: Literal["bound", "expired", "abandoned", "claim_currency_changed"]
+    final_result: Literal[
+        "bound",
+        "expired",
+        "abandoned",
+        "claim_currency_changed",
+    ]
+    citation_id: str | None = None
+    successor_candidate_ref: str | None = None
+    finalized_at: datetime
+    retain_until: datetime
+    patch_envelope_digest: str
+    tombstone_digest: str
+
+    @field_validator(
+        "result_key",
+        "expectation_id",
+        "patch_envelope_digest",
+        "tombstone_digest",
+    )
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _sha256(value, label="insertion tombstone digest")
+
+    @field_validator("finalized_at", "retain_until")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_serializer("finalized_at", "retain_until", when_used="json")
+    def _serialize_times(self, value: datetime) -> str:
+        rendered = format_datetime(value)
+        assert rendered is not None
+        return rendered
+
+    @model_validator(mode="after")
+    def _shape(self) -> "InsertionTerminalTombstoneV1":
+        if self.retain_until < self.finalized_at:
+            raise ValueError("insertion tombstone retention precedes finalization")
+        if (self.final_state == "bound") != (self.citation_id is not None):
+            raise ValueError("only a bound insertion tombstone carries citation_id")
+        if self.tombstone_digest != insertion_terminal_tombstone_digest(self):
+            raise ValueError("insertion tombstone digest does not reproduce")
+        return self
+
+
+def insertion_terminal_tombstone_digest(tombstone: InsertionTerminalTombstoneV1) -> str:
+    payload = tombstone.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("tombstone_digest")
+    return typed_digest(
+        Sha256Value,
+        INSERTION_TERMINAL_TOMBSTONE_DIGEST_DOMAIN,
+        payload,
+    ).tagged
+
+
+def insertion_result_key(
+    *,
+    instance_id: str,
+    actor_id: str,
+    intent_id: str,
+    expectation_id: str,
+) -> str:
+    return typed_digest(
+        Sha256Value,
+        INSERTION_RESULT_KEY_DOMAIN,
+        {
+            "instance_id": instance_id,
+            "actor_id": actor_id,
+            "intent_id": intent_id,
+            "expectation_id": expectation_id,
+        },
+    ).tagged
+
+
+def build_insertion_terminal_tombstone(**values: object) -> InsertionTerminalTombstoneV1:
+    provisional = InsertionTerminalTombstoneV1.model_construct(
+        **cast(dict[str, Any], values),
+        tombstone_digest="sha256:" + "0" * 64,
+    )
+    return InsertionTerminalTombstoneV1.model_validate(
+        {
+            **values,
+            "tombstone_digest": insertion_terminal_tombstone_digest(provisional),
+        }
+    )
+
+
+class InsertionExpectationV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-expectation-v1"] = "playbill-insertion-expectation-v1"
+    expectation_id: str
+    state: InsertionExpectationState
+    claim_identity: str
+    original_claim_artifact_digest: str
+    claim_statement_digest: str
+    patch: InsertionPatchEnvelopeV1
+    confirmation_observation: InsertionConfirmationObservationV1 | None = None
+    citation_id: str | None = None
+    successor_proposal_id: str | None = None
+    successor_candidate_ref: str | None = None
+    successor_candidate_digest: str | None = None
+    terminal_tombstone: InsertionTerminalTombstoneV1 | None = None
+    expectation_digest: str
+
+    @field_validator(
+        "expectation_id",
+        "original_claim_artifact_digest",
+        "claim_statement_digest",
+        "citation_id",
+        "successor_candidate_digest",
+        "expectation_digest",
+    )
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            _sha256(value, label="insertion expectation digest")
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "InsertionExpectationV1":
+        if self.state in {"confirming", "bound"} and self.confirmation_observation is None:
+            raise ValueError("confirmed insertion state requires its exact observation")
+        if self.state in {"awaiting_claim_acceptance", "pending", "expired", "abandoned"} and (
+            self.confirmation_observation is not None
+        ):
+            raise ValueError("unconfirmed insertion state cannot carry an observation")
+        successor_values = (
+            self.successor_proposal_id,
+            self.successor_candidate_ref,
+            self.successor_candidate_digest,
+        )
+        if any(value is not None for value in successor_values) and not all(
+            value is not None for value in successor_values
+        ):
+            raise ValueError("insertion successor handles are all-or-none")
+        terminal = self.state in {
+            "bound",
+            "expired",
+            "abandoned",
+            "claim_currency_changed",
+        }
+        if terminal != (self.terminal_tombstone is not None):
+            raise ValueError("terminal insertion state requires exactly one tombstone")
+        if self.state == "bound" and self.citation_id is None:
+            raise ValueError("bound insertion expectation requires citation_id")
+        if self.expectation_digest != insertion_expectation_digest(self):
+            raise ValueError("insertion expectation digest does not reproduce")
+        return self
+
+
+def insertion_expectation_digest(expectation: InsertionExpectationV1) -> str:
+    payload = expectation.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("expectation_digest")
+    return typed_digest(
+        Sha256Value,
+        INSERTION_EXPECTATION_DIGEST_DOMAIN,
+        payload,
+    ).tagged
+
+
+def build_insertion_expectation(**values: object) -> InsertionExpectationV1:
+    provisional = InsertionExpectationV1.model_construct(
+        **cast(dict[str, Any], values),
+        expectation_digest="sha256:" + "0" * 64,
+    )
+    return InsertionExpectationV1.model_validate(
+        {
+            **values,
+            "expectation_digest": insertion_expectation_digest(provisional),
+        }
+    )
+
+
+def update_insertion_expectation(
+    expectation: InsertionExpectationV1,
+    **changes: object,
+) -> InsertionExpectationV1:
+    values = {
+        name: getattr(expectation, name)
+        for name in type(expectation).model_fields
+        if name not in {"tag", "expectation_digest"}
+    }
+    values.update(changes)
+    return build_insertion_expectation(**values)
+
+
+def insertion_confirmation_operation_key(
+    expectation_id: str,
+    observation: InsertionConfirmationObservationV1,
+) -> str:
+    return typed_digest(
+        Sha256Value,
+        INSERTION_CONFIRM_OPERATION_DOMAIN,
+        {
+            "expectation_id": expectation_id,
+            "observation_digest": insertion_confirmation_observation_digest(observation),
+        },
+    ).tagged
+
+
 class PreflightCertificateV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-preflight-certificate-v1"] = (
         "playbill-authoring-preflight-certificate-v1"
@@ -660,6 +1147,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
     intent_revision: int = Field(default=0, ge=0)
     last_preflight: PreflightResultV1 | None = None
     candidate_status: CandidateStatusV1
+    insertion_expectation: InsertionExpectationV1 | None = None
 
     @field_validator("intent_id")
     @classmethod
@@ -691,8 +1179,22 @@ class AuthoringIntentV1(_StrictAuthoringModel):
             raise ValueError("AuthoringIntent create fingerprint does not reproduce")
         if isinstance(self.payload, ClaimAuthoringPayloadV1):
             claim_path(self.semantic_identity)
+            if self.insertion_expectation is not None:
+                if self.payload.insertion_target is None:
+                    raise ValueError("insertion expectation requires an insertion target")
+                if self.insertion_expectation.claim_identity != self.semantic_identity:
+                    raise ValueError("insertion expectation names another Claim identity")
+                expected_id = insertion_expectation_id(
+                    instance_id=self.instance_id,
+                    intent_id=self.intent_id,
+                    intent_revision=self.intent_revision,
+                )
+                if self.insertion_expectation.expectation_id != expected_id:
+                    raise ValueError("insertion expectation ID does not reproduce")
         elif self.semantic_identity != f"Procedure:{self.payload.definition['name']}":
             raise ValueError("Procedure AuthoringIntent identity differs from its definition")
+        elif self.insertion_expectation is not None:
+            raise ValueError("Procedure AuthoringIntent cannot own an insertion expectation")
         return self
 
 
@@ -739,6 +1241,39 @@ class AuthoringSubmitResultV1(_StrictAuthoringModel):
     status: CandidateStatusV1
 
 
+class InsertionConfirmRequestV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-confirm-request-v1"] = "playbill-insertion-confirm-request-v1"
+    observation: InsertionConfirmationObservationV1
+
+
+class InsertionConfirmResultV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-confirm-result-v1"] = "playbill-insertion-confirm-result-v1"
+    outcome: InsertionConfirmOutcome
+    intent: AuthoringIntentV1
+    expectation: InsertionExpectationV1
+    successor_status: CandidateStatusV1 | None = None
+
+    @model_validator(mode="after")
+    def _status_shape(self) -> "InsertionConfirmResultV1":
+        needs_status = self.outcome in {
+            "backing_candidate_pending",
+            "backing_candidate_refused",
+        }
+        if needs_status != (self.successor_status is not None):
+            raise ValueError("insertion confirm successor status disagrees with its outcome")
+        return self
+
+
+class InsertionAbandonRequestV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-abandon-request-v1"] = "playbill-insertion-abandon-request-v1"
+
+
+class InsertionAbandonResultV1(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
+    intent: AuthoringIntentV1
+    expectation: InsertionExpectationV1
+
+
 __all__ = [
     "AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN",
     "AUTHORING_CREATE_FINGERPRINT_DOMAIN",
@@ -748,6 +1283,14 @@ __all__ = [
     "AUTHORING_PAYLOAD_DIGEST_DOMAIN",
     "AUTHORING_PREFLIGHT_CERTIFICATE_DIGEST_DOMAIN",
     "AUTHORING_RESOLVED_DIGEST_DOMAIN",
+    "INSERTION_CONFIRMATION_OBSERVATION_DIGEST_DOMAIN",
+    "INSERTION_CONFIRM_OPERATION_DOMAIN",
+    "INSERTION_EXPECTATION_DIGEST_DOMAIN",
+    "INSERTION_EXPECTATION_ID_DOMAIN",
+    "INSERTION_PATCH_ENVELOPE_DIGEST_DOMAIN",
+    "INSERTION_RESULT_KEY_DOMAIN",
+    "INSERTION_TARGET_DIGEST_DOMAIN",
+    "INSERTION_TERMINAL_TOMBSTONE_DIGEST_DOMAIN",
     "AcceptanceConditionV1",
     "AuthoringArtifactReferenceV1",
     "AuthoringClaimStatementV1",
@@ -768,6 +1311,19 @@ __all__ = [
     "ClaimAuthoringPayloadV1",
     "DiagnosticFrontierLimitsV1",
     "DiagnosticFrontierV1",
+    "InsertionAbandonRequestV1",
+    "InsertionAbandonResultV1",
+    "InsertionAnchorWindowV1",
+    "InsertionConfirmationObservationV1",
+    "InsertionConfirmOutcome",
+    "InsertionConfirmRequestV1",
+    "InsertionConfirmResultV1",
+    "InsertionExpectationState",
+    "InsertionExpectationV1",
+    "InsertionOperation",
+    "InsertionPatchEnvelopeV1",
+    "InsertionTargetV1",
+    "InsertionTerminalTombstoneV1",
     "PreflightCertificateV1",
     "PreflightResultV1",
     "ProcedureAuthoringPayloadV1",
@@ -779,6 +1335,18 @@ __all__ = [
     "WorkingSelectionObservationV1",
     "authoring_create_fingerprint",
     "authoring_payload_digest",
+    "build_insertion_expectation",
+    "build_insertion_patch_envelope",
+    "build_insertion_terminal_tombstone",
     "build_preflight_certificate",
+    "insertion_confirmation_observation_digest",
+    "insertion_confirmation_operation_key",
+    "insertion_expectation_digest",
+    "insertion_expectation_id",
+    "insertion_patch_envelope_digest",
+    "insertion_result_key",
+    "insertion_target_digest",
+    "insertion_terminal_tombstone_digest",
     "preflight_certificate_digest",
+    "update_insertion_expectation",
 ]
