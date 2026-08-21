@@ -76,6 +76,8 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_playbill_authoring_compile",
             "cruxible_playbill_authoring_preflight",
             "cruxible_playbill_authoring_submit",
+            "cruxible_playbill_authoring_confirm_insertion",
+            "cruxible_playbill_authoring_abandon_insertion",
         }
     ),
     PROFILE_REVIEW: frozenset(

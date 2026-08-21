@@ -210,7 +210,7 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
     result = coordinator.preflight(intent.intent_id, actor=actor)
 
     codes = {item.code for item in result.frontier.diagnostics}
-    assert "playbill.authoring.insertion_target_not_supported" in codes
+    assert "playbill.authoring.insertion_target_requires_self_source" in codes
     assert "playbill.authoring.working_selection_ambiguous" in codes
     assert result.verdict == "refused"
     assert result.frontier.frontier_complete is True

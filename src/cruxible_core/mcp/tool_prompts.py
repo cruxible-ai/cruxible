@@ -126,6 +126,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_authoring_status": (
         "Use when you need exactly what still separates an authored candidate from acceptance."
     ),
+    "cruxible_playbill_authoring_confirm_insertion": (
+        "Use after applying a pending insertion patch to bind its exact observed copy through "
+        "the ordinary governed Claim succession path."
+    ),
+    "cruxible_playbill_authoring_abandon_insertion": (
+        "Use when a pending publication copy should be retired while its accepted self-source "
+        "Claim remains governed."
+    ),
     "cruxible_playbill_list_claims": (
         "Use when you need accepted Claims, optionally narrowed to a Subject or predicate."
     ),

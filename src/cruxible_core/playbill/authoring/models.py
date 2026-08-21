@@ -957,12 +957,15 @@ class InsertionExpectationV1(_StrictAuthoringModel):
         successor_values = (
             self.successor_proposal_id,
             self.successor_candidate_ref,
-            self.successor_candidate_digest,
         )
-        if any(value is not None for value in successor_values) and not all(
+        if any(value is not None for value in successor_values) != all(
             value is not None for value in successor_values
         ):
-            raise ValueError("insertion successor handles are all-or-none")
+            raise ValueError("insertion successor proposal handles are all-or-none")
+        if self.successor_candidate_digest is not None and any(
+            value is None for value in successor_values
+        ):
+            raise ValueError("insertion candidate digest requires its proposal handles")
         terminal = self.state in {
             "bound",
             "expired",

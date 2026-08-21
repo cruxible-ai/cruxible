@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
+from tests.test_client.test_playbill_authoring import OBSERVATION
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -111,3 +112,50 @@ def test_http_refuses_digest_and_base_smuggling_in_request_models(
     )
     assert response.status_code == 422
     assert "claim_id" in response.text or "statement" in response.text
+
+
+def test_http_insertion_confirm_and_abandon_are_typed(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    seen: list[str] = []
+
+    def confirm_stub(selected: str, intent_id: str, *, observation: object):
+        assert selected == instance_id
+        assert intent_id == INTENT_ID
+        seen.append("confirm")
+        return contracts.PlaybillInsertionConfirmResult(
+            outcome="stale_target",
+            intent={"intent_id": intent_id},
+            expectation={"state": "pending"},
+        )
+
+    def abandon_stub(selected: str, intent_id: str):
+        assert (selected, intent_id) == (instance_id, INTENT_ID)
+        seen.append("abandon")
+        return contracts.PlaybillInsertionAbandonResult(
+            intent={"intent_id": intent_id},
+            expectation={"state": "abandoned"},
+        )
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_authoring_confirm_insertion",
+        confirm_stub,
+    )
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_authoring_abandon_insertion",
+        abandon_stub,
+    )
+    confirmed = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/confirm",
+        json={"tag": "playbill-insertion-confirm-request-v1", "observation": OBSERVATION},
+    )
+    abandoned = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/abandon",
+        json={"tag": "playbill-insertion-abandon-request-v1"},
+    )
+
+    assert confirmed.status_code == abandoned.status_code == 200
+    assert confirmed.json()["outcome"] == "stale_target"
+    assert seen == ["confirm", "abandon"]

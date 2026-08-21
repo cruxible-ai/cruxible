@@ -365,6 +365,27 @@ def register_tools(
         return handlers.handle_playbill_authoring_status(instance_id, intent_id)
 
     @_tool
+    def cruxible_playbill_authoring_confirm_insertion(
+        instance_id: str,
+        intent_id: str,
+        observation: dict[str, Any],
+    ) -> contracts.PlaybillInsertionConfirmResult:
+        """Confirm a client-applied insertion and govern its copy citation."""
+        return handlers.handle_playbill_authoring_confirm_insertion(
+            instance_id,
+            intent_id,
+            observation,
+        )
+
+    @_tool
+    def cruxible_playbill_authoring_abandon_insertion(
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillInsertionAbandonResult:
+        """Abandon a pending insertion while keeping the accepted self-source Claim."""
+        return handlers.handle_playbill_authoring_abandon_insertion(instance_id, intent_id)
+
+    @_tool
     def cruxible_playbill_list_claims(
         instance_id: str,
         subject_path: str | None = None,

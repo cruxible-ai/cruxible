@@ -472,6 +472,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "authoring_intent_status",
                         "Read the path to acceptance.",
                     ),
+                    "confirm-insertion": _command(
+                        "playbill",
+                        "confirm_authoring_insertion",
+                        "Confirm a client-applied publication copy.",
+                    ),
+                    "abandon-insertion": _command(
+                        "playbill",
+                        "abandon_authoring_insertion",
+                        "Abandon a pending publication copy.",
+                    ),
                 },
                 module="playbill",
                 attr="authoring_group",

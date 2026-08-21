@@ -18,6 +18,14 @@ from cruxible_core.playbill.errors import PlaybillError
 
 AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})
+_LIVE_INSERTION_STATES = frozenset({"awaiting_claim_acceptance", "pending", "confirming"})
+
+
+def _intent_is_pending(intent: AuthoringIntentV1) -> bool:
+    expectation = intent.insertion_expectation
+    if expectation is not None and expectation.state in _LIVE_INSERTION_STATES:
+        return True
+    return intent.candidate_status.state not in _TERMINAL_STATES
 
 
 class AuthoringIntentStoreError(PlaybillError):
@@ -226,10 +234,7 @@ class AuthoringIntentStore:
             pending: list[AuthoringIntentV1] = []
             for directory in self._intent_directories():
                 intent = self._load_events(directory)[-1].intent
-                if (
-                    intent.actor_id == actor_id
-                    and intent.candidate_status.state not in _TERMINAL_STATES
-                ):
+                if intent.actor_id == actor_id and _intent_is_pending(intent):
                     pending.append(intent)
             return tuple(sorted(pending, key=lambda item: item.intent_id.encode("ascii")))
 
@@ -277,7 +282,7 @@ class AuthoringIntentStore:
             if (
                 intent.actor_id == actor_id
                 and intent.create_fingerprint == fingerprint
-                and intent.candidate_status.state not in _TERMINAL_STATES
+                and _intent_is_pending(intent)
             ):
                 matches.append(intent)
         if len(matches) > 1:

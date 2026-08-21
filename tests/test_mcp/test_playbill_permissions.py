@@ -41,6 +41,8 @@ def test_state_authoring_and_review_profiles_separate_proposal_from_settlement(
     assert "cruxible_playbill_propose_document" in authoring
     assert "cruxible_playbill_authoring_compile" in authoring
     assert "cruxible_playbill_authoring_submit" in authoring
+    assert "cruxible_playbill_authoring_confirm_insertion" in authoring
+    assert "cruxible_playbill_authoring_abandon_insertion" in authoring
     assert "cruxible_playbill_submit_approval" not in authoring
     assert "cruxible_playbill_activate" not in authoring
 

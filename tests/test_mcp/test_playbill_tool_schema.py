@@ -50,9 +50,12 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
     schemas = _schemas()
     compile_schema = schemas["cruxible_playbill_authoring_compile"].inputSchema
     submit_schema = schemas["cruxible_playbill_authoring_submit"].inputSchema
+    confirm_schema = schemas["cruxible_playbill_authoring_confirm_insertion"].inputSchema
 
     assert set(compile_schema["properties"]) == {"instance_id", "payload", "intent_id"}
     assert set(submit_schema["properties"]) == {"instance_id", "intent_id"}
+    assert set(confirm_schema["properties"]) == {"instance_id", "intent_id", "observation"}
     forbidden = {"base", "claim_id", "candidate_digest", "predecessor_digest"}
     assert forbidden.isdisjoint(compile_schema["properties"])
     assert forbidden.isdisjoint(submit_schema["properties"])
+    assert forbidden.isdisjoint(confirm_schema["properties"])

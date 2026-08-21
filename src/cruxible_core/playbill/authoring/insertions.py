@@ -91,7 +91,7 @@ def mark_confirming(
     citation_id: str,
     proposal_id: str,
     candidate_ref: str,
-    candidate_digest: str,
+    candidate_digest: str | None,
 ) -> InsertionExpectationV1:
     if expectation.state == "confirming":
         if expectation.confirmation_observation == observation:

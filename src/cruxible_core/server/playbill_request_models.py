@@ -8,7 +8,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_core.playbill.attestations import ApprovalAttestation
-from cruxible_core.playbill.authoring.models import AuthoringPayloadV1
+from cruxible_core.playbill.authoring.models import (
+    AuthoringPayloadV1,
+    InsertionConfirmationObservationV1,
+)
 from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -129,6 +132,15 @@ class PlaybillAuthoringSubmitRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-intent-submit-request-v1"] = (
         "playbill-authoring-intent-submit-request-v1"
     )
+
+
+class PlaybillInsertionConfirmRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-insertion-confirm-request-v1"] = "playbill-insertion-confirm-request-v1"
+    observation: InsertionConfirmationObservationV1
+
+
+class PlaybillInsertionAbandonRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-insertion-abandon-request-v1"] = "playbill-insertion-abandon-request-v1"
 
 
 class PlaybillProposeQueryDefinitionRequest(_StrictPlaybillRequest):

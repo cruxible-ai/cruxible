@@ -26,6 +26,7 @@ from cruxible_core.playbill.authoring.models import (
     DiagnosticFrontierV1,
     PreflightResultV1,
     RepairAlternativeV1,
+    SelfSourceBodyV1,
     WorkingSelectionObservationV1,
     build_preflight_certificate,
 )
@@ -158,27 +159,56 @@ def compute_preflight(
     payload = intent.payload
     if isinstance(payload, ClaimAuthoringPayloadV1):
         if payload.insertion_target is not None:
-            diagnostics.append(
-                _diagnostic(
-                    code="playbill.authoring.insertion_target_not_supported",
-                    stage="lowering",
-                    offending_element="insertion_target",
-                    message="Publication insertion is not supported in PC-G1b.",
-                    owner="daemon",
-                    disposition="wait",
-                    repairs=(
-                        _repair(
-                            "omit_insertion_target",
-                            "Omit insertion_target and keep the retained self-source citation.",
-                            None,
+            if not isinstance(payload.source, SelfSourceBodyV1):
+                diagnostics.append(
+                    _diagnostic(
+                        code="playbill.authoring.insertion_target_requires_self_source",
+                        stage="source_binding",
+                        offending_element="insertion_target",
+                        message="Publication insertion is available only for a Flow-B body.",
+                        repairs=(
+                            _repair(
+                                "replace_source",
+                                "Use a retained self-source body for publication insertion.",
+                                {"required_source_tag": "playbill-self-source-body-v1"},
+                            ),
+                            _repair(
+                                "omit_insertion_target",
+                                "Omit insertion_target and keep the existing Flow-A binding.",
+                                None,
+                            ),
                         ),
-                        _repair(
-                            "wait_for_pc_g2",
-                            "Keep this intent pending until PC-G2 insertion is available.",
-                        ),
-                    ),
+                    )
                 )
-            )
+            else:
+                target = payload.insertion_target
+                removed = (
+                    target.selector.end_byte - target.selector.start_byte
+                    if target.operation == "replace_window"
+                    else 0
+                )
+                expected_length = (
+                    target.coordinate.source_byte_length - removed + len(payload.source.content)
+                )
+                if expected_length != target.postimage_byte_length:
+                    diagnostics.append(
+                        _diagnostic(
+                            code="playbill.authoring.insertion_postimage_length_mismatch",
+                            stage="source_binding",
+                            offending_element="insertion_target.postimage_byte_length",
+                            message=(
+                                "The proposer-observed postimage length does not match the "
+                                "exact patch arithmetic."
+                            ),
+                            repairs=(
+                                _repair(
+                                    "replace_postimage_observation",
+                                    "Recompute the postimage digest and byte length locally.",
+                                    {"postimage_byte_length": expected_length},
+                                ),
+                            ),
+                        )
+                    )
         if isinstance(payload.source, WorkingSelectionObservationV1):
             count = payload.source.selector.observed_occurrence_count
             if count != 1:

@@ -694,6 +694,33 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillCandidateStatus)
 
+    def confirm_playbill_authoring_insertion(
+        self,
+        instance_id: str,
+        intent_id: str,
+        *,
+        observation: Mapping[str, Any],
+    ) -> contracts.PlaybillInsertionConfirmResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm",
+            json={
+                "tag": "playbill-insertion-confirm-request-v1",
+                "observation": dict(observation),
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillInsertionConfirmResult)
+
+    def abandon_playbill_authoring_insertion(
+        self,
+        instance_id: str,
+        intent_id: str,
+    ) -> contracts.PlaybillInsertionAbandonResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon",
+            json={"tag": "playbill-insertion-abandon-request-v1"},
+        )
+        return self._parse_model(response, contracts.PlaybillInsertionAbandonResult)
+
     def list_playbill_claims(
         self,
         instance_id: str,

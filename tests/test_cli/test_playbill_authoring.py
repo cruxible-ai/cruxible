@@ -17,6 +17,10 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
     compiler_digest="sha256:" + "4" * 64,
 )
 INTENT_ID = "AIT-" + "5" * 32
+OBSERVATION = {
+    "tag": "playbill-insertion-confirmation-observation-v1",
+    "expectation_id": "sha256:" + "6" * 64,
+}
 
 
 def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
@@ -109,3 +113,57 @@ def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  #
     )
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
+
+
+def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    observation = tmp_path / "observation.json"
+    observation.write_text(json.dumps(OBSERVATION))
+    calls: list[tuple[str, object]] = []
+
+    class StubClient:
+        def confirm_playbill_authoring_insertion(
+            self,
+            instance_id: str,
+            intent_id: str,
+            *,
+            observation: dict[str, object],
+        ) -> contracts.PlaybillInsertionConfirmResult:
+            calls.append((intent_id, observation))
+            return contracts.PlaybillInsertionConfirmResult(
+                outcome="stale_target",
+                intent={"intent_id": intent_id},
+                expectation={"state": "pending"},
+            )
+
+        def abandon_playbill_authoring_insertion(
+            self,
+            instance_id: str,
+            intent_id: str,
+        ) -> contracts.PlaybillInsertionAbandonResult:
+            calls.append((intent_id, "abandon"))
+            return contracts.PlaybillInsertionAbandonResult(
+                intent={"intent_id": intent_id},
+                expectation={"state": "abandoned"},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    common = [
+        "--server-url",
+        "https://authoring.example.test",
+        "--instance-id",
+        "inst_authoring",
+        "playbill",
+        "authoring",
+    ]
+    runner = CliRunner()
+    confirmed = runner.invoke(
+        cli,
+        [*common, "confirm-insertion", INTENT_ID, str(observation), "--json"],
+    )
+    abandoned = runner.invoke(cli, [*common, "abandon-insertion", INTENT_ID, "--json"])
+
+    assert confirmed.exit_code == abandoned.exit_code == 0
+    assert calls == [(INTENT_ID, OBSERVATION), (INTENT_ID, "abandon")]

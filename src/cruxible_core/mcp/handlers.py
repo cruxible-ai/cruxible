@@ -13,7 +13,10 @@ from cruxible_client import CruxibleClient, contracts
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.playbill.attestations import ApprovalAttestation
-from cruxible_core.playbill.authoring.models import AuthoringPayloadV1
+from cruxible_core.playbill.authoring.models import (
+    AuthoringPayloadV1,
+    InsertionConfirmationObservationV1,
+)
 from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -630,6 +633,38 @@ def handle_playbill_authoring_status(
         lambda client: client.playbill_authoring_intent_status(instance_id, intent_id),
         lambda: playbill_api.playbill_authoring_status(instance_id, intent_id),
         operation_name="cruxible_playbill_authoring_status",
+    )
+
+
+def handle_playbill_authoring_confirm_insertion(
+    instance_id: str,
+    intent_id: str,
+    observation: dict[str, Any],
+) -> contracts.PlaybillInsertionConfirmResult:
+    request = InsertionConfirmationObservationV1.model_validate(observation)
+    return _dispatch_remote_or_local(
+        lambda client: client.confirm_playbill_authoring_insertion(
+            instance_id,
+            intent_id,
+            observation=request.model_dump(mode="json"),
+        ),
+        lambda: playbill_api.playbill_authoring_confirm_insertion(
+            instance_id,
+            intent_id,
+            observation=request,
+        ),
+        operation_name="cruxible_playbill_authoring_confirm_insertion",
+    )
+
+
+def handle_playbill_authoring_abandon_insertion(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillInsertionAbandonResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.abandon_playbill_authoring_insertion(instance_id, intent_id),
+        lambda: playbill_api.playbill_authoring_abandon_insertion(instance_id, intent_id),
+        operation_name="cruxible_playbill_authoring_abandon_insertion",
     )
 
 

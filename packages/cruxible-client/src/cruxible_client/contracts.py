@@ -439,6 +439,33 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     status: PlaybillCandidateStatus
 
 
+class PlaybillInsertionConfirmResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-insertion-confirm-result-v1"] = "playbill-insertion-confirm-result-v1"
+    outcome: Literal[
+        "bound",
+        "already_bound",
+        "backing_candidate_pending",
+        "backing_candidate_refused",
+        "ambiguous",
+        "stale_target",
+        "expired",
+        "claim_currency_changed",
+    ]
+    intent: dict[str, Any]
+    expectation: dict[str, Any]
+    successor_status: PlaybillCandidateStatus | None = None
+
+
+class PlaybillInsertionAbandonResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
+    intent: dict[str, Any]
+    expectation: dict[str, Any]
+
+
 class PlaybillQueryDefinitionView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

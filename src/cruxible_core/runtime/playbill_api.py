@@ -20,7 +20,10 @@ from cruxible_core.errors import AuthenticationError, ConfigError, DataValidatio
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.attestations import ApprovalAttestation
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.models import AuthoringPayloadV1
+from cruxible_core.playbill.authoring.models import (
+    AuthoringPayloadV1,
+    InsertionConfirmationObservationV1,
+)
 from cruxible_core.playbill.candidates import canonical_candidate_timestamp
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import ClaimType
@@ -684,6 +687,28 @@ def playbill_authoring_status(
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.status(intent_id, actor=actor)
     return contracts.PlaybillCandidateStatus.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_authoring_confirm_insertion(
+    instance_id: str,
+    intent_id: str,
+    *,
+    observation: InsertionConfirmationObservationV1,
+) -> contracts.PlaybillInsertionConfirmResult:
+    check_permission("cruxible_playbill_authoring_confirm_insertion", instance_id=instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    result = coordinator.confirm_insertion(intent_id, actor=actor, observation=observation)
+    return contracts.PlaybillInsertionConfirmResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_authoring_abandon_insertion(
+    instance_id: str,
+    intent_id: str,
+) -> contracts.PlaybillInsertionAbandonResult:
+    check_permission("cruxible_playbill_authoring_abandon_insertion", instance_id=instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    result = coordinator.abandon_insertion(intent_id, actor=actor)
+    return contracts.PlaybillInsertionAbandonResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_list_claims(

@@ -115,6 +115,8 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_authoring_compile": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_authoring_preflight": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_authoring_submit": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_authoring_confirm_insertion": PermissionMode.GOVERNED_WRITE,
+    "cruxible_playbill_authoring_abandon_insertion": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_dereference": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_submit_approval": PermissionMode.GRAPH_WRITE,
     "cruxible_playbill_activate": PermissionMode.GRAPH_WRITE,

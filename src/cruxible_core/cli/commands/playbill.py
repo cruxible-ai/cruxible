@@ -992,6 +992,42 @@ def authoring_intent_status(intent_id: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
+@authoring_group.command("confirm-insertion")
+@click.argument("intent_id")
+@click.argument("observation", type=click.Path(exists=True, dir_okay=False))
+@json_option
+@handle_errors
+def confirm_authoring_insertion(
+    intent_id: str,
+    observation: str,
+    output_json: bool,
+) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.confirm_playbill_authoring_insertion(
+            instance_id,
+            intent_id,
+            observation=_read_mapping(observation),
+        ),
+        command_name="playbill authoring confirm-insertion",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@authoring_group.command("abandon-insertion")
+@click.argument("intent_id")
+@json_option
+@handle_errors
+def abandon_authoring_insertion(intent_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.abandon_playbill_authoring_insertion(
+            instance_id,
+            intent_id,
+        ),
+        command_name="playbill authoring abandon-insertion",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
 @claim_group.command("list")
 @click.option("--subject", "subject_path", default=None, help="Subject artifact path filter.")
 @click.option("--predicate", default=None)
