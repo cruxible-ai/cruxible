@@ -161,6 +161,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_discover": (
         "Use when you do not yet know which interface or Subject names the state you want."
     ),
+    "cruxible_playbill_search": (
+        "Use search mode to find accepted Claims, Briefs, Procedures, or installed demands; "
+        "list mode for deterministic pagination; orient mode for counts and exact follow-ups."
+    ),
     "cruxible_playbill_expand": (
         "Use when you need one address's bounded governance, provenance, and relation context."
     ),

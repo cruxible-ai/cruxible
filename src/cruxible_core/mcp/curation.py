@@ -50,6 +50,7 @@ _COMMON_READS = {
     "cruxible_playbill_get_query_definition",
     "cruxible_playbill_run_query",
     "cruxible_playbill_discover",
+    "cruxible_playbill_search",
     "cruxible_playbill_expand",
     "cruxible_playbill_export_floor",
     "cruxible_playbill_resolve_coverage",

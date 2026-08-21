@@ -143,12 +143,16 @@ cruxible playbill authoring compile PAYLOAD [--intent-id INTENT_ID]
 cruxible playbill authoring preflight INTENT_ID
 cruxible playbill authoring submit INTENT_ID
 cruxible playbill authoring status INTENT_ID
+cruxible playbill authoring confirm-insertion INTENT_ID OBSERVATION
+cruxible playbill authoring abandon-insertion INTENT_ID
 ~~~
 
 The authoring coordinator owns stable identities, timestamps, bases, and proposal
 references. `compile` creates or updates an intent and performs a binding preflight;
 `submit` is idempotent and never supplies approvals. `status` reports the remaining
 approval or activation conditions without impersonating the actors who own them.
+Insertion confirmation verifies a client observation and opens an ordinary
+backing-only successor candidate; abandon closes only that publication expectation.
 
 ## playbill query
 
@@ -173,6 +177,22 @@ cruxible playbill discover [--query TEXT] [--entrypoint NAME]
 
 Exactly one of --query or --entrypoint selects the page. Matching is exact and
 lexical over the accepted naming layer; it is never a similarity score.
+
+## playbill search, list, and orient
+
+~~~text
+cruxible playbill search QUERY [--kind KIND]... [--status STATUS]...
+  [--subject-path PATH] [--cursor JSON] [--evaluation-time TS]
+cruxible playbill list [--kind KIND]... [--status STATUS]...
+  [--subject-path PATH] [--cursor JSON] [--evaluation-time TS]
+cruxible playbill orient [--kind KIND]... [--status STATUS]...
+  [--subject-path PATH] [--evaluation-time TS]
+~~~
+
+These are the generic headless discovery surface for Claims, Briefs, Procedures,
+and installed demand policies. `orient` returns counts and exact follow-up filters,
+never arbitrary top rows. Until demand policy is installed it explicitly reports
+`demand: not_installed`.
 
 ## playbill expand
 

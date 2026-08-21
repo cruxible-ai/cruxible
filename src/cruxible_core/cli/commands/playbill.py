@@ -76,6 +76,7 @@ from cruxible_core.playbill.source_catalog import (
     merge_source_catalogs,
 )
 from cruxible_core.playbill.types import PrincipalRecord
+from cruxible_core.primitives import canonical_json
 
 ResultT = TypeVar("ResultT")
 
@@ -1223,6 +1224,155 @@ def discover(
     for hit in result.page.get("hits", []):
         click.echo(f"{hit['kind']}  {hit['label']}  {hit['address']['artifact_path']}")
     click.echo(f"Vocabulary entries: {result.vocabulary_entry_count}")
+
+
+def _headless_search(
+    *,
+    mode: str,
+    query_text: str | None,
+    kinds: tuple[str, ...],
+    statuses: tuple[str, ...],
+    subject_path: str | None,
+    cursor_json: str | None,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    selected_kinds = tuple(sorted(set(kinds or ("brief", "claim", "demand", "procedure"))))
+    selected_statuses = tuple(sorted(set(statuses)))
+    subject = (
+        None
+        if subject_path is None
+        else SemanticAddress.whole_artifact(subject_path).model_dump(mode="json")
+    )
+    try:
+        parsed_cursor = None if cursor_json is None else json.loads(cursor_json)
+    except ValueError as exc:
+        raise click.ClickException("--cursor must be one complete cursor JSON object") from exc
+    if parsed_cursor is not None and not isinstance(parsed_cursor, dict):
+        raise click.ClickException("--cursor must be one complete cursor JSON object")
+    result = _server_call(
+        lambda client, instance_id: client.search_playbill(
+            instance_id,
+            mode=cast(Any, mode),
+            query=query_text,
+            kinds=selected_kinds,
+            subject=subject,
+            statuses=selected_statuses,
+            cursor=parsed_cursor,
+            evaluation_time=evaluation_time,
+        ),
+        command_name=f"playbill {mode}",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    if result.orientation is not None:
+        click.echo(f"Generation: {result.orientation['generation']}")
+        for item in result.orientation["counts_by_kind"]:
+            click.echo(f"{item['key']}: {item['count']}")
+        for item in result.orientation["kind_availability"]:
+            if item["availability"] != "installed":
+                click.echo(f"{item['kind']}: {item['availability']}")
+        return
+    for row in result.rows:
+        health = "" if row.get("healthy") is None else f" health={row['healthy']}"
+        click.echo(f"{row['kind']}  {row['status']}  {row['identity']}  {row['title']}{health}")
+    if result.next_cursor is not None:
+        click.echo("Next cursor: " + canonical_json(result.next_cursor))
+
+
+_SEARCH_KIND = click.Choice(["claim", "brief", "procedure", "demand"])
+_SEARCH_STATUS = click.Choice(["accepted", "conflicted", "overturned", "refused", "retired"])
+
+
+@playbill_group.command("search")
+@click.argument("query_text")
+@click.option("--kind", "kinds", type=_SEARCH_KIND, multiple=True)
+@click.option("--status", "statuses", type=_SEARCH_STATUS, multiple=True)
+@click.option("--subject-path", default=None, help="Exact governed Subject artifact path.")
+@click.option("--cursor", "cursor_json", default=None, help="Opaque cursor JSON from a prior page.")
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def search(
+    query_text: str,
+    kinds: tuple[str, ...],
+    statuses: tuple[str, ...],
+    subject_path: str | None,
+    cursor_json: str | None,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """Find accepted Claims, Briefs, Procedures, or installed demands."""
+
+    _headless_search(
+        mode="search",
+        query_text=query_text,
+        kinds=kinds,
+        statuses=statuses,
+        subject_path=subject_path,
+        cursor_json=cursor_json,
+        evaluation_time=evaluation_time,
+        output_json=output_json,
+    )
+
+
+@playbill_group.command("list")
+@click.option("--kind", "kinds", type=_SEARCH_KIND, multiple=True)
+@click.option("--status", "statuses", type=_SEARCH_STATUS, multiple=True)
+@click.option("--subject-path", default=None, help="Exact governed Subject artifact path.")
+@click.option("--cursor", "cursor_json", default=None, help="Opaque cursor JSON from a prior page.")
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def search_list(
+    kinds: tuple[str, ...],
+    statuses: tuple[str, ...],
+    subject_path: str | None,
+    cursor_json: str | None,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """List accepted write/read artifacts in deterministic pages."""
+
+    _headless_search(
+        mode="list",
+        query_text=None,
+        kinds=kinds,
+        statuses=statuses,
+        subject_path=subject_path,
+        cursor_json=cursor_json,
+        evaluation_time=evaluation_time,
+        output_json=output_json,
+    )
+
+
+@playbill_group.command("orient")
+@click.option("--kind", "kinds", type=_SEARCH_KIND, multiple=True)
+@click.option("--status", "statuses", type=_SEARCH_STATUS, multiple=True)
+@click.option("--subject-path", default=None, help="Exact governed Subject artifact path.")
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def orient(
+    kinds: tuple[str, ...],
+    statuses: tuple[str, ...],
+    subject_path: str | None,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """Summarize accepted state and return exact follow-up filters."""
+
+    _headless_search(
+        mode="orient",
+        query_text=None,
+        kinds=kinds,
+        statuses=statuses,
+        subject_path=subject_path,
+        cursor_json=None,
+        evaluation_time=evaluation_time,
+        output_json=output_json,
+    )
 
 
 @playbill_group.command("expand")

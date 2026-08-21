@@ -18,6 +18,12 @@
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}": {
     "GET": "PlaybillAuthoringIntentView"
   },
+  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon": {
+    "POST": "PlaybillInsertionAbandonResult"
+  },
+  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm": {
+    "POST": "PlaybillInsertionConfirmResult"
+  },
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight": {
     "POST": "PlaybillAuthoringPreflightResult"
   },
@@ -128,6 +134,9 @@
   },
   "/api/v1/{instance_id}/playbill/queries/{name}/run": {
     "POST": "PlaybillQueryRun"
+  },
+  "/api/v1/{instance_id}/playbill/search": {
+    "POST": "PlaybillSearchResult"
   },
   "/api/v1/{instance_id}/playbill/sources/check": {
     "POST": "PlaybillSourceCheckResult"

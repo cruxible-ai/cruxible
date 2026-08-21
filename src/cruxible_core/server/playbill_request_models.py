@@ -21,6 +21,14 @@ from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.query.definitions import QueryDefinitionV1
 from cruxible_core.playbill.query.grammar import QueryBudgetsV1
+from cruxible_core.playbill.search import (
+    SEARCH_KINDS,
+    PlaybillSearchBudgetsV1,
+    PlaybillSearchCursorV1,
+    SearchKind,
+    SearchMode,
+    SearchStatus,
+)
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 from cruxible_core.playbill.subjects import SubjectShell
@@ -168,6 +176,18 @@ class PlaybillDiscoverRequest(_StrictPlaybillRequest):
     evaluation_time: str | None = None
     profile: Literal["interfaces", "subjects", "all"] = "interfaces"
     budget: DiscoveryBudgetV1 = DiscoveryBudgetV1()
+
+
+class PlaybillSearchRequest(_StrictPlaybillRequest):
+    mode: SearchMode
+    query: str | None = None
+    kinds: tuple[SearchKind, ...] = SEARCH_KINDS
+    subject: SemanticAddress | None = None
+    statuses: tuple[SearchStatus, ...] = ()
+    cursor: PlaybillSearchCursorV1 | None = None
+    at: AcceptedCoordinate | None = None
+    evaluation_time: datetime | None = None
+    budgets: PlaybillSearchBudgetsV1 = PlaybillSearchBudgetsV1()
 
 
 class PlaybillExpandRequest(_StrictPlaybillRequest):

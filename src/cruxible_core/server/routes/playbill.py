@@ -34,6 +34,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillResolveCoverageRequest,
     PlaybillReviewRequest,
     PlaybillRunQueryRequest,
+    PlaybillSearchRequest,
     PlaybillSourceBundleRequest,
     PlaybillSourceProposeRequest,
     PlaybillStoreBodyRequest,
@@ -781,6 +782,28 @@ async def discover(
         evaluation_time=req.evaluation_time,
         profile=req.profile,
         budget=req.budget,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/search",
+    response_model=contracts.PlaybillSearchResult,
+)
+async def search(
+    instance_id: str,
+    req: PlaybillSearchRequest,
+) -> contracts.PlaybillSearchResult:
+    return playbill_api.playbill_search(
+        resolve_server_instance_id(instance_id),
+        mode=req.mode,
+        query=req.query,
+        kinds=req.kinds,
+        subject=req.subject,
+        statuses=req.statuses,
+        cursor=req.cursor,
+        at=req.at,
+        evaluation_time=req.evaluation_time,
+        budgets=req.budgets,
     )
 
 

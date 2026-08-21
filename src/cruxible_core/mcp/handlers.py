@@ -26,6 +26,13 @@ from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.query.definitions import QueryDefinitionV1
 from cruxible_core.playbill.query.grammar import QueryBudgetsV1
+from cruxible_core.playbill.search import (
+    SEARCH_KINDS,
+    PlaybillSearchBudgetsV1,
+    PlaybillSearchCursorV1,
+    SearchKind,
+    SearchStatus,
+)
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 from cruxible_core.playbill.subjects import SubjectShell
@@ -831,6 +838,57 @@ def handle_playbill_discover(
             budget=limits,
         ),
         operation_name="cruxible_playbill_discover",
+    )
+
+
+def handle_playbill_search(
+    instance_id: str,
+    *,
+    mode: str,
+    query: str | None,
+    kinds: list[SearchKind] | None,
+    subject: dict[str, Any] | None,
+    statuses: list[SearchStatus] | None,
+    cursor: dict[str, Any] | None,
+    evaluation_time: str | None,
+    budgets: dict[str, Any] | None,
+) -> contracts.PlaybillSearchResult:
+    parsed_cursor = None if cursor is None else PlaybillSearchCursorV1.model_validate(cursor)
+    limits = (
+        parsed_cursor.budgets
+        if budgets is None and parsed_cursor is not None
+        else None
+        if budgets is None
+        else PlaybillSearchBudgetsV1.model_validate(budgets)
+    )
+    parsed_subject = None if subject is None else SemanticAddress.model_validate(subject)
+    evaluated_at = parse_datetime(evaluation_time)
+    selected_kinds = SEARCH_KINDS if kinds is None else tuple(sorted(set(kinds)))
+    selected_statuses = () if statuses is None else tuple(sorted(set(statuses)))
+    return _dispatch_remote_or_local(
+        lambda client: client.search_playbill(
+            instance_id,
+            mode=cast(Any, mode),
+            query=query,
+            kinds=selected_kinds,
+            subject=(None if parsed_subject is None else parsed_subject.model_dump(mode="json")),
+            statuses=selected_statuses,
+            cursor=(None if parsed_cursor is None else parsed_cursor.model_dump(mode="json")),
+            evaluation_time=(None if evaluated_at is None else evaluated_at.isoformat()),
+            budgets=(None if limits is None else limits.model_dump(mode="json")),
+        ),
+        lambda: playbill_api.playbill_search(
+            instance_id,
+            mode=cast(Any, mode),
+            query=query,
+            kinds=cast(Any, selected_kinds),
+            subject=parsed_subject,
+            statuses=cast(Any, selected_statuses),
+            cursor=parsed_cursor,
+            evaluation_time=evaluated_at,
+            budgets=limits,
+        ),
+        operation_name="cruxible_playbill_search",
     )
 
 

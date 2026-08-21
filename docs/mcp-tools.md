@@ -94,6 +94,8 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_playbill_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
+| `cruxible_playbill_authoring_confirm_insertion` | Confirm a client-applied publication copy | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_abandon_insertion` | Abandon a pending publication copy | `GOVERNED_WRITE` |
 
 The coordinator mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.
@@ -107,6 +109,7 @@ It reports approval conditions but never obtains or impersonates an approval.
 | `cruxible_playbill_get_query_definition` | Read one entrypoint's contract | `READ_ONLY` |
 | `cruxible_playbill_run_query` | Execute an entrypoint with a replay receipt | `READ_ONLY` |
 | `cruxible_playbill_discover` | Find interfaces and Subjects by name | `READ_ONLY` |
+| `cruxible_playbill_search` | Search, list, or orient over accepted state | `READ_ONLY` |
 | `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
 | `cruxible_playbill_export_floor` | Export the greppable floor as base64 bytes | `READ_ONLY` |
 | `cruxible_playbill_resolve_coverage` | Resolve observed working sources against accepted state | `READ_ONLY` |

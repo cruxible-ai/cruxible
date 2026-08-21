@@ -40,6 +40,15 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.query.definitions import QueryDefinitionV1
 from cruxible_core.playbill.query.grammar import QueryBudgetsV1
+from cruxible_core.playbill.search import (
+    SEARCH_KINDS,
+    PlaybillSearchBudgetsV1,
+    PlaybillSearchCursorV1,
+    PlaybillSearchRequestV1,
+    SearchKind,
+    SearchMode,
+    SearchStatus,
+)
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.claim_types import (
     service_get_playbill_claim_type,
@@ -103,10 +112,14 @@ from cruxible_core.service.playbill_claims import (
     service_propose_playbill_claim,
     service_propose_playbill_claims,
 )
-from cruxible_core.service.playbill_coverage import service_resolve_playbill_coverage
+from cruxible_core.service.playbill_coverage import (
+    coverage_access_profile,
+    service_resolve_playbill_coverage,
+)
 from cruxible_core.service.playbill_discovery import service_discover_playbill_semantic
 from cruxible_core.service.playbill_floor import MANIFEST_PATH, service_export_playbill_floor
 from cruxible_core.service.playbill_query import service_run_playbill_query
+from cruxible_core.service.playbill_search import service_search_playbill
 from cruxible_core.temporal import utc_now
 
 
@@ -862,6 +875,39 @@ def playbill_discover(
         budget=budget or DiscoveryBudgetV1(),
     )
     return contracts.PlaybillDiscoveryResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_search(
+    instance_id: str,
+    *,
+    mode: SearchMode,
+    query: str | None = None,
+    kinds: tuple[SearchKind, ...] = SEARCH_KINDS,
+    subject: SemanticAddress | None = None,
+    statuses: tuple[SearchStatus, ...] = (),
+    cursor: PlaybillSearchCursorV1 | None = None,
+    at: AcceptedCoordinate | None = None,
+    evaluation_time: datetime | None = None,
+    budgets: PlaybillSearchBudgetsV1 | None = None,
+) -> contracts.PlaybillSearchResult:
+    check_permission("cruxible_playbill_search", instance_id=instance_id)
+    result = service_search_playbill(
+        get_playbill_manager().get(instance_id),
+        request=PlaybillSearchRequestV1(
+            mode=mode,
+            accepted_coordinate=_accepted_coordinate(instance_id, at),
+            evaluation_time=_evaluation_time(evaluation_time),
+            access_profile=coverage_access_profile(),
+            kinds=kinds,
+            query=query,
+            subject=subject,
+            statuses=statuses,
+            cursor=cursor,
+            budgets=budgets
+            or (cursor.budgets if cursor is not None else PlaybillSearchBudgetsV1()),
+        ),
+    )
+    return contracts.PlaybillSearchResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_expand(

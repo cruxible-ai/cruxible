@@ -865,6 +865,40 @@ class CruxibleClient:
         response = self._client.post(f"/api/v1/{instance_id}/playbill/discover", json=payload)
         return self._parse_model(response, contracts.PlaybillDiscoveryResult)
 
+    def search_playbill(
+        self,
+        instance_id: str,
+        *,
+        mode: Literal["search", "list", "orient"],
+        query: str | None = None,
+        kinds: Sequence[str] = ("brief", "claim", "demand", "procedure"),
+        subject: Mapping[str, Any] | None = None,
+        statuses: Sequence[str] = (),
+        cursor: Mapping[str, Any] | None = None,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        evaluation_time: str | None = None,
+        budgets: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillSearchResult:
+        payload: dict[str, Any] = {
+            "mode": mode,
+            "query": query,
+            "kinds": sorted(set(kinds)),
+            "subject": None if subject is None else dict(subject),
+            "statuses": sorted(set(statuses)),
+            "cursor": None if cursor is None else dict(cursor),
+            "at": self._playbill_coordinate_body(at),
+            "evaluation_time": evaluation_time,
+        }
+        resolved_budgets = budgets
+        if resolved_budgets is None and cursor is not None:
+            cursor_budgets = cursor.get("budgets")
+            if isinstance(cursor_budgets, Mapping):
+                resolved_budgets = cursor_budgets
+        if resolved_budgets is not None:
+            payload["budgets"] = dict(resolved_budgets)
+        response = self._client.post(f"/api/v1/{instance_id}/playbill/search", json=payload)
+        return self._parse_model(response, contracts.PlaybillSearchResult)
+
     def expand_playbill(
         self,
         instance_id: str,

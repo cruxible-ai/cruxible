@@ -59,3 +59,10 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
     assert forbidden.isdisjoint(compile_schema["properties"])
     assert forbidden.isdisjoint(submit_schema["properties"])
     assert forbidden.isdisjoint(confirm_schema["properties"])
+
+
+def test_search_schema_exposes_modes_but_not_access_or_digest_plumbing() -> None:
+    schema = _schemas()["cruxible_playbill_search"].inputSchema
+    assert schema["properties"]["mode"]["enum"] == ["search", "list", "orient"]
+    assert "access_profile" not in schema["properties"]
+    assert "selection_basis_digest" not in schema["properties"]

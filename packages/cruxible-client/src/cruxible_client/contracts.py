@@ -515,6 +515,21 @@ class PlaybillDiscoveryResult(BaseModel):
     vocabulary_entry_count: int
 
 
+class PlaybillSearchResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-search-result-v1"] = "playbill-search-result-v1"
+    mode: Literal["search", "list", "orient"]
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: str
+    rows: list[dict[str, Any]]
+    orientation: dict[str, Any] | None = None
+    selection_basis_digest: str
+    next_cursor: dict[str, Any] | None = None
+    truncated: bool
+    result_digest: str
+
+
 class PlaybillContextCapsule(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

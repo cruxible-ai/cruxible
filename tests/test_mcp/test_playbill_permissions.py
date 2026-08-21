@@ -25,6 +25,7 @@ def test_read_only_advertises_reads_but_hides_all_mutations(
     assert "cruxible_playbill_get_document" in names
     assert "cruxible_playbill_explain" in names
     assert "cruxible_playbill_authoring_status" in names
+    assert "cruxible_playbill_search" in names
     assert "cruxible_playbill_authoring_compile" not in names
     assert "cruxible_playbill_store_body" not in names
     assert "cruxible_playbill_submit_approval" not in names
