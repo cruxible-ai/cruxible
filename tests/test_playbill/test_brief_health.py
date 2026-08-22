@@ -25,7 +25,10 @@ from cruxible_core.service.playbill_briefs import (
     service_list_playbill_brief_reauthor_queue,
 )
 from tests.test_playbill._support import initialize_local
-from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
+from tests.test_playbill.test_authoring_preflight import (
+    _seed_claim_surface,
+    _self_source_payload,
+)
 from tests.test_playbill.test_knowledge_briefs import _activate, _brief_payload
 
 EVALUATION_TIME = datetime(2026, 8, 21, 13, tzinfo=UTC)
@@ -280,3 +283,58 @@ def test_missing_pinned_query_is_an_unhealthy_refusal_not_a_health_error(
     assert evaluation.result.verdict == "completed"
     assert evaluation.result.healthy is False
     assert [item.state for item in evaluation.result.query_states] == ["refused"]
+
+
+def test_supported_same_value_slot_keeps_the_original_brief_ref_current(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+
+    original = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload(),
+        canonical_timestamp="2026-08-21T12:00:00.000000Z",
+    ).intent
+    _activate(instance, owner, coordinator.submit(original.intent_id, actor=actor))
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    original_path = claim_path(original.semantic_identity)
+    original_claim = parse_claim(tree[original_path], path=original_path)
+    original_digest = claim_statement_digest(original_claim.statement).tagged
+
+    supporting = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload().model_copy(
+            update={
+                "existing_claim_dispositions": (
+                    AuthoringExistingClaimDispositionV1(
+                        claim_id=original.semantic_identity,
+                        disposition="support",
+                    ),
+                )
+            }
+        ),
+        canonical_timestamp="2026-08-21T12:00:01.000000Z",
+    ).intent
+    _activate(instance, owner, coordinator.submit(supporting.intent_id, actor=actor))
+
+    _brief_id, brief_digest = _accepted_brief(
+        instance,
+        owner,
+        coordinator,
+        actor,
+        value=KnowledgeBriefValueV1(
+            purpose="What is the current work status?",
+            kind="brief",
+            claim_refs=(_ref(original.semantic_identity, original_digest),),
+            prose="The referenced status is current.",
+        ),
+        timestamp="2026-08-21T12:00:02.000000Z",
+    )
+
+    evaluation = evaluate_knowledge_brief_health(instance, _request(instance, brief_digest))
+
+    assert evaluation.result.healthy is True
+    assert [item.state for item in evaluation.result.ref_states] == ["accepted_current"]

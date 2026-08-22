@@ -24,6 +24,10 @@ import pytest
 
 from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_core.playbill.claim_slots import (
+    classify_claim_slot,
+    classify_claim_slot_member,
+)
 from cruxible_core.playbill.claim_types import claim_type_digest, claim_type_path
 from cruxible_core.playbill.claims import (
     AcceptedClaim,
@@ -424,6 +428,32 @@ def test_a_contended_predicate_is_rendered_unresolved_and_never_picks_a_winner()
     assert card.cardinality == "one"
     assert card.usage.contended_subject_count == 1
     assert card.usage.contended_subject_identities == ("Subject:project.work_item/wi-1",)
+
+
+@pytest.mark.parametrize(
+    ("values", "expected_resolution", "expected_member_state"),
+    (
+        (("ready",), "single", "accepted_current"),
+        (("ready", "ready"), "single", "accepted_current"),
+        (("ready", "blocked"), "unresolved", "conflicted"),
+        (("ready", "ready", "blocked"), "unresolved", "conflicted"),
+    ),
+)
+def test_every_slot_shape_agrees_between_profile_and_member_health(
+    values: tuple[str, ...],
+    expected_resolution: str,
+    expected_member_state: str,
+) -> None:
+    rows = tuple(status_claim(index + 1, "wi-1", value) for index, value in enumerate(values))
+    claims = tuple(row.accepted.claim for row in rows)
+    slot = classify_claim_slot(claims)
+    _vocabulary, projections = _projections(_facts((*rows, *_descriptors())))
+    profile = _profile(projections)
+    status = next(item for item in profile.predicates if item.predicate == STATUS_PREDICATE)
+
+    assert status.resolution == slot.resolution == expected_resolution
+    assert status.contender_count == slot.contender_count == len(set(values))
+    assert classify_claim_slot_member(slot, claims[0].identity.qualified) == expected_member_state
 
 
 # -- match bases -----------------------------------------------------------

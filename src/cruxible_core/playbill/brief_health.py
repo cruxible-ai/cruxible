@@ -9,6 +9,10 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator, model_validator
 
 from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_core.playbill.claim_slots import (
+    classify_claim_slot,
+    classify_claim_slot_member,
+)
 from cruxible_core.playbill.claims import (
     LiteralClaimObject,
     claim_path,
@@ -32,7 +36,6 @@ from cruxible_core.playbill.query.definitions import (
     query_definition_path,
 )
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
-from cruxible_core.service.playbill_claims import service_query_playbill_claims
 from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.temporal import ensure_utc, format_datetime
 
@@ -244,11 +247,8 @@ def _historical_briefs(
 
 
 def _claim_ref_state(
-    instance: PlaybillInstance,
     *,
     tree: Mapping[str, bytes],
-    coordinate: AcceptedCoordinate,
-    evaluation_time: datetime,
     ref: KnowledgeBriefClaimRefV1,
 ) -> BriefClaimRefState:
     path = claim_path(ref.claim_id)
@@ -264,35 +264,20 @@ def _claim_ref_state(
         return "refused"
     if ref.expect.claim_type is not None and claim.statement.predicate != ref.expect.claim_type:
         return "refused"
-    if claim.statement.predicate == KNOWLEDGE_BRIEF_PREDICATE:
-        contenders = tuple(
-            parse_claim(tree[item], path=item)
-            for item in sorted(tree, key=lambda value: value.encode("utf-8"))
-            if item.startswith("claims/") and item != path and tree.get(item) is not None
-        )
-        same_slot = tuple(
-            item
-            for item in contenders
-            if item.lifecycle.state == "live"
-            and item.statement.subject == claim.statement.subject
-            and item.statement.predicate == claim.statement.predicate
-            and item.statement.qualifier == claim.statement.qualifier
-        )
-        return "conflicted" if same_slot else "accepted_current"
-    try:
-        resolution = service_query_playbill_claims(
-            instance,
-            subject=claim.statement.subject,
-            predicate=claim.statement.predicate,
-            at=PlaybillAcceptedCoordinate.model_validate(coordinate.model_dump(mode="json")),
-            evaluation_time=evaluation_time,
-        )
-    except (PlaybillError, ValueError):
-        return "unavailable_to_reader"
-    identity = claim.identity.qualified
-    if resolution.status != "resolved":
-        return "conflicted" if identity in resolution.contender_claim_identities else "refused"
-    return "accepted_current" if identity in resolution.selected_claim_identities else "overturned"
+    same_slot = []
+    for contender_path in sorted(tree, key=lambda value: value.encode("utf-8")):
+        if not contender_path.startswith("claims/"):
+            continue
+        contender = parse_claim(tree[contender_path], path=contender_path)
+        if (
+            contender.statement.subject == claim.statement.subject
+            and contender.statement.predicate == claim.statement.predicate
+            and contender.statement.qualifier == claim.statement.qualifier
+        ):
+            same_slot.append(contender)
+    resolution = classify_claim_slot(same_slot)
+    member_state = classify_claim_slot_member(resolution, claim.identity.qualified)
+    return "refused" if member_state == "absent" else member_state
 
 
 def _query_ref_state(
@@ -377,10 +362,7 @@ def evaluate_knowledge_brief_health(
                 truncated = True
                 return
             claim_state = _claim_ref_state(
-                instance,
                 tree=tree,
-                coordinate=request.accepted_coordinate,
-                evaluation_time=request.evaluation_time,
                 ref=claim_ref,
             )
             ref_states.append(KnowledgeBriefClaimRefStateV1(ref=claim_ref, state=claim_state))

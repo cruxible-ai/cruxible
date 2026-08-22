@@ -38,6 +38,7 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_core.playbill.claim_slots import classify_claim_slot
 from cruxible_core.playbill.claim_type_structure import claim_type_structural_signature
 from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest, claim_type_path
 from cruxible_core.playbill.claim_verdicts import evaluate_claim_verdict
@@ -749,11 +750,8 @@ def _predicate_row(
     budget: InterfaceProjectionBudgetV1,
     reasons: set[str],
 ) -> SubjectProfilePredicateV1:
-    distinct: dict[bytes, object] = {}
-    for claim in rows:
-        payload = claim.statement.object.model_dump(mode="json")
-        distinct[canonical_bytes(payload)] = payload
-    single = next(iter(distinct.values())) if len(distinct) == 1 else None
+    slot = classify_claim_slot(rows)
+    single = slot.single_object
     kinds = byte_sorted(tuple({str(claim.statement.object.kind) for claim in rows}))
     declared = cardinalities.get(predicate)
     return SubjectProfilePredicateV1(
@@ -763,9 +761,9 @@ def _predicate_row(
             tuple(claim.statement.claim_type_digest for claim in rows)
         ),
         cardinality=declared,  # type: ignore[arg-type]
-        claim_count=len(rows),
-        contender_count=len(distinct),
-        resolution="single" if len(distinct) == 1 else "unresolved",
+        claim_count=slot.claim_count,
+        contender_count=slot.contender_count,
+        resolution="single" if slot.resolution == "single" else "unresolved",
         object_kind=kinds[0] if len(kinds) == 1 else None,
         object_digest=(
             None
