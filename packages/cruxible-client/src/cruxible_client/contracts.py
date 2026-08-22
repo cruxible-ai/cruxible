@@ -13,6 +13,13 @@ RuntimeCredentialPermissionMode = Literal[
     "admin",
 ]
 PlaybillHostStatus = Literal["created", "already_exists"]
+PlaybillAuthoringExampleName = Literal[
+    "claim-type",
+    "claim-flow-a",
+    "claim-self-source",
+    "procedure",
+    "brief",
+]
 
 
 class PlaybillHostResult(BaseModel):
@@ -558,6 +565,16 @@ class PlaybillAuthoringIntentView(BaseModel):
 
     tag: Literal["playbill-authoring-intent-view-v1"] = "playbill-authoring-intent-view-v1"
     intent: dict[str, Any]
+
+
+class PlaybillAuthoringExampleResult(BaseModel):
+    """One model-constructed, executable authoring input example."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-authoring-example-result-v1"] = "playbill-authoring-example-result-v1"
+    name: PlaybillAuthoringExampleName
+    payload: dict[str, Any]
 
 
 class PlaybillAuthoringIntentList(BaseModel):

@@ -51,6 +51,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_proposal_list": (
         "Use when you need to find open proposals or inspect terminal proposal outcomes."
     ),
+    "cruxible_playbill_proposal_readmit": (
+        "Use when a stale proposal should be re-admitted against the current coordinate."
+    ),
     "cruxible_playbill_list_documents": (
         "Use when you need accepted Documents and their exact coordinate."
     ),
@@ -96,6 +99,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_propose_claim_type": (
         "Use when you need a governed ClaimType before any Claim can state that predicate."
     ),
+    "cruxible_playbill_claim_type_migrate": (
+        "Use when a ClaimType and all of its dependent Claim dispositions must change atomically."
+    ),
     "cruxible_playbill_list_claim_types": (
         "Use when you need the accepted predicate vocabulary an instance admits."
     ),
@@ -111,6 +117,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_authoring_create": (
         "Use when you need a durable machine-owned intent before iterating on a governed write."
     ),
+    "cruxible_playbill_authoring_example": (
+        "Use when you need a model-constructed ClaimType, Claim, Brief, or Procedure input "
+        "template."
+    ),
     "cruxible_playbill_authoring_get": (
         "Use when you need the current durable content and state of one authoring intent."
     ),
@@ -123,6 +133,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_authoring_compile": (
         "Use when you want to author or revise a Claim or Procedure and learn every "
         "refusal at once."
+    ),
+    "cruxible_playbill_authoring_bind": (
+        "Use when one exact anchor in a configured workspace file is the evidence for a "
+        "Flow-A Claim."
     ),
     "cruxible_playbill_authoring_preflight": (
         "Use when you need a complete binding check of an existing authoring intent."

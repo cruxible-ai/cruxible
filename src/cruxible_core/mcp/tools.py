@@ -12,7 +12,7 @@ from cruxible_client import contracts
 from cruxible_core import __version__
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.tool_prompts import tool_description
-from cruxible_core.playbill.authoring.inputs import AuthoringInputV1
+from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 
 
@@ -149,6 +149,14 @@ def register_tools(
         return handlers.handle_playbill_list_proposals(instance_id, status)
 
     @_tool
+    def cruxible_playbill_proposal_readmit(
+        instance_id: str,
+        proposal_id: str,
+    ) -> contracts.PlaybillProposalReadmitResult:
+        """Re-admit one stale proposal against the current accepted coordinate."""
+        return handlers.handle_playbill_readmit_proposal(instance_id, proposal_id)
+
+    @_tool
     def cruxible_playbill_list_documents(
         instance_id: str,
     ) -> contracts.PlaybillDocumentList:
@@ -282,6 +290,14 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_claim_type_migrate(
+        instance_id: str,
+        request: dict[str, Any],
+    ) -> contracts.PlaybillClaimTypeMigrationResult:
+        """Propose one ClaimType successor and its dependent dispositions atomically."""
+        return handlers.handle_playbill_migrate_claim_type(instance_id, request)
+
+    @_tool
     def cruxible_playbill_list_claim_types(
         instance_id: str,
     ) -> contracts.PlaybillClaimTypeList:
@@ -324,6 +340,13 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_authoring_example(
+        name: contracts.PlaybillAuthoringExampleName,
+    ) -> contracts.PlaybillAuthoringExampleResult:
+        """Return one model-constructed input template with no daemon call."""
+        return handlers.handle_playbill_authoring_example(name)
+
+    @_tool
     def cruxible_playbill_authoring_get(
         instance_id: str,
         intent_id: str,
@@ -357,6 +380,23 @@ def register_tools(
             instance_id,
             payload.model_dump(mode="json"),
             intent_id=intent_id,
+        )
+
+    @_tool
+    def cruxible_playbill_authoring_bind(
+        instance_id: str,
+        source_path: str,
+        anchor: str,
+        payload: ClaimInput,
+        window_lines: int | None = None,
+    ) -> contracts.PlaybillAuthoringPreflightResult:
+        """Bind one exact workspace anchor and compile the derived Flow-A observation."""
+        return handlers.handle_playbill_authoring_bind(
+            instance_id,
+            source_path=source_path,
+            anchor=anchor,
+            payload=payload,
+            window_lines=window_lines,
         )
 
     @_tool

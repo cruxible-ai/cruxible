@@ -18,13 +18,16 @@ from cruxible_client import (
 )
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.mcp.workspace import mcp_workspace_root
+from cruxible_core.mcp.workspace import mcp_workspace_root, resolve_workspace_path
 from cruxible_core.playbill.attestations import ApprovalAttestation
-from cruxible_core.playbill.authoring.inputs import AuthoringInputV1
+from cruxible_core.playbill.authoring.bind import bind_working_selection_input
+from cruxible_core.playbill.authoring.examples import authoring_example
+from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_core.playbill.authoring.models import (
     InsertionConfirmationObservationV1,
 )
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_example
+from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequestV1
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
@@ -323,6 +326,17 @@ def handle_playbill_list_proposals(
     )
 
 
+def handle_playbill_readmit_proposal(
+    instance_id: str,
+    proposal_id: str,
+) -> contracts.PlaybillProposalReadmitResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.readmit_playbill_proposal(instance_id, proposal_id),
+        lambda: playbill_api.playbill_readmit_proposal(instance_id, proposal_id),
+        operation_name="cruxible_playbill_proposal_readmit",
+    )
+
+
 def handle_playbill_list_documents(instance_id: str) -> contracts.PlaybillDocumentList:
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_documents(instance_id),
@@ -533,6 +547,21 @@ def handle_playbill_propose_claim_type(
     )
 
 
+def handle_playbill_migrate_claim_type(
+    instance_id: str,
+    request: dict[str, Any],
+) -> contracts.PlaybillClaimTypeMigrationResult:
+    migration = ClaimTypeMigrationRequestV1.model_validate(request)
+    return _dispatch_remote_or_local(
+        lambda client: client.migrate_playbill_claim_type(
+            instance_id,
+            request=migration.model_dump(mode="json"),
+        ),
+        lambda: playbill_api.playbill_migrate_claim_type(instance_id, request=migration),
+        operation_name="cruxible_playbill_claim_type_migrate",
+    )
+
+
 def handle_playbill_list_claim_types(instance_id: str) -> contracts.PlaybillClaimTypeList:
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_claim_types(instance_id),
@@ -607,6 +636,16 @@ def handle_playbill_authoring_create(
     )
 
 
+def handle_playbill_authoring_example(
+    name: contracts.PlaybillAuthoringExampleName,
+) -> contracts.PlaybillAuthoringExampleResult:
+    if name == "claim-type":
+        payload = claim_type_input_example().model_dump(mode="json")
+    else:
+        payload = authoring_example(name).model_dump(mode="json")
+    return contracts.PlaybillAuthoringExampleResult(name=name, payload=payload)
+
+
 def handle_playbill_authoring_get(
     instance_id: str,
     intent_id: str,
@@ -658,6 +697,40 @@ def handle_playbill_authoring_compile(
             intent_id=intent_id,
         ),
         operation_name="cruxible_playbill_authoring_compile",
+    )
+
+
+def handle_playbill_authoring_bind(
+    instance_id: str,
+    *,
+    source_path: str,
+    anchor: str,
+    payload: ClaimInput,
+    window_lines: int | None,
+) -> contracts.PlaybillAuthoringPreflightResult:
+    path = resolve_workspace_path(source_path, kind="file")
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        raise DataValidationError(f"could not read workspace source {source_path}: {exc}") from exc
+    bound = bind_working_selection_input(
+        payload,
+        content=content,
+        anchor=anchor,
+        window_lines=window_lines,
+    )
+    return _dispatch_remote_or_local(
+        lambda client: client.compile_playbill_authoring(
+            instance_id,
+            payload=bound.model_dump(mode="json"),
+            intent_id=None,
+        ),
+        lambda: playbill_api.playbill_authoring_compile(
+            instance_id,
+            payload=bound,
+            intent_id=None,
+        ),
+        operation_name="cruxible_playbill_authoring_bind",
     )
 
 

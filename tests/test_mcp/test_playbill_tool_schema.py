@@ -67,6 +67,24 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
     assert forbidden.isdisjoint(submit_schema["properties"])
     assert forbidden.isdisjoint(confirm_schema["properties"])
 
+    example_schema = schemas["cruxible_playbill_authoring_example"].inputSchema
+    assert example_schema["properties"]["name"]["enum"] == [
+        "claim-type",
+        "claim-flow-a",
+        "claim-self-source",
+        "procedure",
+        "brief",
+    ]
+    bind_schema = schemas["cruxible_playbill_authoring_bind"].inputSchema
+    assert set(bind_schema["properties"]) == {
+        "instance_id",
+        "source_path",
+        "anchor",
+        "payload",
+        "window_lines",
+    }
+    assert forbidden.isdisjoint(bind_schema["properties"])
+
 
 def test_search_schema_exposes_modes_but_not_access_or_digest_plumbing() -> None:
     schema = _schemas()["cruxible_playbill_search"].inputSchema
