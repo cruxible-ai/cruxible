@@ -3,6 +3,13 @@
 The MCP surface is Playbill-only. All tools delegate to the same service core as
 HTTP and CLI.
 
+The unset/default MCP profile advertises the writer path: authoring, discovery,
+search/list/orient, expansion, source context, coverage, floor export, proposal
+approval/activation, and runtime identity/version reads. Set
+`CRUXIBLE_MCP_PROFILE=expert` (aliases: `full`, `all`) to advertise the complete
+catalog below. Curation changes discoverability only; permission tiers still gate
+every call, and hidden expert tools remain available through the API.
+
 ## Runtime
 
 | Tool | Purpose | Permission |

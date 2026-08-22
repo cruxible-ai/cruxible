@@ -63,6 +63,10 @@ The MCP tool set is Playbill-only and mirrors the same service core as CLI and
 HTTP. Use MCP for structured agent calls and CLI for human-readable review or
 local key custody.
 
+The default MCP profile is curated around the write-side loop. Use the expert
+profile only when work requires lower-level document, Claim, ClaimType, or other
+diagnostic surfaces that the default catalog intentionally hides.
+
 Approval is intentionally split:
 
 - prepare_approval obtains the exact challenge;

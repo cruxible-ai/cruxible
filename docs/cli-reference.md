@@ -136,10 +136,13 @@ together with the law evidence and source handles it was computed from.
 
 ~~~text
 cruxible playbill authoring create PAYLOAD
+cruxible playbill authoring create --example claim-flow-a|claim-self-source|procedure|brief
 cruxible playbill authoring get INTENT_ID
 cruxible playbill authoring resume INTENT_ID
 cruxible playbill authoring list
 cruxible playbill authoring compile PAYLOAD [--intent-id INTENT_ID]
+cruxible playbill authoring bind --file PATH --anchor TEXT [--window-lines N]
+  --payload-file CLAIM_STUB
 cruxible playbill authoring preflight INTENT_ID
 cruxible playbill authoring submit INTENT_ID
 cruxible playbill authoring status INTENT_ID

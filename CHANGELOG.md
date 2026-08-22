@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Curate the default Playbill MCP catalog around authoring and discovery, with
+  `expert`/`full` retaining the complete surface, and render one deduplicated
+  orientation header on human `playbill search`, `list`, and `orient` output.
+
 Every user-visible fix or feature adds its entry here in the same change
 that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in

@@ -5,8 +5,15 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from cruxible_core.mcp.server import create_server
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
+
+
+@pytest.fixture(autouse=True)
+def _full_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
 
 
 def _schemas() -> dict[str, Any]:

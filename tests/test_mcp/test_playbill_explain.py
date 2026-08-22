@@ -5,13 +5,18 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+import pytest
+
 from cruxible_client import contracts
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.server import create_server
 from tests.test_client.test_playbill_documents import COORDINATE
 
 
-def test_playbill_explain_schema_has_no_mutation_or_key_inputs() -> None:
+def test_playbill_explain_schema_has_no_mutation_or_key_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
     schema = tools["cruxible_playbill_explain"].inputSchema
     assert set(schema["properties"]) == {

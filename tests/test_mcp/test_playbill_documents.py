@@ -35,7 +35,10 @@ PLAYBILL_DOCUMENT_TOOLS = {
 }
 
 
-def test_playbill_tools_register_without_private_key_or_local_path_inputs() -> None:
+def test_playbill_tools_register_without_private_key_or_local_path_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     tools = {tool.name: tool for tool in asyncio.run(create_server().list_tools())}
     assert PLAYBILL_DOCUMENT_TOOLS <= set(tools)
     approval = tools["cruxible_playbill_submit_approval"].inputSchema

@@ -8,28 +8,74 @@ import pytest
 
 from cruxible_core.errors import ConfigError, PermissionDeniedError
 from cruxible_core.mcp.server import create_server
-from cruxible_core.runtime.permissions import check_permission, reset_permissions
+from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, check_permission, reset_permissions
 
 
 def _tool_names() -> set[str]:
     return {tool.name for tool in asyncio.run(create_server().list_tools())}
 
 
-def test_read_only_advertises_reads_but_hides_all_mutations(
+def test_read_only_default_profile_advertises_curated_reads_and_hides_legacy_reads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_MODE", "read_only")
     reset_permissions()
     names = _tool_names()
 
-    assert "cruxible_playbill_get_document" in names
-    assert "cruxible_playbill_explain" in names
     assert "cruxible_playbill_authoring_status" in names
     assert "cruxible_playbill_search" in names
+    assert "cruxible_playbill_export_floor" in names
+    assert "cruxible_playbill_list_claims" not in names
+    assert "cruxible_playbill_get_claim" not in names
+    assert "cruxible_playbill_get_claim_type" not in names
+    assert "cruxible_playbill_get_document" not in names
     assert "cruxible_playbill_authoring_compile" not in names
     assert "cruxible_playbill_store_body" not in names
     assert "cruxible_playbill_submit_approval" not in names
     assert "cruxible_playbill_init" not in names
+
+
+def test_admin_default_profile_is_exactly_the_writer_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_MODE", "admin")
+    reset_permissions()
+
+    assert _tool_names() == {
+        "cruxible_version",
+        "cruxible_server_info",
+        "cruxible_playbill_authoring_create",
+        "cruxible_playbill_authoring_get",
+        "cruxible_playbill_authoring_resume",
+        "cruxible_playbill_authoring_list_pending",
+        "cruxible_playbill_authoring_compile",
+        "cruxible_playbill_authoring_preflight",
+        "cruxible_playbill_authoring_submit",
+        "cruxible_playbill_authoring_status",
+        "cruxible_playbill_authoring_confirm_insertion",
+        "cruxible_playbill_authoring_abandon_insertion",
+        "cruxible_playbill_discover",
+        "cruxible_playbill_search",
+        "cruxible_playbill_expand",
+        "cruxible_playbill_source_context",
+        "cruxible_playbill_resolve_coverage",
+        "cruxible_playbill_export_floor",
+        "cruxible_playbill_submit_approval",
+        "cruxible_playbill_activate",
+    }
+
+
+@pytest.mark.parametrize("profile", ["full", "all", "expert"])
+def test_expert_profile_aliases_advertise_the_uncurated_surface(
+    monkeypatch: pytest.MonkeyPatch,
+    profile: str,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", profile)
+    reset_permissions()
+
+    names = _tool_names()
+
+    assert names == set(TOOL_PERMISSIONS)
 
 
 def test_state_authoring_and_review_profiles_separate_proposal_from_settlement(

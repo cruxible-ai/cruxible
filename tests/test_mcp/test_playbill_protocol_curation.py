@@ -84,6 +84,7 @@ def test_protocol_call_allows_advertised_tool(
 def test_protocol_explicit_allowlist_is_enforced_on_list_and_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "full")
     monkeypatch.setenv(
         "CRUXIBLE_MCP_TOOLS",
         "cruxible_version,cruxible_playbill_get_document",
@@ -162,7 +163,7 @@ def test_protocol_listing_is_static_when_daemon_transport_is_missing(
             return {tool.name for tool in listed.tools}, bool(result.isError), text
 
     names, is_error, message = _run(exercise())
-    assert "cruxible_playbill_get_document" in names
+    assert "cruxible_playbill_search" in names
     assert is_error
     assert "CRUXIBLE_SERVER_URL" in message
 

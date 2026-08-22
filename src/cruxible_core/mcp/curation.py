@@ -10,16 +10,43 @@ from cruxible_core.errors import ConfigError
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS, PermissionMode
 
 PROFILE_FULL = "full"
+PROFILE_DEFAULT = "default"
 PROFILE_STATE_AUTHORING = "state_authoring"
 PROFILE_REVIEW = "review"
 
 _PROFILE_ALIASES = {
     "all": PROFILE_FULL,
-    "default": PROFILE_FULL,
+    "expert": PROFILE_FULL,
+    PROFILE_DEFAULT: PROFILE_DEFAULT,
     PROFILE_FULL: PROFILE_FULL,
     "state-authoring": PROFILE_STATE_AUTHORING,
     PROFILE_STATE_AUTHORING: PROFILE_STATE_AUTHORING,
     PROFILE_REVIEW: PROFILE_REVIEW,
+}
+
+_DEFAULT_TOOLS = {
+    "cruxible_version",
+    "cruxible_server_info",
+    "cruxible_playbill_authoring_create",
+    "cruxible_playbill_authoring_get",
+    "cruxible_playbill_authoring_resume",
+    "cruxible_playbill_authoring_list_pending",
+    "cruxible_playbill_authoring_compile",
+    "cruxible_playbill_authoring_preflight",
+    "cruxible_playbill_authoring_submit",
+    "cruxible_playbill_authoring_status",
+    "cruxible_playbill_authoring_confirm_insertion",
+    "cruxible_playbill_authoring_abandon_insertion",
+    "cruxible_playbill_discover",
+    "cruxible_playbill_search",
+    "cruxible_playbill_expand",
+    "cruxible_playbill_source_context",
+    "cruxible_playbill_resolve_coverage",
+    "cruxible_playbill_export_floor",
+    "cruxible_playbill_proposal_list",
+    "cruxible_playbill_submit_approval",
+    "cruxible_playbill_activate",
+    "cruxible_playbill_whoami",
 }
 
 _COMMON_READS = {
@@ -62,6 +89,7 @@ _COMMON_READS = {
 
 _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
     PROFILE_FULL: None,
+    PROFILE_DEFAULT: frozenset(_DEFAULT_TOOLS),
     PROFILE_STATE_AUTHORING: frozenset(
         _COMMON_READS
         | {
@@ -114,7 +142,7 @@ def resolve_tool_curation(
     environ: Mapping[str, str] | None = None,
 ) -> ToolCuration:
     env = environ or os.environ
-    raw_profile = env.get("CRUXIBLE_MCP_PROFILE", PROFILE_FULL).strip().lower()
+    raw_profile = env.get("CRUXIBLE_MCP_PROFILE", PROFILE_DEFAULT).strip().lower()
     profile = _PROFILE_ALIASES.get(raw_profile)
     if profile is None:
         valid = ", ".join(sorted(_PROFILE_ALIASES))

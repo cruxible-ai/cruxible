@@ -177,7 +177,7 @@ def _read_authoring_payload(path: str) -> dict[str, Any]:
         raise click.ClickException(
             f"Invalid authoring payload: {errors}. Example: {examples}"
         ) from exc
-    return cast(dict[str, Any], parsed.model_dump(mode="json"))
+    return parsed.model_dump(mode="json")
 
 
 def _write_floor(destination: Path, export: contracts.PlaybillFloorExport, *, force: bool) -> None:
@@ -1399,35 +1399,62 @@ def _headless_search(
         raise click.ClickException("--cursor must be one complete cursor JSON object") from exc
     if parsed_cursor is not None and not isinstance(parsed_cursor, dict):
         raise click.ClickException("--cursor must be one complete cursor JSON object")
-    result = _server_call(
-        lambda client, instance_id: client.search_playbill(
-            instance_id,
-            mode=cast(Any, mode),
-            query=query_text,
-            kinds=selected_kinds,
-            subject=subject,
-            statuses=selected_statuses,
-            cursor=parsed_cursor,
-            evaluation_time=evaluation_time,
-        ),
-        command_name=f"playbill {mode}",
-    )
+
+    def search_request(
+        request_mode: str, request_kinds: tuple[str, ...]
+    ) -> contracts.PlaybillSearchResult:
+        return _server_call(
+            lambda client, instance_id: client.search_playbill(
+                instance_id,
+                mode=cast(Any, request_mode),
+                query=query_text if request_mode == mode else None,
+                kinds=request_kinds,
+                subject=subject,
+                statuses=selected_statuses,
+                cursor=parsed_cursor if request_mode == mode else None,
+                evaluation_time=evaluation_time,
+            ),
+            command_name=f"playbill {request_mode}",
+        )
+
+    result = search_request(mode, selected_kinds)
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
-    if result.orientation is not None:
-        click.echo(f"Generation: {result.orientation['generation']}")
-        for item in result.orientation["counts_by_kind"]:
-            click.echo(f"{item['key']}: {item['count']}")
-        for item in result.orientation["kind_availability"]:
-            if item["availability"] != "installed":
-                click.echo(f"{item['kind']}: {item['availability']}")
+    orientation = (
+        result
+        if mode == "orient"
+        else search_request("orient", ("brief", "claim", "demand", "procedure"))
+    )
+    if orientation.orientation is None:
+        raise click.ClickException("Playbill orient returned no orientation summary")
+    click.echo(_render_orientation_header(orientation.orientation))
+    if mode == "orient":
         return
     for row in result.rows:
         health = "" if row.get("healthy") is None else f" health={row['healthy']}"
         click.echo(f"{row['kind']}  {row['status']}  {row['identity']}  {row['title']}{health}")
     if result.next_cursor is not None:
         click.echo("Next cursor: " + canonical_json(result.next_cursor))
+
+
+def _render_orientation_header(orientation: Mapping[str, Any]) -> str:
+    counts = {item["key"]: item["count"] for item in orientation["counts_by_kind"]}
+    availability = {item["kind"]: item["availability"] for item in orientation["kind_availability"]}
+    demand: object = (
+        "not_installed"
+        if availability.get("demand") == "not_installed"
+        else counts.get("demand", 0)
+    )
+    return (
+        f"Playbill generation={orientation['generation']} "
+        f"claim={counts.get('claim', 0)} "
+        f"brief={counts.get('brief', 0)} "
+        f"procedure={counts.get('procedure', 0)} "
+        f"demand={demand} "
+        f"unhealthy={orientation['unhealthy_brief_count']} "
+        f"conflicted={orientation['conflicted_count']}"
+    )
 
 
 _SEARCH_KIND = click.Choice(["claim", "brief", "procedure", "demand"])

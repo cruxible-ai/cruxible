@@ -38,8 +38,15 @@ def test_cli_search_and_orient_call_the_same_wire(monkeypatch) -> None:  # type:
                     if mode != "orient"
                     else {
                         "generation": 1,
-                        "counts_by_kind": [{"key": "demand", "count": 0}],
+                        "counts_by_kind": [
+                            {"key": "brief", "count": 2},
+                            {"key": "claim", "count": 3},
+                            {"key": "demand", "count": 0},
+                            {"key": "procedure", "count": 1},
+                        ],
                         "kind_availability": [{"kind": "demand", "availability": "not_installed"}],
+                        "unhealthy_brief_count": 1,
+                        "conflicted_count": 2,
                     }
                 ),
                 selection_basis_digest="sha256:" + "5" * 64,
@@ -58,8 +65,20 @@ def test_cli_search_and_orient_call_the_same_wire(monkeypatch) -> None:  # type:
     runner = CliRunner()
     searched = runner.invoke(cli, [*base, "search", "release", "--kind", "brief", "--json"])
     oriented = runner.invoke(cli, [*base, "orient"])
+    listed = runner.invoke(cli, [*base, "list"])
 
     assert searched.exit_code == 0, searched.output
     assert oriented.exit_code == 0, oriented.output
-    assert calls == [("search", "release"), ("orient", None)]
-    assert "demand: not_installed" in oriented.output
+    assert listed.exit_code == 0, listed.output
+    assert calls == [
+        ("search", "release"),
+        ("orient", None),
+        ("list", None),
+        ("orient", None),
+    ]
+    header = (
+        "Playbill generation=1 claim=3 brief=2 procedure=1 "
+        "demand=not_installed unhealthy=1 conflicted=2"
+    )
+    assert oriented.output.strip() == header
+    assert listed.output.strip() == header

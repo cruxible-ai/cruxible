@@ -56,8 +56,14 @@ def test_no_output_schema_root_is_a_union(tool_schemas: dict[str, dict]) -> None
 
 
 def test_union_tools_use_the_result_envelope(tool_schemas: dict[str, dict]) -> None:
-    """The surviving union-returning tool uses the reviewed envelope convention."""
-    schema = tool_schemas["cruxible_playbill_explain"]
+    """The expert-only union tool keeps the reviewed envelope convention."""
+
+    assert "cruxible_playbill_explain" not in tool_schemas
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv("CRUXIBLE_MCP_PROFILE", "expert")
+        server = create_server()
+        tools = asyncio.run(server.list_tools())
+    schema = next(tool.outputSchema for tool in tools if tool.name == "cruxible_playbill_explain")
 
     assert schema["type"] == "object"
     assert schema["required"] == ["result"]
