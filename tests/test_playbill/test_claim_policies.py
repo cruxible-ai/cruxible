@@ -23,6 +23,7 @@ from cruxible_core.playbill.policies import (
     evaluate_claim_admission_candidate,
     evaluate_claim_admission_settlement,
     evaluate_claim_evidence_admission,
+    evaluate_claim_evidence_admission_trace,
     resolve_claim_contenders,
 )
 
@@ -210,6 +211,39 @@ def test_evidence_admission_is_conjunctive_and_never_grants_claim_authority() ->
         _evidence(capture_claims_semantic_authority=True),
     )
     assert laundering.refusal_code == ("playbill.evidence.capture_cannot_grant_semantic_authority")
+
+
+def test_evidence_admission_trace_chooses_the_closest_contract_rule_deterministically() -> None:
+    direct = _evidence_policy().rules[0]
+    alternative = direct.model_copy(
+        update={
+            "rule_id": "alternate-role",
+            "claim_roles": ("derivation",),
+            "evidence_kinds": ("source.other",),
+            "attestation_requirement": "none",
+        }
+    )
+    policy = ClaimEvidenceAdmissionPolicyV1(
+        rules=tuple(sorted((alternative, direct), key=lambda item: item.rule_id.encode("utf-8")))
+    )
+
+    trace = evaluate_claim_evidence_admission_trace(
+        policy,
+        _evidence(attestation_grade="none"),
+        subject_binding_by_rule={
+            "alternate-role": True,
+            "direct-provider-observation": True,
+        },
+    )
+
+    assert trace.result.refusal_code == "playbill.evidence.attestation_grade_missing"
+    assert trace.closest_rule_id == "direct-provider-observation"
+
+    no_contract = evaluate_claim_evidence_admission_trace(
+        policy,
+        _evidence(capture_contract_digest=DIGEST_B),
+    )
+    assert no_contract.closest_rule_id is None
 
 
 def test_evidence_policy_refuses_duplicate_rules_and_illegal_reducer_shapes() -> None:

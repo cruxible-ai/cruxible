@@ -347,6 +347,44 @@ class PlaybillClaimView(BaseModel):
     facts: list[dict[str, Any]]
 
 
+class PlaybillCaptureEvidenceKindAdmission(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-capture-evidence-kind-admission-v1"]
+    evidence_kind: str
+    status: Literal["admitted", "not_admitted"]
+    rule_id: str | None = None
+    admission: Literal["origin_only", "direct", "derivational"] | None = None
+    refusal_code: str | None = None
+    closest_rule_id: str | None = None
+
+
+class PlaybillCaptureAdmissionAccount(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-capture-admission-account-v1"]
+    citation_id: str
+    capture_digest: str
+    citation_role: Literal["evidence", "copy", "legacy"]
+    citation_origin: Literal["independent", "self_source", "self_published", "legacy"]
+    capture_contract_identity: str
+    capture_contract_digest: str
+    status: Literal["admitted", "not_admitted", "not_evidence"]
+    decisions: list[PlaybillCaptureEvidenceKindAdmission]
+
+
+class PlaybillClaimViewV2(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-read-v2"]
+    coordinate_kind: Literal["canonical"]
+    coordinate: PlaybillAcceptedCoordinate
+    envelope: dict[str, Any]
+    facts: list[dict[str, Any]]
+    admission_evaluation_time: str
+    admission_accounts: list[PlaybillCaptureAdmissionAccount]
+
+
 class PlaybillClaimList(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -417,6 +455,23 @@ class PlaybillClaimExplanation(BaseModel):
     approval_coverage: Literal["containing_change_set"] = "containing_change_set"
     source_handles: list[dict[str, Any]]
     coverage: dict[str, Any]
+
+
+class PlaybillClaimExplanationV2(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-explanation-v2"]
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: str
+    claim: PlaybillClaimView
+    law_evidence: dict[str, Any]
+    verdict: dict[str, Any]
+    exact_attestations: list[dict[str, Any]]
+    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
+    source_handles: list[dict[str, Any]]
+    coverage: dict[str, Any]
+    admission_evaluation_time: str
+    admission_accounts: list[PlaybillCaptureAdmissionAccount]
 
 
 class PlaybillCandidateStatus(BaseModel):

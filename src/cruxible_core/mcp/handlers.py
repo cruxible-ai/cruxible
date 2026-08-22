@@ -720,10 +720,24 @@ def handle_playbill_list_claims(
     )
 
 
-def handle_playbill_get_claim(instance_id: str, identity: str) -> contracts.PlaybillClaimView:
+def handle_playbill_get_claim(
+    instance_id: str,
+    identity: str,
+    *,
+    evaluation_time: str | None = None,
+) -> contracts.PlaybillClaimViewV2:
+    evaluated_at = parse_datetime(evaluation_time)
     return _dispatch_remote_or_local(
-        lambda client: client.get_playbill_claim(instance_id, identity),
-        lambda: playbill_api.playbill_get_claim(instance_id, identity),
+        lambda client: client.get_playbill_claim(
+            instance_id,
+            identity,
+            evaluation_time=(None if evaluated_at is None else evaluated_at.isoformat()),
+        ),
+        lambda: playbill_api.playbill_get_claim(
+            instance_id,
+            identity,
+            evaluation_time=evaluated_at,
+        ),
         operation_name="cruxible_playbill_get_claim",
     )
 
@@ -743,7 +757,7 @@ def handle_playbill_explain_claim(
     identity: str,
     *,
     evaluation_time: str | None,
-) -> contracts.PlaybillClaimExplanation:
+) -> contracts.PlaybillClaimExplanationV2:
     evaluated_at = parse_datetime(evaluation_time)
     return _dispatch_remote_or_local(
         lambda client: client.explain_playbill_claim(

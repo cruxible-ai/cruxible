@@ -42,6 +42,7 @@ from cruxible_core.playbill.semantic import ContentSpan
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.playbill.subjects import render_subject, subject_path
+from cruxible_core.service.playbill_claims import service_get_playbill_claim
 from cruxible_core.service.playbill_coverage import build_accepted_evidence_index_v2
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
@@ -400,6 +401,15 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     )
 
     accepted_v2 = instance.accepted_coordinate()
+    read = service_get_playbill_claim(instance, identity=CLAIM_ID)
+    accounts = {item.citation_id: item for item in read.admission_accounts}
+    assert accounts[copy_citation.citation_id].status == "not_evidence"
+    assert accounts[copy_citation.citation_id].decisions == ()
+    assert accounts[citation.citation_id].status == "not_admitted"
+    assert accounts[citation.citation_id].decisions[0].closest_rule_id is None
+    assert accounts[citation.citation_id].decisions[0].refusal_code == (
+        "playbill.evidence.undeclared_contract_kind"
+    )
     coverage_index = build_accepted_evidence_index_v2(
         instance,
         at=PlaybillAcceptedCoordinate.from_internal(accepted_v2),

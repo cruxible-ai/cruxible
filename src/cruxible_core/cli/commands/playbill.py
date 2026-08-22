@@ -1257,14 +1257,51 @@ def list_claims(
 
 @claim_group.command("get")
 @click.argument("identity")
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
 @json_option
 @handle_errors
-def get_claim(identity: str, output_json: bool) -> None:
+def get_claim(identity: str, evaluation_time: str | None, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.get_playbill_claim(instance_id, identity),
+        lambda client, instance_id: client.get_playbill_claim(
+            instance_id,
+            identity,
+            evaluation_time=evaluation_time,
+        ),
         command_name="playbill claim get",
     )
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"{result.envelope['identity']}  {result.envelope['path']}")
+    _emit_admission_accounts(result.admission_accounts)
+
+
+def _emit_admission_accounts(
+    accounts: Sequence[contracts.PlaybillCaptureAdmissionAccount],
+) -> None:
+    for account in accounts:
+        if account.status == "not_evidence":
+            detail = "not evidence (copy citation)"
+        else:
+            rendered: list[str] = []
+            for decision in account.decisions:
+                if decision.status == "admitted":
+                    rendered.append(f"{decision.evidence_kind}: admitted by {decision.rule_id}")
+                else:
+                    repair = (
+                        f"closest {decision.closest_rule_id}"
+                        if decision.closest_rule_id is not None
+                        else "no rule admits this contract"
+                    )
+                    rendered.append(
+                        f"{decision.evidence_kind}: NOT admitted "
+                        f"({decision.refusal_code}; {repair})"
+                    )
+            detail = "; ".join(rendered) or "NOT admitted (contract declares no evidence kind)"
+        click.echo(
+            f"Capture {account.capture_digest} [{account.capture_contract_identity} "
+            f"{account.capture_contract_digest}]: {detail}"
+        )
 
 
 @claim_group.command("history")
@@ -1291,7 +1328,14 @@ def explain_claim(identity: str, evaluation_time: str | None, output_json: bool)
         ),
         command_name="playbill claim explain",
     )
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(
+        f"{result.claim.envelope['identity']}  verdict={result.verdict['verdict']} "
+        f"at {result.evaluation_time}"
+    )
+    _emit_admission_accounts(result.admission_accounts)
 
 
 @playbill_group.group("query")

@@ -790,12 +790,16 @@ def playbill_get_claim(
     identity: str,
     *,
     at: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillClaimView:
+    evaluation_time: datetime | None = None,
+) -> contracts.PlaybillClaimViewV2:
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_get_playbill_claim(
-        get_playbill_manager().get(instance_id), identity=identity, at=at
+        get_playbill_manager().get(instance_id),
+        identity=identity,
+        at=at,
+        evaluation_time=_evaluation_time(evaluation_time),
     )
-    return contracts.PlaybillClaimView.model_validate(result.model_dump(mode="json"))
+    return contracts.PlaybillClaimViewV2.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_claim_history(
@@ -815,7 +819,7 @@ def playbill_explain_claim(
     *,
     at: AcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
-) -> contracts.PlaybillClaimExplanation:
+) -> contracts.PlaybillClaimExplanationV2:
     check_permission("cruxible_playbill_explain", instance_id=instance_id)
     result = service_explain_playbill_claim(
         get_playbill_manager().get(instance_id),
@@ -823,7 +827,7 @@ def playbill_explain_claim(
         at=at,
         evaluation_time=_evaluation_time(evaluation_time),
     )
-    return contracts.PlaybillClaimExplanation.model_validate(result.model_dump(mode="json"))
+    return contracts.PlaybillClaimExplanationV2.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_propose_query_definition(

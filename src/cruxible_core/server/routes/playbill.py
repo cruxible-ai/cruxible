@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter
@@ -674,7 +675,7 @@ async def list_claims(
 
 @router.get(
     "/{instance_id}/playbill/claims/{identity}",
-    response_model=contracts.PlaybillClaimView,
+    response_model=contracts.PlaybillClaimViewV2,
 )
 async def get_claim(
     instance_id: str,
@@ -683,11 +684,13 @@ async def get_claim(
     semantic_root: str | None = None,
     generation_root: str | None = None,
     compiler_digest: str | None = None,
-) -> contracts.PlaybillClaimView:
+    evaluation_time: datetime | None = None,
+) -> contracts.PlaybillClaimViewV2:
     return playbill_api.playbill_get_claim(
         resolve_server_instance_id(instance_id),
         identity,
         at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+        evaluation_time=evaluation_time,
     )
 
 
@@ -704,13 +707,13 @@ async def claim_history(
 
 @router.post(
     "/{instance_id}/playbill/claims/{identity}/explanation",
-    response_model=contracts.PlaybillClaimExplanation,
+    response_model=contracts.PlaybillClaimExplanationV2,
 )
 async def explain_claim(
     instance_id: str,
     identity: str,
     req: PlaybillClaimExplainRequest,
-) -> contracts.PlaybillClaimExplanation:
+) -> contracts.PlaybillClaimExplanationV2:
     return playbill_api.playbill_explain_claim(
         resolve_server_instance_id(instance_id),
         identity,

@@ -414,9 +414,17 @@ def register_tools(
         )
 
     @_tool
-    def cruxible_playbill_get_claim(instance_id: str, identity: str) -> contracts.PlaybillClaimView:
-        """Read one accepted Claim envelope and facts."""
-        return handlers.handle_playbill_get_claim(instance_id, identity)
+    def cruxible_playbill_get_claim(
+        instance_id: str,
+        identity: str,
+        evaluation_time: str | None = None,
+    ) -> contracts.PlaybillClaimViewV2:
+        """Read one accepted Claim with its capture-admission accounts."""
+        return handlers.handle_playbill_get_claim(
+            instance_id,
+            identity,
+            evaluation_time=evaluation_time,
+        )
 
     @_tool
     def cruxible_playbill_claim_history(
@@ -430,7 +438,7 @@ def register_tools(
         instance_id: str,
         identity: str,
         evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimExplanation:
+    ) -> contracts.PlaybillClaimExplanationV2:
         """Explain one Claim's verdict, law evidence, and sources."""
         return handlers.handle_playbill_explain_claim(
             instance_id, identity, evaluation_time=evaluation_time

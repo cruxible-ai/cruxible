@@ -767,12 +767,16 @@ class CruxibleClient:
         identity: str,
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillClaimView:
+        evaluation_time: str | None = None,
+    ) -> contracts.PlaybillClaimViewV2:
+        params = self._playbill_coordinate_params(at)
+        if evaluation_time is not None:
+            params["evaluation_time"] = evaluation_time
         response = self._client.get(
             f"/api/v1/{instance_id}/playbill/claims/{identity}",
-            params=self._playbill_coordinate_params(at),
+            params=params,
         )
-        return self._parse_model(response, contracts.PlaybillClaimView)
+        return self._parse_model(response, contracts.PlaybillClaimViewV2)
 
     def playbill_claim_history(
         self, instance_id: str, identity: str
@@ -787,7 +791,7 @@ class CruxibleClient:
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimExplanation:
+    ) -> contracts.PlaybillClaimExplanationV2:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claims/{identity}/explanation",
             json={
@@ -795,7 +799,7 @@ class CruxibleClient:
                 "evaluation_time": evaluation_time,
             },
         )
-        return self._parse_model(response, contracts.PlaybillClaimExplanation)
+        return self._parse_model(response, contracts.PlaybillClaimExplanationV2)
 
     def propose_playbill_query_definition(
         self,

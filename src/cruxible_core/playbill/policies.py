@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -713,17 +714,76 @@ class ClaimEvidenceAdmissionResultV1(_StrictPolicyModel):
     refusal_code: str | None = None
 
 
-def evaluate_claim_evidence_admission(
+class ClaimEvidenceAdmissionTrace(_StrictPolicyModel):
+    """Internal trace from the authoritative evidence-admission evaluator."""
+
+    result: ClaimEvidenceAdmissionResultV1
+    closest_rule_id: str | None = None
+
+
+def _attestation_satisfied(
+    requirement: AttestationRequirement,
+    grade: VerifiedAttestationGrade,
+) -> bool:
+    if requirement == "none":
+        return True
+    if requirement == "verified_provider":
+        return grade == "verified_provider"
+    if requirement == "verified_principal":
+        return grade == "verified_principal"
+    return grade != "none"
+
+
+def _derivation_satisfied(
+    rule: ClaimEvidenceAdmissionRuleV1,
+    evidence: EvidenceAdmissionInputV1,
+) -> bool:
+    if rule.admission == "derivational":
+        return evidence.reducer_digest in rule.allowed_reducer_digests and bool(
+            evidence.input_claim_artifact_digests
+        )
+    return evidence.reducer_digest is None and not evidence.input_claim_artifact_digests
+
+
+def evaluate_claim_evidence_admission_trace(
     policy: ClaimEvidenceAdmissionPolicyV1,
     evidence: EvidenceAdmissionInputV1,
-) -> ClaimEvidenceAdmissionResultV1:
-    """Evaluate evidence shape without granting Claim activation authority."""
+    *,
+    subject_binding_by_rule: Mapping[str, bool] | None = None,
+) -> ClaimEvidenceAdmissionTrace:
+    """Evaluate evidence and retain the deterministic nearest repair rule."""
+
+    contract_rules = tuple(
+        rule
+        for rule in policy.rules
+        if evidence.capture_contract_digest in rule.capture_contract_digests
+    )
+    closest_rule_id: str | None = None
+    if contract_rules:
+        binding = subject_binding_by_rule or {}
+
+        def mismatch_count(rule: ClaimEvidenceAdmissionRuleV1) -> tuple[int, bytes]:
+            mismatches = sum(
+                (
+                    evidence.claim_role not in rule.claim_roles,
+                    evidence.evidence_kind not in rule.evidence_kinds,
+                    not binding.get(rule.rule_id, evidence.source_subject_bound),
+                    not _attestation_satisfied(
+                        rule.attestation_requirement, evidence.attestation_grade
+                    ),
+                    not _derivation_satisfied(rule, evidence),
+                )
+            )
+            return mismatches, rule.rule_id.encode("utf-8")
+
+        closest_rule_id = min(contract_rules, key=mismatch_count).rule_id
 
     if evidence.capture_claims_semantic_authority:
-        return ClaimEvidenceAdmissionResultV1(
+        result = ClaimEvidenceAdmissionResultV1(
             verdict="refused",
             refusal_code="playbill.evidence.capture_cannot_grant_semantic_authority",
         )
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
     matches = [
         rule
         for rule in policy.rules
@@ -732,7 +792,7 @@ def evaluate_claim_evidence_admission(
         and evidence.evidence_kind in rule.evidence_kinds
     ]
     if len(matches) != 1:
-        return ClaimEvidenceAdmissionResultV1(
+        result = ClaimEvidenceAdmissionResultV1(
             verdict="refused",
             refusal_code=(
                 "playbill.evidence.admission_ambiguous"
@@ -740,50 +800,45 @@ def evaluate_claim_evidence_admission(
                 else "playbill.evidence.undeclared_contract_kind"
             ),
         )
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
     rule = matches[0]
     if not evidence.source_subject_bound:
-        return ClaimEvidenceAdmissionResultV1(
+        result = ClaimEvidenceAdmissionResultV1(
             verdict="refused",
             refusal_code="playbill.evidence.subject_binding_failed",
         )
-    if rule.attestation_requirement == "verified_provider" and (
-        evidence.attestation_grade != "verified_provider"
-    ):
-        return ClaimEvidenceAdmissionResultV1(
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+    if not _attestation_satisfied(rule.attestation_requirement, evidence.attestation_grade):
+        result = ClaimEvidenceAdmissionResultV1(
             verdict="refused",
             refusal_code="playbill.evidence.attestation_grade_missing",
         )
-    if rule.attestation_requirement == "verified_principal" and (
-        evidence.attestation_grade != "verified_principal"
-    ):
-        return ClaimEvidenceAdmissionResultV1(
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+    if not _derivation_satisfied(rule, evidence):
+        result = ClaimEvidenceAdmissionResultV1(
             verdict="refused",
-            refusal_code="playbill.evidence.attestation_grade_missing",
+            refusal_code=(
+                "playbill.evidence.derivation_incomplete"
+                if rule.admission == "derivational"
+                else "playbill.evidence.reducer_not_allowed"
+            ),
         )
-    if rule.attestation_requirement == "any_verified" and evidence.attestation_grade == "none":
-        return ClaimEvidenceAdmissionResultV1(
-            verdict="refused",
-            refusal_code="playbill.evidence.attestation_grade_missing",
-        )
-    if rule.admission == "derivational":
-        if (
-            evidence.reducer_digest not in rule.allowed_reducer_digests
-            or not evidence.input_claim_artifact_digests
-        ):
-            return ClaimEvidenceAdmissionResultV1(
-                verdict="refused",
-                refusal_code="playbill.evidence.derivation_incomplete",
-            )
-    elif evidence.reducer_digest is not None or evidence.input_claim_artifact_digests:
-        return ClaimEvidenceAdmissionResultV1(
-            verdict="refused",
-            refusal_code="playbill.evidence.reducer_not_allowed",
-        )
-    return ClaimEvidenceAdmissionResultV1(
+        return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+    result = ClaimEvidenceAdmissionResultV1(
         verdict="eligible",
         rule_id=rule.rule_id,
         admission=rule.admission,
     )
+    return ClaimEvidenceAdmissionTrace(result=result, closest_rule_id=closest_rule_id)
+
+
+def evaluate_claim_evidence_admission(
+    policy: ClaimEvidenceAdmissionPolicyV1,
+    evidence: EvidenceAdmissionInputV1,
+) -> ClaimEvidenceAdmissionResultV1:
+    """Evaluate evidence shape without granting Claim activation authority."""
+
+    return evaluate_claim_evidence_admission_trace(policy, evidence).result
 
 
 class ResolutionContenderV1(_StrictPolicyModel):

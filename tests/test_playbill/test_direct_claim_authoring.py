@@ -319,6 +319,11 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
     accepted = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
     view = service_get_playbill_claim(instance, identity=proposed.claim_identity, at=accepted)
+    assert view.tag == "playbill-claim-read-v2"
+    assert view.admission_evaluation_time.isoformat() == "2026-08-16T20:00:00+00:00"
+    assert len(view.admission_accounts) == 1
+    assert view.admission_accounts[0].status == "admitted"
+    assert view.admission_accounts[0].decisions[0].rule_id == "direct-self-asserted"
     assert view.envelope["artifact_digest"] == proposed.artifact_digest
     bare_identity = proposed.claim_identity.removeprefix("Claim:")
     assert service_get_playbill_claim(instance, identity=bare_identity, at=accepted) == view
@@ -336,6 +341,8 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
     assert history.entries[0].statement_digest == proposed.statement_digest
 
     explanation = service_explain_playbill_claim(instance, identity=proposed.claim_identity)
+    assert explanation.tag == "playbill-claim-explanation-v2"
+    assert explanation.admission_accounts == view.admission_accounts
     assert (
         service_explain_playbill_claim(instance, identity=bare_identity).claim == explanation.claim
     )

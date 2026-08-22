@@ -65,9 +65,10 @@ from cruxible_core.playbill.discovery import (
 from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.governance import PermissionTier
 from cruxible_core.playbill.policies import (
+    ClaimEvidenceAdmissionTrace,
     EvidenceAdmissionInputV1,
     VerifiedAttestationGrade,
-    evaluate_claim_evidence_admission,
+    evaluate_claim_evidence_admission_trace,
 )
 from cruxible_core.playbill.principals import PrincipalRegistrySnapshot
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -862,6 +863,88 @@ def _capture_is_explicitly_eligible(
     return any(item.role == "evidence" and item.origin == "independent" for item in associations)
 
 
+@dataclass(frozen=True)
+class CaptureEvidenceKindAdmission:
+    evidence_kind: str
+    trace: ClaimEvidenceAdmissionTrace
+
+
+def evaluate_capture_evidence_admissions(
+    claim: ClaimArtifactAny,
+    *,
+    claim_type: ClaimType,
+    capture_digest: str,
+    capture_contract: AcceptedCaptureContract,
+    envelope: CaptureEnvelopeV1,
+    verified_attestations: tuple[VerifiedClaimAttestationV1, ...],
+) -> tuple[CaptureEvidenceKindAdmission, ...]:
+    """Run the shared evidence-admission evaluator for every declared evidence kind."""
+
+    relevant_spans = tuple(
+        span
+        for mapping in claim.backing.source_mappings
+        for span in mapping.spans
+        if span.content_digest == envelope.commitment.digest
+    )
+    exact_claim_subject_bound = bool(relevant_spans) or (
+        getattr(envelope.source, "selector_type", None)
+        in {"direct-claim-source-v1", "direct-claim-external-selector-v1"}
+        and isinstance(getattr(envelope.source, "selector", None), dict)
+        and getattr(envelope.source, "selector", {}).get("claim_id") == claim.identity.name
+    )
+    contract_source_bound = _verified_contract_subject_binding(
+        envelope.source,
+        contract=capture_contract.contract,
+        subject=claim.statement.subject,
+    )
+    subject_binding_by_rule = {
+        rule.rule_id: (
+            exact_claim_subject_bound
+            if rule.subject_binding == "exact_claim_subject"
+            else contract_source_bound
+        )
+        for rule in claim_type.evidence_admission_policy.rules
+    }
+    capture_attestations = tuple(
+        item for item in verified_attestations if capture_digest in item.statement.capture_digests
+    )
+    if any(item.attestation_grade == "verified_provider" for item in capture_attestations):
+        attestation_grade: VerifiedAttestationGrade = "verified_provider"
+    elif any(item.attestation_grade == "verified_principal" for item in capture_attestations):
+        attestation_grade = "verified_principal"
+    else:
+        attestation_grade = "none"
+    decisions: list[CaptureEvidenceKindAdmission] = []
+    for kind in capture_contract.contract.evidence_kinds:
+        matching_rules = tuple(
+            rule
+            for rule in claim_type.evidence_admission_policy.rules
+            if claim.statement.role in rule.claim_roles
+            and capture_contract.artifact_digest in rule.capture_contract_digests
+            and kind in rule.evidence_kinds
+        )
+        source_bound = any(subject_binding_by_rule[rule.rule_id] for rule in matching_rules)
+        decisions.append(
+            CaptureEvidenceKindAdmission(
+                evidence_kind=kind,
+                trace=evaluate_claim_evidence_admission_trace(
+                    claim_type.evidence_admission_policy,
+                    EvidenceAdmissionInputV1(
+                        claim_role=claim.statement.role,
+                        capture_contract_digest=capture_contract.artifact_digest,
+                        evidence_kind=kind,
+                        reducer_digest=claim.backing.reducer_digest,
+                        input_claim_artifact_digests=claim.backing.input_claim_digests,
+                        attestation_grade=attestation_grade,
+                        source_subject_bound=source_bound,
+                    ),
+                    subject_binding_by_rule=subject_binding_by_rule,
+                ),
+            )
+        )
+    return tuple(decisions)
+
+
 def _citation_origin_refusal(
     claim: ClaimArtifactAny,
     *,
@@ -1391,23 +1474,6 @@ def evaluate_claim_law(
                 path=path,
             )
         verified_commitments[envelope.commitment.digest] = envelope.commitment
-        relevant_spans = tuple(
-            span
-            for mapping in claim.backing.source_mappings
-            for span in mapping.spans
-            if span.content_digest == envelope.commitment.digest
-        )
-        exact_claim_subject_bound = bool(relevant_spans) or (
-            getattr(envelope.source, "selector_type", None)
-            in {"direct-claim-source-v1", "direct-claim-external-selector-v1"}
-            and isinstance(getattr(envelope.source, "selector", None), dict)
-            and getattr(envelope.source, "selector", {}).get("claim_id") == claim.identity.name
-        )
-        contract_source_bound = _verified_contract_subject_binding(
-            envelope.source,
-            contract=resolved_contract.contract,
-            subject=statement.subject,
-        )
         producer_provider = resolved_providers.get(envelope.producer.qualified)
         executable_provider = resolved_providers.get(
             envelope.run_coordinate.executable_identity.qualified
@@ -1435,42 +1501,16 @@ def evaluate_claim_law(
         ):
             continue
         capture_admissions: set[Literal["origin_only", "direct", "derivational"]] = set()
-        capture_attestations = tuple(
-            item
-            for item in verified_attestations
-            if capture_digest_value in item.statement.capture_digests
+        decisions = evaluate_capture_evidence_admissions(
+            claim,
+            claim_type=contract,
+            capture_digest=capture_digest_value,
+            capture_contract=resolved_contract,
+            envelope=envelope,
+            verified_attestations=tuple(verified_attestations),
         )
-        if any(item.attestation_grade == "verified_provider" for item in capture_attestations):
-            attestation_grade: VerifiedAttestationGrade = "verified_provider"
-        elif any(item.attestation_grade == "verified_principal" for item in capture_attestations):
-            attestation_grade = "verified_principal"
-        else:
-            attestation_grade = "none"
-        for kind in resolved_contract.contract.evidence_kinds:
-            matching_rules = tuple(
-                rule
-                for rule in contract.evidence_admission_policy.rules
-                if statement.role in rule.claim_roles
-                and resolved_contract.artifact_digest in rule.capture_contract_digests
-                and kind in rule.evidence_kinds
-            )
-            source_bound = any(
-                (rule.subject_binding == "exact_claim_subject" and exact_claim_subject_bound)
-                or (rule.subject_binding == "contract_source_mapping" and contract_source_bound)
-                for rule in matching_rules
-            )
-            admission = evaluate_claim_evidence_admission(
-                contract.evidence_admission_policy,
-                EvidenceAdmissionInputV1(
-                    claim_role=statement.role,
-                    capture_contract_digest=resolved_contract.artifact_digest,
-                    evidence_kind=kind,
-                    reducer_digest=claim.backing.reducer_digest,
-                    input_claim_artifact_digests=claim.backing.input_claim_digests,
-                    attestation_grade=attestation_grade,
-                    source_subject_bound=source_bound,
-                ),
-            )
+        for decision in decisions:
+            admission = decision.trace.result
             if admission.verdict == "eligible" and admission.admission is not None:
                 evidence_basis.add(admission.admission)
                 capture_admissions.add(admission.admission)

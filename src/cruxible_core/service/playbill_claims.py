@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -38,15 +38,18 @@ from cruxible_core.playbill.claims import (
     ClaimArtifactAny,
     ClaimArtifactV2,
     ClaimBacking,
+    ClaimCitationV1,
     ClaimLawEvidenceV1,
     ClaimReferentContext,
     ClaimStatement,
     SubjectClaimObject,
     claim_artifact_digest,
+    claim_citation_references,
     claim_path,
     claim_referent_context_digest,
     claim_statement_address,
     claim_statement_digest,
+    evaluate_capture_evidence_admissions,
     new_claim_id,
     parse_claim,
     render_claim,
@@ -251,6 +254,54 @@ class PlaybillClaimView(_StrictClaimServiceModel):
     facts: tuple[dict[str, object], ...]
 
 
+class CaptureEvidenceKindAdmissionV1(_StrictClaimServiceModel):
+    tag: Literal["playbill-capture-evidence-kind-admission-v1"] = (
+        "playbill-capture-evidence-kind-admission-v1"
+    )
+    evidence_kind: str
+    status: Literal["admitted", "not_admitted"]
+    rule_id: str | None = None
+    admission: Literal["origin_only", "direct", "derivational"] | None = None
+    refusal_code: str | None = None
+    closest_rule_id: str | None = None
+
+
+class CaptureAdmissionAccountV1(_StrictClaimServiceModel):
+    tag: Literal["playbill-capture-admission-account-v1"] = "playbill-capture-admission-account-v1"
+    citation_id: str
+    capture_digest: str
+    citation_role: Literal["evidence", "copy", "legacy"]
+    citation_origin: Literal["independent", "self_source", "self_published", "legacy"]
+    capture_contract_identity: str
+    capture_contract_digest: str
+    status: Literal["admitted", "not_admitted", "not_evidence"]
+    decisions: tuple[CaptureEvidenceKindAdmissionV1, ...] = ()
+
+
+class PlaybillClaimViewV2(_StrictClaimServiceModel):
+    tag: Literal["playbill-claim-read-v2"] = "playbill-claim-read-v2"
+    coordinate_kind: Literal["canonical"] = "canonical"
+    coordinate: PlaybillAcceptedCoordinate
+    envelope: dict[str, object]
+    facts: tuple[dict[str, object], ...]
+    admission_evaluation_time: datetime
+    admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
+
+    @field_validator("admission_evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("admission evaluation time must be timezone-aware")
+        return value
+
+    @model_validator(mode="after")
+    def _ordered_accounts(self) -> "PlaybillClaimViewV2":
+        ids = tuple(item.citation_id for item in self.admission_accounts)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("ascii"))):
+            raise ValueError("admission accounts must be sorted and unique")
+        return self
+
+
 class PlaybillClaimList(_StrictClaimServiceModel):
     tag: Literal["playbill-claim-list-v1"] = "playbill-claim-list-v1"
     coordinate: PlaybillAcceptedCoordinate
@@ -302,6 +353,21 @@ class PlaybillClaimExplanationV1(_StrictClaimServiceModel):
     coverage: CoverageDescriptorV1
 
 
+class PlaybillClaimExplanationV2(_StrictClaimServiceModel):
+    tag: Literal["playbill-claim-explanation-v2"] = "playbill-claim-explanation-v2"
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: datetime
+    claim: PlaybillClaimView
+    law_evidence: ClaimLawEvidenceV1
+    verdict: ClaimVerdictResultV1
+    exact_attestations: tuple[VerifiedClaimAttestationV1, ...]
+    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
+    source_handles: tuple[SourceHandleV1, ...]
+    coverage: CoverageDescriptorV1
+    admission_evaluation_time: datetime
+    admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
+
+
 def _resolve_coordinate(
     instance: PlaybillInstance,
     at: PlaybillAcceptedCoordinate | None,
@@ -328,7 +394,7 @@ def _public_claim(view: ClaimProjectionView) -> PlaybillClaimView:
     )
 
 
-def _claim_from_view(view: PlaybillClaimView) -> ClaimArtifactAny:
+def _claim_from_view(view: PlaybillClaimView | PlaybillClaimViewV2) -> ClaimArtifactAny:
     path = view.envelope.get("path")
     if not isinstance(path, str):
         raise ProposalIntegrityError("Claim projection envelope has no path")
@@ -901,7 +967,8 @@ def service_get_playbill_claim(
     *,
     identity: str,
     at: PlaybillAcceptedCoordinate | None = None,
-) -> PlaybillClaimView:
+    evaluation_time: datetime | None = None,
+) -> PlaybillClaimViewV2:
     expected = "Claim:CLM-<32 lowercase hex> or CLM-<32 lowercase hex>"
     bare = identity.removeprefix("Claim:")
     try:
@@ -924,7 +991,20 @@ def service_get_playbill_claim(
     public = _public_claim(claim)
     if public.envelope.get("path") != path:
         raise ProposalIntegrityError("Claim projection path differs from normalized identity")
-    return public
+    evaluated_at = evaluation_time or _accepted_generation_time(instance, coordinate)
+    parsed = _claim_from_view(public)
+    return PlaybillClaimViewV2(
+        coordinate=public.coordinate,
+        envelope=public.envelope,
+        facts=public.facts,
+        admission_evaluation_time=evaluated_at,
+        admission_accounts=_claim_admission_accounts(
+            instance,
+            claim=parsed,
+            tree=instance.tree_at(coordinate.git_oid),
+            law=_claim_law_evidence(instance, path=path, at=coordinate),
+        ),
+    )
 
 
 def service_list_playbill_claims(
@@ -986,6 +1066,96 @@ def _claim_law_evidence(
     if found is None:
         raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
     return found
+
+
+def _accepted_generation_time(
+    instance: PlaybillInstance,
+    coordinate: AcceptedProjectionCoordinate,
+) -> datetime:
+    generation = next(
+        item for item in instance.accepted_history() if item.oid == coordinate.git_oid
+    )
+    if generation.record is None:
+        raise ProposalIntegrityError("a Claim read requires an accepted candidate timestamp")
+    return datetime.fromisoformat(generation.record.candidate.timestamp.replace("Z", "+00:00"))
+
+
+def _claim_admission_accounts(
+    instance: PlaybillInstance,
+    *,
+    claim: ClaimArtifactAny,
+    tree: dict[str, bytes],
+    law: ClaimLawEvidenceV1,
+) -> tuple[CaptureAdmissionAccountV1, ...]:
+    from cruxible_core.service.playbill_evidence import _capture_contracts
+
+    claim_type_path_value = claim_type_path(claim.statement.predicate)
+    claim_type = parse_claim_type(tree[claim_type_path_value], path=claim_type_path_value)
+    contracts = _capture_contracts(tree)
+    accounts: list[CaptureAdmissionAccountV1] = []
+    for citation in claim_citation_references(claim):
+        envelope = parse_capture_envelope(
+            instance.body_store().read(
+                citation.capture_digest,
+                access=BodyAccessContext(principal_id="playbill-service", can_read_body=True),
+            )
+        )
+        contract = contracts.get(envelope.capture_contract_digest)
+        if contract is None:
+            raise ProposalIntegrityError("accepted Claim CaptureContract no longer resolves")
+        if isinstance(citation, ClaimCitationV1) and citation.role == "copy":
+            accounts.append(
+                CaptureAdmissionAccountV1(
+                    citation_id=citation.citation_id,
+                    capture_digest=citation.capture_digest,
+                    citation_role=citation.role,
+                    citation_origin=citation.origin,
+                    capture_contract_identity=contract.contract.identity.qualified,
+                    capture_contract_digest=contract.artifact_digest,
+                    status="not_evidence",
+                )
+            )
+            continue
+        traces = evaluate_capture_evidence_admissions(
+            claim,
+            claim_type=claim_type,
+            capture_digest=citation.capture_digest,
+            capture_contract=contract,
+            envelope=envelope,
+            verified_attestations=law.verified_attestations,
+        )
+        decisions = tuple(
+            CaptureEvidenceKindAdmissionV1(
+                evidence_kind=item.evidence_kind,
+                status="admitted" if item.trace.result.verdict == "eligible" else "not_admitted",
+                rule_id=item.trace.result.rule_id,
+                admission=item.trace.result.admission,
+                refusal_code=item.trace.result.refusal_code,
+                closest_rule_id=item.trace.closest_rule_id,
+            )
+            for item in traces
+        )
+        accounts.append(
+            CaptureAdmissionAccountV1(
+                citation_id=citation.citation_id,
+                capture_digest=citation.capture_digest,
+                citation_role=(
+                    citation.role if isinstance(citation, ClaimCitationV1) else "legacy"
+                ),
+                citation_origin=(
+                    citation.origin if isinstance(citation, ClaimCitationV1) else "legacy"
+                ),
+                capture_contract_identity=contract.contract.identity.qualified,
+                capture_contract_digest=contract.artifact_digest,
+                status=(
+                    "admitted"
+                    if any(item.status == "admitted" for item in decisions)
+                    else "not_admitted"
+                ),
+                decisions=decisions,
+            )
+        )
+    return tuple(accounts)
 
 
 def service_query_playbill_claims(
@@ -1104,17 +1274,23 @@ def service_explain_playbill_claim(
     identity: str,
     at: PlaybillAcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
-) -> PlaybillClaimExplanationV1:
+) -> PlaybillClaimExplanationV2:
     from cruxible_core.service.playbill_evidence import (
         service_evaluate_playbill_claim_verdict,
     )
 
     coordinate = _resolve_coordinate(instance, at)
     evaluated_at = evaluation_time or datetime.now(UTC)
-    view = service_get_playbill_claim(
+    read = service_get_playbill_claim(
         instance,
         identity=identity,
         at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        evaluation_time=evaluated_at,
+    )
+    view = PlaybillClaimView(
+        coordinate=read.coordinate,
+        envelope=read.envelope,
+        facts=read.facts,
     )
     claim = _claim_from_view(view)
     law = _claim_law_evidence(
@@ -1155,7 +1331,7 @@ def service_explain_playbill_claim(
                 access_class="instance",
             )
         )
-    return PlaybillClaimExplanationV1(
+    return PlaybillClaimExplanationV2(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         evaluation_time=evaluated_at,
         claim=view,
@@ -1167,6 +1343,8 @@ def service_explain_playbill_claim(
             requested_facets=("governance", "provenance", "sources"),
             available_facets=("governance", "provenance", "sources"),
         ),
+        admission_evaluation_time=evaluated_at,
+        admission_accounts=read.admission_accounts,
     )
 
 
@@ -1700,17 +1878,21 @@ def service_open_playbill_source(
 
 __all__ = [
     "AuthoredClaimV1",
+    "CaptureAdmissionAccountV1",
+    "CaptureEvidenceKindAdmissionV1",
     "DirectClaimAuthoringV1",
     "DirectClaimBatchProposalV1",
     "DirectClaimProposalV1",
     "ExistingClaimStatementHandleV1",
     "ExistingStatementHandoffV1",
     "PlaybillClaimExplanationV1",
+    "PlaybillClaimExplanationV2",
     "PlaybillClaimHistory",
     "PlaybillClaimHistoryEntry",
     "PlaybillClaimList",
     "PlaybillClaimQueryResult",
     "PlaybillClaimView",
+    "PlaybillClaimViewV2",
     "service_expand_playbill_semantic",
     "service_explain_playbill_claim",
     "service_get_playbill_claim",
