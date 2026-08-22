@@ -852,7 +852,7 @@ def handle_playbill_discover(
     evaluation_time: str | None,
     profile: str,
     budget: dict[str, Any] | None,
-) -> contracts.PlaybillDiscoveryResult:
+) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
     limits = None if budget is None else DiscoveryBudgetV1.model_validate(budget)
     return _dispatch_remote_or_local(
         lambda client: client.discover_playbill(

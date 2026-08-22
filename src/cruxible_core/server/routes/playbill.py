@@ -795,12 +795,12 @@ async def run_query(
 
 @router.post(
     "/{instance_id}/playbill/discover",
-    response_model=contracts.PlaybillDiscoveryResult,
+    response_model=contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory,
 )
 async def discover(
     instance_id: str,
     req: PlaybillDiscoverRequest,
-) -> contracts.PlaybillDiscoveryResult:
+) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
     return playbill_api.playbill_discover(
         resolve_server_instance_id(instance_id),
         query=req.query,

@@ -1462,6 +1462,16 @@ def discover(
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
+    if isinstance(result, contracts.PlaybillInterfaceInventory):
+        if result.provider_status == "not_installed":
+            click.echo("No provider interfaces installed.")
+        else:
+            for interface in result.interfaces:
+                click.echo(
+                    f"{interface.identity}  {interface.interface_digest}  "
+                    f"({interface.interface_basis})"
+                )
+        return
     for hit in result.page.get("hits", []):
         click.echo(f"{hit['kind']}  {hit['label']}  {hit['address']['artifact_path']}")
     click.echo(f"Vocabulary entries: {result.vocabulary_entry_count}")

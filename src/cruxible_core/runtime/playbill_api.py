@@ -909,7 +909,7 @@ def playbill_discover(
     evaluation_time: str | None = None,
     profile: Literal["interfaces", "subjects", "all"] = "interfaces",
     budget: DiscoveryBudgetV1 | None = None,
-) -> contracts.PlaybillDiscoveryResult:
+) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_discover_playbill_semantic(
         get_playbill_manager().get(instance_id),
@@ -920,7 +920,10 @@ def playbill_discover(
         profile=profile,
         budget=budget or DiscoveryBudgetV1(),
     )
-    return contracts.PlaybillDiscoveryResult.model_validate(result.model_dump(mode="json"))
+    payload = result.model_dump(mode="json")
+    if payload.get("tag") == "playbill-interface-inventory-v1":
+        return contracts.PlaybillInterfaceInventory.model_validate(payload)
+    return contracts.PlaybillDiscoveryResult.model_validate(payload)
 
 
 def playbill_search(

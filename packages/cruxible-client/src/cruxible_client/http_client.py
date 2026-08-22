@@ -873,7 +873,7 @@ class CruxibleClient:
         evaluation_time: str | None = None,
         profile: Literal["interfaces", "subjects", "all"] = "interfaces",
         budget: Mapping[str, Any] | None = None,
-    ) -> contracts.PlaybillDiscoveryResult:
+    ) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
         payload: dict[str, Any] = {
             "query": query,
             "entrypoint": entrypoint,
@@ -884,7 +884,10 @@ class CruxibleClient:
         if budget is not None:
             payload["budget"] = dict(budget)
         response = self._client.post(f"/api/v1/{instance_id}/playbill/discover", json=payload)
-        return self._parse_model(response, contracts.PlaybillDiscoveryResult)
+        parsed = self._parse_json(response)
+        if parsed.get("tag") == "playbill-interface-inventory-v1":
+            return contracts.PlaybillInterfaceInventory.model_validate(parsed)
+        return contracts.PlaybillDiscoveryResult.model_validate(parsed)
 
     def search_playbill(
         self,

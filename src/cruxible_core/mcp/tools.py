@@ -492,7 +492,7 @@ def register_tools(
         evaluation_time: str | None = None,
         profile: Literal["interfaces", "subjects", "all"] = "interfaces",
         budget: dict[str, Any] | None = None,
-    ) -> contracts.PlaybillDiscoveryResult:
+    ) -> contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory:
         """Find accepted interfaces and Subjects by exact or lexical match."""
         return handlers.handle_playbill_discover(
             instance_id,

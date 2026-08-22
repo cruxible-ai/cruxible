@@ -11,8 +11,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from cruxible_core.playbill.canonical import ArtifactDigest
 from cruxible_core.playbill.claim_types import ClaimType, parse_claim_type
 from cruxible_core.playbill.discovery import DiscoveryBudgetV1, DiscoveryPageV1, DiscoveryRequestV1
 from cruxible_core.playbill.errors import ProposalIntegrityError
@@ -20,6 +21,7 @@ from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.procedures.artifacts import AcceptedProcedureV1
 from cruxible_core.playbill.procedures.line_specs import AcceptedLineSpecV1
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.providers import parse_provider, provider_digest
 from cruxible_core.playbill.query.backends import ClaimQueryFactsV1, subject_query_view
 from cruxible_core.playbill.query.definitions import (
     AcceptedQueryDefinitionV1,
@@ -49,6 +51,66 @@ class PlaybillDiscoveryResultV1(_StrictDiscoveryServiceModel):
     coordinate: PlaybillAcceptedCoordinate
     page: DiscoveryPageV1
     vocabulary_entry_count: int
+
+
+class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
+    tag: Literal["playbill-provider-interface-entry-v1"] = "playbill-provider-interface-entry-v1"
+    identity: str
+    artifact_digest: str
+    artifact_kind: Literal["Provider"] = "Provider"
+    pin_role: Literal["provider"] = "provider"
+    interface_digest: str
+    interface_basis: Literal["explicit_interface_pin", "artifact_digest_fallback"]
+
+    @field_validator("artifact_digest", "interface_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        ArtifactDigest.from_tagged(value)
+        return value
+
+
+class PlaybillInterfaceInventoryV1(_StrictDiscoveryServiceModel):
+    tag: Literal["playbill-interface-inventory-v1"] = "playbill-interface-inventory-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    provider_status: Literal["installed", "not_installed"]
+    interfaces: tuple[ProviderInterfaceEntryV1, ...]
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> "PlaybillInterfaceInventoryV1":
+        identities = tuple(item.identity for item in self.interfaces)
+        if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("provider interfaces must be sorted and unique")
+        if (self.provider_status == "installed") != bool(self.interfaces):
+            raise ValueError("provider status must agree with interface entries")
+        return self
+
+
+def _provider_interfaces(
+    tree: Mapping[str, bytes],
+) -> tuple[ProviderInterfaceEntryV1, ...]:
+    entries: list[ProviderInterfaceEntryV1] = []
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not path.startswith("providers/"):
+            continue
+        provider = parse_provider(tree[path], path=path)
+        if provider.lifecycle.state != "live":
+            continue
+        artifact_digest = provider_digest(provider).tagged
+        interface_pins = tuple(pin for pin in provider.pins if pin.role == "interface")
+        explicit = interface_pins[0] if len(interface_pins) == 1 else None
+        entries.append(
+            ProviderInterfaceEntryV1(
+                identity=provider.identity.qualified,
+                artifact_digest=artifact_digest,
+                interface_digest=(
+                    explicit.artifact_digest if explicit is not None else artifact_digest
+                ),
+                interface_basis=(
+                    "explicit_interface_pin" if explicit is not None else "artifact_digest_fallback"
+                ),
+            )
+        )
+    return tuple(sorted(entries, key=lambda item: item.identity.encode("utf-8")))
 
 
 def _resolve_coordinate(
@@ -134,7 +196,7 @@ def service_discover_playbill_semantic(
     procedures: Iterable[AcceptedProcedureV1] = (),
     line_specs: Iterable[AcceptedLineSpecV1] = (),
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
-) -> PlaybillDiscoveryResultV1:
+) -> PlaybillDiscoveryResultV1 | PlaybillInterfaceInventoryV1:
     """Answer one exact/lexical discovery request without writing anything.
 
     Exactly one of ``query`` or ``entrypoint`` selects the page; the accepted
@@ -144,6 +206,13 @@ def service_discover_playbill_semantic(
     if at is not None and not isinstance(at, PlaybillAcceptedCoordinate):
         raise ProposalIntegrityError("discovery accepts only verified accepted coordinates")
     coordinate = _resolve_coordinate(instance, at)
+    if profile == "interfaces" and query is None and entrypoint is None:
+        interfaces = _provider_interfaces(instance.tree_at(coordinate.git_oid))
+        return PlaybillInterfaceInventoryV1(
+            coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            provider_status="installed" if interfaces else "not_installed",
+            interfaces=interfaces,
+        )
     vocabulary = build_accepted_discovery_vocabulary(
         instance,
         coordinate=coordinate,
@@ -170,7 +239,9 @@ def service_discover_playbill_semantic(
 
 
 __all__ = [
+    "PlaybillInterfaceInventoryV1",
     "PlaybillDiscoveryResultV1",
+    "ProviderInterfaceEntryV1",
     "accepted_claim_types",
     "accepted_query_definitions",
     "build_accepted_discovery_vocabulary",

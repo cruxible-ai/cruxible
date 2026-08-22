@@ -606,6 +606,27 @@ class PlaybillDiscoveryResult(BaseModel):
     vocabulary_entry_count: int
 
 
+class PlaybillProviderInterfaceEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-provider-interface-entry-v1"]
+    identity: str
+    artifact_digest: str
+    artifact_kind: Literal["Provider"]
+    pin_role: Literal["provider"]
+    interface_digest: str
+    interface_basis: Literal["explicit_interface_pin", "artifact_digest_fallback"]
+
+
+class PlaybillInterfaceInventory(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-interface-inventory-v1"]
+    coordinate: PlaybillAcceptedCoordinate
+    provider_status: Literal["installed", "not_installed"]
+    interfaces: list[PlaybillProviderInterfaceEntry]
+
+
 class PlaybillSearchResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

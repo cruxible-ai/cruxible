@@ -7,14 +7,26 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_core.playbill.artifacts import ArtifactPin
+from cruxible_core.playbill.captures import (
+    capture_contract_digest,
+    capture_contract_path,
+    render_capture_contract,
+)
 from cruxible_core.playbill.claim_types import claim_type_path
 from cruxible_core.playbill.discovery import DiscoveryBudgetV1
+from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.playbill.providers import provider_digest, provider_path, render_provider
 from cruxible_core.playbill.query.semantic_discovery import DiscoveryError
-from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
+from cruxible_core.playbill.service.documents import (
+    PlaybillAcceptedCoordinate,
+    PlaybillProposalInspection,
+)
 from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
 )
 from cruxible_core.service.playbill_discovery import (
+    PlaybillInterfaceInventoryV1,
     build_accepted_discovery_vocabulary,
     service_discover_playbill_semantic,
 )
@@ -27,6 +39,8 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.test_playbill._pc_c_support import capture_contract, provider
+from tests.test_playbill._support import initialize_local
 
 
 def _instance_with_query(tmp_path: Path):
@@ -115,11 +129,88 @@ def test_budget_clipping_is_stated_rather_than_silently_narrowing(tmp_path: Path
     assert "hit_budget_exceeded" in result.page.coverage.reason_codes
 
 
-def test_request_naming_neither_a_query_nor_an_entrypoint_is_refused(tmp_path: Path) -> None:
+def test_empty_interfaces_request_returns_an_honest_not_installed_inventory(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    result = service_discover_playbill_semantic(
+        instance,
+        evaluation_time=EVALUATION_TIME,
+    )
+
+    assert isinstance(result, PlaybillInterfaceInventoryV1)
+    assert result.provider_status == "not_installed"
+    assert result.interfaces == ()
+
+
+def test_other_empty_discovery_profiles_remain_refused(tmp_path: Path) -> None:
     instance, _owner = _instance_with_query(tmp_path)
 
     with pytest.raises(ValidationError, match="exactly one query or entrypoint"):
-        service_discover_playbill_semantic(instance, evaluation_time=EVALUATION_TIME)
+        service_discover_playbill_semantic(
+            instance,
+            evaluation_time=EVALUATION_TIME,
+            profile="subjects",
+        )
+
+
+def test_interfaces_inventory_uses_the_linespec_interface_pin_projection(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    contract = capture_contract()
+    contract_digest = capture_contract_digest(contract).tagged
+    provider_artifact = provider(contract).model_copy(
+        update={
+            "pins": tuple(
+                sorted(
+                    (
+                        *provider(contract).pins,
+                        ArtifactPin(
+                            role="interface",
+                            target=contract.identity,
+                            artifact_digest=contract_digest,
+                        ),
+                    ),
+                    key=lambda item: (item.role, item.target.qualified),
+                )
+            )
+        }
+    )
+    proposed = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/provider-interface",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree={
+            **instance.tree_at(base.git_oid),
+            capture_contract_path(contract.identity.name): render_capture_contract(contract),
+            provider_path(provider_artifact.identity.name): render_provider(provider_artifact),
+        },
+        timestamp=TIMESTAMP,
+    )
+    accept_proposal(
+        instance,
+        owner,
+        PlaybillProposalInspection(
+            proposal=proposed,
+            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(base),
+        ),
+        sequence=1,
+    )
+
+    result = service_discover_playbill_semantic(
+        instance,
+        evaluation_time=EVALUATION_TIME,
+    )
+
+    assert isinstance(result, PlaybillInterfaceInventoryV1)
+    assert result.provider_status == "installed"
+    assert result.interfaces[0].identity == provider_artifact.identity.qualified
+    assert result.interfaces[0].artifact_digest == provider_digest(provider_artifact).tagged
+    assert result.interfaces[0].interface_digest == contract_digest
+    assert result.interfaces[0].interface_basis == "explicit_interface_pin"
 
 
 def test_blank_query_is_refused_rather_than_listing_everything(tmp_path: Path) -> None:
