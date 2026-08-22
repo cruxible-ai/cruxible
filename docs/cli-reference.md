@@ -107,13 +107,18 @@ A Subject is an identity-only referent. KIND and ID are the two halves of its
 ## playbill claim-type
 
 ~~~text
-cruxible playbill claim-type propose --envelope FILE --name NAME
+cruxible playbill claim-type propose --input FILE --name NAME
+cruxible playbill claim-type propose --example
+cruxible playbill claim-type migrate REQUEST_FILE
 cruxible playbill claim-type list
 cruxible playbill claim-type get PREDICATE
 ~~~
 
 A ClaimType is the governed interface a predicate must satisfy before any Claim
-may state it.
+may state it. `propose --input` lowers the tagless model-generated form and
+returns lint beside the proposal. `migrate` atomically succeeds the ClaimType
+and disposes every dependent the request names; it never authors retirement
+decisions from diagnostics.
 
 ## playbill claim
 
@@ -430,7 +435,7 @@ cruxible playbill proposal refusal PROPOSAL_ID
 cruxible playbill proposal review PROPOSAL_ID [--include-body|--redacted]
 cruxible playbill proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
-cruxible playbill proposal activate PROPOSAL_ID
+cruxible playbill proposal activate PROPOSAL_ID [--workspace-root DIR]
 ~~~
 
 `cruxible playbill whoami` names the credential-derived actor, its effective
@@ -442,6 +447,10 @@ governed rebase and returns a fresh, idempotent proposal without changing the ol
 proposal evidence.
 
 approve signs locally. The private-key path is not sent to the daemon.
+When `.playbill/coverage.json` at `--workspace-root` declares `floor_output`,
+activate refreshes floor-v2 as a verified exact directory replacement. An
+accepted activation followed by a failed local refresh reports both truths and
+exits nonzero; the daemon never receives the workspace path.
 
 ## playbill principal
 

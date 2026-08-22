@@ -173,8 +173,7 @@ def lint_claim_type_input(
                     ClaimTypeLintWarningV1(
                         code="playbill.claim_type.evidence_policy_admits_no_accepted_contract",
                         field_path=(
-                            "$.evidence_admission_policy.rules"
-                            f"[{index}].capture_contract_digests"
+                            f"$.evidence_admission_policy.rules[{index}].capture_contract_digests"
                         ),
                         contract_identity="unresolved",
                         contract_digest=digest,

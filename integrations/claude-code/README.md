@@ -16,7 +16,7 @@ put a `.playbill/coverage.json` at the workspace root:
 
 ```json
 {
-  "tag": "playbill-coverage-workspace-config-v1",
+  "tag": "playbill-coverage-workspace-config-v2",
   "instance_id": "inst_0123456789abcdef",
   "rules": [
     {
@@ -32,9 +32,20 @@ put a `.playbill/coverage.json` at the workspace root:
       "plane": "external",
       "identity": "workspace.handbook"
     }
-  ]
+  ],
+  "floor_output": {
+    "tag": "playbill-floor-output-v1",
+    "path": "playbill-floor",
+    "format": "playbill-floor-export-v2"
+  }
 }
 ```
+
+`floor_output` is optional. When present, `playbill proposal activate` replaces
+that directory from a verified floor-v2 export, and tool hits inside it carry
+one staleness line if its manifest generation trails current accepted state.
+Floor files are presentation only: the middleware never binds them as evidence,
+even if a path rule would otherwise match.
 
 Bindings are **declared, never inferred.** Playbill will not guess that
 `handbook.md` is the accepted source `documents/handbook.md`, because identical

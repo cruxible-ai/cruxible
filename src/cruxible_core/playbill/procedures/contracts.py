@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Literal
 
-from cruxible_core.config.schema import PropertySchema
 from cruxible_core.playbill.artifacts import ArtifactPin
 from cruxible_core.playbill.canonical import CanonicalValue, normalize_canonical
 from cruxible_core.playbill.procedures.artifacts import (
@@ -15,6 +14,7 @@ from cruxible_core.playbill.procedures.artifacts import (
     ProcedureOwnedContractV1,
     procedure_owned_contract_digest,
 )
+from cruxible_core.playbill.procedures.contract_schema import PropertySchema
 from cruxible_core.primitives import canonical_json
 from cruxible_core.temporal import format_datetime, parse_datetime
 

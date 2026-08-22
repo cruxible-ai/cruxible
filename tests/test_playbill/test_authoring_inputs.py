@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.config.schema import PropertySchema
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.inputs import (
     AuthoringInputError,
@@ -24,6 +23,7 @@ from cruxible_core.playbill.claim_type_inputs import (
     claim_type_input_example,
     lint_claim_type_input,
 )
+from cruxible_core.playbill.procedures.contract_schema import PropertySchema
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_authoring_preflight import (

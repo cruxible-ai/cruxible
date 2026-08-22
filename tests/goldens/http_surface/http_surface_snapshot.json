@@ -42,8 +42,11 @@
   "/api/v1/{instance_id}/playbill/claim-types": {
     "GET": "PlaybillClaimTypeList"
   },
+  "/api/v1/{instance_id}/playbill/claim-types/migrations": {
+    "POST": "PlaybillClaimTypeMigrationResult"
+  },
   "/api/v1/{instance_id}/playbill/claim-types/proposals": {
-    "POST": "PlaybillProposalInspection"
+    "POST": "PlaybillProposalInspection | PlaybillClaimTypeInputProposalResult"
   },
   "/api/v1/{instance_id}/playbill/claim-types/{predicate}": {
     "GET": "PlaybillClaimTypeView"

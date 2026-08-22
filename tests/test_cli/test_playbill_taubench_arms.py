@@ -12,8 +12,8 @@ nobody runs. What it exercises is not scale:
 
 * the seed bundle applied through the governed loop, one group per proposal,
   with approval and activation as separate acts the harness performs;
-* the arm file surface exported as floor artifacts, native renders, and the
-  coverage boundary in one greppable tree;
+* the arm file surface exported as floor-v2 artifacts and the coverage boundary
+  in one greppable tree;
 * all four §11.8 arms constructed, with arms 3 and 4 differing in exactly one
   boolean and producing byte-identical workspaces;
 * the flagship §11.8 outcome: the same event stream yields identical raw tool
@@ -127,16 +127,10 @@ def test_the_seed_bundle_applies_as_four_governed_proposals(arm_run: dict[str, o
     assert projected == {"wi-101": "done", "wi-102": "blocked", "wi-103": "ready"}
 
 
-def test_the_arm_file_surface_is_floor_artifacts_native_renders_and_the_boundary(
+def test_the_arm_file_surface_is_floor_v2_artifacts_and_the_boundary(
     arm_run: dict[str, object],
 ) -> None:
-    """One greppable tree, two manifests, no format break.
-
-    The §11.8 native-surface amendment wants the committed native renders inside
-    arms 3 and 4's file floor. They coexist because they never collide: floor
-    artifacts are `.json` and rendered pages are `.md`, and each manifest keeps
-    its own name.
-    """
+    """One greppable pointer-model tree with no native projection residue."""
 
     setups = arm_run["setups"]
     assert isinstance(setups, dict)
@@ -145,23 +139,18 @@ def test_the_arm_file_surface_is_floor_artifacts_native_renders_and_the_boundary
         path.relative_to(surface).as_posix() for path in surface.rglob("*") if path.is_file()
     }
 
-    assert {"manifest.json", "render-manifest.json", "coverage-manifest.json"} <= written
+    assert {"manifest.json", "coverage-manifest.json"} <= written
     assert any(item.endswith(".profile.json") for item in written)
-    assert any(item.endswith(".md") for item in written)
-    # Neither manifest was rewritten to know about the other.
+    assert not any(item.endswith(".md") for item in written)
+    assert "render-manifest.json" not in written
     floor = json.loads((surface / "manifest.json").read_text(encoding="utf-8"))
-    render = json.loads((surface / "render-manifest.json").read_text(encoding="utf-8"))
-    assert floor["tag"].startswith("playbill-floor")
-    assert "render_digest" in render
+    assert floor["tag"] == "playbill-floor-manifest-v2"
+    assert floor["format"] == "playbill-floor-export-v2"
     floor_paths = {item["path"] for item in floor["files"]}
     assert not any(path.endswith(".md") for path in floor_paths)
     assert "render-manifest.json" not in floor_paths
-
-    # The rendered pages really are the accepted Claims, greppable as prose.
-    rendered = "\n".join(
-        (surface / path).read_text(encoding="utf-8") for path in written if path.endswith(".md")
-    )
-    assert "wi-101" in rendered and "wi-102" in rendered and "wi-103" in rendered
+    assert any(path.startswith("briefs/") for path in floor_paths)
+    assert any(path.startswith("procedures/") for path in floor_paths)
 
 
 def test_arms_three_and_four_are_identical_but_for_one_boolean(
@@ -191,6 +180,9 @@ def test_arms_three_and_four_are_identical_but_for_one_boolean(
     # Both hold a middleware; arm 3 simply never calls it.
     assert third.middleware is not None and fourth.middleware is not None
     assert third.middleware.config == fourth.middleware.config
+    assert third.middleware.config.tag == "playbill-coverage-workspace-config-v2"
+    assert third.middleware.config.floor_output is not None
+    assert third.middleware.config.floor_output.format == "playbill-floor-export-v2"
 
     def tree(root: Path) -> dict[str, bytes]:
         return {
@@ -241,6 +233,7 @@ def test_the_same_event_stream_produces_cards_in_arm_four_and_none_in_arm_three(
     # Arm 4 reads the governed span as exact, then sees it drift on the edit.
     read = _entry(fourth, "read")
     assert read["result"] is not None
+    assert read["result"].tag == "playbill-coverage-result-v2"
     assert read["result"].summary.exact == 1
     assert read["model_visible_output"].startswith(read["original_output"])
     assert "exact  external:corpus.handbook.md" in read["model_visible_output"]
@@ -309,12 +302,12 @@ def test_the_run_manifest_pins_every_field_the_evaluation_requires(
     for field in ("index_digest", "overlay_digest", "manifest_digest"):
         assert str(coverage[field]).startswith("sha256:"), field
     assert coverage["epoch"] is not None
-    assert coverage["boundary_format"] == "playbill-coverage-manifest-v1"
+    assert coverage["boundary_format"] == "playbill-coverage-manifest-v2"
 
     for field in ("generation_root", "semantic_root", "compiler_digest", "floor_digest"):
         assert str(manifest["accepted"][field]).startswith("sha256:"), field
-    assert manifest["native_render"]["render_digest"].startswith("sha256:")
-    assert manifest["native_render"]["lens_version"] >= 1
+    assert manifest["accepted"]["format"] == "playbill-floor-export-v2"
+    assert "native_render" not in manifest
     assert manifest["seed"]["plan_digest"].startswith("sha256:")
     assert manifest["arms"] == {
         "1": "files",

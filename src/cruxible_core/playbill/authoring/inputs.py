@@ -10,7 +10,6 @@ from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cruxible_core.config.schema import ContractSchema, PropertySchema
 from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity
 from cruxible_core.playbill.authoring.models import (
     AuthoringArtifactReferenceV1,
@@ -40,6 +39,7 @@ from cruxible_core.playbill.knowledge_briefs import (
     KnowledgeBriefValueV1,
 )
 from cruxible_core.playbill.procedures.artifacts import ProcedureOwnedContractV1
+from cruxible_core.playbill.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_core.playbill.query.definitions import (
     parse_query_definition,
     query_definition_digest,

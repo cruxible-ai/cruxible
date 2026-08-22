@@ -52,11 +52,9 @@ from recipe import bootstrap, seed, export_arm_surface, build_arm, run_turn, run
    seed command performs neither. One proposal per invocation, because a
    proposal settles against the base it was admitted at and two proposals opened
    against one head cannot both activate.
-3. **`export_arm_surface`** — `playbill floor export --with-native`, which is the
-   §11.8 native-surface amendment: floor artifacts (`.json`), the §11.9 native
-   knowledge renders (`.md`), and the §11.6.3 coverage boundary in one greppable
-   tree. `manifest.json` and `render-manifest.json` each keep their own name and
-   neither format changes.
+3. **`export_arm_surface`** — `playbill floor export`, producing the pointer-model
+   floor-v2 artifacts and §11.6.3 coverage boundary in one greppable tree. The
+   unshipped native markdown projection is deliberately not part of either arm.
 4. **`build_arm`** — materializes each arm's workspace from the bundle's
    committed corpus, and for arms 3 and 4 also copies the exported surface,
    writes `.playbill/coverage.json`, and constructs the middleware over the
@@ -155,7 +153,7 @@ produced rather than restated from configuration:
 |---|---|
 | `coverage.index_digest` / `overlay_digest` / `manifest_digest` / `epoch` | a coverage result the hooked arm received |
 | `accepted.generation_root` / `semantic_root` / `compiler_digest` / `floor_digest` | the floor manifest's own coordinate |
-| `native_render.render_digest` / `lens_id` / `lens_version` | the render manifest |
+| `accepted.format` | the floor manifest (`playbill-floor-export-v2`) |
 | `hook_adapter.rule_set` / `rule_set_digest` | the declared bindings |
 | `hook_adapter.envelope_version` | `null` — the owned-harness middleware has no vendor hook envelope, recorded as absent rather than omitted |
 | `seed.plan_digest` | the bundle's bytes and grouping, excluding the invocation's proposal name |
@@ -165,8 +163,8 @@ produced rather than restated from configuration:
 
 ## Determinism
 
-No wall clock reaches any content. The render read time is a parameter with a
-fixed default (`RENDER_READ_TIME`), the bundle is committed bytes, and the plan
+No wall clock reaches projected content. The run's evaluation label has a fixed
+default (`RUN_EVALUATION_TIME`), the bundle is committed bytes, and the plan
 digest is a pure function of those bytes. Two runs of the same bundle at the
 same generation produce the same manifest apart from the identifiers the daemon
 allocates.

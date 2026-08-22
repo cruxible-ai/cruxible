@@ -4,14 +4,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from collections.abc import Mapping
-from typing import Any
-
-from pydantic import TypeAdapter, ValidationError
 
 from cruxible_core.playbill.authoring.inputs import ClaimInput, lower_bound_claim_input
 from cruxible_core.playbill.authoring.models import (
-    AuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     WorkingAnchorWindowV1,
     WorkingDigestCoordinateV1,
@@ -87,80 +82,6 @@ def _line_window(
     return window_start, window_end
 
 
-def bind_working_selection(
-    stub: Mapping[str, Any],
-    *,
-    content: bytes,
-    anchor: str,
-    window_lines: int | None = None,
-) -> ClaimAuthoringPayloadV1:
-    """Merge one exact local selection into a Claim authoring stub."""
-
-    if window_lines is not None and window_lines < 0:
-        raise AuthoringBindError("--window-lines must be nonnegative")
-    source = stub.get("source")
-    if not isinstance(source, Mapping):
-        raise AuthoringBindError(
-            "Flow-A bind stub source must name the working observation tag and source_id"
-        )
-    expected_keys = {"tag", "source_id"}
-    if set(source) != expected_keys:
-        unexpected = sorted(set(source) - expected_keys)
-        missing = sorted(expected_keys - set(source))
-        raise AuthoringBindError(
-            "Flow-A bind source must contain exactly tag and source_id; "
-            f"unexpected={unexpected!r}; missing={missing!r}"
-        )
-    if source.get("tag") != "playbill-working-selection-observation-v1":
-        raise AuthoringBindError(
-            "Flow-A bind source tag must be playbill-working-selection-observation-v1"
-        )
-    source_id = source.get("source_id")
-    if not isinstance(source_id, str):
-        raise AuthoringBindError("Flow-A bind source_id must be a string")
-    if stub.get("citation_role") not in {"evidence", "copy"}:
-        raise AuthoringBindError("Flow-A bind stub requires citation_role=evidence|copy")
-
-    anchor_bytes = anchor.encode("utf-8")
-    offsets = _anchor_offsets(content, anchor_bytes)
-    if len(offsets) != 1:
-        raise AuthoringBindAmbiguityError(offsets)
-    start = offsets[0]
-    end = start + len(anchor_bytes)
-    if window_lines is not None:
-        start, end = _line_window(
-            content,
-            start=start,
-            end=end,
-            surrounding_lines=window_lines,
-        )
-    selected = content[start:end]
-    observation = WorkingSelectionObservationV1(
-        source_id=source_id,
-        coordinate=WorkingDigestCoordinateV1(
-            source_content_digest=_sha256(content),
-            source_byte_length=len(content),
-        ),
-        selected_content_base64=base64.b64encode(selected).decode("ascii"),
-        selected_bytes_digest=_sha256(selected),
-        selector=WorkingAnchorWindowV1(
-            anchor=anchor,
-            start_byte=start,
-            end_byte=end,
-            observed_occurrence_count=1,
-        ),
-    )
-    payload = dict(stub)
-    payload["source"] = observation.model_dump(mode="json")
-    try:
-        parsed: AuthoringPayloadV1 = TypeAdapter(AuthoringPayloadV1).validate_python(payload)
-    except ValidationError as exc:
-        raise AuthoringBindError(str(exc)) from exc
-    if not isinstance(parsed, ClaimAuthoringPayloadV1):
-        raise AuthoringBindError("Flow-A bind accepts only Claim authoring payloads")
-    return parsed
-
-
 def bind_working_selection_input(
     input: ClaimInput,
     *,
@@ -213,6 +134,5 @@ def bind_working_selection_input(
 __all__ = [
     "AuthoringBindAmbiguityError",
     "AuthoringBindError",
-    "bind_working_selection",
     "bind_working_selection_input",
 ]

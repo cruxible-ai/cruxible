@@ -25,13 +25,12 @@ differ in exactly one field, the boolean :attr:`ArmSetupV1.deliver_coverage`.
 that call is the entire difference between the arms. There is no second code
 path, no alternate tool implementation, and no branch anywhere else.
 
-The file floor includes the native renders
-------------------------------------------
-Per the §11.8 native-surface amendment of 2026-08-19, arms 3 and 4 get the
-committed native knowledge renders of §11.9 in their file floor, so
-:func:`export_arm_surface` runs `playbill floor export --with-native`: floor
-artifacts, rendered pages, and the §11.6.3 coverage boundary in one greppable
-tree.
+The file floor is the pointer-model v2 export
+---------------------------------------------
+Arms 3 and 4 get the same deterministic floor-v2 cards, accepted Documents,
+and coverage boundary. The unshipped native projection is deliberately absent:
+the pointer-model surface is ordinary source material plus a compact, read-only
+floor, not a second editable knowledge tree.
 
 Determinism
 -----------
@@ -65,18 +64,20 @@ from cruxible_core.cli.commands import _common  # noqa: E402
 from cruxible_core.cli.context import load_cli_context  # noqa: E402
 from cruxible_core.cli.main import cli  # noqa: E402
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1  # noqa: E402
-from cruxible_core.playbill.coverage.contracts import CoverageResultV1  # noqa: E402
+from cruxible_core.playbill.coverage.contracts import CoverageResultV2  # noqa: E402
 from cruxible_core.playbill.coverage.middleware import (  # noqa: E402
     CONFIG_RELATIVE_PATH,
     CoverageMiddlewareV1,
-    CoverageWorkspaceConfigV1,
+    CoverageWorkspaceConfigV2,
+    FloorGenerationPairV1,
     HarnessLineRangeV1,
     HarnessToolEventV1,
     ResolveCoverage,
+    ResolveFloorGenerations,
     coverage_middleware,
     grep_event,
 )
-from cruxible_core.playbill.native.manifest import NATIVE_RENDER_MANIFEST_PATH  # noqa: E402
+from cruxible_core.playbill.projection import AcceptedCoordinate  # noqa: E402
 from cruxible_core.playbill.seed import (  # noqa: E402
     SEED_BODY_DIRECTORY,
     plan_seed_bundle,
@@ -85,9 +86,8 @@ from cruxible_core.playbill.seed import (  # noqa: E402
 
 BUNDLE_DIR = Path(__file__).resolve().parent / "seed-example"
 SIGNER_ID = "operator"
-RENDER_READ_TIME = "2026-08-20T12:00:00+00:00"
-"""A fixed read time, because a render that reads a clock is not reproducible.
-The lens itself never reads one; this is the caller supplying the value."""
+RUN_EVALUATION_TIME = "2026-08-20T12:00:00+00:00"
+"""A fixed evaluation label recorded in the run manifest."""
 
 FLOOR_MANIFEST = "manifest.json"
 COVERAGE_BOUNDARY = "coverage-manifest.json"
@@ -114,12 +114,38 @@ ArmNumber = Literal[1, 2, 3, 4]
 def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV1:
+    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV2:
         answered = client.resolve_playbill_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
         )
-        return CoverageResultV1.model_validate(answered.result)
+        return CoverageResultV2.model_validate(answered.result)
+
+    return resolve
+
+
+def _floor_generation_resolver(client: Any, instance_id: str) -> ResolveFloorGenerations:
+    """Use the same search-orient wire as the CLI hook for floor freshness."""
+
+    def generation(at: AcceptedCoordinate | None) -> int:
+        answer = client.search_playbill(
+            instance_id,
+            mode="orient",
+            kinds=("brief", "claim", "demand", "procedure"),
+            at=None if at is None else at.model_dump(mode="json"),
+        )
+        if answer.orientation is None:
+            raise RuntimeError("Playbill orient returned no floor generation")
+        value = answer.orientation.get("generation")
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            raise RuntimeError("Playbill orient returned an invalid floor generation")
+        return value
+
+    def resolve(coordinate: AcceptedCoordinate) -> FloorGenerationPairV1:
+        return FloorGenerationPairV1(
+            floor_generation=generation(coordinate),
+            current_generation=generation(None),
+        )
 
     return resolve
 
@@ -177,7 +203,14 @@ def approve_and_activate(proposal_id: str, *, key_dir: Path) -> dict[str, Any]:
         "--yes",
         "--json",
     )
-    activated = run_cli_json("playbill", "proposal", "activate", proposal_id)
+    activated = run_cli_json(
+        "playbill",
+        "proposal",
+        "activate",
+        proposal_id,
+        "--workspace-root",
+        str(key_dir.parent),
+    )
     if activated["status"] != "accepted":  # pragma: no cover - a refusal raises earlier
         raise RuntimeError(f"proposal {proposal_id} did not settle: {activated}")
     return dict(activated)
@@ -225,8 +258,8 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
 # -- step 3: export the arm file surface ------------------------------------
 
 
-def export_arm_surface(destination: Path, *, evaluation_time: str = RENDER_READ_TIME) -> Path:
-    """Write floor artifacts, native renders, and the coverage boundary as one tree."""
+def export_arm_surface(destination: Path) -> Path:
+    """Write floor-v2 artifacts and the coverage boundary as one tree."""
 
     run_cli_json(
         "playbill",
@@ -234,9 +267,6 @@ def export_arm_surface(destination: Path, *, evaluation_time: str = RENDER_READ_
         "export",
         "--output",
         str(destination),
-        "--with-native",
-        "--evaluation-time",
-        evaluation_time,
     )
     return destination
 
@@ -271,7 +301,7 @@ def coverage_config(bundle_dir: Path = BUNDLE_DIR) -> dict[str, Any]:
     """
 
     return {
-        "tag": "playbill-coverage-workspace-config-v1",
+        "tag": "playbill-coverage-workspace-config-v2",
         "rules": [
             {
                 "tag": "playbill-coverage-path-prefix-rule-v1",
@@ -281,6 +311,11 @@ def coverage_config(bundle_dir: Path = BUNDLE_DIR) -> dict[str, Any]:
                 "normalizer": "playbill-coverage-path-identity-v1",
             }
         ],
+        "floor_output": {
+            "tag": "playbill-floor-output-v1",
+            "path": "playbill-floor",
+            "format": "playbill-floor-export-v2",
+        },
     }
 
 
@@ -342,8 +377,9 @@ def build_arm(
             raise RuntimeError("no remembered Playbill instance to resolve coverage against")
         middleware = coverage_middleware(
             root=workspace,
-            config=CoverageWorkspaceConfigV1.model_validate(coverage_config(bundle_dir)),
+            config=CoverageWorkspaceConfigV2.model_validate(coverage_config(bundle_dir)),
             resolve=_resolver(client, instance_id),
+            resolve_floor_generations=_floor_generation_resolver(client, instance_id),
         )
 
     return ArmSetupV1(
@@ -424,7 +460,7 @@ def run_turn(setup: ArmSetupV1) -> tuple[dict[str, Any], ...]:
 
         raw = event.original_output
         cards: tuple[str, ...] = ()
-        result: CoverageResultV1 | None = None
+        result: CoverageResultV2 | None = None
         if setup.deliver_coverage:
             assert setup.middleware is not None
             delivery = setup.middleware.after_tool(event)
@@ -463,7 +499,7 @@ def run_manifest(
     surface: Path,
     transcripts: dict[int, tuple[dict[str, Any], ...]],
     bundle_dir: Path = BUNDLE_DIR,
-    evaluation_time: str = RENDER_READ_TIME,
+    evaluation_time: str = RUN_EVALUATION_TIME,
 ) -> dict[str, Any]:
     """Pin everything §11.8 requires pinned per run.
 
@@ -471,14 +507,12 @@ def run_manifest(
     are pinned per run." Each of those is read off an artifact the run actually
     produced rather than restated from configuration: the index, overlay, and
     manifest digests plus the epoch come out of a coverage result the hooked arm
-    received; the generation root comes out of the floor manifest's coordinate;
-    the render digest and lens version come out of the render manifest; and the
-    hook adapter is named with its envelope version, which is `null` here
+    received; the generation root and format come out of the floor manifest;
+    and the hook adapter is named with its envelope version, which is `null` here
     because the owned-harness middleware has no vendor envelope at all.
     """
 
     floor = json.loads((surface / FLOOR_MANIFEST).read_text(encoding="utf-8"))
-    render = json.loads((surface / NATIVE_RENDER_MANIFEST_PATH).read_text(encoding="utf-8"))
     boundary = json.loads((surface / COVERAGE_BOUNDARY).read_text(encoding="utf-8"))
     files = {
         path.relative_to(bundle_dir).as_posix(): path.read_bytes()
@@ -517,11 +551,7 @@ def run_manifest(
             "semantic_root": floor["coordinate"]["semantic_root"],
             "compiler_digest": floor["coordinate"]["compiler_digest"],
             "floor_digest": floor["floor_digest"],
-        },
-        "native_render": {
-            "render_digest": render["render_digest"],
-            "lens_id": render["lens"]["lens_id"],
-            "lens_version": render["lens"]["lens_version"],
+            "format": floor["format"],
         },
         "coverage": {
             "boundary_format": boundary["format"],
@@ -589,7 +619,7 @@ __all__ = [
     "DRIFTED_LINE",
     "GOVERNED_LINE",
     "GOVERNED_PATH",
-    "RENDER_READ_TIME",
+    "RUN_EVALUATION_TIME",
     "ArmSetupV1",
     "approve_and_activate",
     "bootstrap",

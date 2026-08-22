@@ -47,6 +47,7 @@ playbill claim propose
 playbill claim propose-batch
 playbill claim-type get
 playbill claim-type list
+playbill claim-type migrate
 playbill claim-type propose
 playbill discover
 playbill coverage resolve
@@ -158,6 +159,7 @@ GET  /api/v1/{instance_id}/playbill/subjects
 GET  /api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}
 GET  /api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history
 POST /api/v1/{instance_id}/playbill/claim-types/proposals
+POST /api/v1/{instance_id}/playbill/claim-types/migrations
 GET  /api/v1/{instance_id}/playbill/claim-types
 GET  /api/v1/{instance_id}/playbill/claim-types/{predicate}
 POST /api/v1/{instance_id}/playbill/claims/proposals

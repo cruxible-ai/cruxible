@@ -445,8 +445,10 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "activate_playbill_proposal",
         "abandon_playbill_authoring_insertion",
         "compile_playbill_authoring",
+        "compile_playbill_authoring_input",
         "confirm_playbill_authoring_insertion",
         "create_playbill_authoring_intent",
+        "create_playbill_authoring_input",
         "get_playbill_authoring_intent",
         "list_pending_playbill_authoring_intents",
         "playbill_authoring_intent_status",
@@ -466,6 +468,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "get_playbill_subject",
         "playbill_subject_history",
         "propose_playbill_claim_type",
+        "propose_playbill_claim_type_input",
         "list_playbill_claim_types",
         "get_playbill_claim_type",
         "propose_playbill_claim",
@@ -485,6 +488,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "list_playbill_proposals",
         "playbill_whoami",
         "readmit_playbill_proposal",
+        "migrate_playbill_claim_type",
         "search_playbill",
     }
 

@@ -38,6 +38,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "document", "propose"): "active",
     ("playbill", "subject", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
+    ("playbill", "claim-type", "migrate"): "active",
     ("playbill", "claim", "propose"): "active",
     ("playbill", "claim", "propose-batch"): "active",
     ("playbill", "authoring", "create"): "manual",
@@ -422,6 +423,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 {
                     "propose": _command(
                         "playbill", "propose_claim_type", "Propose a ClaimType interface."
+                    ),
+                    "migrate": _command(
+                        "playbill",
+                        "migrate_claim_type",
+                        "Atomically succeed a ClaimType and dispose dependents.",
                     ),
                     "list": _command("playbill", "list_claim_types", "List accepted ClaimTypes."),
                     "get": _command("playbill", "get_claim_type", "Read one accepted ClaimType."),

@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_core.config.schema import ContractSchema, PropertySchema
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.artifacts import (
     ArtifactAuthority,
@@ -33,6 +32,7 @@ from cruxible_core.playbill.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
+from cruxible_core.playbill.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_core.playbill.procedures.execution import (
     prepare_direct_procedure_run,
 )
@@ -81,6 +81,34 @@ def _contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedCon
         identity=ArtifactIdentity(kind="Contract", name=name),
         schema=ContractSchema(fields=fields),
     )
+
+
+def test_playbill_owned_contract_schema_preserves_the_deferred_wire_profile() -> None:
+    """The transplant removes a dependency edge, not a byte or validation change."""
+
+    from cruxible_core.config.schema import ContractSchema as DeferredContractSchema
+    from cruxible_core.config.schema import PropertySchema as DeferredPropertySchema
+
+    count = {"type": "int", "optional": True, "default": 2}
+    payload = {"type": "json", "allow": "ignored"}
+    # The unknown `allow` key is ignored by both profiles, preserving the
+    # deferred model's permissive input behavior as well as its accepted bytes.
+    local = ContractSchema(
+        description="owner carried",
+        fields={
+            "count": PropertySchema(**count),  # type: ignore[arg-type]
+            "payload": PropertySchema(**payload),  # type: ignore[arg-type]
+        },
+    )
+    deferred = DeferredContractSchema(
+        description="owner carried",
+        fields={
+            "count": DeferredPropertySchema(**count),  # type: ignore[arg-type]
+            "payload": DeferredPropertySchema(**payload),  # type: ignore[arg-type]
+        },
+    )
+
+    assert local.model_dump(mode="json") == deferred.model_dump(mode="json")
 
 
 def _accepted_query_procedure(query_digest: str) -> AcceptedProcedureV1:

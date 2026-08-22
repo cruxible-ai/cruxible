@@ -10,29 +10,23 @@ from pydantic import TypeAdapter
 
 from cruxible_core.playbill.authoring.bind import (
     AuthoringBindAmbiguityError,
-    bind_working_selection,
+    bind_working_selection_input,
 )
 from cruxible_core.playbill.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
-    claim_self_source_example,
+    claim_flow_a_example,
 )
-from cruxible_core.playbill.authoring.models import AuthoringPayloadV1
+from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
 
 
-def _stub() -> dict[str, object]:
-    payload = claim_self_source_example().model_dump(mode="json")
-    payload["source"] = {
-        "tag": "playbill-working-selection-observation-v1",
-        "source_id": "repo.work-items",
-    }
-    payload["citation_role"] = "evidence"
-    return payload
+def _input() -> ClaimInput:
+    return claim_flow_a_example()
 
 
 def test_bind_derives_every_mechanical_field_from_one_byte_buffer() -> None:
     content = b"before\nstatus: ready\nafter\n"
-    payload = bind_working_selection(
-        _stub(),
+    payload = bind_working_selection_input(
+        _input(),
         content=content,
         anchor="status: ready",
     )
@@ -50,8 +44,8 @@ def test_bind_derives_every_mechanical_field_from_one_byte_buffer() -> None:
 
 def test_window_lines_select_complete_surrounding_lines_without_inventing_newlines() -> None:
     content = b"zero\none\nstatus: ready\nthree"
-    payload = bind_working_selection(
-        _stub(),
+    payload = bind_working_selection_input(
+        _input(),
         content=content,
         anchor="status: ready",
         window_lines=1,
@@ -62,7 +56,7 @@ def test_window_lines_select_complete_surrounding_lines_without_inventing_newlin
 
 def test_ambiguous_anchor_names_all_overlapping_candidate_offsets() -> None:
     with pytest.raises(AuthoringBindAmbiguityError) as caught:
-        bind_working_selection(_stub(), content=b"aaa", anchor="aa")
+        bind_working_selection_input(_input(), content=b"aaa", anchor="aa")
 
     assert caught.value.observed_occurrence_count == 2
     assert caught.value.candidate_byte_offsets == (0, 1)
@@ -70,7 +64,7 @@ def test_ambiguous_anchor_names_all_overlapping_candidate_offsets() -> None:
 
 
 def test_every_example_is_constructed_as_a_valid_authoring_union_member() -> None:
-    adapter = TypeAdapter(AuthoringPayloadV1)
+    adapter = TypeAdapter(AuthoringInputV1)
 
     for factory in AUTHORING_EXAMPLE_FACTORIES.values():
         model = factory()

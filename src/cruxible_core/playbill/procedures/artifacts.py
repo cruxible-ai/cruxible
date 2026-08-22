@@ -15,7 +15,6 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.config.schema import ContractSchema, PropertySchema
 from cruxible_core.playbill.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
@@ -26,6 +25,7 @@ from cruxible_core.playbill.canonical import ArtifactDigest, canonical_bytes, ty
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
 from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.governance import PermissionTier
+from cruxible_core.playbill.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_core.playbill.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_core.playbill.procedures.models import (
     ProcedureDefinitionV3,

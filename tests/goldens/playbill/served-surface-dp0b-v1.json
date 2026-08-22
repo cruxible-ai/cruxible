@@ -4,8 +4,10 @@
     "playbill_activate",
     "playbill_authoring_abandon_insertion",
     "playbill_authoring_compile",
+    "playbill_authoring_compile_input",
     "playbill_authoring_confirm_insertion",
     "playbill_authoring_create",
+    "playbill_authoring_create_input",
     "playbill_authoring_get",
     "playbill_authoring_list_pending",
     "playbill_authoring_preflight",
@@ -36,9 +38,11 @@
     "playbill_list_proposals",
     "playbill_list_query_definitions",
     "playbill_list_subjects",
+    "playbill_migrate_claim_type",
     "playbill_prepare_approval",
     "playbill_propose_claim",
     "playbill_propose_claim_type",
+    "playbill_propose_claim_type_input",
     "playbill_propose_claims",
     "playbill_propose_document",
     "playbill_propose_principal_change",
@@ -56,6 +60,6 @@
     "playbill_submit_approval",
     "playbill_whoami"
   ],
-  "http_delegate_count": 54,
+  "http_delegate_count": 58,
   "mcp_delegate_count": 53
 }

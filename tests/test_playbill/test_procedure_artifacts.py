@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.config.schema import ContractSchema
 from cruxible_core.playbill.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
@@ -24,6 +23,7 @@ from cruxible_core.playbill.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
+from cruxible_core.playbill.procedures.contract_schema import ContractSchema
 from cruxible_core.playbill.procedures.graph import (
     ProcedureGraphFormatError,
     compute_procedure_definition_digest_v3,
