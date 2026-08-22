@@ -10,6 +10,7 @@ from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from cruxible_core.config.schema import ContractSchema, PropertySchema
 from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity
 from cruxible_core.playbill.authoring.models import (
     AuthoringArtifactReferenceV1,
@@ -19,9 +20,11 @@ from cruxible_core.playbill.authoring.models import (
     AuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
+    ProcedureAuthoringPayloadV2,
     SelfSourceBodyV1,
     WorkingSelectionObservationV1,
 )
+from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
@@ -36,6 +39,7 @@ from cruxible_core.playbill.knowledge_briefs import (
     KnowledgeBriefQueryRefV1,
     KnowledgeBriefValueV1,
 )
+from cruxible_core.playbill.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_core.playbill.query.definitions import (
     parse_query_definition,
     query_definition_digest,
@@ -102,6 +106,19 @@ class SlotReferenceInput(_StrictInputModel):
     slot_name: str
 
 
+class CarriedContractReferenceInput(_StrictInputModel):
+    kind: Literal["carried_contract"]
+    name: str
+    role: str
+
+
+class CarriedContractInput(_StrictInputModel):
+    name: str
+    description: str | None = None
+    fields: dict[str, PropertySchema]
+    allow_extra: bool = False
+
+
 class ClaimDispositionInput(_StrictInputModel):
     claim_id: str
     disposition: Literal["not_tested", "support", "contradict", "unsure"]
@@ -162,7 +179,7 @@ class ProcedureInput(_StrictInputModel):
     authority: ArtifactAuthority
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     retire: bool = False
-    contracts: tuple[dict[str, object], ...] = ()
+    contracts: tuple[CarriedContractInput, ...] = ()
 
     @field_validator("definition", mode="before")
     @classmethod
@@ -427,7 +444,12 @@ def _artifact_identity(value: str, *, field_path: str) -> ArtifactIdentity:
         ) from exc
 
 
-def _procedure_references(value: object, *, field_path: str = "input.definition") -> object:
+def _procedure_references(
+    value: object,
+    *,
+    contracts: dict[str, ProcedureOwnedContractV1],
+    field_path: str = "input.definition",
+) -> object:
     if isinstance(value, dict):
         if value.get("kind") == "accepted" and set(value) == {"kind", "role", "target"}:
             accepted_reference = AcceptedReferenceInput.model_validate(value)
@@ -443,13 +465,36 @@ def _procedure_references(value: object, *, field_path: str = "input.definition"
                 "tag": "playbill-procedure-pin-slot-ref-v1",
                 "slot_name": slot_reference.slot_name,
             }
+        if value.get("kind") == "carried_contract" and set(value) == {
+            "kind",
+            "name",
+            "role",
+        }:
+            reference = CarriedContractReferenceInput.model_validate(value)
+            contract = contracts.get(reference.name)
+            if contract is None:
+                raise AuthoringInputError(
+                    "playbill.authoring.carried_contract_unresolved",
+                    f"{field_path}.name",
+                    "The carried Contract reference has no matching declaration.",
+                    "Declare that name in input.contracts or repair the reference.",
+                )
+            return reference.model_dump(mode="json")
         return {
-            key: _procedure_references(member, field_path=f"{field_path}.{key}")
+            key: _procedure_references(
+                member,
+                contracts=contracts,
+                field_path=f"{field_path}.{key}",
+            )
             for key, member in value.items()
         }
     if isinstance(value, list | tuple):
         return [
-            _procedure_references(member, field_path=f"{field_path}[{index}]")
+            _procedure_references(
+                member,
+                contracts=contracts,
+                field_path=f"{field_path}[{index}]",
+            )
             for index, member in enumerate(value)
         ]
     return value
@@ -462,8 +507,44 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
         return _claim_payload(value)
     if isinstance(value, BriefInput):
         return _brief_payload(value, tree=tree)
+    contracts = tuple(
+        sorted(
+            (
+                ProcedureOwnedContractV1(
+                    identity=ArtifactIdentity(kind="Contract", name=contract.name),
+                    schema=ContractSchema(
+                        description=contract.description,
+                        fields=contract.fields,
+                        allow_extra=contract.allow_extra,
+                    ),
+                )
+                for contract in value.contracts
+            ),
+            key=lambda contract: canonical_bytes(contract.model_dump(mode="json", by_alias=True)),
+        )
+    )
+    by_name = {contract.identity.name: contract for contract in contracts}
+    if len(by_name) != len(contracts):
+        raise AuthoringInputError(
+            "playbill.authoring.carried_contract_duplicate",
+            "input.contracts",
+            "Carried Contract names must be unique.",
+            "Remove or rename the duplicate declaration.",
+        )
+    definition = cast(
+        dict[str, object],
+        _procedure_references(value.definition, contracts=by_name),
+    )
+    if contracts:
+        return ProcedureAuthoringPayloadV2(
+            definition=definition,
+            authority=value.authority,
+            activation_policy=value.activation_policy,
+            owned_contracts=contracts,
+            retire=value.retire,
+        )
     return ProcedureAuthoringPayloadV1(
-        definition=cast(dict[str, object], _procedure_references(value.definition)),
+        definition=definition,
         authority=value.authority,
         activation_policy=value.activation_policy,
         retire=value.retire,
@@ -475,6 +556,8 @@ __all__ = [
     "AuthoringInputError",
     "AuthoringInputV1",
     "BriefInput",
+    "CarriedContractInput",
+    "CarriedContractReferenceInput",
     "ClaimInput",
     "ProcedureInput",
     "SlotReferenceInput",

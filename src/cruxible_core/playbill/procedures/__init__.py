@@ -3,10 +3,13 @@
 from cruxible_core.playbill.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactV1,
+    ProcedureArtifactV2,
     ProcedureLawResultV1,
+    ProcedureOwnedContractV1,
     evaluate_procedure_law,
     parse_procedure,
     procedure_artifact_digest,
+    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
@@ -25,6 +28,10 @@ from cruxible_core.playbill.procedures.closure import (
     ProcedureSlotInterfaceV1,
     close_procedure_pin_slots,
     procedure_slot_interface_digest,
+)
+from cruxible_core.playbill.procedures.contracts import (
+    OwnedProcedureContractValidator,
+    ProcedureContractValidationError,
 )
 from cruxible_core.playbill.procedures.execution import (
     AcceptedStateRunMaterialV1,
@@ -145,6 +152,11 @@ __all__ = [
     "PreparedProcedureRunV1",
     "ProcedureActivationAuthorityProtocol",
     "ProcedureArtifactV1",
+    "ProcedureArtifactV2",
+    "ProcedureOwnedContractV1",
+    "OwnedProcedureContractValidator",
+    "ProcedureContractValidationError",
+    "procedure_owned_contract_digest",
     "ProcedureDefinitionV3",
     "ProcedureExecutor",
     "ProcedureGraphV3",

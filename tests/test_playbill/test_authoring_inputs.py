@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_core.config.schema import PropertySchema
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.inputs import (
     AuthoringInputError,
+    CarriedContractInput,
     ClaimInput,
     LiteralObjectInput,
     ProcedureInput,
@@ -129,7 +131,69 @@ def test_tagless_procedure_input_injects_slot_tags_and_compiles(tmp_path: Path) 
         canonical_timestamp=TIMESTAMP,
     )
 
-    assert result.verdict == "passed"
+    assert result.verdict == "passed", result.frontier.model_dump_json(indent=2)
+
+
+def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    coordinator = _coordinator(instance)
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+
+    def remove_tags(value: object) -> object:
+        if isinstance(value, dict):
+            return {key: remove_tags(item) for key, item in value.items() if key != "tag"}
+        if isinstance(value, list):
+            return [remove_tags(item) for item in value]
+        return value
+
+    tagless = remove_tags(definition)
+    assert isinstance(tagless, dict)
+    tagless["contract_in"] = {
+        "kind": "carried_contract",
+        "name": "empty-input",
+        "role": "contract-in",
+    }
+    tagless["contract_out"] = {
+        "kind": "carried_contract",
+        "name": "query-result",
+        "role": "contract-out",
+    }
+    nodes = tagless["nodes"]
+    assert isinstance(nodes, list)
+    project = nodes[1]
+    assert isinstance(project, dict)
+    project["contract_out"] = {
+        "kind": "carried_contract",
+        "name": "query-result",
+        "role": "contract-out",
+    }
+    result = coordinator.compile_input(
+        actor=AuthenticatedActor(actor_id="owner"),
+        input=ProcedureInput(
+            kind="procedure",
+            definition=tagless,
+            authority=AUTHORITY,
+            activation_policy="drain",
+            contracts=(
+                CarriedContractInput(name="empty-input", fields={}),
+                CarriedContractInput(
+                    name="query-result",
+                    fields={"rows": PropertySchema(type="json")},
+                ),
+            ),
+        ),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "passed", result.frontier.model_dump_json(indent=2)
+    payload = (
+        coordinator.list_pending(actor=AuthenticatedActor(actor_id="owner")).intents[0].payload
+    )
+    assert payload.tag == "playbill-procedure-authoring-payload-v2"
+    encoded = payload.model_dump_json(by_alias=True)
+    assert "playbill-procedure-owned-contract-v1" in encoded
+    assert "carried_contract" in encoded
+    assert "artifact_digest" not in encoded
 
 
 def test_claim_type_example_is_tagless_and_anticipated_sources_are_lint_only(
@@ -157,6 +221,4 @@ def test_claim_type_example_is_tagless_and_anticipated_sources_are_lint_only(
     expected = foreign_source_capture_contract("repo.work-items")
     assert warning.contract_identity == expected.identity.qualified
     assert warning.contract_digest is not None
-    assert warning.contract_digest in warning.replacement_rule_fragment[
-        "capture_contract_digests"
-    ]
+    assert warning.contract_digest in warning.replacement_rule_fragment["capture_contract_digests"]

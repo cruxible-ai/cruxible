@@ -12,6 +12,7 @@ from cruxible_core.playbill.laws import (
     LINE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PROCEDURE_LAW,
+    PROCEDURE_LAW_V2,
 )
 
 
@@ -42,6 +43,10 @@ def test_pc_d_procedure_and_line_laws_are_exact_historical_coordinates() -> None
     assert (
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v1").coordinate
         == PROCEDURE_LAW
+    )
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v2").coordinate
+        == PROCEDURE_LAW_V2
     )
 
 

@@ -28,6 +28,7 @@ from cruxible_core.playbill.canonical import (
 )
 from cruxible_core.playbill.claim_type_structure import ClaimRole
 from cruxible_core.playbill.claims import LiteralClaimObject, SubjectClaimObject, claim_path
+from cruxible_core.playbill.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalReceiveLimits
 from cruxible_core.playbill.semantic import SemanticAddress
@@ -507,8 +508,29 @@ class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
         return cast(dict[str, object], normalized)
 
 
+class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
+    tag: Literal["playbill-procedure-authoring-payload-v2"] = (
+        "playbill-procedure-authoring-payload-v2"
+    )
+    definition: dict[str, object]
+    authority: ArtifactAuthority
+    activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
+    owned_contracts: tuple[ProcedureOwnedContractV1, ...]
+    retire: bool = False
+
+    @field_validator("definition", mode="before")
+    @classmethod
+    def _definition(cls, value: object) -> dict[str, object]:
+        normalized = normalize_canonical(value)
+        if not isinstance(normalized, dict):
+            raise ValueError("Procedure authoring definition must be a canonical object")
+        if "name" not in normalized:
+            raise ValueError("Procedure authoring definition requires a semantic name")
+        return cast(dict[str, object], normalized)
+
+
 AuthoringPayloadV1 = Annotated[
-    ClaimAuthoringPayloadV1 | ProcedureAuthoringPayloadV1,
+    ClaimAuthoringPayloadV1 | ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
     Field(discriminator="tag"),
 ]
 
@@ -1330,6 +1352,7 @@ __all__ = [
     "PreflightCertificateV1",
     "PreflightResultV1",
     "ProcedureAuthoringPayloadV1",
+    "ProcedureAuthoringPayloadV2",
     "RepairAlternativeV1",
     "SelfSourceBodyV1",
     "WorkingAnchorWindowV1",

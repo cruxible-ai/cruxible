@@ -34,6 +34,7 @@ from cruxible_core.playbill.authoring.models import (
     InsertionExpectationV1,
     PreflightResultV1,
     ProcedureAuthoringPayloadV1,
+    ProcedureAuthoringPayloadV2,
     SelfSourceBodyV1,
     authoring_create_fingerprint,
     authoring_payload_digest,
@@ -589,11 +590,19 @@ class AuthoringIntentCoordinator:
             }:
                 raise ValueError("submitted AuthoringIntent payload is immutable")
             semantic_identity = current.semantic_identity
-            if isinstance(current.payload, ProcedureAuthoringPayloadV1) or isinstance(
-                payload, ProcedureAuthoringPayloadV1
+            if isinstance(
+                current.payload,
+                ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
+            ) or isinstance(
+                payload,
+                ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
             ):
-                if not isinstance(current.payload, ProcedureAuthoringPayloadV1) or not isinstance(
-                    payload, ProcedureAuthoringPayloadV1
+                if not isinstance(
+                    current.payload,
+                    ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
+                ) or not isinstance(
+                    payload,
+                    ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
                 ):
                     raise ValueError("AuthoringIntent payload kind cannot change")
                 semantic_identity = f"Procedure:{payload.definition['name']}"

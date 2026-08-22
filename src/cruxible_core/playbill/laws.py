@@ -18,6 +18,7 @@ PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
 SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v1"
 STANDING_MANDATE_LAW_IDENTIFIER = "playbill.standing-mandate.v1"
 PROCEDURE_LAW_IDENTIFIER = "playbill.procedure.v1"
+PROCEDURE_LAW_V2_IDENTIFIER = "playbill.procedure.v2"
 LINE_LAW_IDENTIFIER = "playbill.line.v1"
 QUERY_DEFINITION_LAW_IDENTIFIER = "playbill.query-definition.v1"
 EXHAUST_PROMOTION_LAW_IDENTIFIER = "playbill.exhaust-promotion.v1"
@@ -174,6 +175,10 @@ STANDING_MANDATE_LAW = _artifact_law_coordinate(
     "playbill-standing-mandate-v1",
 )
 PROCEDURE_LAW = _artifact_law_coordinate(PROCEDURE_LAW_IDENTIFIER, "playbill-procedure-v1")
+PROCEDURE_LAW_V2 = _artifact_law_coordinate(
+    PROCEDURE_LAW_V2_IDENTIFIER,
+    "playbill-procedure-v2",
+)
 LINE_LAW = _artifact_law_coordinate(LINE_LAW_IDENTIFIER, "playbill-line-v1")
 QUERY_DEFINITION_LAW = _artifact_law_coordinate(
     QUERY_DEFINITION_LAW_IDENTIFIER,
@@ -295,6 +300,11 @@ PROCEDURE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="procedure",
     artifact_tag="playbill-procedure-v1",
 )
+PROCEDURE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=PROCEDURE_LAW_V2,
+    artifact_kind="procedure",
+    artifact_tag="playbill-procedure-v2",
+)
 LINE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=LINE_LAW,
     artifact_kind="line",
@@ -321,6 +331,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
         PROCEDURE_ACCEPTANCE_LAW,
+        PROCEDURE_V2_ACCEPTANCE_LAW,
         LINE_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
         QUERY_DEFINITION_ACCEPTANCE_LAW,
@@ -366,6 +377,9 @@ __all__ = [
     "PROVIDER_LAW",
     "PROVIDER_LAW_IDENTIFIER",
     "PROCEDURE_ACCEPTANCE_LAW",
+    "PROCEDURE_LAW_V2",
+    "PROCEDURE_LAW_V2_IDENTIFIER",
+    "PROCEDURE_V2_ACCEPTANCE_LAW",
     "PROCEDURE_LAW",
     "PROCEDURE_LAW_IDENTIFIER",
     "QUERY_DEFINITION_ACCEPTANCE_LAW",

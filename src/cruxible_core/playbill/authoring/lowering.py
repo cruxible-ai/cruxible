@@ -15,6 +15,7 @@ from cruxible_core.playbill.authoring.models import (
     AuthoringIntentV1,
     ClaimAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
+    ProcedureAuthoringPayloadV2,
     RepairAlternativeV1,
     SelfSourceBodyV1,
     WorkingSelectionObservationV1,
@@ -66,9 +67,13 @@ from cruxible_core.playbill.knowledge_briefs import (
     parse_knowledge_brief_value,
 )
 from cruxible_core.playbill.procedures.artifacts import (
+    ProcedureArtifactAny,
     ProcedureArtifactV1,
+    ProcedureArtifactV2,
+    ProcedureOwnedContractV1,
     parse_procedure,
     procedure_artifact_digest,
+    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
@@ -505,6 +510,7 @@ def _resolve_authoring_references(
     value: object,
     *,
     accepted: dict[str, tuple[str, str]],
+    owned_contracts: dict[str, ProcedureOwnedContractV1] | None = None,
     location: str = "definition",
 ) -> object:
     if isinstance(value, dict):
@@ -534,6 +540,27 @@ def _resolve_authoring_references(
                 target=reference.target,
                 artifact_digest=digest,
             ).model_dump(mode="json")
+        if value.get("kind") == "carried_contract" and set(value) == {
+            "kind",
+            "name",
+            "role",
+        }:
+            name = value["name"]
+            role = value["role"]
+            contract = None if not isinstance(name, str) else (owned_contracts or {}).get(name)
+            if contract is None or not isinstance(role, str):
+                _refuse(
+                    "playbill.authoring.carried_contract_unresolved",
+                    location,
+                    "The carried Contract reference has no matching owned declaration.",
+                    repair_kind="replace_reference",
+                    repair_description="Declare the Contract once and reference its exact name.",
+                )
+            return ArtifactPin(
+                role=role,
+                target=contract.identity,
+                artifact_digest=procedure_owned_contract_digest(contract).tagged,
+            ).model_dump(mode="json")
         if set(value) == {"role", "target", "artifact_digest"}:
             _refuse(
                 "playbill.authoring.caller_artifact_digest_forbidden",
@@ -548,6 +575,7 @@ def _resolve_authoring_references(
             key: _resolve_authoring_references(
                 member,
                 accepted=accepted,
+                owned_contracts=owned_contracts,
                 location=f"{location}.{key}",
             )
             for key, member in value.items()
@@ -557,6 +585,7 @@ def _resolve_authoring_references(
             _resolve_authoring_references(
                 member,
                 accepted=accepted,
+                owned_contracts=owned_contracts,
                 location=f"{location}[{index}]",
             )
             for index, member in enumerate(value)
@@ -571,7 +600,7 @@ def _lower_procedure(
     base_tree: dict[str, bytes],
 ) -> LoweredAuthoring:
     payload = intent.payload
-    assert isinstance(payload, ProcedureAuthoringPayloadV1)
+    assert isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
     parsed = parse_projection_tree(
         base_tree,
         registry=projection_registry_for_compiler(base.compiler),
@@ -584,7 +613,16 @@ def _lower_procedure(
         accepted[envelope.identity] = (envelope.path, envelope.artifact_digest)
     for duplicate_identity in duplicates:
         accepted.pop(duplicate_identity, None)
-    resolved_definition = _resolve_authoring_references(payload.definition, accepted=accepted)
+    owned_contracts = (
+        {contract.identity.name: contract for contract in payload.owned_contracts}
+        if isinstance(payload, ProcedureAuthoringPayloadV2)
+        else None
+    )
+    resolved_definition = _resolve_authoring_references(
+        payload.definition,
+        accepted=accepted,
+        owned_contracts=owned_contracts,
+    )
     try:
         definition = ProcedureDefinitionV3.model_validate(resolved_definition)
     except ValueError as exc:
@@ -597,16 +635,16 @@ def _lower_procedure(
         )
     identity = ArtifactIdentity(kind="Procedure", name=definition.name)
     path = procedure_path(definition.name)
-    predecessor: ProcedureArtifactV1 | None = None
+    predecessor: ProcedureArtifactAny | None = None
     if path in base_tree:
         predecessor = parse_procedure(base_tree[path], path=path)
     pins = tuple(
         sorted(
-            (
+            {
                 binding
                 for binding in iter_pin_bindings(definition)
                 if isinstance(binding, ArtifactPin)
-            ),
+            },
             key=lambda item: (
                 item.role.encode("utf-8"),
                 item.target.qualified.encode("utf-8"),
@@ -614,20 +652,33 @@ def _lower_procedure(
             ),
         )
     )
-    procedure = ProcedureArtifactV1(
-        identity=identity,
-        definition=definition,
-        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        authority=payload.authority,
-        pins=pins,
-        activation_policy=payload.activation_policy,
-        lifecycle=ArtifactLifecycle(
-            state="retired" if payload.retire else "live",
-            predecessor_digest=(
-                None if predecessor is None else procedure_artifact_digest(predecessor).tagged
-            ),
+    lifecycle = ArtifactLifecycle(
+        state="retired" if payload.retire else "live",
+        predecessor_digest=(
+            None if predecessor is None else procedure_artifact_digest(predecessor).tagged
         ),
     )
+    if isinstance(payload, ProcedureAuthoringPayloadV2):
+        procedure: ProcedureArtifactAny = ProcedureArtifactV2(
+            identity=identity,
+            definition=definition,
+            definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+            authority=payload.authority,
+            pins=pins,
+            owned_contracts=payload.owned_contracts,
+            activation_policy=payload.activation_policy,
+            lifecycle=lifecycle,
+        )
+    else:
+        procedure = ProcedureArtifactV1(
+            identity=identity,
+            definition=definition,
+            definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+            authority=payload.authority,
+            pins=pins,
+            activation_policy=payload.activation_policy,
+            lifecycle=lifecycle,
+        )
     candidate_tree = dict(base_tree)
     procedure_bytes = render_procedure(procedure)
     candidate_tree[path] = procedure_bytes

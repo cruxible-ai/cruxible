@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from cruxible_core.playbill.artifacts import ArtifactPin
 from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
 from cruxible_core.playbill.errors import PlaybillFormatError
-from cruxible_core.playbill.procedures.artifacts import ProcedureArtifactV1
+from cruxible_core.playbill.procedures.artifacts import ProcedureArtifactAny
 from cruxible_core.playbill.procedures.models import (
     ProcedurePinSlotRefV1,
     iter_pin_bindings,
@@ -78,7 +78,7 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
 
 
 def close_procedure_pin_slots(
-    procedure: ProcedureArtifactV1,
+    procedure: ProcedureArtifactAny,
     *,
     bindings: tuple[LineSlotBindingV1, ...],
     interface_digests: Mapping[str, str],

@@ -5,18 +5,22 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from cruxible_core.config.schema import ContractSchema
 from cruxible_core.playbill.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
+from cruxible_core.playbill.canonical import ArtifactDigest, canonical_bytes, typed_digest
 from cruxible_core.playbill.captures import CanonicalDurationV1
 from cruxible_core.playbill.procedures.artifacts import (
     ProcedureArtifactV1,
+    ProcedureArtifactV2,
+    ProcedureOwnedContractV1,
     evaluate_procedure_law,
     parse_procedure,
     procedure_artifact_digest,
+    procedure_owned_contract_digest,
     procedure_path,
     render_procedure,
 )
@@ -167,6 +171,104 @@ def test_open_slot_procedure_is_acceptable_but_not_directly_runnable() -> None:
         predecessor=None,
     )
     assert result.verdict == "accepted"
+
+
+def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None:
+    contracts = tuple(
+        ProcedureOwnedContractV1(
+            identity=ArtifactIdentity(kind="Contract", name=name),
+            schema=ContractSchema(fields={}),
+        )
+        for name in ("claim-rows", "empty-input")
+    )
+    by_name = {contract.identity.name: contract for contract in contracts}
+    contract_in = ArtifactPin(
+        role="contract-in",
+        target=by_name["empty-input"].identity,
+        artifact_digest=procedure_owned_contract_digest(by_name["empty-input"]).tagged,
+    )
+    contract_out = ArtifactPin(
+        role="contract-out",
+        target=by_name["claim-rows"].identity,
+        artifact_digest=procedure_owned_contract_digest(by_name["claim-rows"]).tagged,
+    )
+    query_slot = ProcedurePinSlotRefV1(slot_name="query")
+    definition = _definition(query=query_slot).model_copy(
+        update={
+            "contract_in": contract_in,
+            "contract_out": contract_out,
+            "nodes": (
+                StateTapNodeV3(
+                    node_id="read",
+                    query=query_slot,
+                    parameters={},
+                    as_="rows",
+                ),
+                ProjectNodeV3(
+                    node_id="shape",
+                    fields={},
+                    contract_out=contract_out,
+                    as_="result",
+                ),
+            ),
+        }
+    )
+    procedure = ProcedureArtifactV2(
+        identity=ArtifactIdentity(kind="Procedure", name="triage"),
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+        authority=ArtifactAuthority(
+            propose_roles=("procedure-author",),
+            approve_roles=("procedure-reviewer",),
+        ),
+        pins=(contract_in, contract_out),
+        owned_contracts=tuple(
+            sorted(
+                contracts,
+                key=lambda item: canonical_bytes(item.model_dump(mode="json", by_alias=True)),
+            )
+        ),
+        activation_policy="drain",
+    )
+
+    assert procedure.directly_runnable is False
+    assert parse_procedure(render_procedure(procedure), path=procedure_path("triage")) == procedure
+    assert (
+        evaluate_procedure_law(
+            procedure,
+            path=procedure_path("triage"),
+            actor_roles=("procedure-author",),
+            predecessor=None,
+        ).verdict
+        == "accepted"
+    )
+
+    wrong = contract_out.model_copy(update={"artifact_digest": _digest("forged")})
+    wrong_definition = definition.model_copy(
+        update={
+            "contract_out": wrong,
+            "nodes": (
+                definition.nodes[0],
+                ProjectNodeV3(
+                    node_id="shape",
+                    fields={},
+                    contract_out=wrong,
+                    as_="result",
+                ),
+            ),
+        }
+    )
+    with pytest.raises(ValidationError, match="does not resolve"):
+        ProcedureArtifactV2(
+            **{
+                **procedure.model_dump(mode="python", exclude={"artifact_format"}),
+                "definition": wrong_definition,
+                "definition_digest": compute_procedure_definition_digest_v3(
+                    wrong_definition
+                ).tagged,
+                "pins": (contract_in, wrong),
+            }
+        )
 
 
 def test_procedure_rejects_exact_node_pin_missing_from_envelope() -> None:

@@ -40,6 +40,7 @@ def test_pc_e1_activates_procedure_line_run_input_and_promotion_tags() -> None:
         "playbill-procedure-pin-slot-ref-v1",
         "playbill-procedure-pin-slot-v1",
         "playbill-procedure-v1",
+        "playbill-procedure-v2",
         "playbill-provider-v1",
         "playbill-query-definition-v1",
         "playbill-source-acquisition-policy-v1",
