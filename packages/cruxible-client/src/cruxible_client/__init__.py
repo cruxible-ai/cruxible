@@ -11,7 +11,11 @@ __all__ = [
     "CruxibleClient",
     "PlaybillInsertionApplication",
     "PlaybillInsertionApplyError",
+    "PlaybillWorkspaceError",
+    "activate_with_workspace_refresh",
     "apply_playbill_insertion",
+    "inspect_workspace_floor",
+    "materialize_playbill_floor",
     "prepare_playbill_brief",
 ]
 
@@ -36,4 +40,13 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.playbill_briefs import prepare_playbill_brief
 
         return prepare_playbill_brief
+    if name in {
+        "PlaybillWorkspaceError",
+        "activate_with_workspace_refresh",
+        "inspect_workspace_floor",
+        "materialize_playbill_floor",
+    }:
+        from cruxible_client import playbill_workspace
+
+        return getattr(playbill_workspace, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

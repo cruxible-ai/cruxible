@@ -207,6 +207,25 @@ class PlaybillActivationReceipt(BaseModel):
     accepted_coordinate: PlaybillAcceptedCoordinate | None
 
 
+class PlaybillFloorRefreshResult(BaseModel):
+    """Client-owned truth about the optional workspace floor refresh."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-floor-refresh-result-v1"] = "playbill-floor-refresh-result-v1"
+    status: Literal["not_configured", "refreshed", "failed"]
+    path: str | None = None
+    destination: str | None = None
+    floor_digest: str | None = None
+    message: str | None = None
+
+
+class PlaybillWorkspaceActivationResult(PlaybillActivationReceipt):
+    """Activation receipt plus the independent client-workspace refresh outcome."""
+
+    floor_refresh: PlaybillFloorRefreshResult
+
+
 class PlaybillDocumentView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -745,3 +764,33 @@ class PlaybillFloorExport(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     manifest: dict[str, Any]
     files: list[PlaybillFloorFile]
+
+
+class PlaybillWorkspaceFloorWriteResult(BaseModel):
+    """A verified floor export materialized by a client-side adapter."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-workspace-floor-write-result-v1"] = (
+        "playbill-workspace-floor-write-result-v1"
+    )
+    status: Literal["written"] = "written"
+    path: str
+    destination: str
+    floor_digest: str
+    coordinate: PlaybillAcceptedCoordinate
+    file_count: int = Field(ge=1)
+
+
+class PlaybillWorkspaceFloorStatus(BaseModel):
+    """Freshness of the configured local floor against a daemon coordinate."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-workspace-floor-status-v1"] = "playbill-workspace-floor-status-v1"
+    status: Literal["not_configured", "missing", "current", "stale", "invalid"]
+    path: str | None = None
+    destination: str | None = None
+    installed_coordinate: PlaybillAcceptedCoordinate | None = None
+    current_coordinate: PlaybillAcceptedCoordinate | None = None
+    message: str | None = None
