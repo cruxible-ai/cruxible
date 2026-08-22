@@ -26,6 +26,7 @@ from cruxible_core.playbill.seed import (
     SEED_GROUP_OPERATIONS,
     SeedBundleError,
     plan_seed_bundle,
+    read_seed_bundle,
     render_seed_plan,
     seed_group_operation_digest,
     seed_group_proposal_name,
@@ -53,8 +54,8 @@ def _write(files: dict[str, bytes], path: str, payload: Any) -> None:
     files[path] = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
 
 
-def test_the_example_bundle_plans_two_proposals_and_names_what_rides_along() -> None:
-    """Eleven files, four artifacts carried, two proposals.
+def test_the_example_bundle_plans_four_proposals_and_names_what_rides_along() -> None:
+    """Thirteen files, four artifacts carried, four proposals.
 
     The example declares its ClaimType and all three Subjects at top level *and*
     carries them inside the Claim authorings. Neither is redundant authoring: the
@@ -64,7 +65,15 @@ def test_the_example_bundle_plans_two_proposals_and_names_what_rides_along() -> 
 
     plan = plan_seed_bundle(example_bundle(), proposal_name="taubench-example")
 
-    assert plan.group_ids == ("claims", "query_definition:project.work_items")
+    brief_group = (
+        "claim_input:project.work_item/wi-101#knowledge.brief:How should wi-101 be released?"
+    )
+    assert plan.group_ids == (
+        "claims",
+        brief_group,
+        "query_definition:project.work_items",
+        "procedure:project.work_item.digest",
+    )
     claims = plan.group("claims")
     assert claims.operation == SEED_GROUP_OPERATIONS["claim"]
     assert claims.entry_paths == (
@@ -84,8 +93,16 @@ def test_the_example_bundle_plans_two_proposals_and_names_what_rides_along() -> 
         "bodies/corpus/runbook.md",
         "bodies/notes/scratch.md",
     )
-    assert plan.next_group_id("claims") == "query_definition:project.work_items"
-    assert plan.next_group_id("query_definition:project.work_items") is None
+    assert plan.next_group_id("claims") == brief_group
+    assert plan.next_group_id(brief_group) == "query_definition:project.work_items"
+    assert plan.next_group_id("query_definition:project.work_items") == (
+        "procedure:project.work_item.digest"
+    )
+    assert plan.next_group_id("procedure:project.work_item.digest") is None
+    assert plan.group(brief_group).entry_paths == ("claims/wi-101-release-brief.json",)
+    procedure = plan.group("procedure:project.work_item.digest")
+    assert procedure.operation == "playbill_authoring_submit"
+    assert procedure.entry_paths == ("procedures/project.work_item.digest.json",)
 
 
 def test_the_plan_is_a_pure_function_of_the_bundle_bytes() -> None:
@@ -97,6 +114,14 @@ def test_the_plan_is_a_pure_function_of_the_bundle_bytes() -> None:
     assert seed_plan_digest(first) == seed_plan_digest(second)
     assert render_seed_plan(first) == render_seed_plan(second)
     assert seed_plan_digest(first).tagged in render_seed_plan(first)[0]
+
+
+def test_brief_seed_entry_remains_an_ordinary_claim_kind() -> None:
+    entries = read_seed_bundle(example_bundle())
+    brief = next(item for item in entries if item.path == "claims/wi-101-release-brief.json")
+
+    assert brief.kind == "claim"
+    assert brief.payload["kind"] == "brief"
 
 
 def test_a_seed_group_operation_has_the_frozen_content_addressed_identity() -> None:
@@ -145,7 +170,9 @@ def test_an_artifact_no_claim_carries_earns_its_own_proposal() -> None:
     assert plan.group_ids == (
         "claim_type:project.work_item.status",
         "claims",
+        ("claim_input:project.work_item/wi-101#knowledge.brief:How should wi-101 be released?"),
         "query_definition:project.work_items",
+        "procedure:project.work_item.digest",
     )
     assert (
         plan.group("claim_type:project.work_item.status").operation

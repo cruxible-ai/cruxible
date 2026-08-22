@@ -78,14 +78,16 @@ def test_the_seed_plan_is_readable_with_no_instance_daemon_or_context(
         "playbill", "seed", "apply", str(recipe.BUNDLE_DIR), "--name", "offline", "--plan"
     )
 
-    assert "2 proposal(s)" in printed
+    assert "4 proposal(s)" in printed
     assert "1. claims  [playbill_propose_claims]" in printed
-    assert "2. query_definition:project.work_items" in printed
+    assert "2. claim_input:project.work_item/wi-101#knowledge.brief" in printed
+    assert "3. query_definition:project.work_items" in printed
+    assert "4. procedure:project.work_item.digest" in printed
     assert printed.count("no proposal of its own") == 4
 
 
-def test_the_seed_bundle_applies_as_two_governed_proposals(arm_run: dict[str, object]) -> None:
-    """Three Claims, one ClaimType, three Subjects, one entrypoint, two proposals.
+def test_the_seed_bundle_applies_as_four_governed_proposals(arm_run: dict[str, object]) -> None:
+    """Three status Claims, one Brief, one query, and one Procedure in four proposals.
 
     The ClaimType and the Subjects cost no proposal at all: the Claim authorings
     carry them, so the batch admits them in the same generation. Every group is
@@ -98,11 +100,15 @@ def test_the_seed_bundle_applies_as_two_governed_proposals(arm_run: dict[str, ob
 
     assert [item["group_id"] for item in groups] == [
         "claims",
+        ("claim_input:project.work_item/wi-101#knowledge.brief:How should wi-101 be released?"),
         "query_definition:project.work_items",
+        "procedure:project.work_item.digest",
     ]
     assert [item["operation"] for item in groups] == [
         "playbill_propose_claims",
+        "playbill_authoring_submit",
         "playbill_propose_query_definition",
+        "playbill_authoring_submit",
     ]
     # Each group settled its own generation, in the order the plan named them.
     coordinates = [item["accepted_coordinate"]["generation_root"] for item in groups]

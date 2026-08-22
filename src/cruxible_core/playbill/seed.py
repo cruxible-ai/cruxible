@@ -16,11 +16,12 @@ A change set settles as one indivisible generation, so the temptation is to want
 one proposal for the whole bundle. Two facts make that impossible and both are
 load-bearing:
 
-*Only Claims have a plural authoring operation.* `playbill_propose_claims` takes
-N authorings and settles them as one generation; ClaimTypes, Subjects,
-Documents, and QueryDefinitions each have a singular propose operation and
-nothing else. Adding a plural form for them would be a contract change, which
-this module is explicitly not.
+*Only expert Claims have a plural authoring operation.* `playbill_propose_claims`
+takes N authorings and settles them as one generation; ClaimTypes, Subjects,
+Documents, and QueryDefinitions each have a singular propose operation, while
+friendly Claim and Procedure inputs each use one existing coordinator intent.
+Adding a plural form for any of them would be a contract change, which this
+module is explicitly not.
 
 *A proposal settles against the base it was admitted at.* Two proposals opened
 against one accepted head cannot both activate -- the second refuses with
@@ -73,6 +74,7 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from cruxible_core.playbill.authoring.inputs import BriefInput, ClaimInput, ProcedureInput
 from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.claims import ClaimStatement
@@ -94,7 +96,14 @@ is proposed. Committing the bytes beside the authoring that cites them is what
 makes a bundle self-contained and its digests checkable by anyone reading it.
 """
 
-SeedEntryKind = Literal["claim_type", "subject", "document", "claim", "query_definition"]
+SeedEntryKind = Literal[
+    "claim_type",
+    "subject",
+    "document",
+    "claim",
+    "query_definition",
+    "procedure",
+]
 
 SEED_ENTRY_DIRECTORIES: Final[Mapping[str, SeedEntryKind]] = {
     "claim-types": "claim_type",
@@ -102,6 +111,7 @@ SEED_ENTRY_DIRECTORIES: Final[Mapping[str, SeedEntryKind]] = {
     "documents": "document",
     "claims": "claim",
     "query-definitions": "query_definition",
+    "procedures": "procedure",
 }
 """Bundle subdirectory -> what the JSONs inside it author. There is no manifest
 file: the layout *is* the manifest, and the plan below is its rendering."""
@@ -112,6 +122,7 @@ SEED_GROUP_OPERATIONS: Final[Mapping[SeedEntryKind, str]] = {
     "document": "playbill_propose_document",
     "claim": "playbill_propose_claims",
     "query_definition": "playbill_propose_query_definition",
+    "procedure": "playbill_authoring_submit",
 }
 """The served operation each group submits through. Every one of these existed
 before this module did; the table is written out so that "zero new served ops"
@@ -123,6 +134,7 @@ _GROUP_ORDER: Final[tuple[SeedEntryKind, ...]] = (
     "document",
     "claim",
     "query_definition",
+    "procedure",
 )
 """Dependency order. Uncarried ClaimTypes and Subjects have to be accepted before
 the Claims that reference without carrying them; a QueryDefinition pins the
@@ -316,6 +328,15 @@ def _identity_of(path: str, kind: SeedEntryKind, payload: Mapping[str, Any]) -> 
             return DocumentShell.model_validate(payload).identity
         if kind == "query_definition":
             return QueryDefinitionV1.model_validate(payload).identity.name
+        if kind == "procedure":
+            procedure = ProcedureInput.model_validate(payload)
+            return str(procedure.definition["name"])
+        if payload.get("kind") == "brief":
+            brief = BriefInput.model_validate(payload)
+            return f"{brief.subject}#knowledge.brief:{brief.purpose}"
+        if payload.get("kind") == "claim":
+            claim = ClaimInput.model_validate(payload)
+            return f"{claim.subject}#{claim.predicate}"
         statement = ClaimStatement.model_validate(payload.get("statement"))
     except ValueError as exc:
         raise SeedBundleError(f"{path} is not a well-formed {kind} authoring: {exc}") from exc
@@ -433,6 +454,7 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
     carried_types, carried_subjects = _carried_closures(entries)
     carried: list[SeedCarriedEntryV1] = []
     grouped: dict[SeedEntryKind, list[SeedProposalGroupV1]] = {kind: [] for kind in _GROUP_ORDER}
+    input_claims: list[SeedBundleEntryV1] = []
 
     for entry in entries:
         index = carried_types if entry.kind == "claim_type" else carried_subjects
@@ -454,6 +476,8 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
             )
             continue
         if entry.kind == "claim":
+            if entry.payload.get("kind") in {"brief", "claim"}:
+                input_claims.append(entry)
             continue
         grouped[entry.kind].append(
             SeedProposalGroupV1(
@@ -463,27 +487,59 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
                 operation=SEED_GROUP_OPERATIONS[entry.kind],
                 entry_paths=(entry.path,),
                 rationale=(
-                    f"one {entry.kind} per proposal: the served surface has a singular propose "
-                    "operation for it and no plural one"
+                    (
+                        "one Procedure input per existing coordinator intent; no plural "
+                        "Procedure authoring operation exists"
+                    )
+                    if entry.kind == "procedure"
+                    else (
+                        f"one {entry.kind} per proposal: the served surface has a singular "
+                        "propose operation for it and no plural one"
+                    )
                 ),
             )
         )
 
     claim_paths = byte_sorted(tuple(item.path for item in entries if item.kind == "claim"))
     if claim_paths:
+        direct_claim_paths = byte_sorted(
+            tuple(
+                item.path
+                for item in entries
+                if item.kind == "claim" and item.payload.get("kind") not in {"brief", "claim"}
+            )
+        )
+    else:
+        direct_claim_paths = ()
+    if direct_claim_paths:
         grouped["claim"].append(
             SeedProposalGroupV1(
                 group_id="claims",
                 proposal_slug="claims",
                 kind="claim",
                 operation=SEED_GROUP_OPERATIONS["claim"],
-                entry_paths=claim_paths,
+                entry_paths=direct_claim_paths,
                 rationale=(
-                    f"{len(claim_paths)} Claim(s) and every dependency they carry settle as one "
+                    f"{len(direct_claim_paths)} Claim(s) and every dependency they carry "
+                    "settle as one "
                     "generation through the batch operation"
                 ),
             )
         )
+    grouped["claim"].extend(
+        SeedProposalGroupV1(
+            group_id=f"claim_input:{entry.identity}",
+            proposal_slug=proposal_slug(f"claim_input:{entry.identity}"),
+            kind="claim",
+            operation="playbill_authoring_submit",
+            entry_paths=(entry.path,),
+            rationale=(
+                "one ergonomic Claim input per coordinator intent; its accepted artifact remains "
+                "an ordinary Claim"
+            ),
+        )
+        for entry in input_claims
+    )
 
     return SeedPlanV1(
         proposal_name=proposal_name,

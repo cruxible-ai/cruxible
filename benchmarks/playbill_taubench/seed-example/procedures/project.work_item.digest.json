@@ -1,0 +1,95 @@
+{
+  "activation_policy": "abort",
+  "authority": {
+    "approve_roles": [
+      "owner"
+    ],
+    "propose_roles": [
+      "owner"
+    ]
+  },
+  "contracts": [
+    {
+      "allow_extra": false,
+      "fields": {},
+      "name": "empty-input"
+    },
+    {
+      "allow_extra": false,
+      "fields": {
+        "rows": {
+          "type": "json"
+        }
+      },
+      "name": "work-item-query-result"
+    }
+  ],
+  "definition": {
+    "annotations": {},
+    "budget": {
+      "max_capture_bytes": 0,
+      "max_items": 100,
+      "max_provider_calls": 0,
+      "wall_clock": {
+        "microseconds": 1000000
+      }
+    },
+    "contract_in": {
+      "kind": "carried_contract",
+      "name": "empty-input",
+      "role": "contract-in"
+    },
+    "contract_out": {
+      "kind": "carried_contract",
+      "name": "work-item-query-result",
+      "role": "contract-out"
+    },
+    "description": "Read governed work-item state through the accepted query.",
+    "graph_format": 3,
+    "hard_caps": {
+      "max_capture_bytes": 0,
+      "max_items": 200,
+      "max_provider_calls": 0,
+      "max_repeat_attempts": 1,
+      "max_wall_clock": {
+        "microseconds": 2000000
+      }
+    },
+    "measurements": [],
+    "name": "project.work_item.digest",
+    "nodes": [
+      {
+        "as": "query",
+        "kind": "state_tap",
+        "next": "shape",
+        "node_id": "read",
+        "parameters": {},
+        "query": {
+          "kind": "accepted",
+          "role": "query",
+          "target": "QueryDefinition:project.work_items"
+        }
+      },
+      {
+        "as": "result",
+        "contract_out": {
+          "kind": "carried_contract",
+          "name": "work-item-query-result",
+          "role": "contract-out"
+        },
+        "fields": {
+          "rows": "$steps.query.rows"
+        },
+        "kind": "project",
+        "next": null,
+        "node_id": "shape"
+      }
+    ],
+    "parameter_contract": null,
+    "pin_slots": [],
+    "returns": "result",
+    "terminal_capability": 1
+  },
+  "kind": "procedure",
+  "retire": false
+}

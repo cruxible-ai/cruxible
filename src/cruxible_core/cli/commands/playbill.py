@@ -1807,6 +1807,34 @@ def _submit_seed_group(
     """
 
     proposal_name = seed.seed_group_proposal_name(plan, group)
+    payloads = [json.loads(files[path].decode("utf-8")) for path in group.entry_paths]
+    if group.operation == "playbill_authoring_submit":
+        for path in plan.body_paths:
+            client.store_playbill_body(instance_id, files[path])
+        preflight = client.compile_playbill_authoring_input(
+            instance_id,
+            input=payloads[0],
+            intent_id=None,
+        )
+        if preflight.verdict != "passed":
+            raise click.ClickException(
+                "Authoring seed preflight refused: "
+                + json.dumps(preflight.frontier, ensure_ascii=False, sort_keys=True)
+            )
+        intent_id = preflight.certificate.get("intent_id")
+        target_ref = preflight.certificate.get("proposal_ref")
+        if not isinstance(intent_id, str) or not isinstance(target_ref, str):
+            raise click.ClickException(
+                "Authoring seed preflight omitted its intent or proposal identity"
+            )
+        submitted = client.submit_playbill_authoring_intent(
+            instance_id,
+            intent_id,
+        ).model_dump(mode="json")
+        if _seed_admission_value(submitted, "proposal_id") == "":  # pragma: no cover
+            raise click.ClickException("Authoring seed submit omitted its proposal ID")
+        return submitted, target_ref
+
     whoami = client.playbill_whoami(instance_id)
     target_ref = f"refs/proposals/{whoami.actor_id}/{proposal_name}"
     open_proposals = client.list_playbill_proposals(instance_id, status="open")
@@ -1823,7 +1851,6 @@ def _submit_seed_group(
     for path in plan.body_paths:
         client.store_playbill_body(instance_id, files[path])
 
-    payloads = [json.loads(files[path].decode("utf-8")) for path in group.entry_paths]
     if group.kind == "claim":
         submitted = client.propose_playbill_claims(
             instance_id, authorings=payloads, proposal_name=proposal_name
@@ -1869,6 +1896,9 @@ def _seed_admission_value(submitted: Mapping[str, Any], field: str) -> str:
         admission = node.get("admission")
         if isinstance(admission, dict) and field in admission:
             return str(admission[field])
+        status = node.get("status")
+        if isinstance(status, dict) and field in status and status[field] is not None:
+            return str(status[field])
         node = node.get("proposal")
     raise click.ClickException(  # pragma: no cover - every propose result carries one
         f"The propose operation returned no admission {field!r}"

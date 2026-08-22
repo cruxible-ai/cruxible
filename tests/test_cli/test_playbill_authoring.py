@@ -556,3 +556,85 @@ def test_seed_apply_reuses_machine_identity_and_blocks_only_an_open_retry(
     assert client.stored_bodies == stored_after_first * 2
     assert after_head_advance.exit_code == 0, after_head_advance.output
     assert client.proposal_names == [expected_name, expected_name]
+
+
+def test_seed_apply_compiles_and_submits_a_procedure_input_group(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    files = {
+        path.relative_to(SEED_EXAMPLE).as_posix(): path.read_bytes()
+        for path in sorted(SEED_EXAMPLE.rglob("*"))
+        if path.is_file()
+    }
+    plan = plan_seed_bundle(files, proposal_name="procedure-seed")
+    group = plan.group("procedure:project.work_item.digest")
+    proposal_id = "sha256:" + "9" * 64
+    target_ref = f"refs/proposals/owner/intent-{INTENT_ID[4:]}"
+    calls: list[tuple[str, object]] = []
+
+    class StubClient:
+        def store_playbill_body(self, instance_id: str, content: bytes) -> object:
+            assert instance_id == "inst_authoring"
+            calls.append(("body", content))
+            return object()
+
+        def compile_playbill_authoring_input(
+            self,
+            instance_id: str,
+            *,
+            input: dict[str, object],
+            intent_id: str | None,
+        ) -> contracts.PlaybillAuthoringPreflightResult:
+            assert instance_id == "inst_authoring"
+            assert intent_id is None
+            calls.append(("compile", input))
+            return contracts.PlaybillAuthoringPreflightResult(
+                verdict="passed",
+                certificate={
+                    "intent_id": INTENT_ID,
+                    "proposal_ref": target_ref,
+                },
+                frontier={"diagnostics": []},
+            )
+
+        def submit_playbill_authoring_intent(
+            self,
+            instance_id: str,
+            intent_id: str,
+        ) -> contracts.PlaybillAuthoringSubmitResult:
+            assert (instance_id, intent_id) == ("inst_authoring", INTENT_ID)
+            calls.append(("submit", intent_id))
+            return contracts.PlaybillAuthoringSubmitResult(
+                intent={"intent_id": intent_id},
+                status=contracts.PlaybillCandidateStatus(
+                    state="awaiting_external_approval",
+                    proposal_id=proposal_id,
+                    candidate_digest="sha256:" + "8" * 64,
+                    current_accepted_coordinate=COORDINATE,
+                ),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "seed",
+            "apply",
+            str(SEED_EXAMPLE),
+            "--name",
+            "procedure-seed",
+            "--group",
+            group.group_id,
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["proposal_id"] == proposal_id
+    assert payload["target_ref"] == target_ref
+    assert payload["operation"] == "playbill_authoring_submit"
+    assert [kind for kind, _value in calls] == ["body", "body", "body", "compile", "submit"]
