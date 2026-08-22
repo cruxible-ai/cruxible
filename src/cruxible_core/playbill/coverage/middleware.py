@@ -62,12 +62,14 @@ coverage, and it is never rendered.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Iterable, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
@@ -89,6 +91,7 @@ from cruxible_core.playbill.coverage.render import (
     render_coverage_result,
     render_unavailable_note,
 )
+from cruxible_core.playbill.projection import AcceptedCoordinate
 
 CONFIG_RELATIVE_PATH = ".playbill/coverage.json"
 
@@ -97,6 +100,7 @@ PATH_IDENTITY_NORMALIZER: Literal["playbill-coverage-path-identity-v1"] = (
 )
 
 HarnessToolKindV1 = Literal["read", "grep", "edit", "write"]
+_SHA256_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 class _StrictMiddlewareModel(BaseModel):
@@ -249,6 +253,152 @@ class CoverageWorkspaceConfigV1(_StrictMiddlewareModel):
         return WorkingPathBindingsV1(bindings=tuple(bound)), tuple(unbound)
 
 
+class FloorOutputV1(_StrictMiddlewareModel):
+    """A client-owned floor destination; the daemon never sees this path."""
+
+    tag: Literal["playbill-floor-output-v1"] = "playbill-floor-output-v1"
+    path: str
+    format: Literal["playbill-floor-export-v2"] = "playbill-floor-export-v2"
+
+    @field_validator("path")
+    @classmethod
+    def _normalized_relative_directory(cls, value: str) -> str:
+        if not value or value != value.strip() or "\\" in value:
+            raise ValueError("floor output path must be a non-empty normalized POSIX path")
+        path = PurePosixPath(value)
+        if path.is_absolute() or path.as_posix() != value or value == ".":
+            raise ValueError("floor output path must be a normalized relative POSIX directory")
+        if ".." in path.parts or path.parts[0] == ".playbill":
+            raise ValueError("floor output path may not traverse or enter .playbill")
+        return value
+
+
+class CoverageWorkspaceConfigV2(_StrictMiddlewareModel):
+    """Coverage config succession adding one optional client-owned floor."""
+
+    tag: Literal["playbill-coverage-workspace-config-v2"] = "playbill-coverage-workspace-config-v2"
+    instance_id: str | None = None
+    server_url: str | None = None
+    root: str = "."
+    rules: tuple[CoveragePathRuleV1, ...] = ()
+    scan_budget: CoverageScanBudgetV1 | None = None
+    max_observed_paths: int = Field(default=64, ge=1)
+    floor_output: FloorOutputV1 | None = None
+
+    @model_validator(mode="after")
+    def _rules_are_unambiguous(self) -> "CoverageWorkspaceConfigV2":
+        exact = [item.path for item in self.rules if isinstance(item, CoverageExactPathRuleV1)]
+        if len(set(exact)) != len(exact):
+            raise ValueError("a working path may declare at most one exact coverage rule")
+        prefixes = [
+            item.path_prefix for item in self.rules if isinstance(item, CoveragePathPrefixRuleV1)
+        ]
+        if len(set(prefixes)) != len(prefixes):
+            raise ValueError("a path prefix may declare at most one coverage rule")
+        return self
+
+    def source_for(self, path: str) -> LogicalSourceIdentityV1 | None:
+        for rule in self.rules:
+            if isinstance(rule, CoverageExactPathRuleV1) and rule.path == path:
+                return _logical_source(rule.plane, rule.identity)
+
+        best: LogicalSourceIdentityV1 | None = None
+        best_length = -1
+        for rule in self.rules:
+            if not isinstance(rule, CoveragePathPrefixRuleV1):
+                continue
+            identity = rule.identity_for(path)
+            if identity is None or len(rule.path_prefix) <= best_length:
+                continue
+            source = _logical_source(rule.plane, identity)
+            if source is not None:
+                best, best_length = source, len(rule.path_prefix)
+        return best
+
+    def bindings_for(self, paths: Iterable[str]) -> tuple[WorkingPathBindingsV1, tuple[str, ...]]:
+        bound: list[WorkingPathBindingV1] = []
+        claimed: set[bytes] = set()
+        unbound: list[str] = []
+        for path in sorted(set(paths)):
+            source = self.source_for(path)
+            if source is None or source.sort_key in claimed:
+                unbound.append(path)
+                continue
+            claimed.add(source.sort_key)
+            bound.append(WorkingPathBindingV1(path=path, source=source))
+        return WorkingPathBindingsV1(bindings=tuple(bound)), tuple(unbound)
+
+
+CoverageWorkspaceConfig = CoverageWorkspaceConfigV1 | CoverageWorkspaceConfigV2
+
+
+class FloorManifestFileV1(_StrictMiddlewareModel):
+    """The inventory subset required to validate a local floor manifest."""
+
+    path: str
+    content_digest: str
+    byte_length: int = Field(ge=0)
+
+    @field_validator("path")
+    @classmethod
+    def _safe_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if not value or path.is_absolute() or path.as_posix() != value or ".." in path.parts:
+            raise ValueError("floor manifest file path must stay under the floor root")
+        return value
+
+    @field_validator("content_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        if _SHA256_RE.fullmatch(value) is None:
+            raise ValueError("floor manifest content digest must be tagged SHA-256")
+        return value
+
+
+class FloorFreshnessManifestV2(_StrictMiddlewareModel):
+    """The exact v2 manifest shape needed by the presentation-only freshness check."""
+
+    tag: Literal["playbill-floor-manifest-v2"] = "playbill-floor-manifest-v2"
+    format: Literal["playbill-floor-export-v2"] = "playbill-floor-export-v2"
+    coordinate: AcceptedCoordinate
+    files: tuple[FloorManifestFileV1, ...]
+    floor_digest: str
+
+    @field_validator("floor_digest")
+    @classmethod
+    def _floor_digest(cls, value: str) -> str:
+        if _SHA256_RE.fullmatch(value) is None:
+            raise ValueError("floor digest must be tagged SHA-256")
+        return value
+
+    @model_validator(mode="after")
+    def _inventory_is_canonical(self) -> "FloorFreshnessManifestV2":
+        paths = [item.path for item in self.files]
+        if paths != sorted(paths, key=lambda item: item.encode("utf-8")):
+            raise ValueError("floor manifest inventory must be byte-sorted")
+        if len(paths) != len(set(paths)) or "manifest.json" in paths:
+            raise ValueError("floor manifest inventory paths must be unique and exclude itself")
+        expected_digest = typed_digest(
+            Sha256Value,
+            "playbill-floor-export-v2",
+            {"files": [item.model_dump(mode="json") for item in self.files]},
+        ).tagged
+        if self.floor_digest != expected_digest:
+            raise ValueError("floor manifest root digest differs from its inventory")
+        return self
+
+
+class FloorGenerationPairV1(_StrictMiddlewareModel):
+    """Generation numbers resolved by the existing search-orient read."""
+
+    tag: Literal["playbill-floor-generation-pair-v1"] = "playbill-floor-generation-pair-v1"
+    floor_generation: int = Field(ge=0)
+    current_generation: int = Field(ge=0)
+
+
+ResolveFloorGenerations = Callable[[AcceptedCoordinate], FloorGenerationPairV1]
+
+
 def _logical_source(plane: str, identity: str) -> LogicalSourceIdentityV1 | None:
     try:
         return LogicalSourceIdentityV1(plane=plane, identity=identity)  # type: ignore[arg-type]
@@ -256,7 +406,7 @@ def _logical_source(plane: str, identity: str) -> LogicalSourceIdentityV1 | None
         return None
 
 
-def load_coverage_config(root: Path) -> CoverageWorkspaceConfigV1:
+def load_coverage_config(root: Path) -> CoverageWorkspaceConfig:
     """Read `.playbill/coverage.json` from a workspace root."""
 
     path = root.expanduser() / CONFIG_RELATIVE_PATH
@@ -269,7 +419,11 @@ def load_coverage_config(root: Path) -> CoverageWorkspaceConfigV1:
     if not isinstance(payload, dict):
         raise CoverageError(f"coverage configuration must be one mapping: {path}")
     try:
-        return CoverageWorkspaceConfigV1.model_validate(payload)
+        if payload.get("tag", "playbill-coverage-workspace-config-v1") == (
+            "playbill-coverage-workspace-config-v1"
+        ):
+            return CoverageWorkspaceConfigV1.model_validate(payload)
+        return CoverageWorkspaceConfigV2.model_validate(payload)
     except ValueError as exc:
         raise CoverageError(f"coverage configuration is not valid: {exc}") from exc
 
@@ -402,15 +556,17 @@ class CoverageMiddlewareV1:
         self,
         *,
         root: Path,
-        config: CoverageWorkspaceConfigV1,
+        config: CoverageWorkspaceConfig,
         resolve: ResolveCoverage,
+        resolve_floor_generations: ResolveFloorGenerations | None = None,
     ) -> None:
         self._root = root.expanduser()
         self._config = config
         self._resolve = resolve
+        self._resolve_floor_generations = resolve_floor_generations
 
     @property
-    def config(self) -> CoverageWorkspaceConfigV1:
+    def config(self) -> CoverageWorkspaceConfig:
         return self._config
 
     # -- entry points -------------------------------------------------------
@@ -453,15 +609,24 @@ class CoverageMiddlewareV1:
     # -- the one path all three share ---------------------------------------
 
     def _deliver(self, event: HarnessToolEventV1) -> CoverageDeliveryV1:
+        freshness_line = self._floor_freshness_line(event)
         try:
             observations, unbound = self._observe(event)
         except CoverageError:
-            return self._failed_open(event, "working_source_unreadable")
+            return self._failed_open(
+                event,
+                "working_source_unreadable",
+                additional_lines=(() if freshness_line is None else (freshness_line,)),
+            )
 
         if not observations:
             # Every path was unbound, or the event named none. There is nothing
             # to ask about, so nothing is asked and nothing is said.
-            return CoverageDeliveryV1(original_output=event.original_output, unbound_paths=unbound)
+            return CoverageDeliveryV1(
+                original_output=event.original_output,
+                lines=() if freshness_line is None else (freshness_line,),
+                unbound_paths=unbound,
+            )
 
         try:
             result = self._resolve(observations)
@@ -471,11 +636,16 @@ class CoverageMiddlewareV1:
             # and an injected callable may raise anything at all: a transport
             # error, a refusal, a typed client error this package may not
             # import. None of them are the agent's problem mid-tool-call.
-            return self._failed_open(event, "coverage_operation_unavailable")
+            return self._failed_open(
+                event,
+                "coverage_operation_unavailable",
+                additional_lines=(() if freshness_line is None else (freshness_line,)),
+            )
 
         return CoverageDeliveryV1(
             original_output=event.original_output,
-            lines=render_coverage_result(result),
+            lines=render_coverage_result(result)
+            + (() if freshness_line is None else (freshness_line,)),
             result=result,
             unbound_paths=unbound,
             observed_sources=len(observations),
@@ -485,12 +655,72 @@ class CoverageMiddlewareV1:
         self,
         event: HarnessToolEventV1,
         code: CoverageUnavailableCodeV1,
+        *,
+        additional_lines: tuple[str, ...] = (),
     ) -> CoverageDeliveryV1:
         return CoverageDeliveryV1(
             original_output=event.original_output,
-            lines=render_unavailable_note(code),
+            lines=render_unavailable_note(code) + additional_lines,
             failure_code=code,
         )
+
+    def _floor_freshness_line(self, event: HarnessToolEventV1) -> str | None:
+        """Render at most one floor freshness line, independent of evidence coverage."""
+
+        if not isinstance(self._config, CoverageWorkspaceConfigV2):
+            return None
+        floor_output = self._config.floor_output
+        if floor_output is None or not self._event_touches_floor(event, floor_output):
+            return None
+        try:
+            manifest = self._read_floor_manifest(floor_output)
+            if self._resolve_floor_generations is None:
+                raise CoverageError("no floor generation resolver is installed")
+            pair = self._resolve_floor_generations(manifest.coordinate)
+        except Exception:  # noqa: BLE001 - presentation metadata must fail open
+            return "floor freshness unavailable"
+        if pair.floor_generation == pair.current_generation:
+            return None
+        return (
+            f"floor at generation {pair.floor_generation}, current "
+            f"{pair.current_generation}; re-export required"
+        )
+
+    def _event_touches_floor(self, event: HarnessToolEventV1, floor: FloorOutputV1) -> bool:
+        named = {
+            *event.paths,
+            *(item.path for item in event.ranges),
+            *(item.path for item in event.grep_hits),
+        }
+        return any(self._is_floor_path(value, floor) for value in named)
+
+    def _is_floor_path(self, value: str, floor: FloorOutputV1) -> bool:
+        try:
+            path = Path(value)
+            if path.is_absolute():
+                relative = path.resolve().relative_to(self._root.resolve()).as_posix()
+            else:
+                relative = PurePosixPath(value).as_posix()
+        except (OSError, ValueError):
+            return False
+        floor_parts = PurePosixPath(floor.path).parts
+        parts = PurePosixPath(relative).parts
+        return parts[: len(floor_parts)] == floor_parts
+
+    def _read_floor_manifest(self, floor: FloorOutputV1) -> FloorFreshnessManifestV2:
+        root = self._root.resolve()
+        floor_root = (self._root / floor.path).resolve()
+        if not floor_root.is_relative_to(root):
+            raise CoverageError("floor output escapes the workspace root")
+        path = floor_root / "manifest.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise CoverageError("floor manifest is unavailable") from exc
+        try:
+            return FloorFreshnessManifestV2.model_validate(payload)
+        except ValueError as exc:
+            raise CoverageError("floor manifest is invalid") from exc
 
     # -- event -> observations ----------------------------------------------
 
@@ -514,7 +744,17 @@ class CoverageMiddlewareV1:
             windows.setdefault(hit.path, set()).add((hit.line, hit.line))
 
         named = sorted(whole | set(windows))[: self._config.max_observed_paths]
-        bindings, unbound = self._config.bindings_for(named)
+        floor = (
+            self._config.floor_output
+            if isinstance(self._config, CoverageWorkspaceConfigV2)
+            else None
+        )
+        floor_paths = (
+            [] if floor is None else [path for path in named if self._is_floor_path(path, floor)]
+        )
+        evidence_paths = [path for path in named if path not in floor_paths]
+        bindings, unbound = self._config.bindings_for(evidence_paths)
+        unbound = tuple(sorted((*unbound, *floor_paths)))
 
         observations: list[WorkingSourceObservationV1] = []
         for path in bindings.paths:
@@ -537,7 +777,8 @@ def coverage_middleware(
     *,
     root: Path,
     resolve: ResolveCoverage,
-    config: CoverageWorkspaceConfigV1 | None = None,
+    config: CoverageWorkspaceConfig | None = None,
+    resolve_floor_generations: ResolveFloorGenerations | None = None,
 ) -> CoverageMiddlewareV1:
     """Build a middleware over a workspace, loading its configuration if needed."""
 
@@ -545,6 +786,7 @@ def coverage_middleware(
         root=root,
         config=config if config is not None else load_coverage_config(root),
         resolve=resolve,
+        resolve_floor_generations=resolve_floor_generations,
     )
 
 
@@ -557,11 +799,17 @@ __all__ = [
     "CoveragePathPrefixRuleV1",
     "CoveragePathRuleV1",
     "CoverageWorkspaceConfigV1",
+    "CoverageWorkspaceConfigV2",
+    "CoverageWorkspaceConfig",
+    "FloorFreshnessManifestV2",
+    "FloorGenerationPairV1",
+    "FloorOutputV1",
     "HarnessGrepHitV1",
     "HarnessLineRangeV1",
     "HarnessToolEventV1",
     "HarnessToolKindV1",
     "ResolveCoverage",
+    "ResolveFloorGenerations",
     "coverage_middleware",
     "grep_event",
     "load_coverage_config",

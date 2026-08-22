@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import secrets
+import shutil
 import sys
+import tempfile
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,7 +42,7 @@ from cruxible_core.playbill.authoring.examples import (
     authoring_example,
 )
 from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
     claim_type_input_example,
@@ -66,8 +69,14 @@ from cruxible_core.playbill.coverage.contracts import (
 )
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.coverage.middleware import (
-    CoverageWorkspaceConfigV1,
+    CONFIG_RELATIVE_PATH,
+    CoverageWorkspaceConfig,
+    CoverageWorkspaceConfigV2,
+    FloorFreshnessManifestV2,
+    FloorGenerationPairV1,
+    FloorOutputV1,
     ResolveCoverage,
+    ResolveFloorGenerations,
     coverage_middleware,
     load_coverage_config,
 )
@@ -201,6 +210,129 @@ def _write_floor(destination: Path, export: contracts.PlaybillFloorExport, *, fo
             raise click.ClickException(f"Refusing to write outside the export root: {item.path}")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(base64.b64decode(item.content_base64, validate=True))
+
+
+def _verified_floor_files(export: contracts.PlaybillFloorExport) -> dict[str, bytes]:
+    """Verify the v2 envelope, manifest, inventory, and bytes before any workspace write."""
+
+    if export.tag != "playbill-floor-export-v2":
+        raise click.ClickException("Configured floor refresh requires playbill-floor-export-v2")
+    try:
+        manifest = FloorFreshnessManifestV2.model_validate(export.manifest)
+    except ValueError as exc:
+        raise click.ClickException(f"Floor export manifest is invalid: {exc}") from exc
+    if manifest.coordinate.model_dump(mode="json") != export.coordinate.model_dump(mode="json"):
+        raise click.ClickException("Floor export envelope and manifest coordinates differ")
+
+    decoded: dict[str, bytes] = {}
+    try:
+        for exported_file in export.files:
+            if exported_file.path in decoded:
+                raise click.ClickException(f"Floor export repeats path: {exported_file.path}")
+            path = Path(exported_file.path)
+            if path.is_absolute() or ".." in path.parts or path.as_posix() != exported_file.path:
+                raise click.ClickException(
+                    f"Floor export path escapes its root: {exported_file.path}"
+                )
+            decoded[exported_file.path] = base64.b64decode(
+                exported_file.content_base64, validate=True
+            )
+    except (ValueError, TypeError) as exc:
+        raise click.ClickException("Floor export contains invalid base64 bytes") from exc
+
+    expected_paths = {"manifest.json", *(item.path for item in manifest.files)}
+    if set(decoded) != expected_paths:
+        raise click.ClickException("Floor export files differ from the manifest inventory")
+    try:
+        decoded_manifest = json.loads(decoded["manifest.json"])
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise click.ClickException("Floor export manifest bytes are invalid") from exc
+    if decoded_manifest != export.manifest:
+        raise click.ClickException("Floor export manifest bytes differ from the envelope")
+    for manifest_file in manifest.files:
+        content = decoded[manifest_file.path]
+        if len(content) != manifest_file.byte_length:
+            raise click.ClickException(f"Floor export byte length differs for {manifest_file.path}")
+        digest = "sha256:" + hashlib.sha256(content).hexdigest()
+        if digest != manifest_file.content_digest:
+            raise click.ClickException(
+                f"Floor export content digest differs for {manifest_file.path}"
+            )
+    expected_floor_digest = typed_digest(
+        Sha256Value,
+        "playbill-floor-export-v2",
+        {"files": [item.model_dump(mode="json") for item in manifest.files]},
+    ).tagged
+    if manifest.floor_digest != expected_floor_digest:
+        raise click.ClickException("Floor export root digest differs from its inventory")
+    return decoded
+
+
+def _floor_destination(workspace: Path, floor: FloorOutputV1) -> Path:
+    root = workspace.expanduser().resolve()
+    destination = workspace.expanduser() / floor.path
+    try:
+        resolved = destination.resolve()
+    except OSError as exc:
+        raise click.ClickException(f"Could not resolve configured floor output: {exc}") from exc
+    if not resolved.is_relative_to(root):
+        raise click.ClickException("Configured floor output escapes the workspace root")
+    return destination
+
+
+def _replace_floor_exact(
+    workspace: Path,
+    floor: FloorOutputV1,
+    export: contracts.PlaybillFloorExport,
+) -> Path:
+    """Replace the complete floor from a verified sibling, rolling back on failure."""
+
+    files = _verified_floor_files(export)
+    destination = _floor_destination(workspace, floor)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not destination.parent.resolve().is_relative_to(workspace.expanduser().resolve()):
+        raise click.ClickException("Configured floor output parent escapes the workspace root")
+
+    stage = Path(
+        tempfile.mkdtemp(prefix=f".{destination.name}.playbill-floor-", dir=destination.parent)
+    )
+    backup = destination.parent / f".{destination.name}.playbill-backup-{secrets.token_hex(8)}"
+    moved_old = False
+    installed = False
+    try:
+        stage_root = stage.resolve()
+        for path, content in files.items():
+            target = (stage / path).resolve()
+            if not target.is_relative_to(stage_root):  # pragma: no cover - prevalidated above
+                raise click.ClickException(f"Floor export path escapes its stage: {path}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        if destination.exists() or destination.is_symlink():
+            destination.rename(backup)
+            moved_old = True
+        stage.rename(destination)
+        installed = True
+    except Exception:
+        if moved_old and not (destination.exists() or destination.is_symlink()):
+            backup.rename(destination)
+            moved_old = False
+        raise
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage)
+        if installed and moved_old and backup.exists():
+            if backup.is_dir() and not backup.is_symlink():
+                shutil.rmtree(backup)
+            else:
+                backup.unlink()
+    return destination
+
+
+def _configured_floor_output(workspace: Path) -> FloorOutputV1 | None:
+    if not (workspace.expanduser() / CONFIG_RELATIVE_PATH).exists():
+        return None
+    config = load_coverage_config(workspace)
+    return config.floor_output if isinstance(config, CoverageWorkspaceConfigV2) else None
 
 
 def _write_bundle(path: str, bundle: SourceCompilationBundle) -> None:
@@ -588,14 +720,51 @@ def approve_proposal(
 
 @proposal_group.command("activate")
 @click.argument("proposal_id")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace holding .playbill/coverage.json and its optional floor output.",
+)
 @json_option
 @handle_errors
-def activate_proposal(proposal_id: str, output_json: bool) -> None:
+def activate_proposal(proposal_id: str, workspace_root: str, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.activate_playbill_proposal(instance_id, proposal_id),
         command_name="playbill proposal activate",
     )
-    _emit_json(result.model_dump(mode="json"))
+    payload = result.model_dump(mode="json")
+    workspace = Path(workspace_root).expanduser()
+    try:
+        floor_output = _configured_floor_output(workspace)
+        if floor_output is not None:
+            # A response-loss retry normally loses the stale candidate CAS. Refreshing
+            # the current accepted floor is still safe and makes that retry converge.
+            export = _server_call(
+                lambda client, instance_id: client.export_playbill_floor(instance_id),
+                command_name="playbill proposal activate floor refresh",
+            )
+            destination = _replace_floor_exact(workspace, floor_output, export)
+            payload["floor_refresh"] = {
+                "tag": "playbill-floor-refresh-result-v1",
+                "status": "refreshed",
+                "path": floor_output.path,
+                "floor_digest": export.manifest["floor_digest"],
+            }
+            payload["floor_refresh"]["destination"] = str(destination)
+    except Exception as exc:  # noqa: BLE001 - report accepted and refresh truth together
+        message = str(exc)
+        payload["floor_refresh"] = {
+            "tag": "playbill-floor-refresh-result-v1",
+            "status": "failed",
+            "message": message,
+        }
+        _emit_json(payload)
+        raise click.ClickException(
+            f"proposal activation status={result.status}; floor refresh failed: {message}"
+        ) from exc
+    _emit_json(payload)
 
 
 @playbill_group.command("whoami")
@@ -3094,7 +3263,7 @@ def hook_group() -> None:
     """Deliver coverage into a harness's own tool results."""
 
 
-def _hook_resolver(config: CoverageWorkspaceConfigV1) -> ResolveCoverage:
+def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
     """Resolve through the served operation, as every other coverage caller does.
 
     The workspace's declared scan budget rides along here rather than inside the
@@ -3107,6 +3276,37 @@ def _hook_resolver(config: CoverageWorkspaceConfigV1) -> ResolveCoverage:
             tuple(observations),
             command_name="playbill hook post-tool-use",
             scan_budget=config.scan_budget,
+        )
+
+    return resolve
+
+
+def _hook_floor_generation_resolver() -> ResolveFloorGenerations:
+    """Resolve old and current sequence numbers through the existing orient wire."""
+
+    def orientation(at: AcceptedCoordinate | None) -> int:
+        result = _server_call(
+            lambda client, instance_id: client.search_playbill(
+                instance_id,
+                mode="orient",
+                kinds=("brief", "claim", "demand", "procedure"),
+                at=None if at is None else at.model_dump(mode="json"),
+            ),
+            command_name="playbill hook floor freshness",
+        )
+        if result.orientation is None:
+            raise click.ClickException("Playbill orient returned no floor generation")
+        generation = result.orientation.get("generation")
+        if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:
+            raise click.ClickException("Playbill orient returned an invalid floor generation")
+        return generation
+
+    def resolve(coordinate: AcceptedCoordinate) -> FloorGenerationPairV1:
+        floor_generation = orientation(coordinate)
+        current_generation = orientation(None)
+        return FloorGenerationPairV1(
+            floor_generation=floor_generation,
+            current_generation=current_generation,
         )
 
     return resolve
@@ -3148,6 +3348,7 @@ def post_tool_use_hook(root: str) -> None:
                 root=workspace,
                 config=config,
                 resolve=_hook_resolver(config),
+                resolve_floor_generations=_hook_floor_generation_resolver(),
             )
             text = middleware.after_tool(event).appended_coverage_text
     except Exception:  # noqa: BLE001 - fail open; a broken hook is not the agent's problem

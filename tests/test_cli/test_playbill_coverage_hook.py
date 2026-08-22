@@ -37,6 +37,7 @@ from click.testing import CliRunner
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.cli.main import cli
+from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.claude_code import (
     ANNOTATABLE_TOOLS,
@@ -426,6 +427,63 @@ def test_a_grep_content_result_is_annotated_in_place_with_every_other_field_inta
     }
     # The instruction channel is never touched.
     assert "additionalContext" not in emitted["hookSpecificOutput"]
+
+
+def test_the_hook_marks_a_floor_from_an_older_generation_without_a_coverage_binding(
+    served_cli: _Cli,  # noqa: F811
+    tmp_path: Path,
+) -> None:
+    cruxible = served_cli
+    _bootstrap(cruxible, tmp_path)
+    old = cruxible.json("playbill", "orient")["orientation"]
+    _govern_a_foreign_span(cruxible, tmp_path)
+    current = cruxible.json("playbill", "orient")["orientation"]
+    workspace = tmp_path / "workspace"
+    floor = workspace / "playbill-floor"
+    floor.mkdir(parents=True)
+    (workspace / ".playbill").mkdir()
+    (workspace / CONFIG_RELATIVE_PATH).write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v2",
+                "floor_output": {
+                    "tag": "playbill-floor-output-v1",
+                    "path": "playbill-floor",
+                    "format": "playbill-floor-export-v2",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "tag": "playbill-floor-manifest-v2",
+        "format": "playbill-floor-export-v2",
+        "coordinate": old["coordinate"],
+        "files": [],
+        "floor_digest": typed_digest(
+            Sha256Value,
+            "playbill-floor-export-v2",
+            {"files": []},
+        ).tagged,
+    }
+    (floor / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    content = f"{floor / 'manifest.json'}:1:{{"
+
+    emitted = _run_hook(
+        workspace,
+        _post_tool_use(
+            "Grep",
+            {"pattern": "tag", "output_mode": "content"},
+            {"mode": "content", "content": content, "numLines": 1},
+        ),
+    )
+
+    updated = emitted["hookSpecificOutput"]["updatedToolOutput"]["content"]
+    assert updated == (
+        content
+        + f"\nfloor at generation {old['generation']}, current "
+        + f"{current['generation']}; re-export required"
+    )
 
 
 def _file_tool_payloads(workspace: Path) -> dict[str, dict[str, Any]]:

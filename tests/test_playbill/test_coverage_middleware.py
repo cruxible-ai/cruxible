@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
     coverage_span_requests,
@@ -34,6 +35,9 @@ from cruxible_core.playbill.coverage.middleware import (
     CoverageExactPathRuleV1,
     CoveragePathPrefixRuleV1,
     CoverageWorkspaceConfigV1,
+    CoverageWorkspaceConfigV2,
+    FloorGenerationPairV1,
+    FloorOutputV1,
     HarnessLineRangeV1,
     HarnessToolEventV1,
     coverage_middleware,
@@ -110,6 +114,35 @@ def _config(**overrides: object) -> CoverageWorkspaceConfigV1:
     }
     base.update(overrides)
     return CoverageWorkspaceConfigV1(**base)  # type: ignore[arg-type]
+
+
+def _floor_config(**overrides: object) -> CoverageWorkspaceConfigV2:
+    base: dict[str, object] = {
+        "floor_output": FloorOutputV1(path="playbill-floor"),
+    }
+    base.update(overrides)
+    return CoverageWorkspaceConfigV2(**base)  # type: ignore[arg-type]
+
+
+def _write_floor_manifest(workspace: Path) -> None:
+    floor = workspace / "playbill-floor"
+    floor.mkdir(exist_ok=True)
+    (floor / "manifest.json").write_text(
+        json.dumps(
+            {
+                "tag": "playbill-floor-manifest-v2",
+                "format": "playbill-floor-export-v2",
+                "coordinate": coordinate().model_dump(mode="json"),
+                "files": [],
+                "floor_digest": typed_digest(
+                    Sha256Value,
+                    "playbill-floor-export-v2",
+                    {"files": []},
+                ).tagged,
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 @pytest.fixture
@@ -217,6 +250,37 @@ def test_the_config_round_trips_through_the_committed_file_shape(workspace: Path
     assert loaded.scan_budget is not None
     assert loaded.scan_budget.max_scanned_bytes == 4096
     assert loaded.max_observed_paths == 8
+
+
+def test_v2_config_adds_only_the_optional_normalized_floor_output(workspace: Path) -> None:
+    (workspace / ".playbill").mkdir()
+    (workspace / CONFIG_RELATIVE_PATH).write_text(
+        json.dumps(
+            {
+                "tag": "playbill-coverage-workspace-config-v2",
+                "floor_output": {
+                    "tag": "playbill-floor-output-v1",
+                    "path": "playbill-floor",
+                    "format": "playbill-floor-export-v2",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_coverage_config(workspace)
+
+    assert isinstance(loaded, CoverageWorkspaceConfigV2)
+    assert loaded.floor_output == FloorOutputV1(path="playbill-floor")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ("", ".", "/tmp/floor", "../floor", "a/../floor", ".playbill/floor", "a\\floor"),
+)
+def test_floor_output_refuses_non_normalized_or_reserved_paths(path: str) -> None:
+    with pytest.raises(ValueError):
+        FloorOutputV1(path=path)
 
 
 def test_the_declared_path_bound_clips_how_many_sources_one_event_observes(
@@ -428,6 +492,78 @@ def test_the_same_event_against_the_same_state_renders_identical_bytes(workspace
     second = middleware.after_tool(event)
 
     assert first.spliced() == second.spliced()
+
+
+def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
+    workspace: Path,
+) -> None:
+    _write_floor_manifest(workspace)
+    recorder = _Recorder()
+    config = _floor_config(
+        rules=(
+            CoveragePathPrefixRuleV1(
+                path_prefix="playbill-floor/",
+                plane="external",
+                identity_prefix="floor.",
+            ),
+        )
+    )
+    middleware = coverage_middleware(
+        root=workspace,
+        config=config,
+        resolve=recorder,
+        resolve_floor_generations=lambda _: FloorGenerationPairV1(
+            floor_generation=2,
+            current_generation=4,
+        ),
+    )
+
+    delivery = middleware.after_tool(
+        HarnessToolEventV1(
+            kind="read",
+            paths=("playbill-floor/manifest.json", "playbill-floor/other.json"),
+            original_output="floor bytes",
+        )
+    )
+
+    assert recorder.calls == []
+    assert delivery.lines == ("floor at generation 2, current 4; re-export required",)
+    assert delivery.unbound_paths == (
+        "playbill-floor/manifest.json",
+        "playbill-floor/other.json",
+    )
+    assert delivery.spliced() == (
+        "floor bytes\nfloor at generation 2, current 4; re-export required"
+    )
+
+
+def test_current_floor_is_silent_and_invalid_floor_is_explicitly_unavailable(
+    workspace: Path,
+) -> None:
+    _write_floor_manifest(workspace)
+    event = HarnessToolEventV1(kind="grep", paths=("playbill-floor/manifest.json",))
+    current = coverage_middleware(
+        root=workspace,
+        config=_floor_config(),
+        resolve=_Recorder(),
+        resolve_floor_generations=lambda _: FloorGenerationPairV1(
+            floor_generation=4,
+            current_generation=4,
+        ),
+    ).after_tool(event)
+    assert current.lines == ()
+
+    (workspace / "playbill-floor/manifest.json").write_text("{}", encoding="utf-8")
+    unavailable = coverage_middleware(
+        root=workspace,
+        config=_floor_config(),
+        resolve=_Recorder(),
+        resolve_floor_generations=lambda _: FloorGenerationPairV1(
+            floor_generation=4,
+            current_generation=4,
+        ),
+    ).after_tool(event)
+    assert unavailable.lines == ("floor freshness unavailable",)
 
 
 # -- fail open on infrastructure -------------------------------------------
