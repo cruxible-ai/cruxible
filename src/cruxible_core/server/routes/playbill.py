@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter
 
 from cruxible_client import contracts
+from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequestV1
 from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
@@ -472,6 +473,20 @@ async def propose_claim_type(
         claim_type=req.claim_type,
         proposal_name=req.proposal_name,
         base=req.base,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/claim-types/migrations",
+    response_model=contracts.PlaybillClaimTypeMigrationResult,
+)
+async def migrate_claim_type(
+    instance_id: str,
+    req: ClaimTypeMigrationRequestV1,
+) -> contracts.PlaybillClaimTypeMigrationResult:
+    return playbill_api.playbill_migrate_claim_type(
+        resolve_server_instance_id(instance_id),
+        request=req,
     )
 
 

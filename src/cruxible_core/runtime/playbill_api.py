@@ -28,6 +28,10 @@ from cruxible_core.playbill.authoring.models import (
 from cruxible_core.playbill.candidates import canonical_candidate_timestamp
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.playbill.claim_type_migrations import (
+    ClaimTypeMigrationRequestV1,
+    service_migrate_claim_type,
+)
 from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -618,6 +622,20 @@ def playbill_propose_claim_type_input(
     return contracts.PlaybillClaimTypeInputProposalResult.model_validate(
         result.model_dump(mode="json")
     )
+
+
+def playbill_migrate_claim_type(
+    instance_id: str,
+    *,
+    request: ClaimTypeMigrationRequestV1,
+) -> contracts.PlaybillClaimTypeMigrationResult:
+    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    result = service_migrate_claim_type(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        actor=AuthenticatedActor(actor_id=_actor_id()),
+    )
+    return contracts.PlaybillClaimTypeMigrationResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_list_claim_types(

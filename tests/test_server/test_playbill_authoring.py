@@ -132,6 +132,63 @@ def test_http_input_variants_delegate_without_exposing_a_base(
     assert "base" not in response.request.content.decode()
 
 
+def test_http_migration_route_delegates_the_typed_request(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    seen: list[object] = []
+
+    def migrate_stub(selected: str, *, request: object):
+        seen.append((selected, request))
+        return contracts.PlaybillClaimTypeMigrationResult(
+            operation_digest="sha256:" + "1" * 64,
+            dependents=[],
+            proposal=contracts.PlaybillProposalInspection(
+                proposal={},
+                accepted_coordinate=COORDINATE,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_migrate_claim_type",
+        migrate_stub,
+    )
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/claim-types/migrations",
+        json={
+            "tag": "playbill-claim-type-migration-request-v1",
+            "successor": {
+                "predicate": "project.work_item.status",
+                "allowed_subject_kinds": ["project.work_item"],
+                "object_kind": "literal",
+                "cardinality": "one",
+                "permitted_roles": ["observation"],
+                "evidence_admission_policy": {"rules": []},
+                "admission_policy": {
+                    "transition_requirements": [],
+                    "actor_requirements": [],
+                    "evidence_requirements": [],
+                    "freeze_requirements": [],
+                },
+                "resolution_policy": {
+                    "cardinality": "one",
+                    "eligible_verdicts": ["supported"],
+                    "selector": "only_contender",
+                },
+                "authority": {
+                    "propose_roles": ["owner"],
+                    "approve_roles": ["owner"],
+                },
+            },
+            "dependents": [],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen and seen[0][0] == instance_id
+
+
 def test_http_refuses_digest_and_base_smuggling_in_request_models(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:

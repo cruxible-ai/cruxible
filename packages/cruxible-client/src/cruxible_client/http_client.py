@@ -591,6 +591,18 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillClaimTypeInputProposalResult)
 
+    def migrate_playbill_claim_type(
+        self,
+        instance_id: str,
+        *,
+        request: Mapping[str, Any],
+    ) -> contracts.PlaybillClaimTypeMigrationResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claim-types/migrations",
+            json=dict(request),
+        )
+        return self._parse_model(response, contracts.PlaybillClaimTypeMigrationResult)
+
     def list_playbill_claim_types(
         self,
         instance_id: str,

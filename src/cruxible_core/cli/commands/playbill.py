@@ -44,6 +44,7 @@ from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
     claim_type_input_example,
 )
+from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequestV1
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
@@ -728,7 +729,7 @@ def check_sources(
 def propose_sources(
     bundle_path: str,
     source_name: str,
-    proposal_name: str | None,
+    proposal_name: str,
     output_json: bool,
 ) -> None:
     bundle = _read_model(bundle_path, SourceCompilationBundle)
@@ -926,14 +927,14 @@ def claim_type_group() -> None:
 @click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--envelope", type=click.Path(exists=True, dir_okay=False), hidden=True)
 @click.option("--example", is_flag=True, help="Print the model-generated ClaimType input.")
-@click.option("--name", "proposal_name", required=True)
+@click.option("--name", "proposal_name")
 @json_option
 @handle_errors
 def propose_claim_type(
     input_path: str | None,
     envelope: str | None,
     example: bool,
-    proposal_name: str,
+    proposal_name: str | None,
     output_json: bool,
 ) -> None:
     choices = (input_path is not None, envelope is not None, example)
@@ -981,6 +982,27 @@ def propose_claim_type(
             proposal_name=proposal_name,
         ),
         command_name="playbill claim-type propose",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@claim_type_group.command("migrate")
+@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@json_option
+@handle_errors
+def migrate_claim_type(request_file: str, output_json: bool) -> None:
+    """Propose one ClaimType successor and every dependent disposition atomically."""
+
+    try:
+        request = ClaimTypeMigrationRequestV1.model_validate(_read_mapping(request_file))
+    except ValidationError as exc:
+        raise click.ClickException(f"Invalid ClaimType migration: {exc}") from exc
+    result = _server_call(
+        lambda client, instance_id: client.migrate_playbill_claim_type(
+            instance_id,
+            request=request.model_dump(mode="json"),
+        ),
+        command_name="playbill claim-type migrate",
     )
     _emit_json(result.model_dump(mode="json"))
 

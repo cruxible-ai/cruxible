@@ -349,16 +349,29 @@ class PlaybillClaimTypeList(BaseModel):
 class PlaybillClaimTypeProposalLint(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-claim-type-proposal-lint-v1"]
+    tag: Literal["playbill-claim-type-proposal-lint-v1"] = "playbill-claim-type-proposal-lint-v1"
     warnings: list[dict[str, Any]]
 
 
 class PlaybillClaimTypeInputProposalResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-claim-type-input-proposal-result-v1"]
+    tag: Literal["playbill-claim-type-input-proposal-result-v1"] = (
+        "playbill-claim-type-input-proposal-result-v1"
+    )
     proposal: PlaybillProposalInspection
     lint: PlaybillClaimTypeProposalLint
+
+
+class PlaybillClaimTypeMigrationResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-type-migration-result-v1"] = (
+        "playbill-claim-type-migration-result-v1"
+    )
+    operation_digest: str
+    dependents: list[dict[str, Any]]
+    proposal: PlaybillProposalInspection
 
 
 class PlaybillClaimView(BaseModel):
