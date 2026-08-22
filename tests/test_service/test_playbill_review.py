@@ -51,6 +51,9 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Pat
     rendered = render_playbill_proposal_review(review)
     assert f"Candidate: {review.candidate_digest}" in rendered
     assert f"Settlement base OID: {review.base_oid}" in rendered
+    assert f"Proposal admission tier: {review.candidate.required_tier}" in rendered
+    assert "Approve requires: graph_write" in rendered
+    assert "Activate requires: graph_write" in rendered
 
     redacted = service_review_playbill_proposal(
         instance,

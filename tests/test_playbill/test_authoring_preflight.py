@@ -218,3 +218,28 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
         item.repairs or item.disposition in {"wait", "terminal"}
         for item in result.frontier.diagnostics
     )
+
+
+def test_actor_refusal_names_identity_required_roles_and_active_principals(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="unregistered-writer")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_self_source_payload(),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    diagnostic = next(
+        item
+        for item in result.frontier.diagnostics
+        if item.code == "playbill.claim.actor_unauthorized"
+    )
+    assert "'unregistered-writer'" in diagnostic.message
+    assert "required roles=['owner']" in diagnostic.message
+    assert "active principal ids=['daemon', 'owner']" in diagnostic.message

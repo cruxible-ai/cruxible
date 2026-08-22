@@ -23,6 +23,7 @@ together.
 | `OperationType 'group_clear' read-only member` | `group_withdraw` | 0.3.0 | 0.4.0 |
 | `StateHealthGroupsSection.auto_resolved_count` | `withdrawn_count` | 0.3.0 | 0.4.0 |
 | `ProcedureTransitionResult.warnings string list` | `ProcedureTransitionResult.typed_warnings` | 0.4.0 | 0.5.0 |
+| `playbill.claim.propose.legacy_wire_deprecated` | `playbill authoring create/compile; direct propose mints legacy-wire Claims that are invisible to the citation model` | 0.4.0 | 0.5.0 |
 
 The rows stay after a surface is removed: this table is the historical schedule,
 not a list of what is still accepted. Removed in 0.4.0 (the registry entry, the

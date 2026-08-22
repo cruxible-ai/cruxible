@@ -14,6 +14,7 @@ from typing import Any, TypeVar, cast
 
 import click
 import yaml
+from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands._common import (
@@ -25,8 +26,19 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.deprecation import (
+    PLAYBILL_DIRECT_CLAIM_PROPOSE,
+    emit_cli_deprecation,
+)
 from cruxible_core.playbill import native, seed
 from cruxible_core.playbill.attestations import ApprovalStatement
+from cruxible_core.playbill.authoring.bind import bind_working_selection
+from cruxible_core.playbill.authoring.examples import (
+    AUTHORING_EXAMPLE_FACTORIES,
+    AuthoringExampleName,
+    authoring_example,
+)
+from cruxible_core.playbill.authoring.models import AuthoringPayloadV1
 from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
@@ -116,6 +128,56 @@ def _read_mapping(path: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise click.ClickException(f"{source} must contain one mapping")
     return cast(dict[str, Any], payload)
+
+
+_AUTHORING_PAYLOAD_ADAPTER: TypeAdapter[AuthoringPayloadV1] = TypeAdapter(AuthoringPayloadV1)
+
+
+def _authoring_examples_for(payload: Mapping[str, Any]) -> tuple[str, ...]:
+    tag = payload.get("tag")
+    if tag == "playbill-procedure-authoring-payload-v1":
+        return ("procedure",)
+    if tag != "playbill-claim-authoring-payload-v1":
+        return tuple(AUTHORING_EXAMPLE_FACTORIES)
+    statement = payload.get("statement")
+    if isinstance(statement, Mapping) and statement.get("predicate") == "knowledge.brief":
+        return ("brief",)
+    source = payload.get("source")
+    if isinstance(source, Mapping):
+        if source.get("tag") == "playbill-working-selection-observation-v1":
+            return ("claim-flow-a",)
+        if source.get("tag") == "playbill-self-source-body-v1":
+            return ("claim-self-source",)
+    return ("claim-flow-a", "claim-self-source")
+
+
+def _validation_path(location: tuple[object, ...]) -> str:
+    rendered = "$"
+    for item in location:
+        if isinstance(item, int):
+            rendered += f"[{item}]"
+        elif isinstance(item, str) and not item.startswith("playbill-"):
+            rendered += f".{item}"
+    return rendered
+
+
+def _read_authoring_payload(path: str) -> dict[str, Any]:
+    payload = _read_mapping(path)
+    try:
+        parsed = _AUTHORING_PAYLOAD_ADAPTER.validate_python(payload)
+    except ValidationError as exc:
+        examples = ", ".join(
+            f"playbill authoring create --example {name}"
+            for name in _authoring_examples_for(payload)
+        )
+        errors = "; ".join(
+            f"{_validation_path(tuple(item['loc']))}: {item['msg']}"
+            for item in exc.errors(include_url=False)
+        )
+        raise click.ClickException(
+            f"Invalid authoring payload: {errors}. Example: {examples}"
+        ) from exc
+    return cast(dict[str, Any], parsed.model_dump(mode="json"))
 
 
 def _write_floor(destination: Path, export: contracts.PlaybillFloorExport, *, force: bool) -> None:
@@ -846,6 +908,9 @@ def claim_group() -> None:
 @json_option
 @handle_errors
 def propose_claim(authoring: str, proposal_name: str, output_json: bool) -> None:
+    """Legacy-wire path; use the sanctioned authoring coordinator instead."""
+
+    emit_cli_deprecation(PLAYBILL_DIRECT_CLAIM_PROPOSE)
     request = _read_mapping(authoring)
     result = _server_call(
         lambda client, instance_id: client.propose_playbill_claim(
@@ -871,6 +936,9 @@ def propose_claim(authoring: str, proposal_name: str, output_json: bool) -> None
 @json_option
 @handle_errors
 def propose_claims(authorings: tuple[str, ...], proposal_name: str, output_json: bool) -> None:
+    """Legacy-wire batch; use the sanctioned authoring coordinator instead."""
+
+    emit_cli_deprecation(PLAYBILL_DIRECT_CLAIM_PROPOSE)
     requests = [_read_mapping(path) for path in authorings]
     result = _server_call(
         lambda client, instance_id: client.propose_playbill_claims(
@@ -889,14 +957,52 @@ def authoring_group() -> None:
 
 
 @authoring_group.command("create")
-@click.argument("payload", type=click.Path(exists=True, dir_okay=False))
+@click.argument("payload", required=False, type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--example",
+    "example_name",
+    type=click.Choice(tuple(AUTHORING_EXAMPLE_FACTORIES)),
+    help="Print one model-generated payload template and exit.",
+)
 @json_option
 @handle_errors
-def create_authoring_intent(payload: str, output_json: bool) -> None:
+@click.pass_context
+def create_authoring_intent(
+    ctx: click.Context,
+    payload: str | None,
+    example_name: str | None,
+    output_json: bool,
+) -> None:
+    """Create a durable authoring intent or print a schema-derived example.
+
+    \b
+    Payload tags:
+    playbill-claim-authoring-payload-v1
+    playbill-procedure-authoring-payload-v1
+
+    Use --example claim-flow-a|claim-self-source|procedure|brief for a
+    model-generated starting point.
+    """
+
+    if (payload is None) == (example_name is None):
+        raise click.UsageError("provide exactly one of PAYLOAD or --example")
+    if example_name is not None:
+        example = authoring_example(cast(AuthoringExampleName, example_name))
+        click.echo(
+            json.dumps(
+                example.model_dump(mode="json"),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+    assert payload is not None
+    _echo_write_target("active", ctx.params)
     result = _server_call(
         lambda client, instance_id: client.create_playbill_authoring_intent(
             instance_id,
-            payload=_read_mapping(payload),
+            payload=_read_authoring_payload(payload),
         ),
         command_name="playbill authoring create",
     )
@@ -947,10 +1053,53 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
     result = _server_call(
         lambda client, instance_id: client.compile_playbill_authoring(
             instance_id,
-            payload=_read_mapping(payload),
+            payload=_read_authoring_payload(payload),
             intent_id=intent_id,
         ),
         command_name="playbill authoring compile",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@authoring_group.command("bind")
+@click.option("--file", "source_path", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--anchor", required=True)
+@click.option("--window-lines", type=click.IntRange(min=0), default=None)
+@click.option(
+    "--payload-file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Claim stub whose source contains only the working tag and logical source_id.",
+)
+@json_option
+@handle_errors
+def bind_authoring_selection(
+    source_path: str,
+    anchor: str,
+    window_lines: int | None,
+    payload_file: str,
+    output_json: bool,
+) -> None:
+    """Derive a Flow-A observation from one exact local source anchor, then compile."""
+
+    source = Path(source_path).expanduser()
+    try:
+        content = source.read_bytes()
+    except OSError as exc:
+        raise click.ClickException(f"Could not read {source}: {exc}") from exc
+    payload = bind_working_selection(
+        _read_mapping(payload_file),
+        content=content,
+        anchor=anchor,
+        window_lines=window_lines,
+    )
+    result = _server_call(
+        lambda client, instance_id: client.compile_playbill_authoring(
+            instance_id,
+            payload=payload.model_dump(mode="json"),
+            intent_id=None,
+        ),
+        command_name="playbill authoring bind",
     )
     _emit_json(result.model_dump(mode="json"))
 

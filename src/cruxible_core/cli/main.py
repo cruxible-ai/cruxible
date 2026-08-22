@@ -40,7 +40,8 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim", "propose"): "active",
     ("playbill", "claim", "propose-batch"): "active",
-    ("playbill", "authoring", "create"): "active",
+    ("playbill", "authoring", "create"): "manual",
+    ("playbill", "authoring", "bind"): "active",
     ("playbill", "authoring", "compile"): "active",
     ("playbill", "authoring", "preflight"): "active",
     ("playbill", "authoring", "submit"): "active",
@@ -458,6 +459,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                     ),
                     "compile": _command(
                         "playbill", "compile_authoring", "Author and preflight a payload."
+                    ),
+                    "bind": _command(
+                        "playbill",
+                        "bind_authoring_selection",
+                        "Bind a Flow-A selection and compile it.",
                     ),
                     "preflight": _command(
                         "playbill",

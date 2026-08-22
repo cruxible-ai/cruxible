@@ -30,7 +30,11 @@ from cruxible_core.playbill.claims import (
 )
 from cruxible_core.playbill.descriptor_claim_types import descriptor_claim_type
 from cruxible_core.playbill.discovery import ExpandRequestV1
-from cruxible_core.playbill.errors import ProposalIntegrityError, SettlementIntegrityError
+from cruxible_core.playbill.errors import (
+    ClaimNotFoundError,
+    ProposalIntegrityError,
+    SettlementIntegrityError,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.policies import (
     ActorRequirementV1,
@@ -316,6 +320,8 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
 
     view = service_get_playbill_claim(instance, identity=proposed.claim_identity, at=accepted)
     assert view.envelope["artifact_digest"] == proposed.artifact_digest
+    bare_identity = proposed.claim_identity.removeprefix("Claim:")
+    assert service_get_playbill_claim(instance, identity=bare_identity, at=accepted) == view
     assert tuple(
         item.envelope["identity"] for item in service_list_playbill_claims(instance).claims
     ) == (proposed.claim_identity,)
@@ -330,6 +336,9 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
     assert history.entries[0].statement_digest == proposed.statement_digest
 
     explanation = service_explain_playbill_claim(instance, identity=proposed.claim_identity)
+    assert (
+        service_explain_playbill_claim(instance, identity=bare_identity).claim == explanation.claim
+    )
     assert explanation.law_evidence.initial_verdict == "supported"
     assert explanation.approval_coverage == "containing_change_set"
     assert len(explanation.source_handles) == 1
@@ -343,6 +352,10 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
     )
     assert opened.status == "verified"
     assert opened.commitment_verified
+
+    with pytest.raises(ClaimNotFoundError) as missing:
+        service_get_playbill_claim(instance, identity="CLM-" + "f" * 32)
+    assert "Claim:CLM-<32 lowercase hex> or CLM-<32 lowercase hex>" in str(missing.value)
 
     claim_capsule = service_expand_playbill_semantic(
         instance,

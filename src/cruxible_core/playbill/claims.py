@@ -1202,9 +1202,25 @@ def evaluate_claim_law(
                 path=path,
             )
     if not descriptor and not roles.intersection(claim.authority.propose_roles):
+        required_roles = tuple(
+            sorted(claim.authority.propose_roles, key=lambda item: item.encode("utf-8"))
+        )
+        active_principal_ids = tuple(
+            sorted(
+                (
+                    principal.principal_id
+                    for principal in principals.principals
+                    if principal.status == "active"
+                ),
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
         return _diagnostic(
             "playbill.claim.actor_unauthorized",
-            "The authenticated actor lacks ClaimType-derived proposal authority.",
+            "The authenticated actor "
+            f"{(actor_id or '<absent>')!r} lacks ClaimType-derived proposal authority; "
+            f"required roles={list(required_roles)!r}; "
+            f"active principal ids={list(active_principal_ids)!r}.",
             path=path,
         )
     digest = claim_artifact_digest(claim).tagged

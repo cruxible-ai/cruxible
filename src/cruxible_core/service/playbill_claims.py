@@ -902,17 +902,29 @@ def service_get_playbill_claim(
     identity: str,
     at: PlaybillAcceptedCoordinate | None = None,
 ) -> PlaybillClaimView:
+    expected = "Claim:CLM-<32 lowercase hex> or CLM-<32 lowercase hex>"
+    bare = identity.removeprefix("Claim:")
+    try:
+        path = claim_path(bare)
+    except ValueError as exc:
+        raise ClaimNotFoundError(
+            f"Claim not found; expected {expected}; received {identity!r}"
+        ) from exc
+    qualified = f"Claim:{bare}"
     coordinate = _resolve_coordinate(instance, at)
     generation = next(
         item for item in instance.accepted_history() if item.oid == coordinate.git_oid
     )
     if generation.sequence == 0:
-        raise ClaimNotFoundError(identity)
+        raise ClaimNotFoundError(f"Claim not found; expected {expected}; received {identity!r}")
     with instance.bind_accepted_projection(coordinate) as projection:
-        claim = projection.claim(identity)
+        claim = projection.claim(qualified)
     if claim is None:
-        raise ClaimNotFoundError(identity)
-    return _public_claim(claim)
+        raise ClaimNotFoundError(f"Claim not found; expected {expected}; received {identity!r}")
+    public = _public_claim(claim)
+    if public.envelope.get("path") != path:
+        raise ProposalIntegrityError("Claim projection path differs from normalized identity")
+    return public
 
 
 def service_list_playbill_claims(

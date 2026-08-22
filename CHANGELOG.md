@@ -7,6 +7,14 @@ that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
 
+- **Playbill writer ergonomics now route agents through the coordinator.** Direct
+  `playbill claim propose` remains available for compatibility but emits the
+  structured `playbill.claim.propose.legacy_wire_deprecated` warning because it
+  mints Claims outside the citation-aware authoring path. Authoring now provides
+  model-generated examples and client-side Flow-A binding from an exact local
+  source anchor, while Claim reads accept both bare and qualified identities and
+  refusal/review text names the actor, repair authority, and true action tiers.
+
 - **The 0.4.0 deprecation removals landed (BREAKING).** Every surface the
   registry stamped `removal_version: 0.4.0` and that a caller could stop sending
   is gone, along with its acceptance path, its registry entry, and the

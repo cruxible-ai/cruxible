@@ -369,7 +369,9 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
         f"Candidate: {review.candidate_digest}",
         f"Parent semantic root: {review.parent_semantic_root}",
         f"Settlement base OID: {review.base_oid}",
-        f"Required tier: {review.candidate.required_tier}",
+        f"Proposal admission tier: {review.candidate.required_tier}",
+        "Approve requires: graph_write",
+        "Activate requires: graph_write",
         "Required approvals: "
         + ", ".join(
             f"{item.minimum_distinct_signers} {item.role}"

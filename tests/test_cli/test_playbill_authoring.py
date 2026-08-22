@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from click.testing import CliRunner
 
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
+from cruxible_core.playbill.authoring.examples import claim_self_source_example
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -28,9 +30,8 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     tmp_path: Path,
 ) -> None:  # type: ignore[no-untyped-def]
     payload = tmp_path / "claim.json"
-    payload.write_text(
-        json.dumps({"tag": "playbill-claim-authoring-payload-v1", "example": "value"})
-    )
+    authoring = claim_self_source_example().model_dump(mode="json")
+    payload.write_text(json.dumps(authoring))
     calls: list[tuple[str, object]] = []
 
     class StubClient:
@@ -78,7 +79,7 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     assert compiled.exit_code == 0, compiled.output
     assert submitted.exit_code == 0, submitted.output
     assert calls == [
-        ("inst_authoring", {"tag": "playbill-claim-authoring-payload-v1", "example": "value"}),
+        ("inst_authoring", authoring),
         ("inst_authoring", INTENT_ID),
     ]
     assert "target: inst_authoring @ https://authoring.example.test (explicit)" in compiled.stderr
@@ -167,3 +168,198 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
 
     assert confirmed.exit_code == abandoned.exit_code == 0
     assert calls == [(INTENT_ID, OBSERVATION), (INTENT_ID, "abandon")]
+
+
+def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
+    runner = CliRunner()
+    help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
+    assert help_result.exit_code == 0
+    assert "playbill-claim-authoring-payload-v1" in help_result.output
+    assert "playbill-procedure-authoring-payload-v1" in help_result.output
+
+    for name in ("claim-flow-a", "claim-self-source", "procedure", "brief"):
+        result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["tag"] in {
+            "playbill-claim-authoring-payload-v1",
+            "playbill-procedure-authoring-payload-v1",
+        }
+        assert result.stderr == ""
+
+
+def test_cli_validation_names_field_path_and_matching_example(tmp_path: Path) -> None:
+    payload = tmp_path / "invalid.json"
+    payload.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-claim-authoring-payload-v1",
+                "statement": {},
+                "source": {"tag": "playbill-self-source-body-v1"},
+            }
+        )
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "authoring",
+            "create",
+            str(payload),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "$.statement.subject" in result.output
+    assert "playbill authoring create --example claim-self-source" in result.output
+
+
+def test_cli_bind_derives_observation_and_compiles(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    source = tmp_path / "work-items.md"
+    source.write_bytes(b"before\nstatus: ready\nafter\n")
+    stub = claim_self_source_example().model_dump(mode="json")
+    stub["source"] = {
+        "tag": "playbill-working-selection-observation-v1",
+        "source_id": "repo.work-items",
+    }
+    stub["citation_role"] = "evidence"
+    payload_file = tmp_path / "stub.json"
+    payload_file.write_text(json.dumps(stub))
+    calls: list[dict[str, object]] = []
+
+    class StubClient:
+        def compile_playbill_authoring(
+            self,
+            instance_id: str,
+            *,
+            payload: dict[str, object],
+            intent_id: str | None,
+        ) -> contracts.PlaybillAuthoringPreflightResult:
+            assert (instance_id, intent_id) == ("inst_authoring", None)
+            calls.append(payload)
+            return contracts.PlaybillAuthoringPreflightResult(
+                verdict="passed",
+                certificate={"certificate_digest": "sha256:" + "6" * 64},
+                frontier={"diagnostics": []},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "authoring",
+            "bind",
+            "--file",
+            str(source),
+            "--anchor",
+            "status: ready",
+            "--payload-file",
+            str(payload_file),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert len(calls) == 1
+    observation = calls[0]["source"]
+    assert isinstance(observation, dict)
+    assert observation["coordinate"]["source_content_digest"] == (
+        "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
+    )
+
+
+def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    source = tmp_path / "ambiguous.txt"
+    source.write_text("aaa")
+    stub = claim_self_source_example().model_dump(mode="json")
+    stub["source"] = {
+        "tag": "playbill-working-selection-observation-v1",
+        "source_id": "repo.work-items",
+    }
+    stub["citation_role"] = "evidence"
+    payload_file = tmp_path / "stub.json"
+    payload_file.write_text(json.dumps(stub))
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: (_ for _ in ()).throw(AssertionError("daemon must not be called")),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "playbill",
+            "authoring",
+            "bind",
+            "--file",
+            str(source),
+            "--anchor",
+            "aa",
+            "--payload-file",
+            str(payload_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "playbill.authoring.anchor_ambiguous" in result.output
+    assert '"candidate_byte_offsets":[0,1]' in result.output
+
+
+def test_direct_claim_propose_help_and_invocation_route_to_the_coordinator(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    authoring = tmp_path / "legacy.json"
+    authoring.write_text("{}")
+
+    class Result:
+        @staticmethod
+        def model_dump(*, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill._server_call",
+        lambda operation, *, command_name: Result(),
+    )
+    runner = CliRunner()
+    help_result = runner.invoke(cli, ["playbill", "claim", "propose", "--help"])
+    invoked = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "claim",
+            "propose",
+            "--authoring",
+            str(authoring),
+            "--name",
+            "legacy",
+            "--json",
+        ],
+    )
+
+    assert help_result.exit_code == 0
+    assert "Legacy-wire path" in help_result.output
+    assert "sanctioned authoring coordinator" in help_result.output
+    assert invoked.exit_code == 0, invoked.output
+    assert "playbill.claim.propose.legacy_wire_deprecated" in invoked.stderr
+    assert "playbill authoring create/compile" in invoked.stderr
