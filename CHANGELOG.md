@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Version the Playbill floor as `playbill-floor-export-v2`: JSON cards are now
+  deterministically pretty-printed, and the v2 manifest inventory and floor
+  digest bind those exact grep-friendly bytes while v1 readers remain intact.
+
 - Curate the default Playbill MCP catalog around authoring and discovery, with
   `expert`/`full` retaining the complete surface, and render one deduplicated
   orientation header on human `playbill search`, `list`, and `orient` output.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
@@ -131,10 +132,11 @@ def test_first_brief_installs_exact_builtin_type_and_derives_purpose_slot(
     assert claim.statement.claim_type_digest == claim_type_digest(KNOWLEDGE_BRIEF_CLAIM_TYPE).tagged
     floor = service_export_playbill_floor(instance)
     card = floor[f"briefs/{intent.semantic_identity}.card.json"]
-    assert b'"health_receipt_digest":"sha256:' in card
-    assert b'"prose":"Use the release checklist."' in card
-    assert b'"slot_state":"accepted"' in card
-    assert b'"source_handles":[{' in card
+    payload = json.loads(card)
+    assert payload["health_receipt_digest"].startswith("sha256:")
+    assert payload["prose"] == "Use the release checklist."
+    assert payload["slot_state"] == "accepted"
+    assert payload["source_handles"]
 
 
 def test_brief_qualifier_mismatch_refuses_with_its_repair(tmp_path: Path) -> None:

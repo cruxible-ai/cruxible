@@ -21,6 +21,7 @@ about, and only the resolver can tell you what it *is*.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -98,6 +99,7 @@ from cruxible_core.playbill.service.documents import (
 from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.playbill.source_references import SourceHandleV1
 from cruxible_core.playbill.subjects import parse_subject, subject_digest
+from cruxible_core.primitives import pretty_json
 from cruxible_core.service.playbill_claims import (
     _claim_from_view,
     service_explain_playbill_claim,
@@ -118,10 +120,12 @@ from cruxible_core.service.playbill_query import (
 )
 from cruxible_core.temporal import parse_datetime
 
-FLOOR_FORMAT = "playbill-floor-export-v1"
+FLOOR_FORMAT_V1 = "playbill-floor-export-v1"
+FLOOR_FORMAT = "playbill-floor-export-v2"
 MANIFEST_PATH = "manifest.json"
 COVERAGE_MANIFEST_PATH = "coverage-manifest.json"
-FLOOR_DIGEST_DOMAIN = "playbill-floor-export-v1"
+FLOOR_DIGEST_DOMAIN_V1 = "playbill-floor-export-v1"
+FLOOR_DIGEST_DOMAIN = "playbill-floor-export-v2"
 DEFAULT_FLOOR_PRINCIPAL = "playbill-floor"
 SUBJECT_PATH_PREFIX = "subjects/"
 
@@ -155,6 +159,16 @@ class PlaybillFloorManifestV1(_StrictFloorModel):
 
     tag: Literal["playbill-floor-manifest-v1"] = "playbill-floor-manifest-v1"
     format: Literal["playbill-floor-export-v1"] = "playbill-floor-export-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    files: tuple[PlaybillFloorFileV1, ...]
+    floor_digest: str
+
+
+class PlaybillFloorManifestV2(_StrictFloorModel):
+    """The pretty-byte floor manifest; every inventory digest binds rendered bytes."""
+
+    tag: Literal["playbill-floor-manifest-v2"] = "playbill-floor-manifest-v2"
+    format: Literal["playbill-floor-export-v2"] = "playbill-floor-export-v2"
     coordinate: PlaybillAcceptedCoordinate
     files: tuple[PlaybillFloorFileV1, ...]
     floor_digest: str
@@ -288,8 +302,21 @@ def _resolve_coordinate(
     )
 
 
-def _render(payload: object) -> bytes:
+def render_floor_json_v1(payload: object) -> bytes:
+    """Preserve the original compact v1 spelling for historical readers/tests."""
+
     return canonical_bytes(payload) + b"\n"
+
+
+def render_floor_json_v2(payload: object) -> bytes:
+    """Render one canonical JSON value as deterministic, greppable UTF-8."""
+
+    value = json.loads(canonical_bytes(payload))
+    return pretty_json(value).encode("utf-8") + b"\n"
+
+
+def _render(payload: object) -> bytes:
+    return render_floor_json_v2(payload)
 
 
 def _content_digest(content: bytes) -> str:
@@ -733,7 +760,7 @@ def service_export_playbill_floor(
         )
         for path, content in ordered.items()
     )
-    manifest = PlaybillFloorManifestV1(
+    manifest = PlaybillFloorManifestV2(
         coordinate=accepted,
         files=inventory,
         floor_digest=typed_digest(
@@ -752,11 +779,14 @@ __all__ = [
     "PlaybillFloorCoverageManifestV2",
     "PlaybillFloorFileV1",
     "PlaybillFloorManifestV1",
+    "PlaybillFloorManifestV2",
     "PlaybillProcedureCapabilitiesV1",
     "PlaybillProcedureFloorCardV1",
     "PlaybillProcedureGovernanceV1",
     "PlaybillProcedureInputContractV1",
     "PlaybillProcedureTrackRecordEntryV1",
     "PlaybillBriefFloorCardV1",
+    "render_floor_json_v1",
+    "render_floor_json_v2",
     "service_export_playbill_floor",
 ]

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
+from cruxible_client import contracts
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.models import ProcedureAuthoringPayloadV1
+from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
@@ -21,7 +24,10 @@ from cruxible_core.service.playbill_floor import (
     MANIFEST_PATH,
     PlaybillFloorCoverageManifestV2,
     PlaybillFloorManifestV1,
+    PlaybillFloorManifestV2,
     PlaybillProcedureFloorCardV1,
+    render_floor_json_v1,
+    render_floor_json_v2,
     service_export_playbill_floor,
 )
 from tests.test_playbill._knowledge_loop_support import (
@@ -55,8 +61,8 @@ def _instance_with_query(tmp_path: Path):
     return instance, owner
 
 
-def _manifest(floor: dict[str, bytes]) -> PlaybillFloorManifestV1:
-    return PlaybillFloorManifestV1.model_validate(json.loads(floor[MANIFEST_PATH]))
+def _manifest(floor: dict[str, bytes]) -> PlaybillFloorManifestV2:
+    return PlaybillFloorManifestV2.model_validate(json.loads(floor[MANIFEST_PATH]))
 
 
 def _instance_with_procedure(tmp_path: Path):
@@ -109,11 +115,68 @@ def test_manifest_binds_every_file_to_the_accepted_coordinate(tmp_path: Path) ->
 
     manifest = _manifest(floor)
     assert manifest.coordinate == accepted
-    assert manifest.format == "playbill-floor-export-v1"
+    assert manifest.format == "playbill-floor-export-v2"
     listed = {item.path for item in manifest.files}
     assert listed == set(floor) - {MANIFEST_PATH}
     assert all(item.content_digest.startswith("sha256:") for item in manifest.files)
     assert all(item.byte_length == len(floor[item.path]) for item in manifest.files)
+    assert all(
+        item.content_digest == "sha256:" + hashlib.sha256(floor[item.path]).hexdigest()
+        for item in manifest.files
+    )
+
+
+def test_v2_json_render_is_pretty_stable_and_v1_spelling_is_unchanged() -> None:
+    payload = {"z": [2, 1], "a": "é"}
+
+    assert render_floor_json_v1(payload) == canonical_bytes(payload) + b"\n"
+    assert render_floor_json_v2(payload) == (
+        '{\n  "a": "é",\n  "z": [\n    2,\n    1\n  ]\n}\n'.encode()
+    )
+    assert (
+        PlaybillFloorManifestV1.model_validate(
+            {
+                "tag": "playbill-floor-manifest-v1",
+                "format": "playbill-floor-export-v1",
+                "coordinate": {
+                    "git_oid": "1" * 64,
+                    "semantic_root": "sha256:" + "2" * 64,
+                    "generation_root": "sha256:" + "3" * 64,
+                    "compiler_digest": "sha256:" + "4" * 64,
+                },
+                "files": [],
+                "floor_digest": "sha256:" + "5" * 64,
+            }
+        ).format
+        == "playbill-floor-export-v1"
+    )
+
+
+def test_floor_client_envelope_defaults_to_v2_and_still_reads_v1() -> None:
+    coordinate = contracts.PlaybillAcceptedCoordinate(
+        git_oid="1" * 64,
+        semantic_root="sha256:" + "2" * 64,
+        generation_root="sha256:" + "3" * 64,
+        compiler_digest="sha256:" + "4" * 64,
+    )
+
+    assert (
+        contracts.PlaybillFloorExport(
+            coordinate=coordinate,
+            manifest={},
+            files=[],
+        ).tag
+        == "playbill-floor-export-v2"
+    )
+    assert (
+        contracts.PlaybillFloorExport(
+            tag="playbill-floor-export-v1",
+            coordinate=coordinate,
+            manifest={},
+            files=[],
+        ).tag
+        == "playbill-floor-export-v1"
+    )
 
 
 def test_manifest_file_inventory_is_byte_sorted(tmp_path: Path) -> None:
@@ -242,3 +305,5 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
         instance.accepted_coordinate()
     )
     assert PROCEDURE_CARD_PATH in {item.path for item in _manifest(floor).files}
+    (render_floor_json_v1,)
+    (render_floor_json_v2,)

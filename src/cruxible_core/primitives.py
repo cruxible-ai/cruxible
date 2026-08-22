@@ -61,6 +61,19 @@ def canonical_json(value: Any, *, default: Callable[[Any], Any] | None = None) -
     )
 
 
+def pretty_json(value: Any) -> str:
+    """Serialize deterministic, indented RFC-compliant JSON for file surfaces."""
+
+    return json.dumps(
+        value,
+        sort_keys=True,
+        indent=2,
+        separators=(",", ": "),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
 def json_type_name(value: Any) -> str:
     """Return a JSON-schema-style type label for a runtime value."""
     return _JSON_TYPE_NAMES.get(type(value), type(value).__name__)

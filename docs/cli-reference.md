@@ -239,6 +239,11 @@ non-empty output directory unless --force is given. The export carries its own
 coverage boundary in `coverage-manifest.json`, enumerated in the root manifest
 like every other floor file.
 
+Floor export v2 pretty-prints every JSON card with stable key ordering for grep
+quality. `manifest.json` inventories and digests those exact rendered bytes, so
+repeated exports at one accepted coordinate remain byte-identical. Historical v1
+manifests and compact JSON spelling remain readable without reinterpretation.
+
 `--with-native` additionally writes the native knowledge renders into the same
 directory, which is the arm-3/arm-4 file surface: floor artifacts (`.json`),
 rendered pages (`.md`), and the coverage boundary in one greppable tree. The two
