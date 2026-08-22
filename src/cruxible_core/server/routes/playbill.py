@@ -17,6 +17,8 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalRequest,
     PlaybillAuthoringCompileRequest,
     PlaybillAuthoringCreateRequest,
+    PlaybillAuthoringInputCompileRequest,
+    PlaybillAuthoringInputCreateRequest,
     PlaybillAuthoringPreflightRequest,
     PlaybillAuthoringSubmitRequest,
     PlaybillClaimExplainRequest,
@@ -30,6 +32,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillProposalReadmitRequest,
     PlaybillProposeClaimRequest,
     PlaybillProposeClaimsRequest,
+    PlaybillProposeClaimTypeInputRequest,
     PlaybillProposeClaimTypeRequest,
     PlaybillProposeDocumentRequest,
     PlaybillProposePrincipalRequest,
@@ -450,12 +453,20 @@ async def subject_history(
 
 @router.post(
     "/{instance_id}/playbill/claim-types/proposals",
-    response_model=contracts.PlaybillProposalInspection,
+    response_model=(
+        contracts.PlaybillProposalInspection | contracts.PlaybillClaimTypeInputProposalResult
+    ),
 )
 async def propose_claim_type(
     instance_id: str,
-    req: PlaybillProposeClaimTypeRequest,
-) -> contracts.PlaybillProposalInspection:
+    req: PlaybillProposeClaimTypeRequest | PlaybillProposeClaimTypeInputRequest,
+) -> contracts.PlaybillProposalInspection | contracts.PlaybillClaimTypeInputProposalResult:
+    if isinstance(req, PlaybillProposeClaimTypeInputRequest):
+        return playbill_api.playbill_propose_claim_type_input(
+            resolve_server_instance_id(instance_id),
+            input=req.input,
+            proposal_name=req.proposal_name,
+        )
     return playbill_api.playbill_propose_claim_type(
         resolve_server_instance_id(instance_id),
         claim_type=req.claim_type,
@@ -538,8 +549,12 @@ async def propose_claims(
 )
 async def create_authoring_intent(
     instance_id: str,
-    req: PlaybillAuthoringCreateRequest,
+    req: PlaybillAuthoringCreateRequest | PlaybillAuthoringInputCreateRequest,
 ) -> contracts.PlaybillAuthoringIntentView:
+    if isinstance(req, PlaybillAuthoringInputCreateRequest):
+        return playbill_api.playbill_authoring_create_input(
+            resolve_server_instance_id(instance_id), input=req.input
+        )
     return playbill_api.playbill_authoring_create(
         resolve_server_instance_id(instance_id), payload=req.payload
     )
@@ -561,8 +576,14 @@ async def list_pending_authoring_intents(
 )
 async def compile_authoring(
     instance_id: str,
-    req: PlaybillAuthoringCompileRequest,
+    req: PlaybillAuthoringCompileRequest | PlaybillAuthoringInputCompileRequest,
 ) -> contracts.PlaybillAuthoringPreflightResult:
+    if isinstance(req, PlaybillAuthoringInputCompileRequest):
+        return playbill_api.playbill_authoring_compile_input(
+            resolve_server_instance_id(instance_id),
+            input=req.input,
+            intent_id=req.intent_id,
+        )
     return playbill_api.playbill_authoring_compile(
         resolve_server_instance_id(instance_id),
         payload=req.payload,

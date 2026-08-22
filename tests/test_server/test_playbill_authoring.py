@@ -95,6 +95,43 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
     assert seen[1] == (instance_id, INTENT_ID)
 
 
+def test_http_input_variants_delegate_without_exposing_a_base(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    input_value = {
+        "kind": "claim",
+        "subject": "project.work_item/wi-42",
+        "predicate": "project.work_item.status",
+        "object": {"kind": "literal", "value": "ready"},
+        "role": "observation",
+        "rationale": "Observed ready.",
+        "source": {"kind": "self_source", "body": "status: ready\n"},
+    }
+    seen: list[object] = []
+
+    def create_stub(selected: str, *, input: object):
+        seen.append((selected, input))
+        return contracts.PlaybillAuthoringIntentView(intent={"intent_id": INTENT_ID})
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_authoring_create_input",
+        create_stub,
+    )
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        json={
+            "tag": "playbill-authoring-input-create-request-v1",
+            "input": input_value,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert seen and seen[0][0] == instance_id
+    assert "base" not in response.request.content.decode()
+
+
 def test_http_refuses_digest_and_base_smuggling_in_request_models(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:

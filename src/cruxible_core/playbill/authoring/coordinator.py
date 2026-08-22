@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Callable, Literal
 
 from cruxible_core.playbill.artifacts import ArtifactLifecycle, ArtifactPin
+from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, lower_authoring_input
 from cruxible_core.playbill.authoring.insertions import (
     InsertionProtocolError,
     mark_abandoned,
@@ -91,8 +92,11 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
+        base_coordinate: AcceptedCoordinate | None = None,
     ) -> AuthoringIntentViewV1:
-        at = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
+        at = base_coordinate or AcceptedCoordinate.from_internal(
+            self.instance.accepted_coordinate()
+        )
         intent_id = self.store.mint_intent_id()
         semantic_identity = self._mint_semantic_identity(payload)
         status = CandidateStatusV1(
@@ -126,6 +130,25 @@ class AuthoringIntentCoordinator:
         ).tagged
         stored = self.store.create(intent, operation_key=operation_key)
         return AuthoringIntentViewV1(intent=stored)
+
+    def create_input(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        input: AuthoringInputV1,
+        canonical_timestamp: str,
+    ) -> AuthoringIntentViewV1:
+        """Atomically bind friendly IDs to one accepted base, then persist the intent."""
+
+        base = self.instance.accepted_coordinate()
+        coordinate = AcceptedCoordinate.from_internal(base)
+        payload = lower_authoring_input(input, tree=self.instance.tree_at(base.git_oid))
+        return self.create(
+            actor=actor,
+            payload=payload,
+            canonical_timestamp=canonical_timestamp,
+            base_coordinate=coordinate,
+        )
 
     def get(self, intent_id: str, *, actor: AuthenticatedActor) -> AuthoringIntentViewV1:
         intent = self._refresh_protocol(
@@ -213,6 +236,29 @@ class AuthoringIntentCoordinator:
             if intent_id is None
             else self.replace_payload(intent_id, actor=actor, payload=payload)
         )
+        return self.preflight(view.intent.intent_id, actor=actor)
+
+    def compile_input(
+        self,
+        *,
+        actor: AuthenticatedActor,
+        input: AuthoringInputV1,
+        canonical_timestamp: str,
+        intent_id: str | None = None,
+    ) -> PreflightResultV1:
+        if intent_id is None:
+            view = self.create_input(
+                actor=actor,
+                input=input,
+                canonical_timestamp=canonical_timestamp,
+            )
+        else:
+            current = self.store.get(intent_id, actor_id=actor.actor_id)
+            payload = lower_authoring_input(
+                input,
+                tree=self.instance.tree_at(current.base_coordinate.git_oid),
+            )
+            view = self.replace_payload(intent_id, actor=actor, payload=payload)
         return self.preflight(view.intent.intent_id, actor=actor)
 
     def submit(

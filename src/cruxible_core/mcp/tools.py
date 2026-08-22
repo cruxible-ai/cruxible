@@ -12,6 +12,8 @@ from cruxible_client import contracts
 from cruxible_core import __version__
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.tool_prompts import tool_description
+from cruxible_core.playbill.authoring.inputs import AuthoringInputV1
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 
 
 def register_tools(
@@ -271,11 +273,13 @@ def register_tools(
     @_tool
     def cruxible_playbill_propose_claim_type(
         instance_id: str,
-        claim_type: dict[str, Any],
+        input: ClaimTypeInputV1,
         proposal_name: str,
-    ) -> contracts.PlaybillProposalInspection:
+    ) -> contracts.PlaybillClaimTypeInputProposalResult:
         """Propose one governed ClaimType interface."""
-        return handlers.handle_playbill_propose_claim_type(instance_id, claim_type, proposal_name)
+        return handlers.handle_playbill_propose_claim_type(
+            instance_id, input.model_dump(mode="json"), proposal_name
+        )
 
     @_tool
     def cruxible_playbill_list_claim_types(
@@ -312,10 +316,12 @@ def register_tools(
     @_tool
     def cruxible_playbill_authoring_create(
         instance_id: str,
-        payload: dict[str, Any],
+        payload: AuthoringInputV1,
     ) -> contracts.PlaybillAuthoringIntentView:
         """Create or recover a daemon-owned authoring intent."""
-        return handlers.handle_playbill_authoring_create(instance_id, payload)
+        return handlers.handle_playbill_authoring_create(
+            instance_id, payload.model_dump(mode="json")
+        )
 
     @_tool
     def cruxible_playbill_authoring_get(
@@ -343,13 +349,13 @@ def register_tools(
     @_tool
     def cruxible_playbill_authoring_compile(
         instance_id: str,
-        payload: dict[str, Any],
+        payload: AuthoringInputV1,
         intent_id: str | None = None,
     ) -> contracts.PlaybillAuthoringPreflightResult:
         """Create or update an intent and return its complete preflight."""
         return handlers.handle_playbill_authoring_compile(
             instance_id,
-            payload,
+            payload.model_dump(mode="json"),
             intent_id=intent_id,
         )
 

@@ -11,6 +11,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_core.playbill.actor_context import TransportCapability
+from cruxible_core.playbill.claim_type_inputs import (
+    ClaimTypeInputProposalResultV1,
+    ClaimTypeInputV1,
+    lint_claim_type_input,
+    lower_claim_type_input,
+)
 from cruxible_core.playbill.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -115,6 +121,43 @@ def service_propose_playbill_claim_type(
     )
 
 
+def service_propose_playbill_claim_type_input(
+    instance: PlaybillInstance,
+    *,
+    input: ClaimTypeInputV1,
+    actor_id: str,
+    proposal_name: str,
+    timestamp: str,
+    capabilities: tuple[TransportCapability, ...] = ("propose",),
+) -> ClaimTypeInputProposalResultV1:
+    """Lower and lint one tagless ClaimType input against one captured coordinate."""
+
+    coordinate = instance.accepted_coordinate()
+    tree = instance.tree_at(coordinate.git_oid)
+    claim_type = lower_claim_type_input(input, tree=tree)
+    candidate_tree = dict(tree)
+    candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),
+        request=ProposalAdmissionRequest(
+            target_ref=f"refs/proposals/{actor_id}/{proposal_name}",
+            proposed_base_oid=coordinate.git_oid,
+        ),
+        candidate_tree=candidate_tree,
+        timestamp=timestamp,
+    )
+    inspection = PlaybillProposalInspection(
+        proposal=result,
+        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
+            instance.accepted_coordinate()
+        ),
+    )
+    return ClaimTypeInputProposalResultV1(
+        proposal=inspection,
+        lint=lint_claim_type_input(instance, input, coordinate=coordinate),
+    )
+
+
 def service_get_playbill_claim_type(
     instance: PlaybillInstance,
     *,
@@ -157,4 +200,5 @@ __all__ = [
     "service_get_playbill_claim_type",
     "service_list_playbill_claim_types",
     "service_propose_playbill_claim_type",
+    "service_propose_playbill_claim_type_input",
 ]

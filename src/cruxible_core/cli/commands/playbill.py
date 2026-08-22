@@ -32,14 +32,18 @@ from cruxible_core.deprecation import (
 )
 from cruxible_core.playbill import native, seed
 from cruxible_core.playbill.attestations import ApprovalStatement
-from cruxible_core.playbill.authoring.bind import bind_working_selection
+from cruxible_core.playbill.authoring.bind import bind_working_selection_input
 from cruxible_core.playbill.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     AuthoringExampleName,
     authoring_example,
 )
-from cruxible_core.playbill.authoring.models import AuthoringPayloadV1
+from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_core.playbill.claim_type_inputs import (
+    ClaimTypeInputV1,
+    claim_type_input_example,
+)
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
@@ -130,23 +134,22 @@ def _read_mapping(path: str) -> dict[str, Any]:
     return cast(dict[str, Any], payload)
 
 
-_AUTHORING_PAYLOAD_ADAPTER: TypeAdapter[AuthoringPayloadV1] = TypeAdapter(AuthoringPayloadV1)
+_AUTHORING_INPUT_ADAPTER: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
 
 
 def _authoring_examples_for(payload: Mapping[str, Any]) -> tuple[str, ...]:
-    tag = payload.get("tag")
-    if tag == "playbill-procedure-authoring-payload-v1":
+    kind = payload.get("kind")
+    if kind == "procedure":
         return ("procedure",)
-    if tag != "playbill-claim-authoring-payload-v1":
-        return tuple(AUTHORING_EXAMPLE_FACTORIES)
-    statement = payload.get("statement")
-    if isinstance(statement, Mapping) and statement.get("predicate") == "knowledge.brief":
+    if kind == "brief":
         return ("brief",)
+    if kind != "claim":
+        return tuple(AUTHORING_EXAMPLE_FACTORIES)
     source = payload.get("source")
     if isinstance(source, Mapping):
-        if source.get("tag") == "playbill-working-selection-observation-v1":
+        if source.get("kind") == "working_selection":
             return ("claim-flow-a",)
-        if source.get("tag") == "playbill-self-source-body-v1":
+        if source.get("kind") == "self_source":
             return ("claim-self-source",)
     return ("claim-flow-a", "claim-self-source")
 
@@ -161,10 +164,10 @@ def _validation_path(location: tuple[object, ...]) -> str:
     return rendered
 
 
-def _read_authoring_payload(path: str) -> dict[str, Any]:
+def _read_authoring_input(path: str) -> AuthoringInputV1:
     payload = _read_mapping(path)
     try:
-        parsed = _AUTHORING_PAYLOAD_ADAPTER.validate_python(payload)
+        return _AUTHORING_INPUT_ADAPTER.validate_python(payload)
     except ValidationError as exc:
         examples = ", ".join(
             f"playbill authoring create --example {name}"
@@ -175,9 +178,8 @@ def _read_authoring_payload(path: str) -> dict[str, Any]:
             for item in exc.errors(include_url=False)
         )
         raise click.ClickException(
-            f"Invalid authoring payload: {errors}. Example: {examples}"
+            f"Invalid authoring input: {errors}. Matching example: {examples}"
         ) from exc
-    return parsed.model_dump(mode="json")
 
 
 def _write_floor(destination: Path, export: contracts.PlaybillFloorExport, *, force: bool) -> None:
@@ -360,7 +362,7 @@ def document_group() -> None:
 
 @document_group.command("propose")
 @click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--name", "proposal_name", required=True)
+@click.option("--name", "proposal_name")
 @json_option
 @handle_errors
 def propose_document(envelope: str, proposal_name: str, output_json: bool) -> None:
@@ -726,7 +728,7 @@ def check_sources(
 def propose_sources(
     bundle_path: str,
     source_name: str,
-    proposal_name: str,
+    proposal_name: str | None,
     output_json: bool,
 ) -> None:
     bundle = _read_model(bundle_path, SourceCompilationBundle)
@@ -921,16 +923,61 @@ def claim_type_group() -> None:
 
 
 @claim_type_group.command("propose")
-@click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False))
+@click.option("--envelope", type=click.Path(exists=True, dir_okay=False), hidden=True)
+@click.option("--example", is_flag=True, help="Print the model-generated ClaimType input.")
 @click.option("--name", "proposal_name", required=True)
 @json_option
 @handle_errors
-def propose_claim_type(envelope: str, proposal_name: str, output_json: bool) -> None:
-    claim_type = _read_mapping(envelope)
+def propose_claim_type(
+    input_path: str | None,
+    envelope: str | None,
+    example: bool,
+    proposal_name: str,
+    output_json: bool,
+) -> None:
+    choices = (input_path is not None, envelope is not None, example)
+    if sum(choices) != 1:
+        raise click.UsageError("provide exactly one of --input or --example")
+    if example:
+        click.echo(
+            json.dumps(
+                claim_type_input_example().model_dump(mode="json"),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+    if proposal_name is None:
+        raise click.UsageError("--name is required when proposing")
+    if envelope is not None:
+        result = _server_call(
+            lambda client, instance_id: client.propose_playbill_claim_type(
+                instance_id,
+                claim_type=_read_mapping(envelope),
+                proposal_name=proposal_name,
+            ),
+            command_name="playbill claim-type propose",
+        )
+        _emit_json(result.model_dump(mode="json"))
+        return
+    assert input_path is not None
+    try:
+        claim_type_input = ClaimTypeInputV1.model_validate(_read_mapping(input_path))
+    except ValidationError as exc:
+        raise click.ClickException(
+            "Invalid ClaimType input: "
+            + "; ".join(
+                f"{_validation_path(tuple(item['loc']))}: {item['msg']}"
+                for item in exc.errors(include_url=False)
+            )
+            + ". Matching example: playbill claim-type propose --example"
+        ) from exc
     result = _server_call(
-        lambda client, instance_id: client.propose_playbill_claim_type(
+        lambda client, instance_id: client.propose_playbill_claim_type_input(
             instance_id,
-            claim_type=claim_type,
+            input=claim_type_input.model_dump(mode="json"),
             proposal_name=proposal_name,
         ),
         command_name="playbill claim-type propose",
@@ -1045,9 +1092,7 @@ def create_authoring_intent(
     """Create a durable authoring intent or print a schema-derived example.
 
     \b
-    Payload tags:
-    playbill-claim-authoring-payload-v1
-    playbill-procedure-authoring-payload-v1
+    Input kind family: claim | brief | procedure (tagless).
 
     Use --example claim-flow-a|claim-self-source|procedure|brief for a
     model-generated starting point.
@@ -1069,9 +1114,8 @@ def create_authoring_intent(
     assert payload is not None
     _echo_write_target("active", ctx.params)
     result = _server_call(
-        lambda client, instance_id: client.create_playbill_authoring_intent(
-            instance_id,
-            payload=_read_authoring_payload(payload),
+        lambda client, instance_id: client.create_playbill_authoring_input(
+            instance_id, input=_read_authoring_input(payload).model_dump(mode="json")
         ),
         command_name="playbill authoring create",
     )
@@ -1120,9 +1164,9 @@ def list_pending_authoring_intents(output_json: bool) -> None:
 @handle_errors
 def compile_authoring(payload: str, intent_id: str | None, output_json: bool) -> None:
     result = _server_call(
-        lambda client, instance_id: client.compile_playbill_authoring(
+        lambda client, instance_id: client.compile_playbill_authoring_input(
             instance_id,
-            payload=_read_authoring_payload(payload),
+            input=_read_authoring_input(payload).model_dump(mode="json"),
             intent_id=intent_id,
         ),
         command_name="playbill authoring compile",
@@ -1156,8 +1200,11 @@ def bind_authoring_selection(
         content = source.read_bytes()
     except OSError as exc:
         raise click.ClickException(f"Could not read {source}: {exc}") from exc
-    payload = bind_working_selection(
-        _read_mapping(payload_file),
+    parsed_input = _read_authoring_input(payload_file)
+    if not isinstance(parsed_input, ClaimInput):
+        raise click.ClickException("authoring bind accepts only a claim input")
+    payload = bind_working_selection_input(
+        parsed_input,
         content=content,
         anchor=anchor,
         window_lines=window_lines,

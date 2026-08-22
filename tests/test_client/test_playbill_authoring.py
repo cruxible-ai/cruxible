@@ -95,6 +95,45 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
     assert all(key not in captured[0].content.decode() for key in ("base", "claim_id"))
 
 
+def test_client_speaks_tagless_input_request_variants() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/compile"):
+            return httpx.Response(
+                200,
+                json={
+                    "tag": "playbill-authoring-preflight-result-v1",
+                    "verdict": "refused",
+                    "certificate": {"certificate_digest": "sha256:" + "6" * 64},
+                    "frontier": {"diagnostics": []},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "tag": "playbill-authoring-intent-view-v1",
+                "intent": {"intent_id": INTENT_ID},
+            },
+        )
+
+    input_value = {
+        "kind": "claim",
+        "subject": "project.work_item/wi-42",
+        "predicate": "project.work_item.status",
+    }
+    client = _client(handler)
+    client.create_playbill_authoring_input("inst", input=input_value)
+    client.compile_playbill_authoring_input("inst", input=input_value)
+
+    assert [json.loads(item.content)["tag"] for item in captured] == [
+        "playbill-authoring-input-create-request-v1",
+        "playbill-authoring-input-compile-request-v1",
+    ]
+    assert all(json.loads(item.content)["input"] == input_value for item in captured)
+
+
 def test_client_get_resume_list_and_status_are_path_only_reads() -> None:
     captured: list[httpx.Request] = []
 

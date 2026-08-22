@@ -8,10 +8,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_core.playbill.attestations import ApprovalAttestation
+from cruxible_core.playbill.authoring.inputs import AuthoringInputV1
 from cruxible_core.playbill.authoring.models import (
     AuthoringPayloadV1,
     InsertionConfirmationObservationV1,
 )
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -103,6 +105,14 @@ class PlaybillProposeClaimTypeRequest(_StrictPlaybillRequest):
     base: AcceptedCoordinate | None = None
 
 
+class PlaybillProposeClaimTypeInputRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-claim-type-input-propose-request-v1"] = (
+        "playbill-claim-type-input-propose-request-v1"
+    )
+    input: ClaimTypeInputV1
+    proposal_name: str
+
+
 class PlaybillProposeClaimRequest(_StrictPlaybillRequest):
     authoring: DirectClaimAuthoringV1
     proposal_name: str
@@ -122,11 +132,26 @@ class PlaybillAuthoringCreateRequest(_StrictPlaybillRequest):
     payload: AuthoringPayloadV1
 
 
+class PlaybillAuthoringInputCreateRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-authoring-input-create-request-v1"] = (
+        "playbill-authoring-input-create-request-v1"
+    )
+    input: AuthoringInputV1
+
+
 class PlaybillAuthoringCompileRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-intent-compile-request-v1"] = (
         "playbill-authoring-intent-compile-request-v1"
     )
     payload: AuthoringPayloadV1
+    intent_id: str | None = None
+
+
+class PlaybillAuthoringInputCompileRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-authoring-input-compile-request-v1"] = (
+        "playbill-authoring-input-compile-request-v1"
+    )
+    input: AuthoringInputV1
     intent_id: str | None = None
 
 

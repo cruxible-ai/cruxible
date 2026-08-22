@@ -1,0 +1,215 @@
+"""Decision-only ClaimType input and deterministic proposal-time contract lint."""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactLifecycle
+from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_core.playbill.captures import (
+    capture_contract_digest,
+    foreign_source_capture_contract,
+    parse_capture_contract,
+)
+from cruxible_core.playbill.claim_types import (
+    ClaimType,
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+)
+from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.service.documents import PlaybillProposalInspection
+
+
+class _StrictClaimTypeInputModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ClaimTypeInputV1(_StrictClaimTypeInputModel):
+    predicate: str
+    allowed_subject_kinds: tuple[str, ...]
+    object_kind: Literal["literal", "subject", "exact_content"]
+    literal_schema: dict[str, object] | None = None
+    allowed_object_subject_kinds: tuple[str, ...] = ()
+    cardinality: Literal["one", "many"]
+    permitted_roles: tuple[
+        Literal["normative", "observation", "environment_binding", "derivation"], ...
+    ]
+    referent_sensitivity: Literal["identity", "shell"] = "identity"
+    evidence_admission_policy: dict[str, object]
+    admission_policy: dict[str, object]
+    resolution_policy: dict[str, object]
+    authority: ArtifactAuthority
+    pins: tuple[dict[str, object], ...] = ()
+    subject_scope: dict[str, object] | None = None
+    slot_policy: dict[str, object] | None = None
+    anticipated_source_ids: tuple[str, ...] = ()
+
+    @field_validator("anticipated_source_ids")
+    @classmethod
+    def _sources(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("anticipated_source_ids must be sorted and unique")
+        for source_id in value:
+            foreign_source_capture_contract(source_id)
+        return value
+
+
+class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
+    code: Literal[
+        "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+        "playbill.claim_type.anticipated_source_contract_omitted",
+    ]
+    field_path: str
+    source_id: str | None = None
+    contract_identity: str
+    contract_digest: str
+    replacement_rule_fragment: dict[str, object]
+
+
+class ClaimTypeProposalLintV1(_StrictClaimTypeInputModel):
+    tag: Literal["playbill-claim-type-proposal-lint-v1"] = "playbill-claim-type-proposal-lint-v1"
+    warnings: tuple[ClaimTypeLintWarningV1, ...]
+
+
+class ClaimTypeInputProposalResultV1(_StrictClaimTypeInputModel):
+    tag: Literal["playbill-claim-type-input-proposal-result-v1"] = (
+        "playbill-claim-type-input-proposal-result-v1"
+    )
+    proposal: PlaybillProposalInspection
+    lint: ClaimTypeProposalLintV1
+
+
+def lower_claim_type_input(
+    value: ClaimTypeInputV1,
+    *,
+    tree: dict[str, bytes],
+) -> ClaimType:
+    path = claim_type_path(value.predicate)
+    predecessor = None
+    if path in tree:
+        predecessor = parse_claim_type(tree[path], path=path)
+    payload = value.model_dump(mode="json")
+    payload.pop("anticipated_source_ids")
+    payload["artifact_format"] = (
+        "playbill-claim-type-v2"
+        if value.subject_scope is not None or value.slot_policy is not None
+        else "playbill-claim-type-v1"
+    )
+    payload["identity"] = ArtifactIdentity(kind="ClaimType", name=value.predicate).model_dump(
+        mode="json"
+    )
+    payload["lifecycle"] = ArtifactLifecycle(
+        predecessor_digest=(None if predecessor is None else claim_type_digest(predecessor).tagged)
+    ).model_dump(mode="json")
+    return ClaimType.model_validate(payload)
+
+
+def claim_type_input_example() -> ClaimTypeInputV1:
+    """Return the validated tagless template consumed by claim-type propose."""
+
+    return ClaimTypeInputV1(
+        predicate="project.work_item.replace_me",
+        allowed_subject_kinds=("project.work_item",),
+        object_kind="literal",
+        literal_schema={"type": "string"},
+        cardinality="one",
+        permitted_roles=("normative", "observation"),
+        evidence_admission_policy={"rules": []},
+        admission_policy={
+            "transition_requirements": [],
+            "actor_requirements": [],
+            "evidence_requirements": [],
+            "freeze_requirements": [],
+        },
+        resolution_policy={
+            "cardinality": "one",
+            "eligible_verdicts": ["supported"],
+            "required_basis_kinds": [],
+            "require_current": True,
+            "selector": "only_contender",
+            "authority_rule_digest": None,
+            "conflict_result": "unresolved",
+        },
+        authority=ArtifactAuthority(
+            propose_roles=("owner",),
+            approve_roles=("owner",),
+        ),
+        anticipated_source_ids=("repo.replace-me",),
+    )
+
+
+def lint_claim_type_input(
+    instance: PlaybillInstance,
+    value: ClaimTypeInputV1,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> ClaimTypeProposalLintV1:
+    tree = instance.tree_at(coordinate.git_oid)
+    accepted_contracts: dict[str, str] = {}
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not path.startswith("capture-contracts/"):
+            continue
+        contract = parse_capture_contract(tree[path], path=path)
+        accepted_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
+
+    policy = value.evidence_admission_policy
+    raw_rules = policy.get("rules", [])
+    rules = raw_rules if isinstance(raw_rules, list | tuple) else []
+    warnings: list[ClaimTypeLintWarningV1] = []
+    admitted: set[str] = set()
+    for index, raw_rule in enumerate(rules):
+        if not isinstance(raw_rule, dict):
+            continue
+        raw_digests = raw_rule.get("capture_contract_digests", [])
+        digests = tuple(item for item in raw_digests if isinstance(item, str))
+        admitted.update(digests)
+        if digests and not set(digests).intersection(accepted_contracts):
+            for digest in digests:
+                warnings.append(
+                    ClaimTypeLintWarningV1(
+                        code="playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+                        field_path=(
+                            "$.evidence_admission_policy.rules"
+                            f"[{index}].capture_contract_digests"
+                        ),
+                        contract_identity="unresolved",
+                        contract_digest=digest,
+                        replacement_rule_fragment={
+                            "capture_contract_digests": sorted(accepted_contracts)
+                        },
+                    )
+                )
+    for source_id in value.anticipated_source_ids:
+        contract = foreign_source_capture_contract(source_id)
+        digest = capture_contract_digest(contract).tagged
+        if digest in admitted:
+            continue
+        warnings.append(
+            ClaimTypeLintWarningV1(
+                code="playbill.claim_type.anticipated_source_contract_omitted",
+                field_path="$.anticipated_source_ids",
+                source_id=source_id,
+                contract_identity=contract.identity.qualified,
+                contract_digest=digest,
+                replacement_rule_fragment={
+                    "capture_contract_digests": [digest],
+                },
+            )
+        )
+    warnings.sort(key=lambda item: canonical_bytes(item.model_dump(mode="json")))
+    return ClaimTypeProposalLintV1(warnings=tuple(warnings))
+
+
+__all__ = [
+    "ClaimTypeInputProposalResultV1",
+    "ClaimTypeInputV1",
+    "ClaimTypeLintWarningV1",
+    "ClaimTypeProposalLintV1",
+    "claim_type_input_example",
+    "lint_claim_type_input",
+    "lower_claim_type_input",
+]

@@ -20,12 +20,14 @@ from cruxible_core.errors import AuthenticationError, ConfigError, DataValidatio
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.attestations import ApprovalAttestation
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.inputs import AuthoringInputV1
 from cruxible_core.playbill.authoring.models import (
     AuthoringPayloadV1,
     InsertionConfirmationObservationV1,
 )
 from cruxible_core.playbill.candidates import canonical_candidate_timestamp
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -54,6 +56,7 @@ from cruxible_core.playbill.service.claim_types import (
     service_get_playbill_claim_type,
     service_list_playbill_claim_types,
     service_propose_playbill_claim_type,
+    service_propose_playbill_claim_type_input,
 )
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
@@ -598,6 +601,25 @@ def playbill_propose_claim_type(
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
 
+def playbill_propose_claim_type_input(
+    instance_id: str,
+    *,
+    input: ClaimTypeInputV1,
+    proposal_name: str,
+) -> contracts.PlaybillClaimTypeInputProposalResult:
+    check_permission("cruxible_playbill_propose", instance_id=instance_id)
+    result = service_propose_playbill_claim_type_input(
+        get_playbill_manager().get(instance_id),
+        input=input,
+        actor_id=_actor_id(),
+        proposal_name=proposal_name,
+        timestamp=canonical_candidate_timestamp(utc_now()),
+    )
+    return contracts.PlaybillClaimTypeInputProposalResult.model_validate(
+        result.model_dump(mode="json")
+    )
+
+
 def playbill_list_claim_types(
     instance_id: str,
     *,
@@ -682,6 +704,21 @@ def playbill_authoring_create(
     return contracts.PlaybillAuthoringIntentView.model_validate(result.model_dump(mode="json"))
 
 
+def playbill_authoring_create_input(
+    instance_id: str,
+    *,
+    input: AuthoringInputV1,
+) -> contracts.PlaybillAuthoringIntentView:
+    check_permission("cruxible_playbill_authoring_create", instance_id=instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    result = coordinator.create_input(
+        actor=actor,
+        input=input,
+        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+    )
+    return contracts.PlaybillAuthoringIntentView.model_validate(result.model_dump(mode="json"))
+
+
 def playbill_authoring_get(
     instance_id: str,
     intent_id: str,
@@ -722,6 +759,23 @@ def playbill_authoring_compile(
     result = coordinator.compile(
         actor=actor,
         payload=payload,
+        canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+        intent_id=intent_id,
+    )
+    return contracts.PlaybillAuthoringPreflightResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_authoring_compile_input(
+    instance_id: str,
+    *,
+    input: AuthoringInputV1,
+    intent_id: str | None = None,
+) -> contracts.PlaybillAuthoringPreflightResult:
+    check_permission("cruxible_playbill_authoring_compile", instance_id=instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    result = coordinator.compile_input(
+        actor=actor,
+        input=input,
         canonical_timestamp=canonical_candidate_timestamp(utc_now()),
         intent_id=intent_id,
     )

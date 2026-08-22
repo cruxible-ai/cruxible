@@ -346,6 +346,21 @@ class PlaybillClaimTypeList(BaseModel):
     claim_types: list[PlaybillClaimTypeView]
 
 
+class PlaybillClaimTypeProposalLint(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-type-proposal-lint-v1"]
+    warnings: list[dict[str, Any]]
+
+
+class PlaybillClaimTypeInputProposalResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-type-input-proposal-result-v1"]
+    proposal: PlaybillProposalInspection
+    lint: PlaybillClaimTypeProposalLint
+
+
 class PlaybillClaimView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

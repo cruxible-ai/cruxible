@@ -13,11 +13,11 @@ from cruxible_client import CruxibleClient, contracts
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.playbill.attestations import ApprovalAttestation
+from cruxible_core.playbill.authoring.inputs import AuthoringInputV1
 from cruxible_core.playbill.authoring.models import (
-    AuthoringPayloadV1,
     InsertionConfirmationObservationV1,
 )
-from cruxible_core.playbill.claim_types import ClaimType
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
@@ -46,7 +46,7 @@ _client_cache: CruxibleClient | None = None
 _client_cache_key: tuple[str | None, str | None, str | None] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
-_AUTHORING_PAYLOAD: TypeAdapter[AuthoringPayloadV1] = TypeAdapter(AuthoringPayloadV1)
+_AUTHORING_INPUT: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
 
 
 def reset_client_cache() -> None:
@@ -483,19 +483,19 @@ def handle_playbill_subject_history(
 
 def handle_playbill_propose_claim_type(
     instance_id: str,
-    claim_type: dict[str, Any],
+    input: dict[str, Any],
     proposal_name: str,
-) -> contracts.PlaybillProposalInspection:
-    contract = ClaimType.model_validate(claim_type)
+) -> contracts.PlaybillClaimTypeInputProposalResult:
+    request = ClaimTypeInputV1.model_validate(input)
     return _dispatch_remote_or_local(
-        lambda client: client.propose_playbill_claim_type(
+        lambda client: client.propose_playbill_claim_type_input(
             instance_id,
-            claim_type=contract.model_dump(mode="json"),
+            input=request.model_dump(mode="json"),
             proposal_name=proposal_name,
         ),
-        lambda: playbill_api.playbill_propose_claim_type(
+        lambda: playbill_api.playbill_propose_claim_type_input(
             instance_id,
-            claim_type=contract,
+            input=request,
             proposal_name=proposal_name,
         ),
         operation_name="cruxible_playbill_propose_claim_type",
@@ -566,12 +566,12 @@ def handle_playbill_authoring_create(
     instance_id: str,
     payload: dict[str, Any],
 ) -> contracts.PlaybillAuthoringIntentView:
-    request = _AUTHORING_PAYLOAD.validate_python(payload)
+    request = _AUTHORING_INPUT.validate_python(payload)
     return _dispatch_remote_or_local(
-        lambda client: client.create_playbill_authoring_intent(
-            instance_id, payload=request.model_dump(mode="json")
+        lambda client: client.create_playbill_authoring_input(
+            instance_id, input=request.model_dump(mode="json")
         ),
-        lambda: playbill_api.playbill_authoring_create(instance_id, payload=request),
+        lambda: playbill_api.playbill_authoring_create_input(instance_id, input=request),
         operation_name="cruxible_playbill_authoring_create",
     )
 
@@ -614,16 +614,16 @@ def handle_playbill_authoring_compile(
     *,
     intent_id: str | None,
 ) -> contracts.PlaybillAuthoringPreflightResult:
-    request = _AUTHORING_PAYLOAD.validate_python(payload)
+    request = _AUTHORING_INPUT.validate_python(payload)
     return _dispatch_remote_or_local(
-        lambda client: client.compile_playbill_authoring(
+        lambda client: client.compile_playbill_authoring_input(
             instance_id,
-            payload=request.model_dump(mode="json"),
+            input=request.model_dump(mode="json"),
             intent_id=intent_id,
         ),
-        lambda: playbill_api.playbill_authoring_compile(
+        lambda: playbill_api.playbill_authoring_compile_input(
             instance_id,
-            payload=request,
+            input=request,
             intent_id=intent_id,
         ),
         operation_name="cruxible_playbill_authoring_compile",

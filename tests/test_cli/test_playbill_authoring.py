@@ -60,14 +60,14 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     calls: list[tuple[str, object]] = []
 
     class StubClient:
-        def compile_playbill_authoring(
+        def compile_playbill_authoring_input(
             self,
             instance_id: str,
             *,
-            payload: dict[str, object],
+            input: dict[str, object],
             intent_id: str | None,
         ) -> contracts.PlaybillAuthoringPreflightResult:
-            calls.append((instance_id, payload))
+            calls.append((instance_id, input))
             assert intent_id is None
             return contracts.PlaybillAuthoringPreflightResult(
                 verdict="refused",
@@ -256,17 +256,14 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     runner = CliRunner()
     help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
     assert help_result.exit_code == 0
-    assert "playbill-claim-authoring-payload-v1" in help_result.output
-    assert "playbill-procedure-authoring-payload-v1" in help_result.output
+    assert "Input kind family: claim | brief | procedure" in help_result.output
 
     for name in ("claim-flow-a", "claim-self-source", "procedure", "brief"):
         result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
-        assert payload["tag"] in {
-            "playbill-claim-authoring-payload-v1",
-            "playbill-procedure-authoring-payload-v1",
-        }
+        assert payload["kind"] in {"claim", "procedure", "brief"}
+        assert "tag" not in result.output
         assert result.stderr == ""
 
 
@@ -275,9 +272,13 @@ def test_cli_validation_names_field_path_and_matching_example(tmp_path: Path) ->
     payload.write_text(
         json.dumps(
             {
-                "tag": "playbill-claim-authoring-payload-v1",
-                "statement": {},
-                "source": {"tag": "playbill-self-source-body-v1"},
+                "kind": "claim",
+                "subject": "project.work_item/wi-42",
+                "predicate": "project.work_item.status",
+                "object": {"kind": "literal", "value": "ready"},
+                "role": "observation",
+                "rationale": "Observed ready.",
+                "source": {"kind": "self_source"},
             }
         )
     )
@@ -297,7 +298,7 @@ def test_cli_validation_names_field_path_and_matching_example(tmp_path: Path) ->
     )
 
     assert result.exit_code == 1
-    assert "$.statement.subject" in result.output
+    assert "$.claim.source.self_source.body" in result.output
     assert "playbill authoring create --example claim-self-source" in result.output
 
 
@@ -308,10 +309,7 @@ def test_cli_bind_derives_observation_and_compiles(
     source = tmp_path / "work-items.md"
     source.write_bytes(b"before\nstatus: ready\nafter\n")
     stub = claim_self_source_example().model_dump(mode="json")
-    stub["source"] = {
-        "tag": "playbill-working-selection-observation-v1",
-        "source_id": "repo.work-items",
-    }
+    stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
     stub["citation_role"] = "evidence"
     payload_file = tmp_path / "stub.json"
     payload_file.write_text(json.dumps(stub))
@@ -370,10 +368,7 @@ def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
     source = tmp_path / "ambiguous.txt"
     source.write_text("aaa")
     stub = claim_self_source_example().model_dump(mode="json")
-    stub["source"] = {
-        "tag": "playbill-working-selection-observation-v1",
-        "source_id": "repo.work-items",
-    }
+    stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
     stub["citation_role"] = "evidence"
     payload_file = tmp_path / "stub.json"
     payload_file.write_text(json.dumps(stub))

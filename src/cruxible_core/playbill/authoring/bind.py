@@ -9,6 +9,7 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
+from cruxible_core.playbill.authoring.inputs import ClaimInput, lower_bound_claim_input
 from cruxible_core.playbill.authoring.models import (
     AuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
@@ -160,8 +161,58 @@ def bind_working_selection(
     return parsed
 
 
+def bind_working_selection_input(
+    input: ClaimInput,
+    *,
+    content: bytes,
+    anchor: str,
+    window_lines: int | None = None,
+) -> ClaimAuthoringPayloadV1:
+    """Observe local bytes for a decision-only working_selection Claim input."""
+
+    if window_lines is not None and window_lines < 0:
+        raise AuthoringBindError("--window-lines must be nonnegative")
+    source = input.source
+    if source.kind != "working_selection":
+        raise AuthoringBindError("Flow-A bind input source must be working_selection")
+    anchor_bytes = anchor.encode("utf-8")
+    offsets = _anchor_offsets(content, anchor_bytes)
+    if len(offsets) != 1:
+        raise AuthoringBindAmbiguityError(offsets)
+    start = offsets[0]
+    end = start + len(anchor_bytes)
+    if window_lines is not None:
+        start, end = _line_window(
+            content,
+            start=start,
+            end=end,
+            surrounding_lines=window_lines,
+        )
+    selected = content[start:end]
+    observation = WorkingSelectionObservationV1(
+        source_id=source.source_id,
+        coordinate=WorkingDigestCoordinateV1(
+            source_content_digest=_sha256(content),
+            source_byte_length=len(content),
+        ),
+        selected_content_base64=base64.b64encode(selected).decode("ascii"),
+        selected_bytes_digest=_sha256(selected),
+        selector=WorkingAnchorWindowV1(
+            anchor=anchor,
+            start_byte=start,
+            end_byte=end,
+            observed_occurrence_count=1,
+        ),
+    )
+    try:
+        return lower_bound_claim_input(input, observation=observation)
+    except ValueError as exc:
+        raise AuthoringBindError(str(exc)) from exc
+
+
 __all__ = [
     "AuthoringBindAmbiguityError",
     "AuthoringBindError",
     "bind_working_selection",
+    "bind_working_selection_input",
 ]
