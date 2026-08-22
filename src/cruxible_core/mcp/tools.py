@@ -134,6 +134,19 @@ def register_tools(
         return handlers.handle_playbill_activate(instance_id, proposal_id)
 
     @_tool
+    def cruxible_playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
+        """Explain the credential-derived actor and its accepted registration."""
+        return handlers.handle_playbill_whoami(instance_id)
+
+    @_tool
+    def cruxible_playbill_proposal_list(
+        instance_id: str,
+        status: Literal["open", "settled"] | None = None,
+    ) -> contracts.PlaybillProposalList:
+        """List open or settled proposal evidence at the current coordinate."""
+        return handlers.handle_playbill_list_proposals(instance_id, status)
+
+    @_tool
     def cruxible_playbill_list_documents(
         instance_id: str,
     ) -> contracts.PlaybillDocumentList:

@@ -650,6 +650,14 @@ class ProposalEvidenceStore:
         path = self.proposals / f"{proposal_id.removeprefix('sha256:')}.json"
         return self._read_model(path, ProposalAdmissionRecord, label="proposal admission")
 
+    def list_admissions(self) -> tuple[ProposalAdmissionRecord, ...]:
+        """List canonical admissions in stable evidence-filename order."""
+
+        return tuple(
+            self._read_model(path, ProposalAdmissionRecord, label="proposal admission")
+            for path in sorted(self.proposals.glob("*.json"), key=lambda item: item.name)
+        )
+
     def read_evaluation(self, proposal_id: str) -> ProposalEvaluationRecord:
         """Resolve the sole canonical evaluation recorded for one admission."""
 

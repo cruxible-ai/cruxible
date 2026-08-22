@@ -445,6 +445,30 @@ def proposal_group() -> None:
     """Inspect, review, approve, and activate candidates."""
 
 
+@proposal_group.command("list")
+@click.option("--status", type=click.Choice(["open", "settled"]), default=None)
+@json_option
+@handle_errors
+def list_proposals(status: str | None, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.list_playbill_proposals(
+            instance_id,
+            status=cast(Any, status),
+        ),
+        command_name="playbill proposal list",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for entry in result.entries:
+        terminal = "" if entry.terminal_reason is None else f" {entry.terminal_reason}"
+        click.echo(
+            f"{entry.status}{terminal}  {entry.proposal_id}  "
+            f"{entry.target_ref}  {entry.admitted_at}"
+        )
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
 @proposal_group.command("inspect")
 @click.argument("proposal_id")
 @json_option
@@ -548,6 +572,30 @@ def activate_proposal(proposal_id: str, output_json: bool) -> None:
         command_name="playbill proposal activate",
     )
     _emit_json(result.model_dump(mode="json"))
+
+
+@playbill_group.command("whoami")
+@json_option
+@handle_errors
+def whoami(output_json: bool) -> None:
+    """Explain the transport-derived actor, permission mode, and principal status."""
+
+    result = _server_call(
+        lambda client, instance_id: client.playbill_whoami(instance_id),
+        command_name="playbill whoami",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Actor: {result.actor_id}")
+    if result.actor_id_source == "runtime_credential_label":
+        click.echo(f"Actor ID comes from credential label: {result.credential_label}")
+    else:
+        click.echo("Actor ID comes from the local operator identity")
+    click.echo(f"Credential permission mode: {result.credential_permission_mode}")
+    click.echo(f"Principal registration: {result.principal_registration_status}")
+    click.echo(f"Active principals: {', '.join(result.active_principal_ids) or 'none'}")
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
 @playbill_group.command("explain")

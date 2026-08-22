@@ -424,12 +424,18 @@ covers all four tool kinds, including same-turn edit drift.
 
 ~~~text
 cruxible playbill proposal inspect PROPOSAL_ID
+cruxible playbill proposal list [--status open|settled]
 cruxible playbill proposal refusal PROPOSAL_ID
 cruxible playbill proposal review PROPOSAL_ID [--include-body|--redacted]
 cruxible playbill proposal approve PROPOSAL_ID
   --signer-id ID --key FILE [--yes]
 cruxible playbill proposal activate PROPOSAL_ID
 ~~~
+
+`cruxible playbill whoami` names the credential-derived actor, its effective
+permission mode, accepted principal-registration status, and current coordinate.
+`proposal list` deterministically separates current open candidates from accepted,
+refused, and stale terminal evidence so retries do not depend on remembered IDs.
 
 approve signs locally. The private-key path is not sent to the daemon.
 

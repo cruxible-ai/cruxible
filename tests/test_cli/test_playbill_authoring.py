@@ -116,6 +116,63 @@ def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  #
     assert result.stderr == ""
 
 
+def test_cli_whoami_explains_credential_binding_and_lists_open_proposals(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    calls: list[str] = []
+
+    class StubClient:
+        def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+            calls.append(f"whoami:{instance_id}")
+            return contracts.PlaybillWhoAmI(
+                actor_id="owner",
+                credential_label="owner",
+                actor_id_source="runtime_credential_label",
+                credential_permission_mode="governed_write",
+                principal_registration_status="active",
+                active_principal_ids=["daemon", "owner"],
+                coordinate=COORDINATE,
+            )
+
+        def list_playbill_proposals(
+            self, instance_id: str, *, status: str | None
+        ) -> contracts.PlaybillProposalList:
+            calls.append(f"proposals:{instance_id}:{status}")
+            return contracts.PlaybillProposalList(
+                coordinate=COORDINATE,
+                status_filter="open",
+                entries=[
+                    contracts.PlaybillProposalListEntry(
+                        proposal_id="sha256:" + "5" * 64,
+                        actor_id="owner",
+                        target_ref="refs/proposals/owner/example",
+                        admitted_at="2026-08-21T12:00:00.000000Z",
+                        verdict="candidate",
+                        candidate_digest="sha256:" + "6" * 64,
+                        status="open",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    base = [
+        "--server-url",
+        "https://authoring.example.test",
+        "--instance-id",
+        "inst_authoring",
+        "playbill",
+    ]
+    runner = CliRunner()
+    identity = runner.invoke(cli, [*base, "whoami"])
+    proposals = runner.invoke(cli, [*base, "proposal", "list", "--status", "open"])
+
+    assert identity.exit_code == proposals.exit_code == 0
+    assert "Actor ID comes from credential label: owner" in identity.output
+    assert "governed_write" in identity.output
+    assert "open  sha256:" in proposals.output
+    assert calls == ["whoami:inst_authoring", "proposals:inst_authoring:open"]
+
+
 def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
     monkeypatch,
     tmp_path: Path,

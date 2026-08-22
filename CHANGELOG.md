@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `playbill whoami` and a deterministic open/settled proposal inventory
+  across HTTP, client, MCP, and CLI so agents can recover their writer identity
+  and pending work without reconstructing credential or proposal context.
+
 - Version the Playbill floor as `playbill-floor-export-v2`: JSON cards are now
   deterministically pretty-printed, and the v2 manifest inventory and floor
   digest bind those exact grep-friendly bytes while v1 readers remain intact.

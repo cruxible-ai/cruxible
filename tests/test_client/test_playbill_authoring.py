@@ -126,6 +126,45 @@ def test_client_get_resume_list_and_status_are_path_only_reads() -> None:
     assert all(not item.content for item in captured)
 
 
+def test_client_whoami_and_proposal_list_use_read_routes_and_status_query() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        if request.url.path.endswith("/whoami"):
+            return httpx.Response(
+                200,
+                json={
+                    "tag": "playbill-whoami-v1",
+                    "actor_id": "owner",
+                    "credential_label": "owner",
+                    "actor_id_source": "runtime_credential_label",
+                    "credential_permission_mode": "governed_write",
+                    "principal_registration_status": "active",
+                    "active_principal_ids": ["daemon", "owner"],
+                    "coordinate": COORDINATE,
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "tag": "playbill-proposal-list-v1",
+                "coordinate": COORDINATE,
+                "status_filter": "open",
+                "entries": [],
+            },
+        )
+
+    client = _client(handler)
+    identity = client.playbill_whoami("inst")
+    proposals = client.list_playbill_proposals("inst", status="open")
+
+    assert identity.actor_id_source == "runtime_credential_label"
+    assert proposals.status_filter == "open"
+    assert [item.method for item in captured] == ["GET", "GET"]
+    assert dict(captured[1].url.params) == {"status": "open"}
+
+
 def test_client_speaks_frozen_insertion_confirm_and_abandon_requests() -> None:
     captured: list[httpx.Request] = []
 

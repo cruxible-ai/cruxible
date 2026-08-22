@@ -44,6 +44,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you have a public approval attestation produced outside the daemon."
     ),
     "cruxible_playbill_activate": ("Use when an approved Playbill candidate is ready to settle."),
+    "cruxible_playbill_whoami": (
+        "Use when you need the credential-derived writer identity, permission mode, and "
+        "accepted principal status."
+    ),
+    "cruxible_playbill_proposal_list": (
+        "Use when you need to find open proposals or inspect terminal proposal outcomes."
+    ),
     "cruxible_playbill_list_documents": (
         "Use when you need accepted Documents and their exact coordinate."
     ),

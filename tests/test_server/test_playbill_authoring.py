@@ -114,6 +114,45 @@ def test_http_refuses_digest_and_base_smuggling_in_request_models(
     assert "claim_id" in response.text or "statement" in response.text
 
 
+def test_http_whoami_and_proposal_inventory_are_typed_reads(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    seen: list[tuple[str, str | None]] = []
+    who = contracts.PlaybillWhoAmI(
+        actor_id="operator",
+        credential_label="operator",
+        actor_id_source="local_operator",
+        credential_permission_mode="admin",
+        principal_registration_status="active",
+        active_principal_ids=["daemon", "operator"],
+        coordinate=COORDINATE,
+    )
+    proposals = contracts.PlaybillProposalList(
+        coordinate=COORDINATE,
+        status_filter="open",
+        entries=[],
+    )
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_whoami",
+        lambda selected: (seen.append((selected, None)), who)[1],
+    )
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_list_proposals",
+        lambda selected, *, status=None: (seen.append((selected, status)), proposals)[1],
+    )
+
+    identity = client.get(f"/api/v1/{instance_id}/playbill/whoami")
+    listing = client.get(f"/api/v1/{instance_id}/playbill/proposals?status=open")
+
+    assert identity.status_code == listing.status_code == 200
+    assert identity.json()["tag"] == "playbill-whoami-v1"
+    assert listing.json()["tag"] == "playbill-proposal-list-v1"
+    assert seen == [(instance_id, None), (instance_id, "open")]
+
+
 def test_http_insertion_confirm_and_abandon_are_typed(
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch,

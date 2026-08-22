@@ -11,7 +11,7 @@ import base64
 import json
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
@@ -94,7 +94,7 @@ from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 from cruxible_core.playbill.subjects import SubjectShell
 from cruxible_core.playbill.types import OperatingProfile, PrincipalRecord
 from cruxible_core.primitives import new_id
-from cruxible_core.runtime.permissions import check_permission
+from cruxible_core.runtime.permissions import check_permission, get_current_mode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.actor_identity import local_operator_actor_context
 from cruxible_core.server.auth import (
@@ -118,6 +118,11 @@ from cruxible_core.service.playbill_coverage import (
 )
 from cruxible_core.service.playbill_discovery import service_discover_playbill_semantic
 from cruxible_core.service.playbill_floor import MANIFEST_PATH, service_export_playbill_floor
+from cruxible_core.service.playbill_proposals import (
+    ProposalInventoryStatus,
+    service_list_playbill_proposals,
+    service_playbill_whoami,
+)
 from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.service.playbill_search import service_search_playbill
 from cruxible_core.temporal import utc_now
@@ -258,6 +263,43 @@ def playbill_inspect_proposal(
         get_playbill_manager().get(instance_id), proposal_id=proposal_id
     )
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_list_proposals(
+    instance_id: str,
+    *,
+    status: ProposalInventoryStatus | None = None,
+) -> contracts.PlaybillProposalList:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    result = service_list_playbill_proposals(
+        get_playbill_manager().get(instance_id),
+        status=status,
+    )
+    return contracts.PlaybillProposalList.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
+    check_permission("cruxible_playbill_read", instance_id=instance_id)
+    auth_context = get_current_auth_context()
+    if auth_context is not None and auth_context.credential_type == "runtime_credential":
+        actor_id = auth_context.principal_label
+        credential_label = auth_context.principal_label
+        actor_id_source = "runtime_credential_label"
+    else:
+        actor = _actor_context()
+        if actor is None:
+            raise AuthenticationError("Playbill identity requires an authenticated actor")
+        actor_id = actor.actor_id
+        credential_label = actor.actor_id
+        actor_id_source = "local_operator"
+    result = service_playbill_whoami(
+        get_playbill_manager().get(instance_id),
+        actor_id=actor_id,
+        credential_label=credential_label,
+        actor_id_source=cast(Any, actor_id_source),
+        permission_mode=get_current_mode(),
+    )
+    return contracts.PlaybillWhoAmI.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_inspect_refusal(

@@ -272,6 +272,26 @@ def handle_playbill_activate(
     )
 
 
+def handle_playbill_whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_whoami(instance_id),
+        lambda: playbill_api.playbill_whoami(instance_id),
+        operation_name="cruxible_playbill_whoami",
+    )
+
+
+def handle_playbill_list_proposals(
+    instance_id: str,
+    status: str | None,
+) -> contracts.PlaybillProposalList:
+    normalized = cast(Any, status)
+    return _dispatch_remote_or_local(
+        lambda client: client.list_playbill_proposals(instance_id, status=normalized),
+        lambda: playbill_api.playbill_list_proposals(instance_id, status=normalized),
+        operation_name="cruxible_playbill_proposal_list",
+    )
+
+
 def handle_playbill_list_documents(instance_id: str) -> contracts.PlaybillDocumentList:
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_documents(instance_id),

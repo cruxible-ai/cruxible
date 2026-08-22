@@ -277,6 +277,23 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/principals")
         return self._parse_model(response, contracts.PlaybillPrincipalList)
 
+    def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/whoami")
+        return self._parse_model(response, contracts.PlaybillWhoAmI)
+
+    def list_playbill_proposals(
+        self,
+        instance_id: str,
+        *,
+        status: Literal["open", "settled"] | None = None,
+    ) -> contracts.PlaybillProposalList:
+        params = {} if status is None else {"status": status}
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/proposals",
+            params=params,
+        )
+        return self._parse_model(response, contracts.PlaybillProposalList)
+
     def inspect_playbill_proposal(
         self, instance_id: str, proposal_id: str
     ) -> contracts.PlaybillProposalInspection:

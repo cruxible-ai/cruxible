@@ -105,6 +105,9 @@
   "/api/v1/{instance_id}/playbill/principals/proposals": {
     "POST": "PlaybillProposalInspection"
   },
+  "/api/v1/{instance_id}/playbill/proposals": {
+    "GET": "PlaybillProposalList"
+  },
   "/api/v1/{instance_id}/playbill/proposals/{proposal_id}": {
     "GET": "PlaybillProposalInspection"
   },
@@ -158,6 +161,9 @@
   },
   "/api/v1/{instance_id}/playbill/subjects/{subject_kind}/{subject_id}/history": {
     "GET": "PlaybillSubjectHistory"
+  },
+  "/api/v1/{instance_id}/playbill/whoami": {
+    "GET": "PlaybillWhoAmI"
   },
   "/api/v1/{instance_id}/runtime/bootstrap/claim": {
     "POST": "RuntimeCredentialBootstrapResult"

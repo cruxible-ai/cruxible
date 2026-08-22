@@ -36,6 +36,8 @@ every call, and hidden expert tools remain available through the API.
 | `cruxible_playbill_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
 | `cruxible_playbill_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
 | `cruxible_playbill_activate` | Verify and activate by compare-and-set | `GRAPH_WRITE` |
+| `cruxible_playbill_proposal_list` | List open and terminal proposal evidence | `READ_ONLY` |
+| `cruxible_playbill_whoami` | Explain credential-derived actor identity and registration | `READ_ONLY` |
 
 MCP never accepts a client private key. Signing occurs outside the server and
 outside the language server/MCP process.

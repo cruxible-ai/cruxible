@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter
 
 from cruxible_client import contracts
@@ -131,6 +133,28 @@ async def propose_principal(
 )
 async def list_principals(instance_id: str) -> contracts.PlaybillPrincipalList:
     return playbill_api.playbill_list_principals(resolve_server_instance_id(instance_id))
+
+
+@router.get(
+    "/{instance_id}/playbill/whoami",
+    response_model=contracts.PlaybillWhoAmI,
+)
+async def whoami(instance_id: str) -> contracts.PlaybillWhoAmI:
+    return playbill_api.playbill_whoami(resolve_server_instance_id(instance_id))
+
+
+@router.get(
+    "/{instance_id}/playbill/proposals",
+    response_model=contracts.PlaybillProposalList,
+)
+async def list_proposals(
+    instance_id: str,
+    status: Literal["open", "settled"] | None = None,
+) -> contracts.PlaybillProposalList:
+    return playbill_api.playbill_list_proposals(
+        resolve_server_instance_id(instance_id),
+        status=status,
+    )
 
 
 @router.get(

@@ -100,6 +100,42 @@ class PlaybillProposalInspection(BaseModel):
     accepted_coordinate: PlaybillAcceptedCoordinate
 
 
+class PlaybillProposalListEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-proposal-list-entry-v1"] = "playbill-proposal-list-entry-v1"
+    proposal_id: str
+    actor_id: str
+    target_ref: str
+    admitted_at: str
+    verdict: Literal["candidate", "refused"]
+    candidate_digest: str | None = None
+    status: Literal["open", "settled"]
+    terminal_reason: Literal["accepted", "refused", "stale"] | None = None
+
+
+class PlaybillProposalList(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-proposal-list-v1"] = "playbill-proposal-list-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    status_filter: Literal["open", "settled"] | None = None
+    entries: list[PlaybillProposalListEntry]
+
+
+class PlaybillWhoAmI(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-whoami-v1"] = "playbill-whoami-v1"
+    actor_id: str
+    credential_label: str
+    actor_id_source: Literal["runtime_credential_label", "local_operator"]
+    credential_permission_mode: Literal["read_only", "governed_write", "graph_write", "admin"]
+    principal_registration_status: Literal["active", "revoked", "absent"]
+    active_principal_ids: list[str]
+    coordinate: PlaybillAcceptedCoordinate
+
+
 class PlaybillRefusalInspection(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

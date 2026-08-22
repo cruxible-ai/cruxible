@@ -25,6 +25,8 @@ def test_read_only_default_profile_advertises_curated_reads_and_hides_legacy_rea
     assert "cruxible_playbill_authoring_status" in names
     assert "cruxible_playbill_search" in names
     assert "cruxible_playbill_export_floor" in names
+    assert "cruxible_playbill_whoami" in names
+    assert "cruxible_playbill_proposal_list" in names
     assert "cruxible_playbill_list_claims" not in names
     assert "cruxible_playbill_get_claim" not in names
     assert "cruxible_playbill_get_claim_type" not in names
@@ -60,6 +62,8 @@ def test_admin_default_profile_is_exactly_the_writer_path(
         "cruxible_playbill_source_context",
         "cruxible_playbill_resolve_coverage",
         "cruxible_playbill_export_floor",
+        "cruxible_playbill_whoami",
+        "cruxible_playbill_proposal_list",
         "cruxible_playbill_submit_approval",
         "cruxible_playbill_activate",
     }

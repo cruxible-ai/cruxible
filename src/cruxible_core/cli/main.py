@@ -342,6 +342,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="host_group",
             ),
             "init": _command("playbill", "init_playbill", "Bootstrap Playbill state."),
+            "whoami": _command(
+                "playbill", "whoami", "Explain the active writer identity and permissions."
+            ),
             "body": _group(
                 "Store inert Document body bytes.",
                 {
@@ -373,6 +376,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "proposal": _group(
                 "Inspect, review, approve, and activate candidates.",
                 {
+                    "list": _command(
+                        "playbill", "list_proposals", "List open or settled proposals."
+                    ),
                     "inspect": _command(
                         "playbill", "inspect_proposal", "Inspect immutable proposal evidence."
                     ),

@@ -85,6 +85,8 @@ _COMMON_READS = {
     "cruxible_playbill_authoring_resume",
     "cruxible_playbill_authoring_list_pending",
     "cruxible_playbill_authoring_status",
+    "cruxible_playbill_whoami",
+    "cruxible_playbill_proposal_list",
 }
 
 _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
