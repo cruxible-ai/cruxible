@@ -204,6 +204,20 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you have read or changed working files and need what they have to do with "
         "accepted state."
     ),
+    "cruxible_playbill_workspace_source_compile": (
+        "Use to compile catalog-declared files under this MCP client's workspace without "
+        "constructing source digests or compilation wire."
+    ),
+    "cruxible_playbill_workspace_source_check": (
+        "Use to compile catalog-declared workspace files and compare them with accepted state."
+    ),
+    "cruxible_playbill_workspace_coverage_resolve": (
+        "Use after reading or changing selected workspace files; supply logical bindings and "
+        "the selections while the adapter derives byte observations."
+    ),
+    "cruxible_playbill_workspace_coverage_status": (
+        "Use for one coverage answer over every file in the declared workspace binding set."
+    ),
 }
 
 

@@ -31,6 +31,10 @@ from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationReque
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.playbill.coverage.workspace import (
+    bindings_from_mapping,
+    observe_workspace,
+)
 from cruxible_core.playbill.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -47,6 +51,11 @@ from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 from cruxible_core.playbill.subjects import SubjectShell
 from cruxible_core.playbill.types import PrincipalRecord
+from cruxible_core.playbill.workspace_sources import (
+    compile_client_source_context,
+    load_source_catalog,
+    mapped_root_aliases,
+)
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
 from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
@@ -76,6 +85,13 @@ class _LocalFloorClient:
         if at is not None:  # pragma: no cover - shared refresh always asks for current
             raise DataValidationError("local floor adapter accepts only the current coordinate")
         return playbill_api.playbill_export_floor(instance_id)
+
+
+class _LocalSourceContextClient:
+    """Supply accepted context to the shared local compiler in library mode."""
+
+    def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext:
+        return playbill_api.playbill_source_context(instance_id)
 
 
 def reset_client_cache() -> None:
@@ -1083,6 +1099,134 @@ def handle_playbill_resolve_coverage(
             scan_budget=scan,
         ),
         operation_name="cruxible_playbill_resolve_coverage",
+    )
+
+
+def handle_playbill_workspace_source_compile(
+    instance_id: str,
+    *,
+    catalog_path: str,
+    repository_root: str,
+    local_catalog_path: str | None,
+    root_aliases: Mapping[str, str],
+) -> SourceCompilationBundle:
+    """Compile declared workspace bytes without exposing path or digest plumbing."""
+
+    workspace = mcp_workspace_root()
+    catalog = load_source_catalog(
+        resolve_workspace_path(catalog_path, root=workspace, kind="file"),
+        (
+            None
+            if local_catalog_path is None
+            else resolve_workspace_path(local_catalog_path, root=workspace, kind="file")
+        ),
+    )
+    repository = resolve_workspace_path(repository_root, root=workspace, kind="directory")
+    aliases = mapped_root_aliases(
+        {
+            name: resolve_workspace_path(path, root=workspace, kind="directory")
+            for name, path in root_aliases.items()
+        }
+    )
+    return _dispatch_remote_or_local(
+        lambda client: compile_client_source_context(
+            client,
+            instance_id,
+            catalog=catalog,
+            repository_root=repository,
+            aliases=aliases,
+        ),
+        lambda: compile_client_source_context(
+            _LocalSourceContextClient(),
+            instance_id,
+            catalog=catalog,
+            repository_root=repository,
+            aliases=aliases,
+        ),
+        operation_name="cruxible_playbill_workspace_source_compile",
+    )
+
+
+def handle_playbill_workspace_source_check(
+    instance_id: str,
+    *,
+    catalog_path: str,
+    repository_root: str,
+    local_catalog_path: str | None,
+    root_aliases: Mapping[str, str],
+) -> contracts.PlaybillSourceCheckResult:
+    bundle = handle_playbill_workspace_source_compile(
+        instance_id,
+        catalog_path=catalog_path,
+        repository_root=repository_root,
+        local_catalog_path=local_catalog_path,
+        root_aliases=root_aliases,
+    )
+    return _dispatch_remote_or_local(
+        lambda client: client.check_playbill_source_bundle(
+            instance_id,
+            bundle=bundle.model_dump(mode="json"),
+        ),
+        lambda: playbill_api.playbill_check_source_bundle(instance_id, bundle=bundle),
+        operation_name="cruxible_playbill_workspace_source_check",
+    )
+
+
+def handle_playbill_workspace_coverage_resolve(
+    instance_id: str,
+    *,
+    bindings: Mapping[str, str],
+    files: tuple[str, ...],
+    ranges: tuple[str, ...],
+    grep_results_path: str | None,
+    whole_working_set: bool,
+    budget: dict[str, Any] | None,
+    scan_budget: dict[str, Any] | None,
+) -> contracts.PlaybillCoverageResult:
+    """Read selected workspace bytes and lower them to existing coverage wire."""
+
+    workspace = mcp_workspace_root()
+    grep_text = (
+        None
+        if grep_results_path is None
+        else resolve_workspace_path(
+            grep_results_path,
+            root=workspace,
+            kind="file",
+        ).read_text(encoding="utf-8")
+    )
+    observations = observe_workspace(
+        bindings_from_mapping(bindings),
+        root=workspace,
+        files=files,
+        ranges=ranges,
+        grep_text=grep_text,
+        whole_working_set=whole_working_set,
+    )
+    return handle_playbill_resolve_coverage(
+        instance_id,
+        [item.model_dump(mode="json") for item in observations],
+        budget=budget,
+        scan_budget=scan_budget,
+    )
+
+
+def handle_playbill_workspace_coverage_status(
+    instance_id: str,
+    *,
+    bindings: Mapping[str, str],
+    budget: dict[str, Any] | None,
+    scan_budget: dict[str, Any] | None,
+) -> contracts.PlaybillCoverageResult:
+    return handle_playbill_workspace_coverage_resolve(
+        instance_id,
+        bindings=bindings,
+        files=(),
+        ranges=(),
+        grep_results_path=None,
+        whole_working_set=True,
+        budget=budget,
+        scan_budget=scan_budget,
     )
 
 

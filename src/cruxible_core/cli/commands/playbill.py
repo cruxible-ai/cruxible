@@ -47,23 +47,14 @@ from cruxible_core.playbill.claim_type_inputs import (
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequestV1
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
-    WorkingPathBindingV1,
     WorkingSourceObservationV1,
-    observe_working_source,
-    parse_grep_batch,
-    read_working_path,
-    selection_for_lines,
 )
 from cruxible_core.playbill.coverage.claude_code import (
     annotated_tool_output,
     post_tool_use_response,
     read_post_tool_use_event,
 )
-from cruxible_core.playbill.coverage.contracts import (
-    CoverageAccessProfileV1,
-    CoverageResultV2,
-    LogicalSourceIdentityV1,
-)
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageResultV2
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.coverage.middleware import (
     CoverageWorkspaceConfig,
@@ -77,6 +68,7 @@ from cruxible_core.playbill.coverage.render import (
     render_coverage_manifest,
     render_coverage_result,
 )
+from cruxible_core.playbill.coverage.workspace import bindings_from_mapping, observe_workspace
 from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.native.grammar import NativeRenderError
@@ -88,13 +80,13 @@ from cruxible_core.playbill.service.review import (
     render_playbill_proposal_review,
 )
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
-from cruxible_core.playbill.source_catalog import (
-    SourceCatalog,
-    SourceCompilationBundle,
-    compile_source_catalog,
-    merge_source_catalogs,
-)
+from cruxible_core.playbill.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_core.playbill.types import PrincipalRecord
+from cruxible_core.playbill.workspace_sources import (
+    compile_client_source_context,
+    load_source_catalog,
+    root_aliases,
+)
 from cruxible_core.primitives import canonical_json
 
 ResultT = TypeVar("ResultT")
@@ -216,19 +208,14 @@ def _write_bundle(path: str, bundle: SourceCompilationBundle) -> None:
 
 
 def _root_aliases(values: tuple[str, ...]) -> dict[str, Path]:
-    aliases: dict[str, Path] = {}
-    for value in values:
-        name, separator, path = value.partition("=")
-        if not separator or not name or not path or name in aliases:
-            raise click.BadParameter("root aliases must be unique NAME=PATH values")
-        aliases[name] = Path(path).expanduser()
-    return aliases
+    return root_aliases(values)
 
 
 def _catalog(portable_path: str, local_path: str | None) -> SourceCatalog:
-    portable = _read_model(portable_path, SourceCatalog)
-    local = _read_model(local_path, SourceCatalog) if local_path is not None else None
-    return merge_source_catalogs(portable, local)
+    return load_source_catalog(
+        Path(portable_path).expanduser(),
+        None if local_path is None else Path(local_path).expanduser(),
+    )
 
 
 def _compile_remote_context(
@@ -239,20 +226,12 @@ def _compile_remote_context(
     repository_root: Path,
     aliases: dict[str, Path],
 ) -> SourceCompilationBundle:
-    context = client.playbill_source_context(instance_id)
-    accepted = {
-        shell.document_id: shell
-        for value in context.documents
-        for shell in (DocumentShell.model_validate(value),)
-    }
-    return compile_source_catalog(
-        catalog,
+    return compile_client_source_context(
+        client,
+        instance_id,
+        catalog=catalog,
         repository_root=repository_root,
-        root_aliases=aliases,
-        accepted_base=AcceptedCoordinate.model_validate(
-            context.accepted_coordinate.model_dump(mode="json")
-        ),
-        accepted_documents=accepted,
+        aliases=aliases,
     )
 
 
@@ -974,7 +953,7 @@ def propose_claim_type(
     if proposal_name is None:
         raise click.UsageError("--name is required when proposing")
     if envelope is not None:
-        result = _server_call(
+        envelope_result = _server_call(
             lambda client, instance_id: client.propose_playbill_claim_type(
                 instance_id,
                 claim_type=_read_mapping(envelope),
@@ -982,7 +961,7 @@ def propose_claim_type(
             ),
             command_name="playbill claim-type propose",
         )
-        _emit_json(result.model_dump(mode="json"))
+        _emit_json(envelope_result.model_dump(mode="json"))
         return
     assert input_path is not None
     try:
@@ -996,7 +975,7 @@ def propose_claim_type(
             )
             + ". Matching example: playbill claim-type propose --example"
         ) from exc
-    result = _server_call(
+    input_result = _server_call(
         lambda client, instance_id: client.propose_playbill_claim_type_input(
             instance_id,
             input=claim_type_input.model_dump(mode="json"),
@@ -1004,7 +983,7 @@ def propose_claim_type(
         ),
         command_name="playbill claim-type propose",
     )
-    _emit_json(result.model_dump(mode="json"))
+    _emit_json(input_result.model_dump(mode="json"))
 
 
 @claim_type_group.command("migrate")
@@ -2941,34 +2920,7 @@ def _coverage_bindings(
             raise click.BadParameter("a binding must be PATH=PLANE:IDENTITY")
         declared[path] = value
 
-    bindings: list[WorkingPathBindingV1] = []
-    for path, value in sorted(declared.items()):
-        plane, separator, identity = value.partition(":")
-        if not separator or plane not in {"ledger", "external"}:
-            raise click.BadParameter(f"binding for {path} must name the ledger or external plane")
-        bindings.append(
-            WorkingPathBindingV1(
-                path=path,
-                source=LogicalSourceIdentityV1(
-                    plane=cast(Any, plane),
-                    identity=identity,
-                ),
-            )
-        )
-    if not bindings:
-        raise click.BadParameter("coverage needs at least one declared --bind or --bindings entry")
-    return WorkingPathBindingsV1(bindings=tuple(bindings))
-
-
-def _line_range(value: str) -> tuple[str, int, int]:
-    path, separator, span = value.rpartition(":")
-    start_text, dash, end_text = span.partition("-")
-    if not separator or not path or not start_text.isdigit():
-        raise click.BadParameter("a range must be PATH:START-END")
-    end_text = end_text if dash else start_text
-    if not end_text.isdigit():
-        raise click.BadParameter("a range must be PATH:START-END")
-    return path, int(start_text), int(end_text)
+    return bindings_from_mapping(declared)
 
 
 def _coverage_observations(
@@ -2988,33 +2940,17 @@ def _coverage_observations(
     visible without the caller having to guess which window moved.
     """
 
-    whole = set(bindings.paths) if whole_working_set else set(files)
-    windows: dict[str, set[tuple[int, int]]] = {}
-    for value in ranges:
-        path, start_line, end_line = _line_range(value)
-        windows.setdefault(path, set()).add((start_line, end_line))
-    if grep_path is not None:
-        text = Path(grep_path).expanduser().read_text(encoding="utf-8")
-        for path, line in parse_grep_batch(text):
-            windows.setdefault(path, set()).add((line, line))
-
-    observations: list[WorkingSourceObservationV1] = []
-    for path in sorted(whole | set(windows)):
-        content = read_working_path(path, root=root)
-        selections = (
-            ()
-            if path in whole
-            else tuple(
-                selection_for_lines(content, start_line=start, end_line=end)
-                for start, end in sorted(windows[path])
-            )
-        )
-        observations.append(
-            observe_working_source(bindings.source_for(path), content, selections=selections)
-        )
-    if not observations:
-        raise click.BadParameter("name at least one --file, --range, --grep-results, or --all")
-    return tuple(observations)
+    grep_text = (
+        None if grep_path is None else Path(grep_path).expanduser().read_text(encoding="utf-8")
+    )
+    return observe_workspace(
+        bindings,
+        root=root,
+        files=files,
+        ranges=ranges,
+        grep_text=grep_text,
+        whole_working_set=whole_working_set,
+    )
 
 
 def _resolved_coverage(

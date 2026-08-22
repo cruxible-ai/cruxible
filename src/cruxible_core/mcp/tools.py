@@ -14,6 +14,7 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.tool_prompts import tool_description
 from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 
 
 def register_tools(
@@ -603,6 +604,78 @@ def register_tools(
         return handlers.handle_playbill_resolve_coverage(
             instance_id,
             observations,
+            budget=budget,
+            scan_budget=scan_budget,
+        )
+
+    @_tool
+    def cruxible_playbill_workspace_source_compile(
+        instance_id: str,
+        catalog_path: str,
+        repository_root: str = ".",
+        local_catalog_path: str | None = None,
+        root_aliases: dict[str, str] | None = None,
+    ) -> SourceCompilationBundle:
+        """Compile declared workspace sources against accepted daemon context."""
+        return handlers.handle_playbill_workspace_source_compile(
+            instance_id,
+            catalog_path=catalog_path,
+            repository_root=repository_root,
+            local_catalog_path=local_catalog_path,
+            root_aliases=root_aliases or {},
+        )
+
+    @_tool
+    def cruxible_playbill_workspace_source_check(
+        instance_id: str,
+        catalog_path: str,
+        repository_root: str = ".",
+        local_catalog_path: str | None = None,
+        root_aliases: dict[str, str] | None = None,
+    ) -> contracts.PlaybillSourceCheckResult:
+        """Compile workspace sources and report their alignment to accepted state."""
+        return handlers.handle_playbill_workspace_source_check(
+            instance_id,
+            catalog_path=catalog_path,
+            repository_root=repository_root,
+            local_catalog_path=local_catalog_path,
+            root_aliases=root_aliases or {},
+        )
+
+    @_tool
+    def cruxible_playbill_workspace_coverage_resolve(
+        instance_id: str,
+        bindings: dict[str, str],
+        files: list[str] | None = None,
+        ranges: list[str] | None = None,
+        grep_results_path: str | None = None,
+        whole_working_set: bool = False,
+        budget: dict[str, Any] | None = None,
+        scan_budget: dict[str, Any] | None = None,
+    ) -> contracts.PlaybillCoverageResult:
+        """Resolve selected workspace files while the adapter derives observations."""
+        return handlers.handle_playbill_workspace_coverage_resolve(
+            instance_id,
+            bindings=bindings,
+            files=tuple(files or ()),
+            ranges=tuple(ranges or ()),
+            grep_results_path=grep_results_path,
+            whole_working_set=whole_working_set,
+            budget=budget,
+            scan_budget=scan_budget,
+        )
+
+    @_tool
+    def cruxible_playbill_workspace_coverage_status(
+        instance_id: str,
+        bindings: dict[str, str],
+        budget: dict[str, Any] | None = None,
+        scan_budget: dict[str, Any] | None = None,
+    ) -> contracts.PlaybillCoverageResult:
+        """Resolve the complete declared workspace scope as one coverage status."""
+        return handlers.handle_playbill_workspace_coverage_status(
+            instance_id,
+            bindings=bindings,
             budget=budget,
             scan_budget=scan_budget,
         )
