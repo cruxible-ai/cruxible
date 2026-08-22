@@ -1652,8 +1652,7 @@ def _submit_seed_group(
     files: Mapping[str, bytes],
     plan: seed.SeedPlanV1,
     group: seed.SeedProposalGroupV1,
-    proposal_name: str,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str]:
     """Store the bundle's bodies, then submit one group through its own operation.
 
     Bodies first and always: a foreign-source citation names a content digest and
@@ -1663,34 +1662,53 @@ def _submit_seed_group(
     store can be safe.
     """
 
+    proposal_name = seed.seed_group_proposal_name(plan, group)
+    whoami = client.playbill_whoami(instance_id)
+    target_ref = f"refs/proposals/{whoami.actor_id}/{proposal_name}"
+    open_proposals = client.list_playbill_proposals(instance_id, status="open")
+    existing = next(
+        (entry for entry in open_proposals.entries if entry.target_ref == target_ref),
+        None,
+    )
+    if existing is not None:
+        raise click.ClickException(
+            f"Seed group {group.group_id!r} already has open proposal "
+            f"{existing.proposal_id} at {target_ref}"
+        )
+
     for path in plan.body_paths:
         client.store_playbill_body(instance_id, files[path])
 
     payloads = [json.loads(files[path].decode("utf-8")) for path in group.entry_paths]
     if group.kind == "claim":
-        return client.propose_playbill_claims(
+        submitted = client.propose_playbill_claims(
             instance_id, authorings=payloads, proposal_name=proposal_name
         ).model_dump(mode="json")
-    single = payloads[0]
-    if group.kind == "claim_type":
-        return client.propose_playbill_claim_type(
-            instance_id, claim_type=single, proposal_name=proposal_name
-        ).model_dump(mode="json")
-    if group.kind == "subject":
-        return client.propose_playbill_subject(
-            instance_id, shell=single, proposal_name=proposal_name
-        ).model_dump(mode="json")
-    if group.kind == "document":
-        return client.propose_playbill_document(
-            instance_id, shell=single, proposal_name=proposal_name
-        ).model_dump(mode="json")
-    return client.propose_playbill_query_definition(
-        instance_id, query=single, proposal_name=proposal_name
-    ).model_dump(mode="json")
+    else:
+        single = payloads[0]
+        if group.kind == "claim_type":
+            submitted = client.propose_playbill_claim_type(
+                instance_id, claim_type=single, proposal_name=proposal_name
+            ).model_dump(mode="json")
+        elif group.kind == "subject":
+            submitted = client.propose_playbill_subject(
+                instance_id, shell=single, proposal_name=proposal_name
+            ).model_dump(mode="json")
+        elif group.kind == "document":
+            submitted = client.propose_playbill_document(
+                instance_id, shell=single, proposal_name=proposal_name
+            ).model_dump(mode="json")
+        else:
+            submitted = client.propose_playbill_query_definition(
+                instance_id, query=single, proposal_name=proposal_name
+            ).model_dump(mode="json")
+    if _seed_admission_value(submitted, "target_ref") != target_ref:
+        raise click.ClickException("The seed proposal admission returned an unexpected target ref")
+    return submitted, target_ref
 
 
-def _seed_proposal_id(submitted: Mapping[str, Any]) -> str:
-    """Dig the proposal id out of whichever result shape the operation returned.
+def _seed_admission_value(submitted: Mapping[str, Any], field: str) -> str:
+    """Dig an admission field out of whichever result shape was returned.
 
     The five propose operations wrap their inspection at different depths -- a
     ClaimType result *is* the inspection, a batch result carries one inside its
@@ -1705,17 +1723,26 @@ def _seed_proposal_id(submitted: Mapping[str, Any]) -> str:
         if not isinstance(node, dict):
             break
         admission = node.get("admission")
-        if isinstance(admission, dict) and "proposal_id" in admission:
-            return str(admission["proposal_id"])
+        if isinstance(admission, dict) and field in admission:
+            return str(admission[field])
         node = node.get("proposal")
     raise click.ClickException(  # pragma: no cover - every propose result carries one
-        "The propose operation returned no admission to approve"
+        f"The propose operation returned no admission {field!r}"
     )
+
+
+def _seed_proposal_id(submitted: Mapping[str, Any]) -> str:
+    return _seed_admission_value(submitted, "proposal_id")
 
 
 @seed_group.command("apply")
 @click.argument("bundle_dir", type=click.Path(exists=True, file_okay=False))
-@click.option("--name", "proposal_name", required=True, help="Proposal name for the group.")
+@click.option(
+    "--name",
+    "proposal_name",
+    required=True,
+    help="Human application label; the proposal ref is machine-owned.",
+)
 @click.option(
     "--plan",
     "plan_only",
@@ -1753,6 +1780,10 @@ def apply_seed(
     neither; a harness runs `--plan`, then loops apply/approve/activate over the
     group ids in the order the plan printed them.
 
+    The human --name labels output only. Each group's proposal ref is derived
+    from the plan digest and group id, so a lost response retries the same
+    operation and names the still-open proposal instead of creating a duplicate.
+
     A bundle that cannot be legally grouped refuses -- here when two of its own
     entries would put different bytes at one canonical path, and otherwise
     through the propose operation's own diagnostics, which are the authoritative
@@ -1787,14 +1818,13 @@ def apply_seed(
         raise click.ClickException(str(exc)) from exc
 
     _echo_write_target("active", ctx.params)
-    submitted = _server_call(
+    submitted, target_ref = _server_call(
         lambda client, instance_id: _submit_seed_group(
             client,
             instance_id,
             files=files,
             plan=plan,
             group=group,
-            proposal_name=f"{proposal_name}-{group.proposal_slug}",
         ),
         command_name="playbill seed apply",
     )
@@ -1802,10 +1832,12 @@ def apply_seed(
         "tag": "playbill-seed-application-v1",
         "proposal_name": plan.proposal_name,
         "plan_digest": seed.seed_plan_digest(plan).tagged,
+        "operation_digest": seed.seed_group_operation_digest(plan, group).tagged,
         "group_id": group.group_id,
         "operation": group.operation,
         "entry_paths": list(group.entry_paths),
         "proposal_id": _seed_proposal_id(submitted),
+        "target_ref": target_ref,
         "next_group_id": plan.next_group_id(group.group_id),
         "result": submitted,
     }

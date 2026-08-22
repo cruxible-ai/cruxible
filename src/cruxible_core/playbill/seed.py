@@ -83,6 +83,7 @@ from cruxible_core.playbill.query.grammar import byte_sorted
 from cruxible_core.playbill.subjects import SubjectShell
 
 SEED_BUNDLE_DIGEST_DOMAIN: Final = "playbill-seed-plan-v1"
+SEED_GROUP_OPERATION_DIGEST_DOMAIN: Final = "playbill-seed-group-operation-v1"
 
 SEED_BODY_DIRECTORY: Final = "bodies"
 """Raw bytes stored through the ordinary body-store operation before any propose.
@@ -151,15 +152,12 @@ _REF_SAFE: Final = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_.-")
 
 
 def proposal_slug(group_id: str) -> str:
-    """Fold one group id into the proposal-ref grammar without losing its sense.
+    """Fold one group id into the seed-plan v1 presentation-slug grammar.
 
     A group id names an artifact and is written for a person to select --
-    `query_definition:project.work_items`. A proposal ref is
-    `[a-z][a-z0-9_.-]*` and cannot hold the colon. Folding is deterministic and
-    lossy only in characters the ref grammar has no room for, so two distinct
-    groups can in principle fold together; that is harmless because a slug names
-    a *proposal*, never an artifact, and successive proposals in one lineage are
-    exactly what a shared ref means.
+    `query_definition:project.work_items`. The v1 plan retains its short slug for
+    byte compatibility and human display, but proposal refs are now machine-owned
+    content addresses from :func:`seed_group_proposal_name`.
     """
 
     folded = "".join(item if item in _REF_SAFE else "-" for item in group_id.lower())
@@ -257,6 +255,28 @@ def seed_plan_digest(plan: SeedPlanV1) -> Sha256Value:
             if key not in _UNDIGESTED_PLAN_FIELDS
         },
     )
+
+
+def seed_group_operation_digest(
+    plan: SeedPlanV1,
+    group: SeedProposalGroupV1,
+) -> Sha256Value:
+    """Bind one planned group to its exact, name-independent bundle content."""
+
+    return typed_digest(
+        Sha256Value,
+        SEED_GROUP_OPERATION_DIGEST_DOMAIN,
+        {
+            "plan_digest": seed_plan_digest(plan).tagged,
+            "group_id": group.group_id,
+        },
+    )
+
+
+def seed_group_proposal_name(plan: SeedPlanV1, group: SeedProposalGroupV1) -> str:
+    """Return the machine-owned proposal-ref leaf for one seed operation."""
+
+    return f"seed-{seed_group_operation_digest(plan, group).value}"
 
 
 # -- reading a bundle -------------------------------------------------------
@@ -491,6 +511,7 @@ def render_seed_plan(plan: SeedPlanV1) -> tuple[str, ...]:
 __all__ = [
     "SEED_BODY_DIRECTORY",
     "SEED_BUNDLE_DIGEST_DOMAIN",
+    "SEED_GROUP_OPERATION_DIGEST_DOMAIN",
     "SEED_ENTRY_DIRECTORIES",
     "SEED_GROUP_OPERATIONS",
     "SeedBundleEntryV1",
@@ -503,5 +524,7 @@ __all__ = [
     "proposal_slug",
     "read_seed_bundle",
     "render_seed_plan",
+    "seed_group_operation_digest",
+    "seed_group_proposal_name",
     "seed_plan_digest",
 ]

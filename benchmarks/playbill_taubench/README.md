@@ -99,7 +99,10 @@ authorings declare them as dependency closures and the batch admits them in the
 same generation. The QueryDefinition needs its own, because the served surface
 has one singular propose operation for it and no plural one. Run
 `cruxible playbill seed apply seed-example --name NAME --plan` to see it; the
-plan is offline and reaches no daemon.
+plan is offline and reaches no daemon. `NAME` is a human run label. Applying a
+group uses a machine-owned `seed-<digest>` proposal ref derived from the plan
+digest and group id, so retrying after a lost response finds the same open
+proposal instead of opening a duplicate.
 
 ## What the two arms actually see
 

@@ -20,11 +20,15 @@ from typing import Any
 
 import pytest
 
+from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.seed import (
+    SEED_GROUP_OPERATION_DIGEST_DOMAIN,
     SEED_GROUP_OPERATIONS,
     SeedBundleError,
     plan_seed_bundle,
     render_seed_plan,
+    seed_group_operation_digest,
+    seed_group_proposal_name,
     seed_plan_digest,
 )
 
@@ -93,6 +97,32 @@ def test_the_plan_is_a_pure_function_of_the_bundle_bytes() -> None:
     assert seed_plan_digest(first) == seed_plan_digest(second)
     assert render_seed_plan(first) == render_seed_plan(second)
     assert seed_plan_digest(first).tagged in render_seed_plan(first)[0]
+
+
+def test_a_seed_group_operation_has_the_frozen_content_addressed_identity() -> None:
+    first = plan_seed_bundle(example_bundle(), proposal_name="human-run-a")
+    relabeled = plan_seed_bundle(example_bundle(), proposal_name="human-run-b")
+    group = first.group("claims")
+
+    expected = typed_digest(
+        Sha256Value,
+        SEED_GROUP_OPERATION_DIGEST_DOMAIN,
+        {
+            "plan_digest": seed_plan_digest(first).tagged,
+            "group_id": group.group_id,
+        },
+    )
+
+    assert seed_group_operation_digest(first, group) == expected
+    assert seed_group_operation_digest(relabeled, relabeled.group("claims")) == expected
+    assert seed_group_proposal_name(first, group) == f"seed-{expected.value}"
+    assert (
+        seed_group_operation_digest(
+            first,
+            first.group("query_definition:project.work_items"),
+        )
+        != expected
+    )
 
 
 def test_an_artifact_no_claim_carries_earns_its_own_proposal() -> None:

@@ -5,12 +5,18 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 from click.testing import CliRunner
 
 from cruxible_client import contracts
 from cruxible_core.cli.main import cli
 from cruxible_core.playbill.authoring.examples import claim_self_source_example
+from cruxible_core.playbill.seed import (
+    plan_seed_bundle,
+    seed_group_operation_digest,
+    seed_group_proposal_name,
+)
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -23,6 +29,25 @@ OBSERVATION = {
     "tag": "playbill-insertion-confirmation-observation-v1",
     "expectation_id": "sha256:" + "6" * 64,
 }
+SEED_EXAMPLE = Path(__file__).resolve().parents[2] / "benchmarks/playbill_taubench/seed-example"
+
+
+class _SeedSubmission:
+    def __init__(self, *, proposal_id: str, target_ref: str) -> None:
+        self.payload = {
+            "proposal": {
+                "proposal": {
+                    "admission": {
+                        "proposal_id": proposal_id,
+                        "target_ref": target_ref,
+                    }
+                }
+            }
+        }
+
+    def model_dump(self, *, mode: str) -> dict[str, Any]:
+        assert mode == "json"
+        return self.payload
 
 
 def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
@@ -420,3 +445,119 @@ def test_direct_claim_propose_help_and_invocation_route_to_the_coordinator(
     assert invoked.exit_code == 0, invoked.output
     assert "playbill.claim.propose.legacy_wire_deprecated" in invoked.stderr
     assert "playbill authoring create/compile" in invoked.stderr
+
+
+def test_seed_apply_reuses_machine_identity_and_blocks_only_an_open_retry(
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    files = {
+        path.relative_to(SEED_EXAMPLE).as_posix(): path.read_bytes()
+        for path in sorted(SEED_EXAMPLE.rglob("*"))
+        if path.is_file()
+    }
+    plan = plan_seed_bundle(files, proposal_name="first-human-label")
+    group = plan.group("claims")
+    expected_name = seed_group_proposal_name(plan, group)
+    expected_ref = f"refs/proposals/owner/{expected_name}"
+    proposal_id = "sha256:" + "7" * 64
+
+    class StubClient:
+        state = "absent"
+        proposal_names: list[str] = []
+        stored_bodies = 0
+
+        def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+            assert instance_id == "inst_authoring"
+            return contracts.PlaybillWhoAmI(
+                actor_id="owner",
+                credential_label="owner",
+                actor_id_source="runtime_credential_label",
+                credential_permission_mode="governed_write",
+                principal_registration_status="active",
+                active_principal_ids=["owner"],
+                coordinate=COORDINATE,
+            )
+
+        def list_playbill_proposals(
+            self, instance_id: str, *, status: str | None
+        ) -> contracts.PlaybillProposalList:
+            assert (instance_id, status) == ("inst_authoring", "open")
+            entries = []
+            if self.state == "open":
+                entries.append(
+                    contracts.PlaybillProposalListEntry(
+                        proposal_id=proposal_id,
+                        actor_id="owner",
+                        target_ref=expected_ref,
+                        admitted_at="2026-08-21T12:00:00.000000Z",
+                        verdict="candidate",
+                        candidate_digest="sha256:" + "8" * 64,
+                        status="open",
+                    )
+                )
+            return contracts.PlaybillProposalList(
+                coordinate=COORDINATE,
+                status_filter="open",
+                entries=entries,
+            )
+
+        def store_playbill_body(self, instance_id: str, content: bytes) -> object:
+            assert instance_id == "inst_authoring"
+            assert content
+            self.stored_bodies += 1
+            return object()
+
+        def propose_playbill_claims(
+            self,
+            instance_id: str,
+            *,
+            authorings: list[dict[str, object]],
+            proposal_name: str,
+        ) -> _SeedSubmission:
+            assert instance_id == "inst_authoring"
+            assert authorings
+            self.proposal_names.append(proposal_name)
+            self.state = "open"
+            return _SeedSubmission(proposal_id=proposal_id, target_ref=expected_ref)
+
+    client = StubClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    runner = CliRunner()
+
+    def invoke(label: str):  # type: ignore[no-untyped-def]
+        return runner.invoke(
+            cli,
+            [
+                "--server-url",
+                "https://authoring.example.test",
+                "--instance-id",
+                "inst_authoring",
+                "playbill",
+                "seed",
+                "apply",
+                str(SEED_EXAMPLE),
+                "--name",
+                label,
+                "--group",
+                "claims",
+                "--json",
+            ],
+        )
+
+    first = invoke("first-human-label")
+    stored_after_first = client.stored_bodies
+    retry = invoke("different-presentation-label")
+    client.state = "stale"
+    after_head_advance = invoke("third-human-label")
+
+    assert first.exit_code == 0, first.output
+    first_payload = json.loads(first.stdout)
+    assert first_payload["proposal_name"] == "first-human-label"
+    assert first_payload["target_ref"] == expected_ref
+    assert first_payload["operation_digest"] == seed_group_operation_digest(plan, group).tagged
+    assert retry.exit_code == 1
+    assert proposal_id in retry.output
+    assert expected_ref in retry.output
+    assert client.stored_bodies == stored_after_first * 2
+    assert after_head_advance.exit_code == 0, after_head_advance.output
+    assert client.proposal_names == [expected_name, expected_name]
