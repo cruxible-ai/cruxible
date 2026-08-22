@@ -10,6 +10,12 @@ approval/activation, and runtime identity/version reads. Set
 catalog below. Curation changes discoverability only; permission tiers still gate
 every call, and hidden expert tools remain available through the API.
 
+`CRUXIBLE_MCP_WORKSPACE_ROOT` selects the client-owned workspace for tools that
+read or write local files. The stdio MCP process is the client-side adapter; the
+workspace defaults to its working directory.
+All tool paths are normalized relative paths confined under that root; the
+daemon receives bytes and typed observations, never a client filesystem path.
+
 ## Runtime
 
 | Tool | Purpose | Permission |
@@ -35,8 +41,9 @@ every call, and hidden expert tools remain available through the API.
 | `cruxible_playbill_review` | Render review material | `READ_ONLY` |
 | `cruxible_playbill_prepare_approval` | Return the exact approval challenge | `READ_ONLY` |
 | `cruxible_playbill_submit_approval` | Submit a public signed attestation | `GRAPH_WRITE` |
-| `cruxible_playbill_activate` | Verify and activate by compare-and-set | `GRAPH_WRITE` |
+| `cruxible_playbill_activate` | Activate by compare-and-set and refresh any configured workspace floor | `GRAPH_WRITE` |
 | `cruxible_playbill_proposal_list` | List open and terminal proposal evidence | `READ_ONLY` |
+| `cruxible_playbill_proposal_readmit` | Re-admit a stale proposal at the current head | `GOVERNED_WRITE` |
 | `cruxible_playbill_whoami` | Explain credential-derived actor identity and registration | `READ_ONLY` |
 
 MCP never accepts a client private key. Signing occurs outside the server and
@@ -59,9 +66,12 @@ outside the language server/MCP process.
 | `cruxible_playbill_source_context` | Return source alignment context | `READ_ONLY` |
 | `cruxible_playbill_check_source_bundle` | Validate a compiled bundle | `READ_ONLY` |
 | `cruxible_playbill_propose_source_bundle` | Propose a frozen compiled bundle | `GOVERNED_WRITE` |
+| `cruxible_playbill_workspace_source_compile` | Read catalog-declared workspace bytes and derive a source bundle | `READ_ONLY` |
+| `cruxible_playbill_workspace_source_check` | Compile workspace sources and check accepted alignment | `READ_ONLY` |
 
-Local path traversal and compilation remain client-side CLI/library concerns.
-MCP receives canonical path-free bundles.
+The raw bundle tools remain for programmatic clients. Workspace tools own local
+path traversal and digest construction so an agent supplies catalog paths and
+root aliases, not compilation wire.
 
 ## Principals
 
@@ -81,6 +91,7 @@ MCP receives canonical path-free bundles.
 | `cruxible_playbill_propose_claim_type` | Propose a governed predicate interface | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_claim_types` | List the accepted predicate vocabulary | `READ_ONLY` |
 | `cruxible_playbill_get_claim_type` | Read one accepted ClaimType | `READ_ONLY` |
+| `cruxible_playbill_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
 | `cruxible_playbill_propose_claim` | Propose a direct Claim and its Capture | `GOVERNED_WRITE` |
 | `cruxible_playbill_propose_claims` | Propose several Claims as one change set | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_claims` | List accepted Claims by Subject or predicate | `READ_ONLY` |
@@ -96,10 +107,12 @@ from accepted law evidence, never carried forward from acceptance.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_authoring_create` | Create or recover a durable authoring intent | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_example` | Return a model-generated ClaimType/Claim/Brief/Procedure input | `READ_ONLY` |
 | `cruxible_playbill_authoring_get` | Read one authoring intent | `READ_ONLY` |
 | `cruxible_playbill_authoring_resume` | Return an intent's durable continuation | `READ_ONLY` |
 | `cruxible_playbill_authoring_list_pending` | List the caller's pending intents | `READ_ONLY` |
 | `cruxible_playbill_authoring_compile` | Create or update an intent and preflight it | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_bind` | Read an anchored workspace selection, derive commitments, and compile | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
@@ -122,6 +135,10 @@ It reports approval conditions but never obtains or impersonates an approval.
 | `cruxible_playbill_expand` | Expand one address into a context capsule | `READ_ONLY` |
 | `cruxible_playbill_export_floor` | Export the greppable floor as base64 bytes | `READ_ONLY` |
 | `cruxible_playbill_resolve_coverage` | Resolve observed working sources against accepted state | `READ_ONLY` |
+| `cruxible_playbill_workspace_floor_export` | Verify and exactly replace a floor directory under the MCP workspace | `READ_ONLY` |
+| `cruxible_playbill_workspace_floor_status` | Report whether the installed workspace floor is current, stale, or absent | `READ_ONLY` |
+| `cruxible_playbill_workspace_coverage_resolve` | Derive observations from selected workspace files and resolve coverage | `READ_ONLY` |
+| `cruxible_playbill_workspace_coverage_status` | Resolve coverage for the full declared workspace binding set | `READ_ONLY` |
 
 Query execution is a read: it returns the result together with its
 `playbill-query-execution-receipt-v1`, and it writes nothing. The floor export
@@ -130,6 +147,17 @@ Coverage resolution takes observations -- a declared logical-source binding and
 the bytes the caller read -- rather than paths, so the daemon reads no client
 filesystem. It appends no receipt: it changes no accepted state, and the
 evidence-index, overlay, and manifest digests it returns reproduce the answer.
+
+## Seed bundles
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_seed_plan` | Deterministically plan a local seed bundle without contacting an instance | `READ_ONLY` |
+| `cruxible_playbill_seed_apply` | Submit exactly one selected seed group | `GOVERNED_WRITE` |
+
+Seed application stores referenced bodies and composes only existing proposal
+and authoring operations. It never approves or activates. Plan and operation
+digests are adapter-owned outputs; callers choose the bundle, label, and group.
 
 ## Permission tiers
 

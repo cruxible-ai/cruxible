@@ -72,6 +72,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillClaimProposal",
         "PlaybillAuthoredClaim",
         "PlaybillAuthoringIntentList",
+        "PlaybillAuthoringExampleResult",
         "PlaybillAuthoringIntentView",
         "PlaybillAuthoringPreflightResult",
         "PlaybillAuthoringSubmitResult",
@@ -90,6 +91,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillCoverageResult",
         "PlaybillFloorFile",
         "PlaybillFloorExport",
+        "PlaybillFloorRefreshResult",
         "PlaybillInsertionAbandonResult",
         "PlaybillInsertionConfirmResult",
         "PlaybillInterfaceInventory",
@@ -99,6 +101,9 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillProviderInterfaceEntry",
         "PlaybillSearchResult",
         "PlaybillWhoAmI",
+        "PlaybillWorkspaceActivationResult",
+        "PlaybillWorkspaceFloorStatus",
+        "PlaybillWorkspaceFloorWriteResult",
         "RuntimeCredentialBootstrapResult",
         "RuntimeCredentialListResult",
         "RuntimeCredentialMetadata",
@@ -107,6 +112,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "ServerRestartResult",
     }
     assert set(current["literal_aliases"]) == {
+        "PlaybillAuthoringExampleName",
         "PlaybillHostStatus",
         "RuntimeCredentialPermissionMode",
     }

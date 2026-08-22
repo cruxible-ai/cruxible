@@ -1,4 +1,4 @@
-"""Shared CLI/MCP orchestration for planning and applying seed bundles."""
+"""Shared CLI/MCP orchestration for planning and applying Playbill seed bundles."""
 
 from __future__ import annotations
 

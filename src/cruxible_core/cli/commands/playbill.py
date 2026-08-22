@@ -26,6 +26,15 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.client.playbill_seed import (
+    apply_seed_directory_group,
+    plan_seed_directory,
+)
+from cruxible_core.client.playbill_sources import (
+    compile_client_source_context,
+    load_source_catalog,
+    root_aliases,
+)
 from cruxible_core.deprecation import (
     PLAYBILL_DIRECT_CLAIM_PROPOSE,
     emit_cli_deprecation,
@@ -74,10 +83,6 @@ from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.native.grammar import NativeRenderError
 from cruxible_core.playbill.native.manifest import parse_native_manifest
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.seed_client import (
-    apply_seed_directory_group,
-    plan_seed_directory,
-)
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.review import (
     PlaybillProposalReview,
@@ -86,11 +91,6 @@ from cruxible_core.playbill.service.review import (
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.playbill.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_core.playbill.types import PrincipalRecord
-from cruxible_core.playbill.workspace_sources import (
-    compile_client_source_context,
-    load_source_catalog,
-    root_aliases,
-)
 from cruxible_core.primitives import canonical_json
 
 ResultT = TypeVar("ResultT")

@@ -1,4 +1,4 @@
-"""Shared CLI/MCP adapter for deterministic local source compilation."""
+"""Shared CLI/MCP adapter for deterministic local Playbill source compilation."""
 
 from __future__ import annotations
 

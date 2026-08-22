@@ -17,6 +17,17 @@ from cruxible_client import (
     materialize_playbill_floor,
 )
 from cruxible_client.errors import ServerUnreachableError
+from cruxible_core.client.playbill_seed import (
+    SeedApplicationResultV1,
+    SeedPlanResultV1,
+    apply_seed_directory_group,
+    plan_seed_directory,
+)
+from cruxible_core.client.playbill_sources import (
+    compile_client_source_context,
+    load_source_catalog,
+    mapped_root_aliases,
+)
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp.workspace import mcp_workspace_root, resolve_workspace_path
 from cruxible_core.playbill.attestations import ApprovalAttestation
@@ -48,21 +59,10 @@ from cruxible_core.playbill.search import (
     SearchKind,
     SearchStatus,
 )
-from cruxible_core.playbill.seed_client import (
-    SeedApplicationResultV1,
-    SeedPlanResultV1,
-    apply_seed_directory_group,
-    plan_seed_directory,
-)
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 from cruxible_core.playbill.subjects import SubjectShell
 from cruxible_core.playbill.types import PrincipalRecord
-from cruxible_core.playbill.workspace_sources import (
-    compile_client_source_context,
-    load_source_catalog,
-    mapped_root_aliases,
-)
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
 from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1

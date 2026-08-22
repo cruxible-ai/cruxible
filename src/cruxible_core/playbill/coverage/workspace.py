@@ -6,7 +6,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, cast
 
-from cruxible_core.errors import DataValidationError
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
@@ -16,10 +15,10 @@ from cruxible_core.playbill.coverage.adapter import (
     read_working_path,
     selection_for_lines,
 )
-from cruxible_core.playbill.coverage.contracts import LogicalSourceIdentityV1
+from cruxible_core.playbill.coverage.contracts import CoverageError, LogicalSourceIdentityV1
 
 
-class WorkspaceCoverageError(DataValidationError):
+class WorkspaceCoverageError(CoverageError):
     """A workspace coverage selection is malformed or empty."""
 
 

@@ -1,5 +1,14 @@
 {
   "literal_aliases": {
+    "PlaybillAuthoringExampleName": {
+      "values": [
+        "claim-type",
+        "claim-flow-a",
+        "claim-self-source",
+        "procedure",
+        "brief"
+      ]
+    },
     "PlaybillHostStatus": {
       "values": [
         "created",
@@ -876,6 +885,90 @@
         "handoffs",
         "observed_at",
         "statement_digest"
+      ]
+    },
+    "PlaybillAuthoringExampleResult": {
+      "fields": {
+        "name": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "name",
+          "required": true,
+          "schema": {
+            "enum": [
+              "claim-type",
+              "claim-flow-a",
+              "claim-self-source",
+              "procedure",
+              "brief"
+            ],
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "payload": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "payload",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "tag": {
+          "default": "playbill-authoring-example-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-authoring-example-result-v1",
+            "default": "playbill-authoring-example-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "One model-constructed, executable authoring input example.",
+        "properties": {
+          "name": {
+            "enum": [
+              "claim-type",
+              "claim-flow-a",
+              "claim-self-source",
+              "procedure",
+              "brief"
+            ],
+            "title": "Name",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "tag": {
+            "const": "playbill-authoring-example-result-v1",
+            "default": "playbill-authoring-example-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "payload"
+        ],
+        "title": "PlaybillAuthoringExampleResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "name",
+        "payload"
       ]
     },
     "PlaybillAuthoringIntentList": {
@@ -6571,6 +6664,196 @@
         "path"
       ]
     },
+    "PlaybillFloorRefreshResult": {
+      "fields": {
+        "destination": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "destination",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Destination"
+          }
+        },
+        "floor_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "floor_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Floor Digest"
+          }
+        },
+        "message": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "message",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          }
+        },
+        "path": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "not_configured",
+              "refreshed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-floor-refresh-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-floor-refresh-result-v1",
+            "default": "playbill-floor-refresh-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Client-owned truth about the optional workspace floor refresh.",
+        "properties": {
+          "destination": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Destination"
+          },
+          "floor_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Floor Digest"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          },
+          "status": {
+            "enum": [
+              "not_configured",
+              "refreshed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-floor-refresh-result-v1",
+            "default": "playbill-floor-refresh-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PlaybillFloorRefreshResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "status"
+      ]
+    },
     "PlaybillHostResult": {
       "fields": {
         "instance_id": {
@@ -10332,6 +10615,679 @@
         "credential_label",
         "credential_permission_mode",
         "principal_registration_status"
+      ]
+    },
+    "PlaybillWorkspaceActivationResult": {
+      "fields": {
+        "accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "accepted_coordinate",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "floor_refresh": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "floor_refresh",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillFloorRefreshResult"
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "accepted",
+              "lost_cas"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-activation-receipt-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-activation-receipt-v1",
+            "default": "playbill-activation-receipt-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillFloorRefreshResult": {
+            "additionalProperties": false,
+            "description": "Client-owned truth about the optional workspace floor refresh.",
+            "properties": {
+              "destination": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Destination"
+              },
+              "floor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Floor Digest"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              },
+              "path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Path"
+              },
+              "status": {
+                "enum": [
+                  "not_configured",
+                  "refreshed",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-floor-refresh-result-v1",
+                "default": "playbill-floor-refresh-result-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "title": "PlaybillFloorRefreshResult",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Activation receipt plus the independent client-workspace refresh outcome.",
+        "properties": {
+          "accepted_coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "floor_refresh": {
+            "$ref": "#/$defs/PlaybillFloorRefreshResult"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "lost_cas"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-activation-receipt-v1",
+            "default": "playbill-activation-receipt-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "status",
+          "accepted_coordinate",
+          "floor_refresh"
+        ],
+        "title": "PlaybillWorkspaceActivationResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "accepted_coordinate",
+        "floor_refresh",
+        "proposal_id",
+        "status"
+      ]
+    },
+    "PlaybillWorkspaceFloorStatus": {
+      "fields": {
+        "current_coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "current_coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "destination": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "destination",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Destination"
+          }
+        },
+        "installed_coordinate": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "installed_coordinate",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "message": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "message",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          }
+        },
+        "path": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "not_configured",
+              "missing",
+              "current",
+              "stale",
+              "invalid"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-workspace-floor-status-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-workspace-floor-status-v1",
+            "default": "playbill-workspace-floor-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Freshness of the configured local floor against a daemon coordinate.",
+        "properties": {
+          "current_coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "destination": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Destination"
+          },
+          "installed_coordinate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Path"
+          },
+          "status": {
+            "enum": [
+              "not_configured",
+              "missing",
+              "current",
+              "stale",
+              "invalid"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-workspace-floor-status-v1",
+            "default": "playbill-workspace-floor-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PlaybillWorkspaceFloorStatus",
+        "type": "object"
+      },
+      "required_fields": [
+        "status"
+      ]
+    },
+    "PlaybillWorkspaceFloorWriteResult": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "destination": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "destination",
+          "required": true,
+          "schema": {
+            "title": "Destination",
+            "type": "string"
+          }
+        },
+        "file_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "file_count",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "File Count",
+            "type": "integer"
+          }
+        },
+        "floor_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "floor_digest",
+          "required": true,
+          "schema": {
+            "title": "Floor Digest",
+            "type": "string"
+          }
+        },
+        "path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": true,
+          "schema": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "status": {
+          "default": "written",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": false,
+          "schema": {
+            "const": "written",
+            "default": "written",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-workspace-floor-write-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-workspace-floor-write-result-v1",
+            "default": "playbill-workspace-floor-write-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "A verified floor export materialized by a client-side adapter.",
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "destination": {
+            "title": "Destination",
+            "type": "string"
+          },
+          "file_count": {
+            "minimum": 1,
+            "title": "File Count",
+            "type": "integer"
+          },
+          "floor_digest": {
+            "title": "Floor Digest",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "status": {
+            "const": "written",
+            "default": "written",
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-workspace-floor-write-result-v1",
+            "default": "playbill-workspace-floor-write-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "destination",
+          "floor_digest",
+          "coordinate",
+          "file_count"
+        ],
+        "title": "PlaybillWorkspaceFloorWriteResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "destination",
+        "file_count",
+        "floor_digest",
+        "path"
       ]
     },
     "RuntimeCredentialBootstrapResult": {
