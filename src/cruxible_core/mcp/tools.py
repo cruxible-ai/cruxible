@@ -14,6 +14,7 @@ from cruxible_core.mcp import handlers
 from cruxible_core.mcp.tool_prompts import tool_description
 from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.playbill.seed_client import SeedApplicationResultV1, SeedPlanResultV1
 from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 
 
@@ -678,6 +679,32 @@ def register_tools(
             bindings=bindings,
             budget=budget,
             scan_budget=scan_budget,
+        )
+
+    @_tool
+    def cruxible_playbill_seed_plan(
+        bundle_path: str,
+        proposal_name: str,
+    ) -> SeedPlanResultV1:
+        """Plan a workspace seed bundle offline without opening a proposal."""
+        return handlers.handle_playbill_seed_plan(
+            bundle_path=bundle_path,
+            proposal_name=proposal_name,
+        )
+
+    @_tool
+    def cruxible_playbill_seed_apply(
+        instance_id: str,
+        bundle_path: str,
+        proposal_name: str,
+        group_id: str | None = None,
+    ) -> SeedApplicationResultV1:
+        """Submit exactly one deterministic seed group; never approve or activate it."""
+        return handlers.handle_playbill_seed_apply(
+            instance_id,
+            bundle_path=bundle_path,
+            proposal_name=proposal_name,
+            group_id=group_id,
         )
 
     @_tool

@@ -48,6 +48,8 @@ _DEFAULT_TOOLS = {
     "cruxible_playbill_workspace_source_check",
     "cruxible_playbill_workspace_coverage_resolve",
     "cruxible_playbill_workspace_coverage_status",
+    "cruxible_playbill_seed_plan",
+    "cruxible_playbill_seed_apply",
     "cruxible_playbill_export_floor",
     "cruxible_playbill_workspace_floor_export",
     "cruxible_playbill_workspace_floor_status",
@@ -97,6 +99,7 @@ _COMMON_READS = {
     "cruxible_playbill_workspace_source_check",
     "cruxible_playbill_workspace_coverage_resolve",
     "cruxible_playbill_workspace_coverage_status",
+    "cruxible_playbill_seed_plan",
     "cruxible_playbill_authoring_get",
     "cruxible_playbill_authoring_resume",
     "cruxible_playbill_authoring_list_pending",
@@ -130,6 +133,7 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_playbill_authoring_abandon_insertion",
             "cruxible_playbill_claim_type_migrate",
             "cruxible_playbill_proposal_readmit",
+            "cruxible_playbill_seed_apply",
         }
     ),
     PROFILE_REVIEW: frozenset(

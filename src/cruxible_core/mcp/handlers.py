@@ -5,7 +5,7 @@ from __future__ import annotations
 import base64
 import threading
 from collections.abc import Callable, Mapping
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 from pydantic import TypeAdapter
 
@@ -28,6 +28,7 @@ from cruxible_core.playbill.authoring.models import (
 )
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_example
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequestV1
+from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
@@ -46,6 +47,12 @@ from cruxible_core.playbill.search import (
     PlaybillSearchCursorV1,
     SearchKind,
     SearchStatus,
+)
+from cruxible_core.playbill.seed_client import (
+    SeedApplicationResultV1,
+    SeedPlanResultV1,
+    apply_seed_directory_group,
+    plan_seed_directory,
 )
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_catalog import SourceCompilationBundle
@@ -92,6 +99,115 @@ class _LocalSourceContextClient:
 
     def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext:
         return playbill_api.playbill_source_context(instance_id)
+
+
+class _LocalSeedClient:
+    """Map the shared seed coordinator onto library-mode runtime operations."""
+
+    def store_playbill_body(
+        self, instance_id: str, content: bytes
+    ) -> contracts.PlaybillCasObjectResult:
+        return playbill_api.playbill_store_body(
+            instance_id,
+            content_base64=base64.b64encode(content).decode("ascii"),
+        )
+
+    def compile_playbill_authoring_input(
+        self,
+        instance_id: str,
+        *,
+        input: Mapping[str, Any],
+        intent_id: str | None,
+    ) -> contracts.PlaybillAuthoringPreflightResult:
+        return playbill_api.playbill_authoring_compile_input(
+            instance_id,
+            input=_AUTHORING_INPUT.validate_python(input),
+            intent_id=intent_id,
+        )
+
+    def submit_playbill_authoring_intent(
+        self, instance_id: str, intent_id: str
+    ) -> contracts.PlaybillAuthoringSubmitResult:
+        return playbill_api.playbill_authoring_submit(instance_id, intent_id)
+
+    def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+        return playbill_api.playbill_whoami(instance_id)
+
+    def list_playbill_proposals(
+        self,
+        instance_id: str,
+        *,
+        status: Literal["open", "settled"] | None = None,
+    ) -> contracts.PlaybillProposalList:
+        return playbill_api.playbill_list_proposals(
+            instance_id,
+            status=cast(Any, status),
+        )
+
+    def propose_playbill_claims(
+        self,
+        instance_id: str,
+        *,
+        authorings: list[dict[str, Any]],
+        proposal_name: str,
+    ) -> contracts.PlaybillClaimBatchProposal:
+        return playbill_api.playbill_propose_claims(
+            instance_id,
+            authorings=tuple(DirectClaimAuthoringV1.model_validate(item) for item in authorings),
+            proposal_name=proposal_name,
+        )
+
+    def propose_playbill_claim_type(
+        self,
+        instance_id: str,
+        *,
+        claim_type: Mapping[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        return playbill_api.playbill_propose_claim_type(
+            instance_id,
+            claim_type=ClaimType.model_validate(claim_type),
+            proposal_name=proposal_name,
+        )
+
+    def propose_playbill_subject(
+        self,
+        instance_id: str,
+        *,
+        shell: Mapping[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        return playbill_api.playbill_propose_subject(
+            instance_id,
+            shell=SubjectShell.model_validate(shell),
+            proposal_name=proposal_name,
+        )
+
+    def propose_playbill_document(
+        self,
+        instance_id: str,
+        *,
+        shell: Mapping[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        return playbill_api.playbill_propose_document(
+            instance_id,
+            shell=DocumentShell.model_validate(shell),
+            proposal_name=proposal_name,
+        )
+
+    def propose_playbill_query_definition(
+        self,
+        instance_id: str,
+        *,
+        query: Mapping[str, Any],
+        proposal_name: str,
+    ) -> contracts.PlaybillProposalInspection:
+        return playbill_api.playbill_propose_query_definition(
+            instance_id,
+            query=QueryDefinitionV1.model_validate(query),
+            proposal_name=proposal_name,
+        )
 
 
 def reset_client_cache() -> None:
@@ -1227,6 +1343,50 @@ def handle_playbill_workspace_coverage_status(
         whole_working_set=True,
         budget=budget,
         scan_budget=scan_budget,
+    )
+
+
+def handle_playbill_seed_plan(
+    *,
+    bundle_path: str,
+    proposal_name: str,
+) -> SeedPlanResultV1:
+    root = resolve_workspace_path(
+        bundle_path,
+        root=mcp_workspace_root(),
+        kind="directory",
+    )
+    return plan_seed_directory(root, proposal_name=proposal_name)
+
+
+def handle_playbill_seed_apply(
+    instance_id: str,
+    *,
+    bundle_path: str,
+    proposal_name: str,
+    group_id: str | None,
+) -> SeedApplicationResultV1:
+    root = resolve_workspace_path(
+        bundle_path,
+        root=mcp_workspace_root(),
+        kind="directory",
+    )
+    return _dispatch_remote_or_local(
+        lambda client: apply_seed_directory_group(
+            client,
+            instance_id,
+            root=root,
+            proposal_name=proposal_name,
+            group_id=group_id,
+        ),
+        lambda: apply_seed_directory_group(
+            _LocalSeedClient(),
+            instance_id,
+            root=root,
+            proposal_name=proposal_name,
+            group_id=group_id,
+        ),
+        operation_name="cruxible_playbill_seed_apply",
     )
 
 

@@ -30,7 +30,7 @@ from cruxible_core.deprecation import (
     PLAYBILL_DIRECT_CLAIM_PROPOSE,
     emit_cli_deprecation,
 )
-from cruxible_core.playbill import native, seed
+from cruxible_core.playbill import native
 from cruxible_core.playbill.attestations import ApprovalStatement
 from cruxible_core.playbill.authoring.bind import bind_working_selection_input
 from cruxible_core.playbill.authoring.examples import (
@@ -74,6 +74,10 @@ from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.native.grammar import NativeRenderError
 from cruxible_core.playbill.native.manifest import parse_native_manifest
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.seed_client import (
+    apply_seed_directory_group,
+    plan_seed_directory,
+)
 from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.review import (
     PlaybillProposalReview,
@@ -1775,140 +1779,6 @@ def seed_group() -> None:
     """Apply a bundle of authoring JSONs as governed proposals."""
 
 
-def _read_seed_bundle_files(root: Path) -> dict[str, bytes]:
-    """Read the whole bundle directory as bundle-relative bytes."""
-
-    if not root.is_dir():
-        raise click.ClickException(f"Not a seed bundle directory: {root}")
-    files: dict[str, bytes] = {}
-    for path in sorted(root.rglob("*")):
-        if path.is_file():
-            files[path.relative_to(root).as_posix()] = path.read_bytes()
-    if not files:
-        raise click.ClickException(f"The seed bundle at {root} is empty")
-    return files
-
-
-def _submit_seed_group(
-    client: CruxibleClient,
-    instance_id: str,
-    *,
-    files: Mapping[str, bytes],
-    plan: seed.SeedPlanV1,
-    group: seed.SeedProposalGroupV1,
-) -> tuple[dict[str, Any], str]:
-    """Store the bundle's bodies, then submit one group through its own operation.
-
-    Bodies first and always: a foreign-source citation names a content digest and
-    a Document names a body digest, so the bytes have to be in CAS before the
-    artifact citing them is proposed. Storing is content-addressed and therefore
-    idempotent, which is what makes re-running a group safe in the only sense a
-    store can be safe.
-    """
-
-    proposal_name = seed.seed_group_proposal_name(plan, group)
-    payloads = [json.loads(files[path].decode("utf-8")) for path in group.entry_paths]
-    if group.operation == "playbill_authoring_submit":
-        for path in plan.body_paths:
-            client.store_playbill_body(instance_id, files[path])
-        preflight = client.compile_playbill_authoring_input(
-            instance_id,
-            input=payloads[0],
-            intent_id=None,
-        )
-        if preflight.verdict != "passed":
-            raise click.ClickException(
-                "Authoring seed preflight refused: "
-                + json.dumps(preflight.frontier, ensure_ascii=False, sort_keys=True)
-            )
-        intent_id = preflight.certificate.get("intent_id")
-        target_ref = preflight.certificate.get("proposal_ref")
-        if not isinstance(intent_id, str) or not isinstance(target_ref, str):
-            raise click.ClickException(
-                "Authoring seed preflight omitted its intent or proposal identity"
-            )
-        submitted = client.submit_playbill_authoring_intent(
-            instance_id,
-            intent_id,
-        ).model_dump(mode="json")
-        if _seed_admission_value(submitted, "proposal_id") == "":  # pragma: no cover
-            raise click.ClickException("Authoring seed submit omitted its proposal ID")
-        return submitted, target_ref
-
-    whoami = client.playbill_whoami(instance_id)
-    target_ref = f"refs/proposals/{whoami.actor_id}/{proposal_name}"
-    open_proposals = client.list_playbill_proposals(instance_id, status="open")
-    existing = next(
-        (entry for entry in open_proposals.entries if entry.target_ref == target_ref),
-        None,
-    )
-    if existing is not None:
-        raise click.ClickException(
-            f"Seed group {group.group_id!r} already has open proposal "
-            f"{existing.proposal_id} at {target_ref}"
-        )
-
-    for path in plan.body_paths:
-        client.store_playbill_body(instance_id, files[path])
-
-    if group.kind == "claim":
-        submitted = client.propose_playbill_claims(
-            instance_id, authorings=payloads, proposal_name=proposal_name
-        ).model_dump(mode="json")
-    else:
-        single = payloads[0]
-        if group.kind == "claim_type":
-            submitted = client.propose_playbill_claim_type(
-                instance_id, claim_type=single, proposal_name=proposal_name
-            ).model_dump(mode="json")
-        elif group.kind == "subject":
-            submitted = client.propose_playbill_subject(
-                instance_id, shell=single, proposal_name=proposal_name
-            ).model_dump(mode="json")
-        elif group.kind == "document":
-            submitted = client.propose_playbill_document(
-                instance_id, shell=single, proposal_name=proposal_name
-            ).model_dump(mode="json")
-        else:
-            submitted = client.propose_playbill_query_definition(
-                instance_id, query=single, proposal_name=proposal_name
-            ).model_dump(mode="json")
-    if _seed_admission_value(submitted, "target_ref") != target_ref:
-        raise click.ClickException("The seed proposal admission returned an unexpected target ref")
-    return submitted, target_ref
-
-
-def _seed_admission_value(submitted: Mapping[str, Any], field: str) -> str:
-    """Dig an admission field out of whichever result shape was returned.
-
-    The five propose operations wrap their inspection at different depths -- a
-    ClaimType result *is* the inspection, a batch result carries one inside its
-    own `proposal` field -- so this descends `proposal` until it finds the
-    admission rather than encoding five shapes. It is deliberately a *read* of
-    the result, not a re-derivation: the id is whatever the operation said it
-    was.
-    """
-
-    node: Any = submitted
-    for _ in range(4):
-        if not isinstance(node, dict):
-            break
-        admission = node.get("admission")
-        if isinstance(admission, dict) and field in admission:
-            return str(admission[field])
-        status = node.get("status")
-        if isinstance(status, dict) and field in status and status[field] is not None:
-            return str(status[field])
-        node = node.get("proposal")
-    raise click.ClickException(  # pragma: no cover - every propose result carries one
-        f"The propose operation returned no admission {field!r}"
-    )
-
-
-def _seed_proposal_id(submitted: Mapping[str, Any]) -> str:
-    return _seed_admission_value(submitted, "proposal_id")
-
-
 @seed_group.command("apply")
 @click.argument("bundle_dir", type=click.Path(exists=True, file_okay=False))
 @click.option(
@@ -1965,61 +1835,39 @@ def apply_seed(
     """
 
     root = Path(bundle_dir).expanduser()
-    files = _read_seed_bundle_files(root)
-    try:
-        plan = seed.plan_seed_bundle(files, proposal_name=proposal_name)
-    except seed.SeedBundleError as exc:
-        raise click.ClickException(str(exc)) from exc
-    if not plan.groups:
-        raise click.ClickException(f"The seed bundle at {root} declares nothing to propose")
+    planning = plan_seed_directory(root, proposal_name=proposal_name)
+    plan = planning.plan
 
     if plan_only:
         if output_json:
             _emit_json(
                 {
                     **plan.model_dump(mode="json"),
-                    "plan_digest": seed.seed_plan_digest(plan).tagged,
+                    "plan_digest": planning.plan_digest,
                 }
             )
             return
-        for line in seed.render_seed_plan(plan):
+        for line in planning.rendered:
             click.echo(line)
         return
 
-    try:
-        group = plan.group(group_id) if group_id is not None else plan.groups[0]
-    except seed.SeedBundleError as exc:
-        raise click.ClickException(str(exc)) from exc
-
     _echo_write_target("active", ctx.params)
-    submitted, target_ref = _server_call(
-        lambda client, instance_id: _submit_seed_group(
+    result = _server_call(
+        lambda client, instance_id: apply_seed_directory_group(
             client,
             instance_id,
-            files=files,
-            plan=plan,
-            group=group,
+            root=root,
+            proposal_name=proposal_name,
+            group_id=group_id,
         ),
         command_name="playbill seed apply",
     )
-    payload = {
-        "tag": "playbill-seed-application-v1",
-        "proposal_name": plan.proposal_name,
-        "plan_digest": seed.seed_plan_digest(plan).tagged,
-        "operation_digest": seed.seed_group_operation_digest(plan, group).tagged,
-        "group_id": group.group_id,
-        "operation": group.operation,
-        "entry_paths": list(group.entry_paths),
-        "proposal_id": _seed_proposal_id(submitted),
-        "target_ref": target_ref,
-        "next_group_id": plan.next_group_id(group.group_id),
-        "result": submitted,
-    }
+    payload = result.model_dump(mode="json")
     if output_json:
         _emit_json(payload)
         return
-    click.echo(f"Proposed {group.group_id} as {payload['proposal_id']}")
-    click.echo(f"Entries: {', '.join(group.entry_paths)}")
+    click.echo(f"Proposed {payload['group_id']} as {payload['proposal_id']}")
+    click.echo(f"Entries: {', '.join(payload['entry_paths'])}")
     click.echo("Approve and activate it, then apply the next group.")
     click.echo(f"Next group: {payload['next_group_id'] or 'none; the bundle is applied'}")
 

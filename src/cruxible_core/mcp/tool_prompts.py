@@ -218,6 +218,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_workspace_coverage_status": (
         "Use for one coverage answer over every file in the declared workspace binding set."
     ),
+    "cruxible_playbill_seed_plan": (
+        "Use to inspect the deterministic proposal sequence for a workspace seed bundle; this "
+        "does not contact or mutate an instance."
+    ),
+    "cruxible_playbill_seed_apply": (
+        "Use after reviewing a seed plan to submit exactly one selected group. Approval and "
+        "activation remain separate governed acts."
+    ),
 }
 
 
