@@ -62,6 +62,8 @@ def test_admin_default_profile_is_exactly_the_writer_path(
         "cruxible_playbill_source_context",
         "cruxible_playbill_resolve_coverage",
         "cruxible_playbill_export_floor",
+        "cruxible_playbill_workspace_floor_export",
+        "cruxible_playbill_workspace_floor_status",
         "cruxible_playbill_whoami",
         "cruxible_playbill_proposal_list",
         "cruxible_playbill_submit_approval",

@@ -131,8 +131,8 @@ def register_tools(
     @_tool
     def cruxible_playbill_activate(
         instance_id: str, proposal_id: str
-    ) -> contracts.PlaybillActivationReceipt:
-        """Settle an approved candidate by compare-and-set."""
+    ) -> contracts.PlaybillWorkspaceActivationResult:
+        """Settle by compare-and-set and refresh the configured client-owned floor."""
         return handlers.handle_playbill_activate(instance_id, proposal_id)
 
     @_tool
@@ -573,5 +573,25 @@ def register_tools(
     ) -> contracts.PlaybillFloorExport:
         """Export the deterministic greppable floor as base64 bytes per path."""
         return handlers.handle_playbill_export_floor(instance_id)
+
+    @_tool
+    def cruxible_playbill_workspace_floor_export(
+        instance_id: str,
+        output_path: str = "playbill-floor",
+        force: bool = False,
+    ) -> contracts.PlaybillWorkspaceFloorWriteResult:
+        """Verify and write the floor under the configured MCP workspace."""
+        return handlers.handle_playbill_workspace_floor_export(
+            instance_id,
+            output_path,
+            force=force,
+        )
+
+    @_tool
+    def cruxible_playbill_workspace_floor_status(
+        instance_id: str,
+    ) -> contracts.PlaybillWorkspaceFloorStatus:
+        """Report whether the configured local floor is current, stale, or missing."""
+        return handlers.handle_playbill_workspace_floor_status(instance_id)
 
     return registered

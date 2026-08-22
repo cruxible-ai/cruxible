@@ -178,6 +178,14 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_export_floor": (
         "Use when you need the whole accepted floor as greppable files rather than one read."
     ),
+    "cruxible_playbill_workspace_floor_export": (
+        "Use when you need the accepted floor verified and written under this MCP client's "
+        "configured workspace."
+    ),
+    "cruxible_playbill_workspace_floor_status": (
+        "Use when you need to know whether this MCP client's configured floor is current, "
+        "stale, missing, or invalid."
+    ),
     "cruxible_playbill_resolve_coverage": (
         "Use when you have read or changed working files and need what they have to do with "
         "accepted state."

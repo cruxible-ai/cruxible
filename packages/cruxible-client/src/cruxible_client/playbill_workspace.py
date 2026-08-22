@@ -34,7 +34,10 @@ class _FloorClient(Protocol):
     ) -> contracts.PlaybillActivationReceipt: ...
 
     def export_playbill_floor(
-        self, instance_id: str, *, at: object | None = None
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillFloorExport: ...
 
 

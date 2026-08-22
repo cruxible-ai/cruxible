@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import base64
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any, TypeVar, cast
 
 from pydantic import TypeAdapter
 
-from cruxible_client import CruxibleClient, contracts
+from cruxible_client import (
+    CruxibleClient,
+    activate_with_workspace_refresh,
+    contracts,
+    inspect_workspace_floor,
+    materialize_playbill_floor,
+)
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.mcp.workspace import mcp_workspace_root
 from cruxible_core.playbill.attestations import ApprovalAttestation
 from cruxible_core.playbill.authoring.inputs import AuthoringInputV1
 from cruxible_core.playbill.authoring.models import (
@@ -47,6 +54,25 @@ _client_cache_key: tuple[str | None, str | None, str | None] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
 _AUTHORING_INPUT: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
+
+
+class _LocalFloorClient:
+    """Give the shared client adapter the same two calls in library mode."""
+
+    def activate_playbill_proposal(
+        self, instance_id: str, proposal_id: str
+    ) -> contracts.PlaybillActivationReceipt:
+        return playbill_api.playbill_activate(instance_id, proposal_id)
+
+    def export_playbill_floor(
+        self,
+        instance_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillFloorExport:
+        if at is not None:  # pragma: no cover - shared refresh always asks for current
+            raise DataValidationError("local floor adapter accepts only the current coordinate")
+        return playbill_api.playbill_export_floor(instance_id)
 
 
 def reset_client_cache() -> None:
@@ -264,10 +290,15 @@ def handle_playbill_submit_approval(
 
 def handle_playbill_activate(
     instance_id: str, proposal_id: str
-) -> contracts.PlaybillActivationReceipt:
+) -> contracts.PlaybillWorkspaceActivationResult:
+    workspace = mcp_workspace_root()
     return _dispatch_remote_or_local(
-        lambda client: client.activate_playbill_proposal(instance_id, proposal_id),
-        lambda: playbill_api.playbill_activate(instance_id, proposal_id),
+        lambda client: activate_with_workspace_refresh(
+            client, instance_id, proposal_id, workspace=workspace
+        ),
+        lambda: activate_with_workspace_refresh(
+            _LocalFloorClient(), instance_id, proposal_id, workspace=workspace
+        ),
         operation_name="cruxible_playbill_activate",
     )
 
@@ -987,4 +1018,34 @@ def handle_playbill_export_floor(instance_id: str) -> contracts.PlaybillFloorExp
         lambda client: client.export_playbill_floor(instance_id),
         lambda: playbill_api.playbill_export_floor(instance_id),
         operation_name="cruxible_playbill_export_floor",
+    )
+
+
+def handle_playbill_workspace_floor_export(
+    instance_id: str,
+    output_path: str,
+    *,
+    force: bool,
+) -> contracts.PlaybillWorkspaceFloorWriteResult:
+    workspace = mcp_workspace_root()
+    export = handle_playbill_export_floor(instance_id)
+    return materialize_playbill_floor(
+        workspace,
+        relative_path=output_path,
+        export=export,
+        force=force,
+    )
+
+
+def handle_playbill_workspace_floor_status(
+    instance_id: str,
+) -> contracts.PlaybillWorkspaceFloorStatus:
+    search = _dispatch_remote_or_local(
+        lambda client: client.search_playbill(instance_id, mode="orient"),
+        lambda: playbill_api.playbill_search(instance_id, mode="orient"),
+        operation_name="cruxible_playbill_workspace_floor_status",
+    )
+    return inspect_workspace_floor(
+        mcp_workspace_root(),
+        current_coordinate=search.coordinate,
     )

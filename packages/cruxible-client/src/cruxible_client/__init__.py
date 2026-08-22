@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from cruxible_client.http_client import CruxibleClient
+    from cruxible_client.playbill_workspace import (
+        PlaybillWorkspaceError,
+        activate_with_workspace_refresh,
+        inspect_workspace_floor,
+        materialize_playbill_floor,
+    )
 
 __all__ = [
     "CruxibleClient",
