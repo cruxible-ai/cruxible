@@ -2,6 +2,16 @@
   "format": "playbill-served-surface-dp0b-v1",
   "facade_operations": [
     "playbill_activate",
+    "playbill_authoring_abandon_insertion",
+    "playbill_authoring_compile",
+    "playbill_authoring_confirm_insertion",
+    "playbill_authoring_create",
+    "playbill_authoring_get",
+    "playbill_authoring_list_pending",
+    "playbill_authoring_preflight",
+    "playbill_authoring_resume",
+    "playbill_authoring_status",
+    "playbill_authoring_submit",
     "playbill_check_source_bundle",
     "playbill_claim_history",
     "playbill_dereference_document",
@@ -23,6 +33,7 @@
     "playbill_list_claims",
     "playbill_list_documents",
     "playbill_list_principals",
+    "playbill_list_proposals",
     "playbill_list_query_definitions",
     "playbill_list_subjects",
     "playbill_prepare_approval",
@@ -34,14 +45,17 @@
     "playbill_propose_query_definition",
     "playbill_propose_source_bundle",
     "playbill_propose_subject",
+    "playbill_readmit_proposal",
     "playbill_resolve_coverage",
     "playbill_review_proposal",
     "playbill_run_query",
+    "playbill_search",
     "playbill_source_context",
     "playbill_store_body",
     "playbill_subject_history",
-    "playbill_submit_approval"
+    "playbill_submit_approval",
+    "playbill_whoami"
   ],
-  "http_delegate_count": 40,
-  "mcp_delegate_count": 40
+  "http_delegate_count": 54,
+  "mcp_delegate_count": 53
 }

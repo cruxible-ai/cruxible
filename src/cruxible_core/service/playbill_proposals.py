@@ -6,8 +6,18 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
+from cruxible_core.playbill.canonical import Sha256Value, typed_digest
+from cruxible_core.playbill.errors import ProposalAdmissionError, ProposalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
+from cruxible_core.playbill.proposals import (
+    AuthenticatedActor,
+    ProposalAdmissionRequest,
+    ProposalResult,
+)
+from cruxible_core.playbill.service.documents import (
+    PlaybillAcceptedCoordinate,
+    PlaybillProposalInspection,
+)
 from cruxible_core.runtime.permissions import PermissionMode
 
 ProposalInventoryStatus = Literal["open", "settled"]
@@ -46,6 +56,13 @@ class PlaybillProposalListV1(_StrictOperationalReadModel):
     coordinate: PlaybillAcceptedCoordinate
     status_filter: ProposalInventoryStatus | None = None
     entries: tuple[PlaybillProposalListEntryV1, ...]
+
+
+class PlaybillProposalReadmitResultV1(_StrictOperationalReadModel):
+    tag: Literal["playbill-proposal-readmit-result-v1"] = "playbill-proposal-readmit-result-v1"
+    source_proposal_id: str
+    operation_digest: str
+    proposal: PlaybillProposalInspection
 
 
 class PlaybillWhoAmIV1(_StrictOperationalReadModel):
@@ -121,6 +138,85 @@ def service_list_playbill_proposals(
     )
 
 
+def _proposal_result(instance: PlaybillInstance, proposal_id: str) -> ProposalResult:
+    evidence = instance.proposal_evidence()
+    admission = evidence.read_admission(proposal_id)
+    evaluation = evidence.read_evaluation(proposal_id)
+    candidate = (
+        None
+        if evaluation.candidate_digest is None
+        else evidence.read_candidate(evaluation.candidate_digest)
+    )
+    return ProposalResult(admission=admission, evaluation=evaluation, candidate=candidate)
+
+
+def service_readmit_playbill_proposal(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    actor_id: str,
+) -> PlaybillProposalReadmitResultV1:
+    """Replay one stale authored tree through the current ProposalService rebase."""
+
+    source = _proposal_result(instance, proposal_id)
+    if source.admission.actor_id != actor_id:
+        raise ProposalAdmissionError("only the source proposal actor may readmit it")
+    source_status = next(
+        (
+            entry
+            for entry in service_list_playbill_proposals(instance, status="settled").entries
+            if entry.proposal_id == proposal_id
+        ),
+        None,
+    )
+    if source_status is None or source_status.terminal_reason != "stale":
+        raise ProposalAdmissionError("only a settled stale proposal may be readmitted")
+    coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    operation_digest = typed_digest(
+        Sha256Value,
+        "playbill-proposal-readmit-v1",
+        {
+            "source_proposal_id": proposal_id,
+            "current_accepted_coordinate": coordinate.model_dump(mode="json"),
+        },
+    ).tagged
+    matching = tuple(
+        admission
+        for admission in instance.proposal_evidence().list_admissions()
+        if admission.source_compilation_digest == operation_digest
+    )
+    if len(matching) > 1:
+        raise ProposalIntegrityError("readmission operation digest names multiple admissions")
+    if matching:
+        result = _proposal_result(instance, matching[0].proposal_id)
+    else:
+        generation = instance.accepted_history()[-1]
+        if generation.record is None:  # pragma: no cover - stale source requires a successor
+            raise ProposalIntegrityError("readmission requires an accepted candidate timestamp")
+        result = instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id=actor_id),
+            request=ProposalAdmissionRequest(
+                target_ref=(
+                    f"refs/proposals/{actor_id}/readmit-"
+                    f"{operation_digest.removeprefix('sha256:')[:24]}"
+                ),
+                proposed_base_oid=source.admission.proposed_base_oid,
+                source_compilation_digest=operation_digest,
+                claim_type_expansions=source.admission.claim_type_expansions,
+            ),
+            candidate_tree=instance.proposal_tree(source.admission.candidate_tree_oid),
+            timestamp=generation.record.candidate.timestamp,
+        )
+    return PlaybillProposalReadmitResultV1(
+        source_proposal_id=proposal_id,
+        operation_digest=operation_digest,
+        proposal=PlaybillProposalInspection(
+            proposal=result,
+            accepted_coordinate=coordinate,
+        ),
+    )
+
+
 def service_playbill_whoami(
     instance: PlaybillInstance,
     *,
@@ -155,6 +251,7 @@ def service_playbill_whoami(
 __all__ = [
     "PlaybillProposalListEntryV1",
     "PlaybillProposalListV1",
+    "PlaybillProposalReadmitResultV1",
     "PlaybillWhoAmIV1",
     "CredentialPermissionMode",
     "PrincipalRegistrationStatus",
@@ -162,5 +259,6 @@ __all__ = [
     "ProposalTerminalReason",
     "WhoAmIActorIdSource",
     "service_list_playbill_proposals",
+    "service_readmit_playbill_proposal",
     "service_playbill_whoami",
 ]

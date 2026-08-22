@@ -123,6 +123,15 @@ class PlaybillProposalList(BaseModel):
     entries: list[PlaybillProposalListEntry]
 
 
+class PlaybillProposalReadmitResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-proposal-readmit-result-v1"]
+    source_proposal_id: str
+    operation_digest: str
+    proposal: PlaybillProposalInspection
+
+
 class PlaybillWhoAmI(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

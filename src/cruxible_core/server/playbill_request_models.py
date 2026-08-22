@@ -162,6 +162,10 @@ class PlaybillClaimExplainRequest(_StrictPlaybillRequest):
     evaluation_time: datetime | None = None
 
 
+class PlaybillProposalReadmitRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-proposal-readmit-request-v1"] = "playbill-proposal-readmit-request-v1"
+
+
 class PlaybillRunQueryRequest(_StrictPlaybillRequest):
     at: AcceptedCoordinate | None = None
     evaluation_time: datetime | None = None

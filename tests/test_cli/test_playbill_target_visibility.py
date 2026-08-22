@@ -31,6 +31,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "query", "propose"): "active",
     ("playbill", "proposal", "approve"): "active",
     ("playbill", "proposal", "activate"): "active",
+    ("playbill", "proposal", "readmit"): "active",
     ("playbill", "sources", "propose"): "active",
     ("playbill", "principal", "rotate"): "active",
     ("playbill", "principal", "recover"): "active",

@@ -294,6 +294,17 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillProposalList)
 
+    def readmit_playbill_proposal(
+        self,
+        instance_id: str,
+        proposal_id: str,
+    ) -> contracts.PlaybillProposalReadmitResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/readmit",
+            json={"tag": "playbill-proposal-readmit-request-v1"},
+        )
+        return self._parse_model(response, contracts.PlaybillProposalReadmitResult)
+
     def inspect_playbill_proposal(
         self, instance_id: str, proposal_id: str
     ) -> contracts.PlaybillProposalInspection:

@@ -878,6 +878,395 @@
         "statement_digest"
       ]
     },
+    "PlaybillAuthoringIntentList": {
+      "fields": {
+        "intents": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "intents",
+          "required": false,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Intents",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-authoring-intent-list-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-authoring-intent-list-v1",
+            "default": "playbill-authoring-intent-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "intents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Intents",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-authoring-intent-list-v1",
+            "default": "playbill-authoring-intent-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "title": "PlaybillAuthoringIntentList",
+        "type": "object"
+      },
+      "required_fields": []
+    },
+    "PlaybillAuthoringIntentView": {
+      "fields": {
+        "intent": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "intent",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          }
+        },
+        "tag": {
+          "default": "playbill-authoring-intent-view-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-authoring-intent-view-v1",
+            "default": "playbill-authoring-intent-view-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "intent": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          },
+          "tag": {
+            "const": "playbill-authoring-intent-view-v1",
+            "default": "playbill-authoring-intent-view-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent"
+        ],
+        "title": "PlaybillAuthoringIntentView",
+        "type": "object"
+      },
+      "required_fields": [
+        "intent"
+      ]
+    },
+    "PlaybillAuthoringPreflightResult": {
+      "fields": {
+        "certificate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "certificate",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Certificate",
+            "type": "object"
+          }
+        },
+        "frontier": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "frontier",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Frontier",
+            "type": "object"
+          }
+        },
+        "tag": {
+          "default": "playbill-authoring-preflight-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-authoring-preflight-result-v1",
+            "default": "playbill-authoring-preflight-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "enum": [
+              "passed",
+              "refused"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "certificate": {
+            "additionalProperties": true,
+            "title": "Certificate",
+            "type": "object"
+          },
+          "frontier": {
+            "additionalProperties": true,
+            "title": "Frontier",
+            "type": "object"
+          },
+          "tag": {
+            "const": "playbill-authoring-preflight-result-v1",
+            "default": "playbill-authoring-preflight-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "passed",
+              "refused"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict",
+          "certificate",
+          "frontier"
+        ],
+        "title": "PlaybillAuthoringPreflightResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "certificate",
+        "frontier",
+        "verdict"
+      ]
+    },
+    "PlaybillAuthoringSubmitResult": {
+      "fields": {
+        "intent": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "intent",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillCandidateStatus"
+          }
+        },
+        "tag": {
+          "default": "playbill-authoring-submit-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-authoring-submit-result-v1",
+            "default": "playbill-authoring-submit-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillCandidateStatus": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_generation": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "candidate_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Candidate Digest"
+              },
+              "current_accepted_coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "path_to_acceptance": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Path To Acceptance",
+                "type": "array"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "state": {
+                "enum": [
+                  "draft",
+                  "preflight_refused",
+                  "ready_to_submit",
+                  "awaiting_external_approval",
+                  "approval_invalid",
+                  "ready_to_activate",
+                  "conflicted_after_rebase",
+                  "superseded",
+                  "accepted",
+                  "terminal"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-candidate-status-v1",
+                "default": "playbill-candidate-status-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "current_accepted_coordinate"
+            ],
+            "title": "PlaybillCandidateStatus",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "intent": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          },
+          "status": {
+            "$ref": "#/$defs/PlaybillCandidateStatus"
+          },
+          "tag": {
+            "const": "playbill-authoring-submit-result-v1",
+            "default": "playbill-authoring-submit-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent",
+          "status"
+        ],
+        "title": "PlaybillAuthoringSubmitResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "intent",
+        "status"
+      ]
+    },
     "PlaybillBodyRead": {
       "fields": {
         "body_digest": {
@@ -1030,6 +1419,746 @@
         "coordinate",
         "identity",
         "media_type"
+      ]
+    },
+    "PlaybillCandidateStatus": {
+      "fields": {
+        "accepted_generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "accepted_generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "candidate_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "candidate_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          }
+        },
+        "current_accepted_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "current_accepted_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "path_to_acceptance": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "path_to_acceptance",
+          "required": false,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Path To Acceptance",
+            "type": "array"
+          }
+        },
+        "proposal_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "enum": [
+              "draft",
+              "preflight_refused",
+              "ready_to_submit",
+              "awaiting_external_approval",
+              "approval_invalid",
+              "ready_to_activate",
+              "conflicted_after_rebase",
+              "superseded",
+              "accepted",
+              "terminal"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-candidate-status-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-candidate-status-v1",
+            "default": "playbill-candidate-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "accepted_generation": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "candidate_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          },
+          "current_accepted_coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "path_to_acceptance": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Path To Acceptance",
+            "type": "array"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Proposal Id"
+          },
+          "state": {
+            "enum": [
+              "draft",
+              "preflight_refused",
+              "ready_to_submit",
+              "awaiting_external_approval",
+              "approval_invalid",
+              "ready_to_activate",
+              "conflicted_after_rebase",
+              "superseded",
+              "accepted",
+              "terminal"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-candidate-status-v1",
+            "default": "playbill-candidate-status-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "current_accepted_coordinate"
+        ],
+        "title": "PlaybillCandidateStatus",
+        "type": "object"
+      },
+      "required_fields": [
+        "current_accepted_coordinate",
+        "state"
+      ]
+    },
+    "PlaybillCaptureAdmissionAccount": {
+      "fields": {
+        "capture_contract_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "capture_contract_digest",
+          "required": true,
+          "schema": {
+            "title": "Capture Contract Digest",
+            "type": "string"
+          }
+        },
+        "capture_contract_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "capture_contract_identity",
+          "required": true,
+          "schema": {
+            "title": "Capture Contract Identity",
+            "type": "string"
+          }
+        },
+        "capture_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "capture_digest",
+          "required": true,
+          "schema": {
+            "title": "Capture Digest",
+            "type": "string"
+          }
+        },
+        "citation_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "citation_id",
+          "required": true,
+          "schema": {
+            "title": "Citation Id",
+            "type": "string"
+          }
+        },
+        "citation_origin": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "citation_origin",
+          "required": true,
+          "schema": {
+            "enum": [
+              "independent",
+              "self_source",
+              "self_published",
+              "legacy"
+            ],
+            "title": "Citation Origin",
+            "type": "string"
+          }
+        },
+        "citation_role": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "citation_role",
+          "required": true,
+          "schema": {
+            "enum": [
+              "evidence",
+              "copy",
+              "legacy"
+            ],
+            "title": "Citation Role",
+            "type": "string"
+          }
+        },
+        "decisions": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "decisions",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillCaptureEvidenceKindAdmission"
+            },
+            "title": "Decisions",
+            "type": "array"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "admitted",
+              "not_admitted",
+              "not_evidence"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-capture-admission-account-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillCaptureEvidenceKindAdmission": {
+            "additionalProperties": false,
+            "properties": {
+              "admission": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "origin_only",
+                      "direct",
+                      "derivational"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Admission"
+              },
+              "closest_rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closest Rule Id"
+              },
+              "evidence_kind": {
+                "title": "Evidence Kind",
+                "type": "string"
+              },
+              "refusal_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
+              },
+              "rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rule Id"
+              },
+              "status": {
+                "enum": [
+                  "admitted",
+                  "not_admitted"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-capture-evidence-kind-admission-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "evidence_kind",
+              "status"
+            ],
+            "title": "PlaybillCaptureEvidenceKindAdmission",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "capture_contract_digest": {
+            "title": "Capture Contract Digest",
+            "type": "string"
+          },
+          "capture_contract_identity": {
+            "title": "Capture Contract Identity",
+            "type": "string"
+          },
+          "capture_digest": {
+            "title": "Capture Digest",
+            "type": "string"
+          },
+          "citation_id": {
+            "title": "Citation Id",
+            "type": "string"
+          },
+          "citation_origin": {
+            "enum": [
+              "independent",
+              "self_source",
+              "self_published",
+              "legacy"
+            ],
+            "title": "Citation Origin",
+            "type": "string"
+          },
+          "citation_role": {
+            "enum": [
+              "evidence",
+              "copy",
+              "legacy"
+            ],
+            "title": "Citation Role",
+            "type": "string"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/$defs/PlaybillCaptureEvidenceKindAdmission"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "admitted",
+              "not_admitted",
+              "not_evidence"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-capture-admission-account-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "citation_id",
+          "capture_digest",
+          "citation_role",
+          "citation_origin",
+          "capture_contract_identity",
+          "capture_contract_digest",
+          "status",
+          "decisions"
+        ],
+        "title": "PlaybillCaptureAdmissionAccount",
+        "type": "object"
+      },
+      "required_fields": [
+        "capture_contract_digest",
+        "capture_contract_identity",
+        "capture_digest",
+        "citation_id",
+        "citation_origin",
+        "citation_role",
+        "decisions",
+        "status",
+        "tag"
+      ]
+    },
+    "PlaybillCaptureEvidenceKindAdmission": {
+      "fields": {
+        "admission": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "admission",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Admission"
+          }
+        },
+        "closest_rule_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "closest_rule_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closest Rule Id"
+          }
+        },
+        "evidence_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evidence_kind",
+          "required": true,
+          "schema": {
+            "title": "Evidence Kind",
+            "type": "string"
+          }
+        },
+        "refusal_code": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "refusal_code",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Refusal Code"
+          }
+        },
+        "rule_id": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "rule_id",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rule Id"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "admitted",
+              "not_admitted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-capture-evidence-kind-admission-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "admission": {
+            "anyOf": [
+              {
+                "enum": [
+                  "origin_only",
+                  "direct",
+                  "derivational"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Admission"
+          },
+          "closest_rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Closest Rule Id"
+          },
+          "evidence_kind": {
+            "title": "Evidence Kind",
+            "type": "string"
+          },
+          "refusal_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Refusal Code"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rule Id"
+          },
+          "status": {
+            "enum": [
+              "admitted",
+              "not_admitted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-capture-evidence-kind-admission-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "evidence_kind",
+          "status"
+        ],
+        "title": "PlaybillCaptureEvidenceKindAdmission",
+        "type": "object"
+      },
+      "required_fields": [
+        "evidence_kind",
+        "status",
+        "tag"
       ]
     },
     "PlaybillCasObjectResult": {
@@ -1612,6 +2741,480 @@
         "exact_attestations",
         "law_evidence",
         "source_handles",
+        "verdict"
+      ]
+    },
+    "PlaybillClaimExplanationV2": {
+      "fields": {
+        "admission_accounts": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admission_accounts",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillCaptureAdmissionAccount"
+            },
+            "title": "Admission Accounts",
+            "type": "array"
+          }
+        },
+        "admission_evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admission_evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Admission Evaluation Time",
+            "type": "string"
+          }
+        },
+        "approval_coverage": {
+          "default": "containing_change_set",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "approval_coverage",
+          "required": false,
+          "schema": {
+            "const": "containing_change_set",
+            "default": "containing_change_set",
+            "title": "Approval Coverage",
+            "type": "string"
+          }
+        },
+        "claim": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillClaimView"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "coverage": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coverage",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Coverage",
+            "type": "object"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "exact_attestations": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "exact_attestations",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Exact Attestations",
+            "type": "array"
+          }
+        },
+        "law_evidence": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "law_evidence",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Law Evidence",
+            "type": "object"
+          }
+        },
+        "source_handles": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_handles",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Source Handles",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-claim-explanation-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Verdict",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillCaptureAdmissionAccount": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "title": "Capture Contract Identity",
+                "type": "string"
+              },
+              "capture_digest": {
+                "title": "Capture Digest",
+                "type": "string"
+              },
+              "citation_id": {
+                "title": "Citation Id",
+                "type": "string"
+              },
+              "citation_origin": {
+                "enum": [
+                  "independent",
+                  "self_source",
+                  "self_published",
+                  "legacy"
+                ],
+                "title": "Citation Origin",
+                "type": "string"
+              },
+              "citation_role": {
+                "enum": [
+                  "evidence",
+                  "copy",
+                  "legacy"
+                ],
+                "title": "Citation Role",
+                "type": "string"
+              },
+              "decisions": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillCaptureEvidenceKindAdmission"
+                },
+                "title": "Decisions",
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "admitted",
+                  "not_admitted",
+                  "not_evidence"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-capture-admission-account-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "citation_id",
+              "capture_digest",
+              "citation_role",
+              "citation_origin",
+              "capture_contract_identity",
+              "capture_contract_digest",
+              "status",
+              "decisions"
+            ],
+            "title": "PlaybillCaptureAdmissionAccount",
+            "type": "object"
+          },
+          "PlaybillCaptureEvidenceKindAdmission": {
+            "additionalProperties": false,
+            "properties": {
+              "admission": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "origin_only",
+                      "direct",
+                      "derivational"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Admission"
+              },
+              "closest_rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closest Rule Id"
+              },
+              "evidence_kind": {
+                "title": "Evidence Kind",
+                "type": "string"
+              },
+              "refusal_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
+              },
+              "rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rule Id"
+              },
+              "status": {
+                "enum": [
+                  "admitted",
+                  "not_admitted"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-capture-evidence-kind-admission-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "evidence_kind",
+              "status"
+            ],
+            "title": "PlaybillCaptureEvidenceKindAdmission",
+            "type": "object"
+          },
+          "PlaybillClaimView": {
+            "additionalProperties": false,
+            "properties": {
+              "coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "coordinate_kind": {
+                "const": "canonical",
+                "default": "canonical",
+                "title": "Coordinate Kind",
+                "type": "string"
+              },
+              "envelope": {
+                "additionalProperties": true,
+                "title": "Envelope",
+                "type": "object"
+              },
+              "facts": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Facts",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-read-v1",
+                "default": "playbill-claim-read-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "coordinate",
+              "envelope",
+              "facts"
+            ],
+            "title": "PlaybillClaimView",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "admission_accounts": {
+            "items": {
+              "$ref": "#/$defs/PlaybillCaptureAdmissionAccount"
+            },
+            "title": "Admission Accounts",
+            "type": "array"
+          },
+          "admission_evaluation_time": {
+            "title": "Admission Evaluation Time",
+            "type": "string"
+          },
+          "approval_coverage": {
+            "const": "containing_change_set",
+            "default": "containing_change_set",
+            "title": "Approval Coverage",
+            "type": "string"
+          },
+          "claim": {
+            "$ref": "#/$defs/PlaybillClaimView"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "coverage": {
+            "additionalProperties": true,
+            "title": "Coverage",
+            "type": "object"
+          },
+          "evaluation_time": {
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "exact_attestations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Exact Attestations",
+            "type": "array"
+          },
+          "law_evidence": {
+            "additionalProperties": true,
+            "title": "Law Evidence",
+            "type": "object"
+          },
+          "source_handles": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Source Handles",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-claim-explanation-v2",
+            "title": "Tag",
+            "type": "string"
+          },
+          "verdict": {
+            "additionalProperties": true,
+            "title": "Verdict",
+            "type": "object"
+          }
+        },
+        "required": [
+          "tag",
+          "coordinate",
+          "evaluation_time",
+          "claim",
+          "law_evidence",
+          "verdict",
+          "exact_attestations",
+          "source_handles",
+          "coverage",
+          "admission_evaluation_time",
+          "admission_accounts"
+        ],
+        "title": "PlaybillClaimExplanationV2",
+        "type": "object"
+      },
+      "required_fields": [
+        "admission_accounts",
+        "admission_evaluation_time",
+        "claim",
+        "coordinate",
+        "coverage",
+        "evaluation_time",
+        "exact_attestations",
+        "law_evidence",
+        "source_handles",
+        "tag",
         "verdict"
       ]
     },
@@ -2602,6 +4205,348 @@
         "coordinate",
         "envelope",
         "facts"
+      ]
+    },
+    "PlaybillClaimViewV2": {
+      "fields": {
+        "admission_accounts": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admission_accounts",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillCaptureAdmissionAccount"
+            },
+            "title": "Admission Accounts",
+            "type": "array"
+          }
+        },
+        "admission_evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admission_evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Admission Evaluation Time",
+            "type": "string"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "coordinate_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate_kind",
+          "required": true,
+          "schema": {
+            "const": "canonical",
+            "title": "Coordinate Kind",
+            "type": "string"
+          }
+        },
+        "envelope": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "envelope",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Envelope",
+            "type": "object"
+          }
+        },
+        "facts": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "facts",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Facts",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-claim-read-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillCaptureAdmissionAccount": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "title": "Capture Contract Identity",
+                "type": "string"
+              },
+              "capture_digest": {
+                "title": "Capture Digest",
+                "type": "string"
+              },
+              "citation_id": {
+                "title": "Citation Id",
+                "type": "string"
+              },
+              "citation_origin": {
+                "enum": [
+                  "independent",
+                  "self_source",
+                  "self_published",
+                  "legacy"
+                ],
+                "title": "Citation Origin",
+                "type": "string"
+              },
+              "citation_role": {
+                "enum": [
+                  "evidence",
+                  "copy",
+                  "legacy"
+                ],
+                "title": "Citation Role",
+                "type": "string"
+              },
+              "decisions": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillCaptureEvidenceKindAdmission"
+                },
+                "title": "Decisions",
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "admitted",
+                  "not_admitted",
+                  "not_evidence"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-capture-admission-account-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "citation_id",
+              "capture_digest",
+              "citation_role",
+              "citation_origin",
+              "capture_contract_identity",
+              "capture_contract_digest",
+              "status",
+              "decisions"
+            ],
+            "title": "PlaybillCaptureAdmissionAccount",
+            "type": "object"
+          },
+          "PlaybillCaptureEvidenceKindAdmission": {
+            "additionalProperties": false,
+            "properties": {
+              "admission": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "origin_only",
+                      "direct",
+                      "derivational"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Admission"
+              },
+              "closest_rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closest Rule Id"
+              },
+              "evidence_kind": {
+                "title": "Evidence Kind",
+                "type": "string"
+              },
+              "refusal_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
+              },
+              "rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rule Id"
+              },
+              "status": {
+                "enum": [
+                  "admitted",
+                  "not_admitted"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-capture-evidence-kind-admission-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "evidence_kind",
+              "status"
+            ],
+            "title": "PlaybillCaptureEvidenceKindAdmission",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "admission_accounts": {
+            "items": {
+              "$ref": "#/$defs/PlaybillCaptureAdmissionAccount"
+            },
+            "title": "Admission Accounts",
+            "type": "array"
+          },
+          "admission_evaluation_time": {
+            "title": "Admission Evaluation Time",
+            "type": "string"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "coordinate_kind": {
+            "const": "canonical",
+            "title": "Coordinate Kind",
+            "type": "string"
+          },
+          "envelope": {
+            "additionalProperties": true,
+            "title": "Envelope",
+            "type": "object"
+          },
+          "facts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Facts",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-claim-read-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "coordinate_kind",
+          "coordinate",
+          "envelope",
+          "facts",
+          "admission_evaluation_time",
+          "admission_accounts"
+        ],
+        "title": "PlaybillClaimViewV2",
+        "type": "object"
+      },
+      "required_fields": [
+        "admission_accounts",
+        "admission_evaluation_time",
+        "coordinate",
+        "coordinate_kind",
+        "envelope",
+        "facts",
+        "tag"
       ]
     },
     "PlaybillContextCapsule": {
@@ -4092,15 +6037,18 @@
           }
         },
         "tag": {
-          "default": "playbill-floor-export-v1",
+          "default": "playbill-floor-export-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-floor-export-v1",
-            "default": "playbill-floor-export-v1",
+            "default": "playbill-floor-export-v2",
+            "enum": [
+              "playbill-floor-export-v1",
+              "playbill-floor-export-v2"
+            ],
             "title": "Tag",
             "type": "string"
           }
@@ -4186,8 +6134,11 @@
             "type": "object"
           },
           "tag": {
-            "const": "playbill-floor-export-v1",
-            "default": "playbill-floor-export-v1",
+            "default": "playbill-floor-export-v2",
+            "enum": [
+              "playbill-floor-export-v1",
+              "playbill-floor-export-v2"
+            ],
             "title": "Tag",
             "type": "string"
           }
@@ -4448,6 +6399,519 @@
         "trust_root"
       ]
     },
+    "PlaybillInsertionAbandonResult": {
+      "fields": {
+        "expectation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "expectation",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Expectation",
+            "type": "object"
+          }
+        },
+        "intent": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "intent",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          }
+        },
+        "tag": {
+          "default": "playbill-insertion-abandon-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-insertion-abandon-result-v1",
+            "default": "playbill-insertion-abandon-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "expectation": {
+            "additionalProperties": true,
+            "title": "Expectation",
+            "type": "object"
+          },
+          "intent": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          },
+          "tag": {
+            "const": "playbill-insertion-abandon-result-v1",
+            "default": "playbill-insertion-abandon-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "intent",
+          "expectation"
+        ],
+        "title": "PlaybillInsertionAbandonResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "expectation",
+        "intent"
+      ]
+    },
+    "PlaybillInsertionConfirmResult": {
+      "fields": {
+        "expectation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "expectation",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Expectation",
+            "type": "object"
+          }
+        },
+        "intent": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "intent",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          }
+        },
+        "outcome": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "outcome",
+          "required": true,
+          "schema": {
+            "enum": [
+              "bound",
+              "already_bound",
+              "backing_candidate_pending",
+              "backing_candidate_refused",
+              "ambiguous",
+              "stale_target",
+              "expired",
+              "claim_currency_changed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "successor_status": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "successor_status",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillCandidateStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "tag": {
+          "default": "playbill-insertion-confirm-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-insertion-confirm-result-v1",
+            "default": "playbill-insertion-confirm-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillCandidateStatus": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_generation": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "candidate_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Candidate Digest"
+              },
+              "current_accepted_coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "path_to_acceptance": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Path To Acceptance",
+                "type": "array"
+              },
+              "proposal_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Proposal Id"
+              },
+              "state": {
+                "enum": [
+                  "draft",
+                  "preflight_refused",
+                  "ready_to_submit",
+                  "awaiting_external_approval",
+                  "approval_invalid",
+                  "ready_to_activate",
+                  "conflicted_after_rebase",
+                  "superseded",
+                  "accepted",
+                  "terminal"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-candidate-status-v1",
+                "default": "playbill-candidate-status-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "state",
+              "current_accepted_coordinate"
+            ],
+            "title": "PlaybillCandidateStatus",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "expectation": {
+            "additionalProperties": true,
+            "title": "Expectation",
+            "type": "object"
+          },
+          "intent": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          },
+          "outcome": {
+            "enum": [
+              "bound",
+              "already_bound",
+              "backing_candidate_pending",
+              "backing_candidate_refused",
+              "ambiguous",
+              "stale_target",
+              "expired",
+              "claim_currency_changed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "successor_status": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillCandidateStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tag": {
+            "const": "playbill-insertion-confirm-result-v1",
+            "default": "playbill-insertion-confirm-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "intent",
+          "expectation"
+        ],
+        "title": "PlaybillInsertionConfirmResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "expectation",
+        "intent",
+        "outcome"
+      ]
+    },
+    "PlaybillInterfaceInventory": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "interfaces": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "interfaces",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillProviderInterfaceEntry"
+            },
+            "title": "Interfaces",
+            "type": "array"
+          }
+        },
+        "provider_status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "provider_status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "installed",
+              "not_installed"
+            ],
+            "title": "Provider Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-interface-inventory-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillProviderInterfaceEntry": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "artifact_kind": {
+                "const": "Provider",
+                "title": "Artifact Kind",
+                "type": "string"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "interface_basis": {
+                "enum": [
+                  "explicit_interface_pin",
+                  "artifact_digest_fallback"
+                ],
+                "title": "Interface Basis",
+                "type": "string"
+              },
+              "interface_digest": {
+                "title": "Interface Digest",
+                "type": "string"
+              },
+              "pin_role": {
+                "const": "provider",
+                "title": "Pin Role",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-provider-interface-entry-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "identity",
+              "artifact_digest",
+              "artifact_kind",
+              "pin_role",
+              "interface_digest",
+              "interface_basis"
+            ],
+            "title": "PlaybillProviderInterfaceEntry",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "interfaces": {
+            "items": {
+              "$ref": "#/$defs/PlaybillProviderInterfaceEntry"
+            },
+            "title": "Interfaces",
+            "type": "array"
+          },
+          "provider_status": {
+            "enum": [
+              "installed",
+              "not_installed"
+            ],
+            "title": "Provider Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-interface-inventory-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "coordinate",
+          "provider_status",
+          "interfaces"
+        ],
+        "title": "PlaybillInterfaceInventory",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "interfaces",
+        "provider_status",
+        "tag"
+      ]
+    },
     "PlaybillPrincipalList": {
       "fields": {
         "coordinate": {
@@ -4668,6 +7132,606 @@
       "required_fields": [
         "accepted_coordinate",
         "proposal"
+      ]
+    },
+    "PlaybillProposalList": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "entries": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "entries",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillProposalListEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "status_filter": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "status_filter",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "settled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status Filter"
+          }
+        },
+        "tag": {
+          "default": "playbill-proposal-list-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-proposal-list-v1",
+            "default": "playbill-proposal-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillProposalListEntry": {
+            "additionalProperties": false,
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "admitted_at": {
+                "title": "Admitted At",
+                "type": "string"
+              },
+              "candidate_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Candidate Digest"
+              },
+              "proposal_id": {
+                "title": "Proposal Id",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "open",
+                  "settled"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-proposal-list-entry-v1",
+                "default": "playbill-proposal-list-entry-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_ref": {
+                "title": "Target Ref",
+                "type": "string"
+              },
+              "terminal_reason": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "accepted",
+                      "refused",
+                      "stale"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Terminal Reason"
+              },
+              "verdict": {
+                "enum": [
+                  "candidate",
+                  "refused"
+                ],
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal_id",
+              "actor_id",
+              "target_ref",
+              "admitted_at",
+              "verdict",
+              "status"
+            ],
+            "title": "PlaybillProposalListEntry",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/PlaybillProposalListEntry"
+            },
+            "title": "Entries",
+            "type": "array"
+          },
+          "status_filter": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "settled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Status Filter"
+          },
+          "tag": {
+            "const": "playbill-proposal-list-v1",
+            "default": "playbill-proposal-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "entries"
+        ],
+        "title": "PlaybillProposalList",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "entries"
+      ]
+    },
+    "PlaybillProposalListEntry": {
+      "fields": {
+        "actor_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id",
+          "required": true,
+          "schema": {
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "admitted_at": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admitted_at",
+          "required": true,
+          "schema": {
+            "title": "Admitted At",
+            "type": "string"
+          }
+        },
+        "candidate_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "candidate_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          }
+        },
+        "proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Proposal Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "open",
+              "settled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-proposal-list-entry-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-proposal-list-entry-v1",
+            "default": "playbill-proposal-list-entry-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "target_ref": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "target_ref",
+          "required": true,
+          "schema": {
+            "title": "Target Ref",
+            "type": "string"
+          }
+        },
+        "terminal_reason": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "terminal_reason",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "enum": [
+                  "accepted",
+                  "refused",
+                  "stale"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Terminal Reason"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "enum": [
+              "candidate",
+              "refused"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "admitted_at": {
+            "title": "Admitted At",
+            "type": "string"
+          },
+          "candidate_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Candidate Digest"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "open",
+              "settled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-proposal-list-entry-v1",
+            "default": "playbill-proposal-list-entry-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "target_ref": {
+            "title": "Target Ref",
+            "type": "string"
+          },
+          "terminal_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "accepted",
+                  "refused",
+                  "stale"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Terminal Reason"
+          },
+          "verdict": {
+            "enum": [
+              "candidate",
+              "refused"
+            ],
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "actor_id",
+          "target_ref",
+          "admitted_at",
+          "verdict",
+          "status"
+        ],
+        "title": "PlaybillProposalListEntry",
+        "type": "object"
+      },
+      "required_fields": [
+        "actor_id",
+        "admitted_at",
+        "proposal_id",
+        "status",
+        "target_ref",
+        "verdict"
+      ]
+    },
+    "PlaybillProposalReadmitResult": {
+      "fields": {
+        "operation_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operation_digest",
+          "required": true,
+          "schema": {
+            "title": "Operation Digest",
+            "type": "string"
+          }
+        },
+        "proposal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillProposalInspection"
+          }
+        },
+        "source_proposal_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_proposal_id",
+          "required": true,
+          "schema": {
+            "title": "Source Proposal Id",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-proposal-readmit-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillProposalInspection": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "proposal": {
+                "additionalProperties": true,
+                "title": "Proposal",
+                "type": "object"
+              },
+              "tag": {
+                "const": "playbill-proposal-inspection-v1",
+                "default": "playbill-proposal-inspection-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal",
+              "accepted_coordinate"
+            ],
+            "title": "PlaybillProposalInspection",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "operation_digest": {
+            "title": "Operation Digest",
+            "type": "string"
+          },
+          "proposal": {
+            "$ref": "#/$defs/PlaybillProposalInspection"
+          },
+          "source_proposal_id": {
+            "title": "Source Proposal Id",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-proposal-readmit-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "source_proposal_id",
+          "operation_digest",
+          "proposal"
+        ],
+        "title": "PlaybillProposalReadmitResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "operation_digest",
+        "proposal",
+        "source_proposal_id",
+        "tag"
       ]
     },
     "PlaybillProposalReview": {
@@ -5008,6 +8072,147 @@
         "provenance",
         "redactions",
         "settlement_base"
+      ]
+    },
+    "PlaybillProviderInterfaceEntry": {
+      "fields": {
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Artifact Digest",
+            "type": "string"
+          }
+        },
+        "artifact_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_kind",
+          "required": true,
+          "schema": {
+            "const": "Provider",
+            "title": "Artifact Kind",
+            "type": "string"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "title": "Identity",
+            "type": "string"
+          }
+        },
+        "interface_basis": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "interface_basis",
+          "required": true,
+          "schema": {
+            "enum": [
+              "explicit_interface_pin",
+              "artifact_digest_fallback"
+            ],
+            "title": "Interface Basis",
+            "type": "string"
+          }
+        },
+        "interface_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "interface_digest",
+          "required": true,
+          "schema": {
+            "title": "Interface Digest",
+            "type": "string"
+          }
+        },
+        "pin_role": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "pin_role",
+          "required": true,
+          "schema": {
+            "const": "provider",
+            "title": "Pin Role",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-provider-interface-entry-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "artifact_kind": {
+            "const": "Provider",
+            "title": "Artifact Kind",
+            "type": "string"
+          },
+          "identity": {
+            "title": "Identity",
+            "type": "string"
+          },
+          "interface_basis": {
+            "enum": [
+              "explicit_interface_pin",
+              "artifact_digest_fallback"
+            ],
+            "title": "Interface Basis",
+            "type": "string"
+          },
+          "interface_digest": {
+            "title": "Interface Digest",
+            "type": "string"
+          },
+          "pin_role": {
+            "const": "provider",
+            "title": "Pin Role",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-provider-interface-entry-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "identity",
+          "artifact_digest",
+          "artifact_kind",
+          "pin_role",
+          "interface_digest",
+          "interface_basis"
+        ],
+        "title": "PlaybillProviderInterfaceEntry",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_digest",
+        "artifact_kind",
+        "identity",
+        "interface_basis",
+        "interface_digest",
+        "pin_role",
+        "tag"
       ]
     },
     "PlaybillQueryDefinitionList": {
@@ -5645,6 +8850,278 @@
         "verdict"
       ]
     },
+    "PlaybillSearchResult": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "mode": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "mode",
+          "required": true,
+          "schema": {
+            "enum": [
+              "search",
+              "list",
+              "orient"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          }
+        },
+        "orientation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "orientation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Orientation"
+          }
+        },
+        "result_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "result_digest",
+          "required": true,
+          "schema": {
+            "title": "Result Digest",
+            "type": "string"
+          }
+        },
+        "rows": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rows",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "selection_basis_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "selection_basis_digest",
+          "required": true,
+          "schema": {
+            "title": "Selection Basis Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-search-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-search-result-v1",
+            "default": "playbill-search-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": true,
+          "schema": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "evaluation_time": {
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "search",
+              "list",
+              "orient"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Next Cursor"
+          },
+          "orientation": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Orientation"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "selection_basis_digest": {
+            "title": "Selection Basis Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-search-result-v1",
+            "default": "playbill-search-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "coordinate",
+          "evaluation_time",
+          "rows",
+          "selection_basis_digest",
+          "truncated",
+          "result_digest"
+        ],
+        "title": "PlaybillSearchResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "evaluation_time",
+        "mode",
+        "result_digest",
+        "rows",
+        "selection_basis_digest",
+        "truncated"
+      ]
+    },
     "PlaybillSourceCheckResult": {
       "fields": {
         "accepted_coordinate": {
@@ -6266,6 +9743,228 @@
         "coordinate",
         "envelope",
         "facts"
+      ]
+    },
+    "PlaybillWhoAmI": {
+      "fields": {
+        "active_principal_ids": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "active_principal_ids",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Active Principal Ids",
+            "type": "array"
+          }
+        },
+        "actor_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id",
+          "required": true,
+          "schema": {
+            "title": "Actor Id",
+            "type": "string"
+          }
+        },
+        "actor_id_source": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "actor_id_source",
+          "required": true,
+          "schema": {
+            "enum": [
+              "runtime_credential_label",
+              "local_operator"
+            ],
+            "title": "Actor Id Source",
+            "type": "string"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "credential_label": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "credential_label",
+          "required": true,
+          "schema": {
+            "title": "Credential Label",
+            "type": "string"
+          }
+        },
+        "credential_permission_mode": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "credential_permission_mode",
+          "required": true,
+          "schema": {
+            "enum": [
+              "read_only",
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Credential Permission Mode",
+            "type": "string"
+          }
+        },
+        "principal_registration_status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "principal_registration_status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "active",
+              "revoked",
+              "absent"
+            ],
+            "title": "Principal Registration Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-whoami-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-whoami-v1",
+            "default": "playbill-whoami-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "active_principal_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Active Principal Ids",
+            "type": "array"
+          },
+          "actor_id": {
+            "title": "Actor Id",
+            "type": "string"
+          },
+          "actor_id_source": {
+            "enum": [
+              "runtime_credential_label",
+              "local_operator"
+            ],
+            "title": "Actor Id Source",
+            "type": "string"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "credential_label": {
+            "title": "Credential Label",
+            "type": "string"
+          },
+          "credential_permission_mode": {
+            "enum": [
+              "read_only",
+              "governed_write",
+              "graph_write",
+              "admin"
+            ],
+            "title": "Credential Permission Mode",
+            "type": "string"
+          },
+          "principal_registration_status": {
+            "enum": [
+              "active",
+              "revoked",
+              "absent"
+            ],
+            "title": "Principal Registration Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-whoami-v1",
+            "default": "playbill-whoami-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor_id",
+          "credential_label",
+          "actor_id_source",
+          "credential_permission_mode",
+          "principal_registration_status",
+          "active_principal_ids",
+          "coordinate"
+        ],
+        "title": "PlaybillWhoAmI",
+        "type": "object"
+      },
+      "required_fields": [
+        "active_principal_ids",
+        "actor_id",
+        "actor_id_source",
+        "coordinate",
+        "credential_label",
+        "credential_permission_mode",
+        "principal_registration_status"
       ]
     },
     "RuntimeCredentialBootstrapResult": {

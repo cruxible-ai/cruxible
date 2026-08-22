@@ -27,6 +27,17 @@ credential mint
 credential recover-admin
 credential revoke
 credential rotate
+playbill authoring abandon-insertion
+playbill authoring bind
+playbill authoring compile
+playbill authoring confirm-insertion
+playbill authoring create
+playbill authoring get
+playbill authoring list
+playbill authoring preflight
+playbill authoring resume
+playbill authoring status
+playbill authoring submit
 playbill body store
 playbill claim explain
 playbill claim get
@@ -51,6 +62,7 @@ playbill floor export
 playbill hook post-tool-use
 playbill host create
 playbill init
+playbill list
 playbill native compile
 playbill native render
 playbill native review-current
@@ -58,6 +70,7 @@ playbill native stash list
 playbill native stash restore
 playbill native stash show
 playbill native status
+playbill orient
 playbill principal list
 playbill principal recover
 playbill principal revoke
@@ -65,12 +78,15 @@ playbill principal rotate
 playbill proposal activate
 playbill proposal approve
 playbill proposal inspect
+playbill proposal list
+playbill proposal readmit
 playbill proposal refusal
 playbill proposal review
 playbill query get
 playbill query list
 playbill query propose
 playbill query run
+playbill search
 playbill seed apply
 playbill sources check
 playbill sources compile
@@ -79,6 +95,7 @@ playbill subject get
 playbill subject history
 playbill subject list
 playbill subject propose
+playbill whoami
 server info
 server restart
 server start
@@ -107,6 +124,16 @@ POST /api/v1/{instance_id}/runtime/credentials/{credential_id}/revoke
 POST /api/v1/{instance_id}/runtime/credentials/{credential_id}/rotate
 POST /api/v1/{instance_id}/playbill/init
 POST /api/v1/{instance_id}/playbill/bodies
+GET  /api/v1/{instance_id}/playbill/authoring/intents
+POST /api/v1/{instance_id}/playbill/authoring/intents
+POST /api/v1/{instance_id}/playbill/authoring/compile
+GET  /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}
+GET  /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/resume
+GET  /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/status
+POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight
+POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit
+POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm
+POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon
 GET  /api/v1/{instance_id}/playbill/documents
 POST /api/v1/{instance_id}/playbill/documents/proposals
 GET  /api/v1/{instance_id}/playbill/documents/{identity}
@@ -116,11 +143,13 @@ POST /api/v1/{instance_id}/playbill/explain
 GET  /api/v1/{instance_id}/playbill/principals
 POST /api/v1/{instance_id}/playbill/principals/proposals
 GET  /api/v1/{instance_id}/playbill/proposals/{proposal_id}
+GET  /api/v1/{instance_id}/playbill/proposals
 GET  /api/v1/{instance_id}/playbill/proposals/{proposal_id}/refusal
 POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/review
 POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge
 POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals
 POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate
+POST /api/v1/{instance_id}/playbill/proposals/{proposal_id}/readmit
 GET  /api/v1/{instance_id}/playbill/sources/context
 POST /api/v1/{instance_id}/playbill/sources/check
 POST /api/v1/{instance_id}/playbill/sources/proposals
@@ -145,6 +174,8 @@ POST /api/v1/{instance_id}/playbill/discover
 POST /api/v1/{instance_id}/playbill/expand
 POST /api/v1/{instance_id}/playbill/coverage/resolve
 POST /api/v1/{instance_id}/playbill/floor/export
+POST /api/v1/{instance_id}/playbill/search
+GET  /api/v1/{instance_id}/playbill/whoami
 ```
 
 ## Surviving public MCP tool inventory
@@ -164,6 +195,16 @@ cruxible_playbill_review
 cruxible_playbill_prepare_approval
 cruxible_playbill_submit_approval
 cruxible_playbill_activate
+cruxible_playbill_authoring_abandon_insertion
+cruxible_playbill_authoring_compile
+cruxible_playbill_authoring_confirm_insertion
+cruxible_playbill_authoring_create
+cruxible_playbill_authoring_get
+cruxible_playbill_authoring_list_pending
+cruxible_playbill_authoring_preflight
+cruxible_playbill_authoring_resume
+cruxible_playbill_authoring_status
+cruxible_playbill_authoring_submit
 cruxible_playbill_list_documents
 cruxible_playbill_get_document
 cruxible_playbill_dereference
@@ -195,6 +236,9 @@ cruxible_playbill_discover
 cruxible_playbill_expand
 cruxible_playbill_export_floor
 cruxible_playbill_resolve_coverage
+cruxible_playbill_proposal_list
+cruxible_playbill_search
+cruxible_playbill_whoami
 ```
 
 The permission catalog and MCP registration catalog are equality-tested. See

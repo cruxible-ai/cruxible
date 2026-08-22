@@ -27,6 +27,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillInitRequest,
     PlaybillInsertionAbandonRequest,
     PlaybillInsertionConfirmRequest,
+    PlaybillProposalReadmitRequest,
     PlaybillProposeClaimRequest,
     PlaybillProposeClaimsRequest,
     PlaybillProposeClaimTypeRequest,
@@ -168,6 +169,21 @@ async def inspect_proposal(
 ) -> contracts.PlaybillProposalInspection:
     return playbill_api.playbill_inspect_proposal(
         resolve_server_instance_id(instance_id), proposal_id
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/proposals/{proposal_id}/readmit",
+    response_model=contracts.PlaybillProposalReadmitResult,
+)
+async def readmit_proposal(
+    instance_id: str,
+    proposal_id: str,
+    _req: PlaybillProposalReadmitRequest,
+) -> contracts.PlaybillProposalReadmitResult:
+    return playbill_api.playbill_readmit_proposal(
+        resolve_server_instance_id(instance_id),
+        proposal_id,
     )
 
 

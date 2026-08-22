@@ -58,10 +58,10 @@
     "POST": "PlaybillClaimBatchProposal"
   },
   "/api/v1/{instance_id}/playbill/claims/{identity}": {
-    "GET": "PlaybillClaimView"
+    "GET": "PlaybillClaimViewV2"
   },
   "/api/v1/{instance_id}/playbill/claims/{identity}/explanation": {
-    "POST": "PlaybillClaimExplanation"
+    "POST": "PlaybillClaimExplanationV2"
   },
   "/api/v1/{instance_id}/playbill/claims/{identity}/history": {
     "GET": "PlaybillClaimHistory"
@@ -70,7 +70,7 @@
     "POST": "PlaybillCoverageResult"
   },
   "/api/v1/{instance_id}/playbill/discover": {
-    "POST": "PlaybillDiscoveryResult"
+    "POST": "PlaybillDiscoveryResult | PlaybillInterfaceInventory"
   },
   "/api/v1/{instance_id}/playbill/documents": {
     "GET": "PlaybillDocumentList"
@@ -119,6 +119,9 @@
   },
   "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approvals": {
     "POST": "PlaybillApprovalReceipt"
+  },
+  "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/readmit": {
+    "POST": "PlaybillProposalReadmitResult"
   },
   "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/refusal": {
     "GET": "PlaybillRefusalInspection"

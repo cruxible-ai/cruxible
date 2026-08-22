@@ -469,6 +469,27 @@ def list_proposals(status: str | None, output_json: bool) -> None:
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
+@proposal_group.command("readmit")
+@click.argument("proposal_id")
+@json_option
+@handle_errors
+def readmit_proposal(proposal_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.readmit_playbill_proposal(instance_id, proposal_id),
+        command_name="playbill proposal readmit",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    proposal = result.proposal.proposal
+    evaluation = proposal.get("evaluation", {})
+    admission = proposal.get("admission", {})
+    click.echo(
+        f"{evaluation.get('verdict')}  {admission.get('proposal_id')}  "
+        f"from {result.source_proposal_id}"
+    )
+
+
 @proposal_group.command("inspect")
 @click.argument("proposal_id")
 @json_option
