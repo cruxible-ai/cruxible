@@ -20,7 +20,6 @@ from cruxible_core.playbill.exhaust import (
     HttpGovernedJournalClient,
     JournalCoverageState,
     JournalHeadManifestV1,
-    JournalHeadProof,
     JournalHeadVectorV1,
     JournalPartitionHeadV1,
     JournalRangeV1,
@@ -34,11 +33,11 @@ from cruxible_core.playbill.exhaust import (
     StoredProcedureJournalRecordV1,
     build_journal_export,
     build_journal_head_manifest,
+    governed,
     journal_genesis_digest,
     procedure_journal_record_digest,
     render_journal_export,
 )
-from cruxible_core.playbill.exhaust import governed
 from cruxible_core.playbill.exhaust.records import ProcedureJournalRecordV1
 from tests.test_playbill.test_journal_backends import (
     NOW,
@@ -170,9 +169,9 @@ def test_governed_client_public_contract_has_no_private_service_vocabulary() -> 
     ]
     words = {word.lower().strip(".,:;`()") for text in public for word in text.split()}
     assert words.isdisjoint({"tenant", "account", "quota", "credit", "billing", "org"})
-    assert "idempotency_key" not in inspect.signature(
-        GovernedJournalClientProtocol.append
-    ).parameters
+    assert (
+        "idempotency_key" not in inspect.signature(GovernedJournalClientProtocol.append).parameters
+    )
 
 
 def test_remote_refusals_compose_with_the_journal_error_family() -> None:
@@ -213,9 +212,7 @@ def test_http_peer_round_trip_verifies_and_reuses_deterministic_append_identity(
                         "status": "active",
                         "lease_generation": 1,
                         "expected_head_sequence": body["expected_head_sequence"],
-                        "expected_head_record_digest": body[
-                            "expected_head_record_digest"
-                        ],
+                        "expected_head_record_digest": body["expected_head_record_digest"],
                     },
                     "fencing_token": "fence-one",
                 }
@@ -431,11 +428,13 @@ def test_head_and_range_coordinate_substitution_are_typed_refusals(tmp_path: Pat
         http.close()
 
     changed_range = fixture.journal_range.model_copy(
-        update={"expected_head_digest": typed_digest(
-            ArtifactDigest,
-            "governed-journal-test-range-substitution-v1",
-            {"value": "other"},
-        ).tagged}
+        update={
+            "expected_head_digest": typed_digest(
+                ArtifactDigest,
+                "governed-journal-test-range-substitution-v1",
+                {"value": "other"},
+            ).tagged
+        }
     )
 
     def range_handler(_request: httpx.Request) -> httpx.Response:
@@ -535,6 +534,7 @@ def test_append_refuses_record_scope_head_commit_extension_and_content_changes(
         (fixture.stored, fixture.head, different_content, "changed caller-supplied"),
     )
     for stored, head, content, message in cases:
+
         def handler(_request: httpx.Request, *, stored=stored, head=head) -> httpx.Response:
             return _response(
                 {

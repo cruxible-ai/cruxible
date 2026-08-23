@@ -377,9 +377,7 @@ class HttpGovernedJournalClient:
             raise RemoteJournalVerificationError("coverage response has no coverage object")
         raw_partitions = report.get("partitions")
         if not isinstance(raw_partitions, list):
-            raise RemoteJournalVerificationError(
-                "coverage response has no partition coverage list"
-            )
+            raise RemoteJournalVerificationError("coverage response has no partition coverage list")
         by_id: dict[str, Mapping[str, object]] = {}
         for index, item in enumerate(raw_partitions):
             if not isinstance(item, dict) or not isinstance(item.get("partition_id"), str):
@@ -633,9 +631,7 @@ class HttpGovernedJournalClient:
             head.partition_id for head in transfer.head_vector.partitions if head.sequence > 0
         ]
         if moving != expected_moving:
-            raise RemoteJournalVerificationError(
-                "handoff proof changed its moving partition set"
-            )
+            raise RemoteJournalVerificationError("handoff proof changed its moving partition set")
         return JournalHeadProof(
             manifest=transfer.head_manifest,
             expected_public_key=transfer.expected_head_public_key,
@@ -655,10 +651,9 @@ class HttpGovernedJournalClient:
             raise RemoteJournalVerificationError(
                 "handoff target head proof does not verify"
             ) from exc
-        if (
-            any(head.stream != self.identity for head in proved.partitions)
-            or {head.partition_id for head in proved.partitions} != set(requested)
-        ):
+        if any(head.stream != self.identity for head in proved.partitions) or {
+            head.partition_id for head in proved.partitions
+        } != set(requested):
             raise RemoteJournalVerificationError(
                 "handoff target proof names another stream or partition set"
             )
@@ -727,9 +722,7 @@ class HttpGovernedJournalClient:
                 "export response payload is not canonical base64"
             ) from exc
         if export.get("byte_length") != len(payload):
-            raise RemoteJournalVerificationError(
-                "export response byte length does not reproduce"
-            )
+            raise RemoteJournalVerificationError("export response byte length does not reproduce")
         manifest = _model(
             JournalHeadManifestV1,
             document.get("head_manifest"),
@@ -764,9 +757,8 @@ class HttpGovernedJournalClient:
             raise RemoteJournalVerificationError(
                 "export response substituted its requested partition set"
             )
-        if (
-            segment_count != len(bundle.manifest.segments)
-            or record_count != sum(item.record_count for item in bundle.manifest.segments)
+        if segment_count != len(bundle.manifest.segments) or record_count != sum(
+            item.record_count for item in bundle.manifest.segments
         ):
             raise RemoteJournalVerificationError(
                 "export response counts do not reproduce its normalized bundle"
@@ -795,10 +787,8 @@ class HttpGovernedJournalClient:
             raise RemoteJournalVerificationError(
                 "journal transfer substituted its logical stream identity"
             )
-        if (
-            transfer.segment_count != len(bundle.manifest.segments)
-            or transfer.record_count
-            != sum(item.record_count for item in bundle.manifest.segments)
+        if transfer.segment_count != len(bundle.manifest.segments) or transfer.record_count != sum(
+            item.record_count for item in bundle.manifest.segments
         ):
             raise RemoteJournalVerificationError(
                 "journal transfer metadata does not reproduce its normalized bundle"
@@ -858,18 +848,14 @@ class HttpGovernedJournalClient:
                     remote_status=response.status_code,
                     refusal_id=None,
                 ) from exc
-            raise RemoteJournalVerificationError(
-                "successful journal response is not JSON"
-            ) from exc
+            raise RemoteJournalVerificationError("successful journal response is not JSON") from exc
         if not isinstance(raw, dict):
             if not 200 <= response.status_code < 300:
                 raise RemoteJournalRefusal(
                     remote_status=response.status_code,
                     refusal_id=None,
                 )
-            raise RemoteJournalVerificationError(
-                "successful journal response is not an object"
-            )
+            raise RemoteJournalVerificationError("successful journal response is not an object")
         document = cast(dict[str, object], raw)
         if not 200 <= response.status_code < 300:
             raw_refusal_id = document.get("error_code")
@@ -922,9 +908,7 @@ class HttpGovernedJournalClient:
         for partition_id in requested:
             self._validate_partition_id(partition_id)
         if len(set(requested)) != len(requested):
-            raise RemoteJournalVerificationError(
-                "journal operation repeats a partition coordinate"
-            )
+            raise RemoteJournalVerificationError("journal operation repeats a partition coordinate")
         return requested
 
 
