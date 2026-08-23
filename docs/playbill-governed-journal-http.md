@@ -143,7 +143,9 @@ It does not reinterpret them as journal semantics.
 For every requested partition, the client separately reads the authoritative
 head and compares it with `head_sequence` and `head_record_digest`. An omitted
 partition or a disagreement produces `UNAVAILABLE`, never `EXACT` with an empty
-head set. HTTP 401 or 403 produces `UNAUTHORIZED` coverage.
+head set. A partition explicitly reported as `UNAVAILABLE` does not require a
+head read, and a head that cannot be verified also produces `UNAVAILABLE`.
+HTTP 401 or 403 produces `UNAUTHORIZED` coverage.
 
 ## Writer operations
 
@@ -234,6 +236,13 @@ The fencing token and actor attribution are deliberately absent. Retrying the
 same append after transport uncertainty derives the same key; changing its
 logical coordinate or content derives a different key.
 
+The home enforces idempotency within one logical stream and partition. It
+durably retains the association between each key, the canonical caller content,
+and the original committed record. Repeating the same key and content returns
+that original record with `replayed: true`. Reusing the key with different
+content is a typed `journal_idempotency_conflict`; it never returns or commits a
+different record.
+
 Response:
 
 ```json
@@ -248,11 +257,11 @@ Response:
 
 The returned record must name the configured logical stream and requested
 partition. The returned head's sequence and digest must commit that exact
-record. For `replayed: false`, the record must be at expected sequence plus one
-and commit the expected head digest as its predecessor. For `replayed: true`,
-that extension check does not apply; every other scope, digest, content, and head
-check still applies. The returned actor context is accepted as home-assigned,
-while the remaining record fields must reproduce caller `content` through
+record. Whether `replayed` is true or false, the record must be at expected
+sequence plus one and commit the expected head digest as its predecessor. The
+flag is success metadata, not authority to weaken chain verification. The
+returned actor context is accepted as home-assigned, while the remaining record
+fields must reproduce caller `content` through
 `ProcedureJournalRecordDraftV1` and `ProcedureJournalRecordV1.bind`.
 
 ### Fence a writer
@@ -309,6 +318,9 @@ The common export object is:
   "operation_id": "<home operation>"
 }
 ```
+
+`payload_base64` is strict base64. `byte_length` is the exact length of its
+decoded normalized-export bytes, not the encoded string length or an estimate.
 
 ### Export
 
@@ -373,9 +385,10 @@ The request is the export request. The response is the common export object,
 {"moving_partitions":["runs-2026-08"]}
 ```
 
-`moving_partitions` must equal the populated partitions in the verified head
-vector. The client returns a `JournalHeadProof`; its signature proves custody of
-the named prefixes, not semantic acceptance.
+`moving_partitions` must equal the populated partition set in the verified head
+vector. Array order is irrelevant; duplicates, omissions, and additions are
+refused. The client returns a `JournalHeadProof`; its signature proves custody
+of the named prefixes, not semantic acceptance.
 
 ### Complete handoff
 
@@ -417,6 +430,7 @@ Response:
 ```
 
 The released and fenced partition sets must exactly reproduce the request.
+Array order is irrelevant; duplicates, omissions, and additions are refused.
 
 ## Refusals
 
@@ -442,7 +456,8 @@ The following peer identifiers classify a writer or prefix conflict and produce
 
 Every other non-success response produces `RemoteJournalRefusal`. A response
 without usable JSON or an identifier remains a refusal with its HTTP status and
-an unspecified identifier. A failed HTTP exchange produces
+an unspecified identifier. Any HTTPX exchange failure, including transport
+errors, redirect exhaustion, and invalid URLs, produces
 `RemoteJournalTransportError`.
 
 A 2xx response that is malformed, substituted, unverifiable, discontinuous, or
