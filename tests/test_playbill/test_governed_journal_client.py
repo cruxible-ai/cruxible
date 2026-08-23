@@ -981,6 +981,97 @@ def test_reported_unavailable_coverage_does_not_require_a_head_read() -> None:
     ]
 
 
+def test_coverage_head_refusal_remains_unavailable(tmp_path: Path) -> None:
+    fixture = _peer_fixture(tmp_path)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/coverage"):
+            return _response(
+                {
+                    "coverage": {
+                        "coverage": "exact",
+                        "partitions": [
+                            {
+                                "partition_id": PARTITION,
+                                "coverage": "exact",
+                                "head_sequence": fixture.head.sequence,
+                                "head_record_digest": fixture.head.record_digest,
+                                "reason": None,
+                            }
+                        ],
+                        "reason": None,
+                    }
+                }
+            )
+        return httpx.Response(
+            503,
+            json={"error_code": "home-history-unavailable", "message": "unavailable"},
+        )
+
+    client, http = _client(handler)
+    try:
+        coverage = client.coverage((PARTITION,))
+        assert coverage.state is JournalCoverageState.UNAVAILABLE
+        assert coverage.partitions == ()
+        assert coverage.reason == f"authoritative head is unavailable for partition {PARTITION!r}"
+    finally:
+        http.close()
+
+
+@pytest.mark.parametrize("failure_kind", ["substituted-identity", "transport"])
+def test_coverage_propagates_head_verification_and_transport_failures(
+    tmp_path: Path,
+    failure_kind: str,
+) -> None:
+    fixture = _peer_fixture(tmp_path)
+    other_stream = JournalStreamIdentityV1(
+        instance_id=_stream().instance_id,
+        journal_family=_stream().journal_family,
+        stream_id="substituted",
+    )
+    substituted_head = JournalPartitionHeadV1(
+        stream=other_stream,
+        partition_id=PARTITION,
+        sequence=0,
+        record_digest=journal_genesis_digest(other_stream, PARTITION),
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/coverage"):
+            return _response(
+                {
+                    "coverage": {
+                        "coverage": "exact",
+                        "partitions": [
+                            {
+                                "partition_id": PARTITION,
+                                "coverage": "exact",
+                                "head_sequence": fixture.head.sequence,
+                                "head_record_digest": fixture.head.record_digest,
+                                "reason": None,
+                            }
+                        ],
+                        "reason": None,
+                    }
+                }
+            )
+        if failure_kind == "substituted-identity":
+            return _response(_head_document(substituted_head))
+        raise httpx.ConnectError("peer unavailable", request=request)
+
+    client, http = _client(handler)
+    try:
+        error_type = (
+            RemoteJournalVerificationError
+            if failure_kind == "substituted-identity"
+            else RemoteJournalTransportError
+        )
+        with pytest.raises(error_type):
+            client.coverage((PARTITION,))
+    finally:
+        http.close()
+
+
 @pytest.mark.parametrize("failure_kind", ["connect", "invalid-url"])
 def test_http_failures_are_typed_without_exposing_authorization(failure_kind: str) -> None:
     def disconnected(request: httpx.Request) -> httpx.Response:

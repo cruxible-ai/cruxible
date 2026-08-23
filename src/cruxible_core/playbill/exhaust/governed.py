@@ -423,7 +423,7 @@ class HttpGovernedJournalClient:
                 )
             try:
                 head = self.read_head(partition_id)
-            except RemoteJournalError:
+            except RemoteJournalRefusal:
                 return JournalCoverage(
                     state=JournalCoverageState.UNAVAILABLE,
                     reason="; ".join(reasons)
