@@ -400,18 +400,35 @@ class HttpGovernedJournalClient:
         states: list[JournalCoverageState] = []
         heads: list[JournalPartitionHeadV1] = []
         reasons: list[str] = []
+        report_reason = report.get("reason")
+        if isinstance(report_reason, str) and report_reason:
+            reasons.append(report_reason)
         for partition_id in requested:
             item = by_id[partition_id]
             try:
-                states.append(JournalCoverageState(str(item.get("coverage"))))
+                state = JournalCoverageState(str(item.get("coverage")))
             except ValueError as exc:
                 raise RemoteJournalVerificationError(
                     f"coverage returned an unknown state for partition {partition_id!r}"
                 ) from exc
+            states.append(state)
             reason = item.get("reason")
             if isinstance(reason, str) and reason:
                 reasons.append(reason)
-            head = self.read_head(partition_id)
+            if state is JournalCoverageState.UNAVAILABLE:
+                return JournalCoverage(
+                    state=JournalCoverageState.UNAVAILABLE,
+                    reason="; ".join(reasons)
+                    or f"coverage is unavailable for partition {partition_id!r}",
+                )
+            try:
+                head = self.read_head(partition_id)
+            except RemoteJournalError:
+                return JournalCoverage(
+                    state=JournalCoverageState.UNAVAILABLE,
+                    reason="; ".join(reasons)
+                    or f"authoritative head is unavailable for partition {partition_id!r}",
+                )
             if (
                 item.get("head_sequence") != head.sequence
                 or item.get("head_record_digest") != head.record_digest
@@ -421,9 +438,6 @@ class HttpGovernedJournalClient:
                     reason=f"coverage and authoritative head disagree for {partition_id!r}",
                 )
             heads.append(head)
-        report_reason = report.get("reason")
-        if isinstance(report_reason, str) and report_reason:
-            reasons.append(report_reason)
         return JournalCoverage(
             state=_narrowest_coverage(tuple(states)),
             partitions=tuple(heads),
@@ -519,7 +533,7 @@ class HttpGovernedJournalClient:
             raise RemoteJournalVerificationError(
                 "append response omitted replay or operation metadata"
             )
-        if not replayed and (
+        if (
             stored.record.previous_record_digest != expected_head.record_digest
             or stored.record.sequence != expected_head.sequence + 1
         ):
@@ -630,7 +644,7 @@ class HttpGovernedJournalClient:
         expected_moving = [
             head.partition_id for head in transfer.head_vector.partitions if head.sequence > 0
         ]
-        if moving != expected_moving:
+        if not _same_partition_set(moving, expected_moving):
             raise RemoteJournalVerificationError("handoff proof changed its moving partition set")
         return JournalHeadProof(
             manifest=transfer.head_manifest,
@@ -678,7 +692,10 @@ class HttpGovernedJournalClient:
         )
         released = document.get("released_partitions")
         fenced = document.get("fenced_leases")
-        if released != list(requested) or document.get("export_remains_available") is not True:
+        if (
+            not _same_partition_set(released, requested)
+            or document.get("export_remains_available") is not True
+        ):
             raise RemoteJournalVerificationError(
                 "handoff completion did not release every requested partition"
             )
@@ -698,7 +715,7 @@ class HttpGovernedJournalClient:
                     "handoff completion returned substituted fenced-writer evidence"
                 )
             fenced_partitions.append(cast(str, item["partition_id"]))
-        if fenced_partitions != list(requested):
+        if not _same_partition_set(fenced_partitions, requested):
             raise RemoteJournalVerificationError(
                 "handoff completion fenced a different partition set"
             )
@@ -831,7 +848,7 @@ class HttpGovernedJournalClient:
                 params=params,
                 json=json,
             )
-        except httpx.TransportError as exc:
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
             raise RemoteJournalTransportError("remote journal transport failed") from exc
 
     def _response_document(
@@ -988,6 +1005,12 @@ def _nonblank(value: str, field_name: str) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"{field_name} cannot be blank")
     return value
+
+
+def _same_partition_set(raw: object, expected: Sequence[str]) -> bool:
+    if not isinstance(raw, list) or any(not isinstance(item, str) for item in raw):
+        return False
+    return len(raw) == len(expected) and len(set(raw)) == len(raw) and set(raw) == set(expected)
 
 
 def _write_header_extensions(headers: Mapping[str, str] | None) -> dict[str, str]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import inspect
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,7 +39,7 @@ from cruxible_core.playbill.exhaust import (
     procedure_journal_record_digest,
     render_journal_export,
 )
-from cruxible_core.playbill.exhaust.records import ProcedureJournalRecordV1
+from cruxible_core.playbill.exhaust.records import ProcedureJournalRecordV1, journal_head_key
 from tests.test_playbill.test_journal_backends import (
     NOW,
     _activate,
@@ -162,12 +163,24 @@ def _head_document(head: JournalPartitionHeadV1) -> dict[str, object]:
 
 
 def test_governed_client_public_contract_has_no_private_service_vocabulary() -> None:
-    public = [
-        *governed.__all__,
-        str(inspect.signature(GovernedJournalClientProtocol.append)),
-        *(getattr(governed, name).__doc__ or "" for name in governed.__all__),
-    ]
-    words = {word.lower().strip(".,:;`()") for text in public for word in text.split()}
+    public = [governed.__doc__ or "", *governed.__all__]
+    for name in governed.__all__:
+        symbol = getattr(governed, name)
+        public.append(symbol.__doc__ or "")
+        try:
+            public.append(str(inspect.signature(symbol)))
+        except (TypeError, ValueError):
+            pass
+        for member_name, member in getattr(symbol, "__dict__", {}).items():
+            if member_name.startswith("_"):
+                continue
+            public.extend((member_name, getattr(member, "__doc__", "") or ""))
+            if callable(member):
+                public.append(str(inspect.signature(member)))
+    for name, value in vars(governed).items():
+        if name.isupper():
+            public.extend((name, repr(value)))
+    words = set(re.findall(r"[a-z]+", " ".join(public).lower()))
     assert words.isdisjoint({"tenant", "account", "quota", "credit", "billing", "org"})
     assert (
         "idempotency_key" not in inspect.signature(GovernedJournalClientProtocol.append).parameters
@@ -356,7 +369,8 @@ def test_http_peer_round_trip_verifies_and_reuses_deterministic_append_identity(
     sent_content = append_documents[0]["content"]
     assert isinstance(sent_content, dict)
     assert assigned.isdisjoint(sent_content)
-    assert AUTHORIZATION not in repr(client)
+    assert grant.fencing_token not in repr(grant)
+    assert repr(transfer.payload) not in repr(transfer)
     assert all(request.headers["Authorization"] == AUTHORIZATION for request in requests)
     write_paths = {"/lease", "/records", "/lease/fence"}
     for request in requests:
@@ -558,7 +572,34 @@ def test_append_refuses_record_scope_head_commit_extension_and_content_changes(
             http.close()
 
 
-def test_replayed_append_is_success_without_expected_head_extension(tmp_path: Path) -> None:
+def test_replayed_append_is_success_when_it_extends_expected_head(tmp_path: Path) -> None:
+    fixture = _peer_fixture(tmp_path)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return _response(
+            {
+                "record": fixture.stored.model_dump(mode="json"),
+                "head": fixture.head.model_dump(mode="json"),
+                "replayed": True,
+                "operation_id": "operation-replay",
+            }
+        )
+
+    client, http = _client(handler)
+    try:
+        outcome = client.append(
+            PARTITION,
+            content=fixture.content,
+            expected_head=fixture.genesis,
+            fencing_token="fence-one",
+        )
+        assert outcome.replayed is True
+        assert outcome.record == fixture.stored
+    finally:
+        http.close()
+
+
+def test_replayed_append_without_expected_head_extension_is_refused(tmp_path: Path) -> None:
     fixture = _peer_fixture(tmp_path)
     unrelated_previous = typed_digest(
         ArtifactDigest,
@@ -593,14 +634,13 @@ def test_replayed_append_is_success_without_expected_head_extension(tmp_path: Pa
 
     client, http = _client(handler)
     try:
-        outcome = client.append(
-            PARTITION,
-            content=fixture.content,
-            expected_head=fixture.genesis,
-            fencing_token="fence-one",
-        )
-        assert outcome.replayed is True
-        assert outcome.record == replayed_stored
+        with pytest.raises(RemoteJournalVerificationError, match="exact expected head"):
+            client.append(
+                PARTITION,
+                content=fixture.content,
+                expected_head=fixture.genesis,
+                fencing_token="fence-one",
+            )
     finally:
         http.close()
 
@@ -627,23 +667,30 @@ def test_idempotency_key_changes_only_with_append_coordinates_or_content(
         exclude={"tag", "stream", "partition_id", "actor_context"},
         exclude_none=True,
     )
-    client, http = _client(handler)
+    first_client, first_http = _client(handler)
+    second_client, second_http = _client(handler)
     try:
-        for expected_head, content in (
-            (fixture.genesis, first_content),
-            (fixture.genesis, dict(reversed(tuple(first_content.items())))),
-            (fixture.genesis, second_content),
-            (fixture.head, second_content),
+        for client, expected_head, content, fencing_token in (
+            (first_client, fixture.genesis, first_content, "fence-one"),
+            (
+                second_client,
+                fixture.genesis,
+                dict(reversed(tuple(first_content.items()))),
+                "different-fence",
+            ),
+            (first_client, fixture.genesis, second_content, "fence-one"),
+            (second_client, fixture.head, second_content, "another-fence"),
         ):
             with pytest.raises(RemoteJournalRefusal):
                 client.append(
                     PARTITION,
                     content=content,
                     expected_head=expected_head,
-                    fencing_token="fence-one",
+                    fencing_token=fencing_token,
                 )
     finally:
-        http.close()
+        first_http.close()
+        second_http.close()
 
     assert keys[0] == keys[1]
     assert len(set(keys)) == 3
@@ -680,6 +727,97 @@ def test_export_and_import_reject_unverified_bundle_metadata(tmp_path: Path) -> 
     try:
         with pytest.raises(RemoteJournalVerificationError, match="head-proof verification"):
             client.import_transfer(transfer)
+    finally:
+        http.close()
+
+
+def test_handoff_partition_arrays_are_exact_sets_not_ordered_vectors(tmp_path: Path) -> None:
+    backend = _backend(tmp_path, "two-partition-source")
+    requested = ("z-partition", "a-partition")
+    heads: list[JournalPartitionHeadV1] = []
+    ranges: list[JournalRangeV1] = []
+    for index, partition_id in enumerate(requested):
+        genesis = backend.read_head(_stream(), partition_id)
+        token = f"writer-{index}"
+        backend.activate_writer(
+            _stream(),
+            partition_id,
+            fencing_token=token,
+            expected_head=genesis,
+        )
+        draft = _draft(partition_id).model_copy(update={"partition_id": partition_id})
+        backend.append(draft, expected_head=genesis, fencing_token=token)
+        heads.append(backend.read_head(_stream(), partition_id))
+        ranges.append(
+            backend.range_from_sequences(
+                _stream(),
+                partition_id,
+                first_sequence=1,
+                last_sequence=1,
+            )
+        )
+    signer = _HeadSigner(Ed25519PrivateKey.generate())
+    head_vector = JournalHeadVectorV1(partitions=tuple(sorted(heads, key=journal_head_key)))
+    manifest = build_journal_head_manifest(head_vector, asserted_at=NOW, signer=signer)
+    bundle = build_journal_export(
+        backend,
+        ranges=tuple(ranges),
+        head_manifest=manifest,
+    )
+    payload = render_journal_export(bundle)
+    public_key = signer.private_key.public_key().public_bytes_raw().hex()
+    ordered = tuple(sorted(requested))
+
+    def transfer_response() -> dict[str, object]:
+        return {
+            "export": {
+                "payload_base64": base64.b64encode(payload).decode("ascii"),
+                "byte_length": len(payload),
+                "segment_count": len(bundle.manifest.segments),
+                "record_count": sum(item.record_count for item in bundle.manifest.segments),
+            },
+            "head_manifest": manifest.model_dump(mode="json"),
+            "expected_head_public_key": public_key,
+            "operation_id": "operation-handoff",
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/handoff/begin"):
+            assert _request_json(request)["partition_ids"] == list(requested)
+            return _response(
+                {
+                    **transfer_response(),
+                    "moving_partitions": list(requested),
+                }
+            )
+        if request.url.path.endswith("/handoff/complete"):
+            assert _request_json(request)["partition_ids"] == list(requested)
+            return _response(
+                {
+                    "released_partitions": list(ordered),
+                    "fenced_leases": [
+                        {
+                            "journal_stream_id": HOME_STREAM_ID,
+                            "partition_id": partition_id,
+                            "status": "fenced",
+                        }
+                        for partition_id in ordered
+                    ],
+                    "export_remains_available": True,
+                }
+            )
+        raise AssertionError(f"unexpected request: {request.method} {request.url.path}")
+
+    client, http = _client(handler)
+    try:
+        proof = client.head_proof(requested)
+        client.complete_handoff(
+            target_proof=proof,
+            source_fencing_tokens={
+                partition_id: f"fence-{partition_id}" for partition_id in requested
+            },
+            partition_ids=requested,
+        )
     finally:
         http.close()
 
@@ -801,16 +939,66 @@ def test_missing_coverage_is_unavailable_and_range_refusal_is_not_empty(
         http.close()
 
 
-def test_transport_failure_and_success_format_drift_are_typed() -> None:
+def test_reported_unavailable_coverage_does_not_require_a_head_read() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/coverage"):
+            return _response(
+                {
+                    "coverage": {
+                        "coverage": "unavailable",
+                        "partitions": [
+                            {
+                                "partition_id": PARTITION,
+                                "coverage": "unavailable",
+                                "head_sequence": None,
+                                "head_record_digest": None,
+                                "reason": "authoritative prefix is unavailable",
+                            }
+                        ],
+                        "reason": None,
+                    }
+                }
+            )
+        return httpx.Response(
+            503,
+            json={"error_code": "home-history-unavailable", "message": "unavailable"},
+        )
+
+    client, http = _client(handler)
+    try:
+        coverage = client.coverage((PARTITION,))
+        assert coverage.state is JournalCoverageState.UNAVAILABLE
+        assert coverage.partitions == ()
+        assert coverage.reason == "authoritative prefix is unavailable"
+    finally:
+        http.close()
+
+    assert [request.url.path for request in requests] == [
+        f"/already-scoped/journal/streams/{HOME_STREAM_ID}/coverage"
+    ]
+
+
+@pytest.mark.parametrize("failure_kind", ["connect", "invalid-url"])
+def test_http_failures_are_typed_without_exposing_authorization(failure_kind: str) -> None:
     def disconnected(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("peer unavailable", request=request)
+        detail = f"peer failure included {AUTHORIZATION}"
+        if failure_kind == "connect":
+            raise httpx.ConnectError(detail, request=request)
+        raise httpx.InvalidURL(detail)
 
     client, http = _client(disconnected)
     try:
-        with pytest.raises(RemoteJournalTransportError, match="transport failed"):
+        with pytest.raises(RemoteJournalTransportError, match="transport failed") as refused:
             client.read_head(PARTITION)
+        assert AUTHORIZATION not in str(refused.value)
     finally:
         http.close()
+
+
+def test_success_format_drift_is_a_typed_verification_failure() -> None:
 
     def drifted(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
