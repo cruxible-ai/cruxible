@@ -20,6 +20,7 @@ from cruxible_core.playbill.exhaust.interchange import (
 )
 from cruxible_core.playbill.exhaust.governed import (
     GovernedJournalClientProtocol,
+    HttpGovernedJournalClient,
     JournalAppendOutcome,
     JournalCoverage,
     JournalCoverageState,
@@ -83,6 +84,7 @@ __all__ = [
     "ExhaustReceiptSetManifestV1",
     "ExhaustReducerProtocol",
     "GovernedJournalClientProtocol",
+    "HttpGovernedJournalClient",
     "JournalAppendOutcome",
     "JournalEventKindV1",
     "JournalBackendProtocol",
