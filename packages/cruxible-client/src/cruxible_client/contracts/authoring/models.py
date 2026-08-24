@@ -27,11 +27,13 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.claim_type_structure import ClaimRole
+from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject, claim_path
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalReceiveLimits
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.types import CompilerCoordinate
 
@@ -625,6 +627,17 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
         return self
 
 
+class ClaimDependencyDraftsV1(_StrictAuthoringModel):
+    tag: Literal["playbill-claim-dependency-drafts-v1"] = "playbill-claim-dependency-drafts-v1"
+    subject: SubjectShell | None = None
+    claim_type: ClaimType | None = None
+
+
+class ClaimAuthoringPayloadV2(ClaimAuthoringPayloadV1):
+    tag: Literal["playbill-claim-authoring-payload-v2"] = "playbill-claim-authoring-payload-v2"  # type: ignore[assignment]
+    dependency_drafts: ClaimDependencyDraftsV1
+
+
 class AuthoringArtifactReferenceV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-artifact-reference-v1"] = (
         "playbill-authoring-artifact-reference-v1"
@@ -683,7 +696,10 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
 
 
 AuthoringPayloadV1 = Annotated[
-    ClaimAuthoringPayloadV1 | ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
+    ClaimAuthoringPayloadV1
+    | ClaimAuthoringPayloadV2
+    | ProcedureAuthoringPayloadV1
+    | ProcedureAuthoringPayloadV2,
     Field(discriminator="tag"),
 ]
 
@@ -1585,6 +1601,8 @@ __all__ = [
     "CandidateStatusState",
     "CandidateStatusV1",
     "ClaimAuthoringPayloadV1",
+    "ClaimAuthoringPayloadV2",
+    "ClaimDependencyDraftsV1",
     "DiagnosticFrontierLimitsV1",
     "DiagnosticFrontierV1",
     "InsertionAbandonRequestV1",

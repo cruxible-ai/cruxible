@@ -14,6 +14,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObjectV1,
     AuthoringIntentV1,
     ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayloadV2,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
     RepairAlternativeV1,
@@ -78,7 +79,12 @@ from cruxible_client.contracts.procedures.artifacts import (
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, iter_pin_bindings
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
-from cruxible_client.contracts.subjects import parse_subject, subject_digest
+from cruxible_client.contracts.subjects import (
+    parse_subject,
+    render_subject,
+    subject_digest,
+    subject_path,
+)
 from cruxible_core.playbill.compiler import projection_registry_for_compiler
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -221,6 +227,113 @@ def _merge_mappings(*groups: tuple[SourceMapping, ...]) -> tuple[SourceMapping, 
     return tuple(by_wire[key] for key in sorted(by_wire))
 
 
+def _install_claim_dependencies(
+    payload: ClaimAuthoringPayloadV1,
+    *,
+    base_tree: dict[str, bytes],
+) -> tuple[dict[str, bytes], set[str]]:
+    candidate_tree = dict(base_tree)
+    changed_paths: set[str] = set()
+    if not isinstance(payload, ClaimAuthoringPayloadV2):
+        return candidate_tree, changed_paths
+
+    drafts = payload.dependency_drafts
+    subject_artifact_path = payload.statement.subject.artifact_path
+    subject_draft = drafts.subject
+    if subject_draft is not None:
+        draft_path = subject_path(subject_draft.subject_kind, subject_draft.subject_id)
+        if (
+            payload.statement.subject.selector.scheme != "artifact-v1"
+            or draft_path != subject_artifact_path
+        ):
+            _refuse(
+                "playbill.authoring.dependency_subject_mismatch",
+                "dependency_drafts.subject",
+                "The Subject draft does not equal this Claim's exact subject.",
+                repair_kind="replace_dependency_subject",
+                repair_description="Use the Subject named by statement.subject.",
+            )
+        if (
+            subject_draft.lifecycle.state != "live"
+            or subject_draft.lifecycle.predecessor_digest is not None
+        ):
+            _refuse(
+                "playbill.authoring.dependency_not_one_claim",
+                "dependency_drafts.subject.lifecycle",
+                "A one-Claim dependency closure cannot carry a Subject succession.",
+                repair_kind="remove_dependency_successor",
+                repair_description="Submit the Subject successor as a separate governed change.",
+            )
+        rendered = render_subject(subject_draft)
+        accepted = base_tree.get(draft_path)
+        if accepted is not None and accepted != rendered:
+            _refuse(
+                "playbill.authoring.dependency_conflicts_with_accepted",
+                "dependency_drafts.subject",
+                "The Subject dependency conflicts with accepted bytes at this identity.",
+                repair_kind="use_accepted_subject",
+                repair_description="Refresh the Subject ref from the accepted coordinate.",
+            )
+        if accepted is None:
+            candidate_tree[draft_path] = rendered
+            changed_paths.add(draft_path)
+    elif subject_artifact_path not in base_tree:
+        _refuse(
+            "playbill.authoring.dependency_subject_required",
+            "dependency_drafts.subject",
+            "This Claim's Subject is absent at the intent base.",
+            repair_kind="provide_dependency_subject",
+            repair_description="Supply the exact Subject draft for statement.subject.",
+        )
+
+    type_artifact_path = claim_type_path(payload.statement.predicate)
+    claim_type_draft = drafts.claim_type
+    if claim_type_draft is not None:
+        draft_path = claim_type_path(claim_type_draft.predicate)
+        if draft_path != type_artifact_path:
+            _refuse(
+                "playbill.authoring.dependency_claim_type_mismatch",
+                "dependency_drafts.claim_type",
+                "The ClaimType draft does not equal this Claim's predicate.",
+                repair_kind="replace_dependency_claim_type",
+                repair_description="Use the ClaimType named by statement.predicate.",
+            )
+        if (
+            claim_type_draft.lifecycle.state != "live"
+            or claim_type_draft.lifecycle.predecessor_digest is not None
+        ):
+            _refuse(
+                "playbill.authoring.dependency_not_one_claim",
+                "dependency_drafts.claim_type.lifecycle",
+                "A one-Claim dependency closure cannot carry a ClaimType succession.",
+                repair_kind="remove_dependency_successor",
+                repair_description="Submit the ClaimType successor as a separate governed change.",
+            )
+        rendered = render_claim_type(claim_type_draft)
+        accepted = base_tree.get(draft_path)
+        if accepted is not None and accepted != rendered:
+            _refuse(
+                "playbill.authoring.dependency_conflicts_with_accepted",
+                "dependency_drafts.claim_type",
+                "The ClaimType dependency conflicts with accepted bytes at this identity.",
+                repair_kind="use_accepted_claim_type",
+                repair_description="Refresh the ClaimType ref from the accepted coordinate.",
+            )
+        if accepted is None:
+            candidate_tree[draft_path] = rendered
+            changed_paths.add(draft_path)
+    elif type_artifact_path not in base_tree:
+        _refuse(
+            "playbill.authoring.dependency_claim_type_required",
+            "dependency_drafts.claim_type",
+            "This Claim's ClaimType is absent at the intent base.",
+            repair_kind="provide_dependency_claim_type",
+            repair_description="Supply the exact ClaimType draft for statement.predicate.",
+        )
+
+    return candidate_tree, changed_paths
+
+
 def _lower_claim(
     instance: PlaybillInstance,
     *,
@@ -232,8 +345,11 @@ def _lower_claim(
     payload = intent.payload
     assert isinstance(payload, ClaimAuthoringPayloadV1)
     type_path = claim_type_path(payload.statement.predicate)
-    type_content = base_tree.get(type_path)
-    candidate_base_tree = dict(base_tree)
+    candidate_base_tree, dependency_paths = _install_claim_dependencies(
+        payload,
+        base_tree=base_tree,
+    )
+    type_content = candidate_base_tree.get(type_path)
     installs_brief_type = (
         type_content is None and payload.statement.predicate == KNOWLEDGE_BRIEF_PREDICATE
     )
@@ -256,7 +372,7 @@ def _lower_claim(
         "semantic.tag",
     }
     subject_identity, subject_digest_value = _referent(
-        base_tree, payload.statement.subject, descriptor=descriptor
+        candidate_base_tree, payload.statement.subject, descriptor=descriptor
     )
     statement_object = _exact_object(instance, payload.statement.object)
     qualifier = payload.statement.qualifier
@@ -293,7 +409,9 @@ def _lower_claim(
         statement_object = LiteralClaimObject(value=brief.model_dump(mode="json"))
     object_referent: tuple[ArtifactIdentity, str] | None = None
     if isinstance(statement_object, SubjectClaimObject):
-        object_referent = _referent(base_tree, statement_object.address, descriptor=descriptor)
+        object_referent = _referent(
+            candidate_base_tree, statement_object.address, descriptor=descriptor
+        )
     observed_at = _observed_at(intent.canonical_timestamp)
     context = ClaimReferentContext(
         subject_content_digest=subject_digest_value,
@@ -469,6 +587,7 @@ def _lower_claim(
     candidate_tree[contract_member_path] = contract_bytes
     candidate_tree[path] = claim_bytes
     member_paths = {contract_member_path, path}
+    member_paths.update(dependency_paths)
     if installs_brief_type:
         member_paths.add(type_path)
     changed = tuple(
