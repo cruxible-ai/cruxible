@@ -67,7 +67,7 @@
     "GET": "PlaybillClaimViewV2"
   },
   "/api/v1/{instance_id}/playbill/claims/{identity}/explanation": {
-    "POST": "PlaybillClaimExplanationV2"
+    "POST": "PlaybillClaimExplanationV2 | PlaybillClaimExplanationV3"
   },
   "/api/v1/{instance_id}/playbill/claims/{identity}/history": {
     "GET": "PlaybillClaimHistory"

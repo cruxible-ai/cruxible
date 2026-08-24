@@ -95,6 +95,7 @@ from cruxible_core.playbill.claim_types import (
     AcceptedClaimType,
     ClaimType,
     ClaimTypeFormatError,
+    ClaimTypeFreshnessHorizonInvalid,
     claim_type_accepts_subject,
     claim_type_digest,
     evaluate_claim_type_law,
@@ -2504,6 +2505,19 @@ def _evaluate_scoped_members(
         try:
             if any(pattern.fullmatch(path) for pattern in _SEMANTIC_MEMBER_PATTERNS):
                 dependency_artifacts({path: proposed})
+        except ClaimTypeFreshnessHorizonInvalid as exc:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (
+                    _diagnostic(
+                        "playbill.claim_type.freshness_horizon_invalid",
+                        str(exc),
+                        path,
+                    ),
+                ),
+                rebased,
+            )
         except (
             CaptureFormatError,
             ClaimFormatError,

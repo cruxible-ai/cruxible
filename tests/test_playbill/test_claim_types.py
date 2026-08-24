@@ -21,10 +21,14 @@ from cruxible_core.playbill.authoring_profiles import (
     expand_claim_type_profile,
     verify_claim_type_expansion_evidence,
 )
+from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_types import (
+    ClaimEvidenceFreshnessV1,
+    ClaimFreshnessDurationV1,
     ClaimType,
     ClaimTypeFormatError,
+    ClaimTypeFreshnessHorizonInvalid,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
@@ -136,6 +140,67 @@ def test_claim_type_successor_requires_exact_predecessor_digest_shape() -> None:
         }
     )
     assert successor.lifecycle.predecessor_digest == claim_type_digest(claim_type).tagged
+
+
+def test_claim_type_v3_adds_only_a_positive_freshness_horizon() -> None:
+    original = literal_claim_type()
+    successor = ClaimType.model_validate(
+        {
+            **original.model_dump(mode="json"),
+            "artifact_format": "playbill-claim-type-v3",
+            "evidence_freshness": ClaimEvidenceFreshnessV1(
+                stale_after=ClaimFreshnessDurationV1(microseconds=30_000_000)
+            ).model_dump(mode="json"),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_type_digest(original).tagged
+            ).model_dump(mode="json"),
+        }
+    )
+
+    rendered = render_claim_type(successor)
+    assert parse_claim_type(rendered, path=claim_type_path(successor.predicate)) == successor
+    assert claim_type_digest(successor).tagged != claim_type_digest(original).tagged
+    assert successor.structure == original.structure
+    assert render_claim_type(original) == render_claim_type(literal_claim_type())
+
+
+def test_claim_type_v3_refuses_missing_or_zero_freshness_horizon() -> None:
+    payload = literal_claim_type().model_dump(mode="json")
+    payload["artifact_format"] = "playbill-claim-type-v3"
+    payload["evidence_freshness"] = {
+        "tag": "playbill-claim-evidence-freshness-v1",
+        "stale_after": {"tag": "playbill-duration-v1", "microseconds": 0},
+    }
+    malformed = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode() + b"\n"
+    with pytest.raises(ClaimTypeFreshnessHorizonInvalid):
+        parse_claim_type(malformed, path=claim_type_path(literal_claim_type().predicate))
+
+
+def test_claim_type_v3_horizon_proposal_uses_the_frozen_refusal_code(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    payload = literal_claim_type().model_dump(mode="json")
+    payload["artifact_format"] = "playbill-claim-type-v3"
+    payload["evidence_freshness"] = {
+        "tag": "playbill-claim-evidence-freshness-v1",
+        "stale_after": {"tag": "playbill-duration-v1", "microseconds": 0},
+    }
+    base = instance.accepted_coordinate()
+    tree = instance.tree_at(base.git_oid)
+    tree[claim_type_path(literal_claim_type().predicate)] = canonical_bytes(payload) + b"\n"
+
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/invalid-freshness",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-24T21:00:00.000000Z",
+    )
+
+    assert result.evaluation.diagnostics[0].code == (
+        "playbill.claim_type.freshness_horizon_invalid"
+    )
 
 
 def test_compact_ordinary_profile_and_expert_input_expand_to_identical_bytes() -> None:

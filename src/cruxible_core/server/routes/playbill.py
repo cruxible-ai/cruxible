@@ -780,13 +780,13 @@ async def claim_history(
 
 @router.post(
     "/{instance_id}/playbill/claims/{identity}/explanation",
-    response_model=contracts.PlaybillClaimExplanationV2,
+    response_model=(contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3),
 )
 async def explain_claim(
     instance_id: str,
     identity: str,
     req: PlaybillClaimExplainRequest,
-) -> contracts.PlaybillClaimExplanationV2:
+) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
     return playbill_api.playbill_explain_claim(
         resolve_server_instance_id(instance_id),
         identity,

@@ -11,6 +11,7 @@ from cruxible_core.playbill.governance import AcceptanceLawCoordinate
 DOCUMENT_LAW_IDENTIFIER = "playbill.document.v1"
 CLAIM_TYPE_LAW_IDENTIFIER = "playbill.claim-type.v1"
 CLAIM_TYPE_LAW_V2_IDENTIFIER = "playbill.claim-type.v2"
+CLAIM_TYPE_LAW_V3_IDENTIFIER = "playbill.claim-type.v3"
 CLAIM_LAW_IDENTIFIER = "playbill.claim.v1"
 CLAIM_LAW_V2_IDENTIFIER = "playbill.claim.v2"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
@@ -165,6 +166,10 @@ CLAIM_TYPE_LAW_V2 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V2_IDENTIFIER,
     "playbill-claim-type-v2",
 )
+CLAIM_TYPE_LAW_V3 = _artifact_law_coordinate(
+    CLAIM_TYPE_LAW_V3_IDENTIFIER,
+    "playbill-claim-type-v3",
+)
 PROVIDER_LAW = _artifact_law_coordinate(PROVIDER_LAW_IDENTIFIER, "playbill-provider-v1")
 SOURCE_ACQUISITION_POLICY_LAW = _artifact_law_coordinate(
     SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER,
@@ -265,6 +270,11 @@ CLAIM_TYPE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="claim-type",
     artifact_tag="playbill-claim-type-v2",
 )
+CLAIM_TYPE_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_TYPE_LAW_V3,
+    artifact_kind="claim-type",
+    artifact_tag="playbill-claim-type-v3",
+)
 CAPTURE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CAPTURE_CONTRACT_LAW,
     artifact_kind="capture-contract",
@@ -327,6 +337,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CLAIM_V2_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
         CLAIM_TYPE_V2_ACCEPTANCE_LAW,
+        CLAIM_TYPE_V3_ACCEPTANCE_LAW,
         DOCUMENT_ACCEPTANCE_LAW,
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
@@ -346,10 +357,13 @@ __all__ = [
     "AcceptanceLawRegistry",
     "CLAIM_TYPE_ACCEPTANCE_LAW",
     "CLAIM_TYPE_V2_ACCEPTANCE_LAW",
+    "CLAIM_TYPE_V3_ACCEPTANCE_LAW",
     "CLAIM_TYPE_LAW",
     "CLAIM_TYPE_LAW_IDENTIFIER",
     "CLAIM_TYPE_LAW_V2",
     "CLAIM_TYPE_LAW_V2_IDENTIFIER",
+    "CLAIM_TYPE_LAW_V3",
+    "CLAIM_TYPE_LAW_V3_IDENTIFIER",
     "CAPTURE_CONTRACT_ACCEPTANCE_LAW",
     "CAPTURE_CONTRACT_LAW",
     "CAPTURE_CONTRACT_LAW_IDENTIFIER",

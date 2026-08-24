@@ -14,11 +14,13 @@ from cruxible_core.playbill.claim_types import claim_type_digest
 from cruxible_core.playbill.claim_verdicts import (
     CaptureVerdictEvidenceV1,
     ClaimAdjudicationRuleV1,
+    ClaimVerdictResultV2,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
     evidence_control_components,
     observation_trust_grade,
+    verify_claim_verdict_freshness,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.semantic import SemanticAddress
@@ -276,9 +278,41 @@ def test_evaluation_time_reproduces_currency_without_rewriting_evidence() -> Non
         providers={},
     )
     assert current.verdict == "supported"
-    assert stale.verdict == "stale"
+    assert stale.verdict == "stale_evidence"
+    assert isinstance(current, ClaimVerdictResultV2)
+    assert isinstance(stale, ClaimVerdictResultV2)
+    assert stale.freshness_expirations[0].expires_at == NOW + timedelta(seconds=5)
     assert claim_adjudication_rule_digest(rule) == current.adjudication_rule_digest
     assert current.supporting_evidence_digests == stale.supporting_evidence_digests
+
+    forged = stale.model_copy(
+        update={
+            "freshness_expirations": (
+                stale.freshness_expirations[0].model_copy(
+                    update={"expires_at": NOW + timedelta(seconds=7)}
+                ),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="playbill.claim.evidence_freshness_invalid"):
+        verify_claim_verdict_freshness(forged, rule=rule, captures=(evidence,))
+
+
+def test_freshness_horizon_applies_only_to_admitted_capture_evidence() -> None:
+    origin = _capture("origin-freshness", admission="origin_only")
+    rule = _rule(max_evidence_age=CanonicalDurationV1(microseconds=5_000_000))
+    result = evaluate_claim_verdict(
+        claim_statement_digest=STATEMENT_DIGEST,
+        rule=rule,
+        evaluation_time=NOW + timedelta(seconds=6),
+        captures=(origin,),
+        attestations=(),
+        providers={},
+    )
+
+    assert isinstance(result, ClaimVerdictResultV2)
+    assert result.verdict == "uncovered"
+    assert result.freshness_expirations == ()
 
 
 def test_future_evidence_is_uncovered_and_pre_effective_claim_is_not_applicable() -> None:

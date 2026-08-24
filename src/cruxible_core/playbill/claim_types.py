@@ -10,6 +10,7 @@ from typing import Any, Callable, Literal, cast
 from pydantic import (
     BaseModel,
     ConfigDict,
+    Field,
     ValidationError,
     field_validator,
     model_serializer,
@@ -41,6 +42,10 @@ class ClaimTypeFormatError(PlaybillFormatError):
     """The ClaimType envelope or its canonical path is invalid."""
 
 
+class ClaimTypeFreshnessHorizonInvalid(ClaimTypeFormatError):
+    """A ClaimType v3 evidence-freshness horizon is malformed or non-positive."""
+
+
 class _StrictClaimTypeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -60,10 +65,28 @@ class ClaimSlotPolicyV1(_StrictClaimTypeModel):
     per_slot_cardinality: Literal[1] = 1
 
 
+class ClaimFreshnessDurationV1(_StrictClaimTypeModel):
+    tag: Literal["playbill-duration-v1"] = "playbill-duration-v1"
+    microseconds: int = Field(ge=0)
+
+
+class ClaimEvidenceFreshnessV1(_StrictClaimTypeModel):
+    tag: Literal["playbill-claim-evidence-freshness-v1"] = "playbill-claim-evidence-freshness-v1"
+    stale_after: ClaimFreshnessDurationV1
+
+    @model_validator(mode="after")
+    def _positive_horizon(self) -> "ClaimEvidenceFreshnessV1":
+        if self.stale_after.microseconds <= 0:
+            raise ValueError("evidence freshness stale_after must be positive")
+        return self
+
+
 class ClaimType(_StrictClaimTypeModel):
-    artifact_format: Literal["playbill-claim-type-v1", "playbill-claim-type-v2"] = (
-        "playbill-claim-type-v1"
-    )
+    artifact_format: Literal[
+        "playbill-claim-type-v1",
+        "playbill-claim-type-v2",
+        "playbill-claim-type-v3",
+    ] = "playbill-claim-type-v1"
     identity: ArtifactIdentity
     predicate: str
     allowed_subject_kinds: tuple[str, ...]
@@ -83,6 +106,7 @@ class ClaimType(_StrictClaimTypeModel):
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
     subject_scope: ClaimSubjectScopeV1 | None = None
     slot_policy: ClaimSlotPolicyV1 | None = None
+    evidence_freshness: ClaimEvidenceFreshnessV1 | None = None
 
     @model_serializer(mode="wrap")
     def _versioned_wire(self, handler: Any) -> dict[str, object]:
@@ -90,6 +114,9 @@ class ClaimType(_StrictClaimTypeModel):
         if self.artifact_format == "playbill-claim-type-v1":
             payload.pop("subject_scope", None)
             payload.pop("slot_policy", None)
+            payload.pop("evidence_freshness", None)
+        elif self.artifact_format == "playbill-claim-type-v2":
+            payload.pop("evidence_freshness", None)
         return payload
 
     @field_validator("predicate")
@@ -120,17 +147,29 @@ class ClaimType(_StrictClaimTypeModel):
         # Reuse the deliberately policy-free PC-A1 validator so the final wire
         # cannot drift from the reviewed structural surface.
         if self.artifact_format == "playbill-claim-type-v1":
-            if self.subject_scope is not None or self.slot_policy is not None:
+            if (
+                self.subject_scope is not None
+                or self.slot_policy is not None
+                or self.evidence_freshness is not None
+            ):
                 raise ValueError("ClaimType v1 cannot carry v2 subject or slot policy")
             structural_subject_kinds = self.allowed_subject_kinds
-        else:
+        elif self.artifact_format == "playbill-claim-type-v2":
             if self.subject_scope is None or self.slot_policy is None:
                 raise ValueError("ClaimType v2 requires subject-scope and slot-policy contracts")
+            if self.evidence_freshness is not None:
+                raise ValueError("ClaimType v2 cannot carry v3 evidence freshness")
             if self.allowed_subject_kinds:
                 raise ValueError("a v2 any-subject scope replaces finite allowed_subject_kinds")
             if self.cardinality != "many":
                 raise ValueError("a slotted ClaimType v2 has many slots")
             structural_subject_kinds = ("semantic.subject",)
+        else:
+            if self.subject_scope is not None or self.slot_policy is not None:
+                raise ValueError("ClaimType v3 retains v1 finite subject structure")
+            if self.evidence_freshness is None:
+                raise ValueError("ClaimType v3 requires evidence freshness")
+            structural_subject_kinds = self.allowed_subject_kinds
         ClaimTypeStructure(
             predicate=self.predicate,
             allowed_subject_kinds=structural_subject_kinds,
@@ -186,6 +225,9 @@ def render_claim_type(claim_type: ClaimType) -> bytes:
     if claim_type.artifact_format == "playbill-claim-type-v1":
         payload.pop("subject_scope", None)
         payload.pop("slot_policy", None)
+        payload.pop("evidence_freshness", None)
+    elif claim_type.artifact_format == "playbill-claim-type-v2":
+        payload.pop("evidence_freshness", None)
     return canonical_bytes(payload) + b"\n"
 
 
@@ -197,12 +239,19 @@ def parse_claim_type(content: bytes, *, path: str) -> ClaimType:
     if not isinstance(payload, dict) or payload.get("artifact_format") not in {
         "playbill-claim-type-v1",
         "playbill-claim-type-v2",
+        "playbill-claim-type-v3",
     }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise ClaimTypeFormatError(f"unsupported ClaimType artifact format: {declared!r}")
     try:
         claim_type = ClaimType.model_validate(payload)
     except ValidationError as exc:
+        if payload.get("artifact_format") == "playbill-claim-type-v3" and any(
+            tuple(error["loc"])[0:1] == ("evidence_freshness",) for error in exc.errors()
+        ):
+            raise ClaimTypeFreshnessHorizonInvalid(
+                "ClaimType v3 evidence freshness horizon is malformed or non-positive"
+            ) from exc
         raise ClaimTypeFormatError("ClaimType failed strict versioned validation") from exc
     if render_claim_type(claim_type) != content:
         raise ClaimTypeFormatError("ClaimType is not in canonical wire form")
@@ -229,9 +278,18 @@ def _claim_type_digest_v2(claim_type: ClaimType) -> ArtifactDigest:
     )
 
 
+def _claim_type_digest_v3(claim_type: ClaimType) -> ArtifactDigest:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-envelope-v1",
+        claim_type.model_dump(mode="json"),
+    )
+
+
 CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
     "playbill-claim-type-v1": _claim_type_digest_v1,
     "playbill-claim-type-v2": _claim_type_digest_v2,
+    "playbill-claim-type-v3": _claim_type_digest_v3,
 }
 
 
@@ -252,7 +310,7 @@ def claim_type_projection_structure(claim_type: ClaimType) -> dict[str, object]:
     """Project v2 structure without treating JSON-Schema `$` keys as fact wrappers."""
 
     structure = claim_type.structure.model_dump(mode="json")
-    if claim_type.artifact_format == "playbill-claim-type-v1":
+    if claim_type.artifact_format != "playbill-claim-type-v2":
         return structure
     structure["literal_schema"] = canonical_bytes(claim_type.literal_schema or {}).decode("utf-8")
     structure["subject_scope"] = (
@@ -488,6 +546,9 @@ __all__ = [
     "AcceptedClaimType",
     "CLAIM_TYPE_DIGEST_FUNCTIONS",
     "ClaimType",
+    "ClaimEvidenceFreshnessV1",
+    "ClaimFreshnessDurationV1",
+    "ClaimTypeFreshnessHorizonInvalid",
     "ClaimSlotPolicyV1",
     "ClaimSubjectScopeV1",
     "ClaimTypeFormatError",

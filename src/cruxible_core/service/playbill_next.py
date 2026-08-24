@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -20,6 +20,7 @@ from cruxible_core.playbill.canonical import (
 from cruxible_core.playbill.captures import CanonicalDurationV1, parse_capture_envelope
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_slots import classify_claim_slot
+from cruxible_core.playbill.claim_verdicts import ClaimVerdictResultV2
 from cruxible_core.playbill.claims import (
     ClaimArtifactAny,
     claim_citation_references,
@@ -386,6 +387,7 @@ def _claim_items(
     *,
     coordinate: PlaybillAcceptedCoordinate,
     evaluation_time: datetime,
+    expiring_within: CanonicalDurationV1,
 ) -> tuple[PlaybillNextItemV1, ...]:
     listed = service_list_playbill_claims(instance, at=coordinate)
     claims = tuple(
@@ -440,6 +442,66 @@ def _claim_items(
                 evaluation_time=evaluation_time,
                 at=coordinate,
             ).verdict
+            if verdict.verdict == "stale_evidence":
+                expirations = (
+                    verdict.freshness_expirations
+                    if isinstance(verdict, ClaimVerdictResultV2)
+                    else ()
+                )
+                items.append(
+                    _item(
+                        severity="repair",
+                        reason="claim_stale_evidence",
+                        subject_identity=claim.identity.qualified,
+                        related_identities=(subject,),
+                        detail={
+                            "expired_capture_digests": [
+                                item.capture_digest
+                                for item in expirations
+                                if evaluation_time >= item.expires_at
+                            ],
+                            "predicate": claim.statement.predicate,
+                            "verdict": verdict.verdict,
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.authoring.bind",
+                            target=claim.identity.qualified,
+                            required_change="recapture_expired_evidence",
+                            arguments={"claim_id": claim.identity.name},
+                        ),
+                    )
+                )
+                continue
+            if isinstance(verdict, ClaimVerdictResultV2) and verdict.verdict in {
+                "supported",
+                "contradicted",
+                "unresolved",
+            }:
+                lead_end = evaluation_time + timedelta(microseconds=expiring_within.microseconds)
+                expiring = tuple(
+                    item
+                    for item in verdict.freshness_expirations
+                    if evaluation_time < item.expires_at <= lead_end
+                )
+                if expiring:
+                    items.append(
+                        _item(
+                            severity="warning",
+                            reason="evidence_expiring",
+                            subject_identity=claim.identity.qualified,
+                            related_identities=(subject,),
+                            detail={
+                                "expirations": [item.model_dump(mode="json") for item in expiring],
+                                "predicate": claim.statement.predicate,
+                            },
+                            repair=PlaybillNextRepairV1(
+                                operation="playbill.authoring.bind",
+                                target=claim.identity.qualified,
+                                required_change="recapture_expiring_evidence",
+                                arguments={"claim_id": claim.identity.name},
+                            ),
+                        )
+                    )
             if verdict.verdict != "uncovered":
                 continue
             items.append(
@@ -605,6 +667,7 @@ def service_playbill_next(
                     instance,
                     coordinate=public_coordinate,
                     evaluation_time=request.evaluation_time,
+                    expiring_within=request.expiring_within,
                 ),
                 *workspace_items,
             ),

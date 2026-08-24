@@ -486,7 +486,7 @@ def register_tools(
         instance_id: str,
         identity: str,
         evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimExplanationV2:
+    ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
         """Explain one Claim's verdict, law evidence, and sources."""
         return handlers.handle_playbill_explain_claim(
             instance_id, identity, evaluation_time=evaluation_time

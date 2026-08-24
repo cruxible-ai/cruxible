@@ -32,13 +32,18 @@ from cruxible_core.playbill.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_core.playbill.claim_verdicts import ClaimVerdictResultV1
+from cruxible_core.playbill.claim_verdicts import (
+    ClaimVerdictResultAny,
+    ClaimVerdictResultV1,
+    ClaimVerdictResultV2,
+)
 from cruxible_core.playbill.claims import (
     ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
     ClaimBacking,
     ClaimCitationV1,
+    ClaimLawEvidenceAny,
     ClaimLawEvidenceV1,
     ClaimReferentContext,
     ClaimStatement,
@@ -52,6 +57,7 @@ from cruxible_core.playbill.claims import (
     evaluate_capture_evidence_admissions,
     new_claim_id,
     parse_claim,
+    parse_claim_law_evidence,
     render_claim,
 )
 from cruxible_core.playbill.dereference import (
@@ -322,6 +328,20 @@ class PlaybillClaimQueryResult(_StrictClaimServiceModel):
     verdicts: tuple[ClaimVerdictResultV1, ...]
 
 
+class PlaybillClaimQueryResultV2(_StrictClaimServiceModel):
+    tag: Literal["playbill-claim-query-v2"] = "playbill-claim-query-v2"
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: datetime
+    subject: SemanticAddress
+    predicate: str
+    cardinality: Literal["one", "many"]
+    status: Literal["resolved", "unresolved", "refused"]
+    selected_claim_identities: tuple[str, ...]
+    contender_claim_identities: tuple[str, ...]
+    claims: tuple[PlaybillClaimView, ...]
+    verdicts: tuple[ClaimVerdictResultAny, ...]
+
+
 class PlaybillClaimHistoryEntry(_StrictClaimServiceModel):
     sequence: int
     coordinate: PlaybillAcceptedCoordinate
@@ -366,6 +386,46 @@ class PlaybillClaimExplanationV2(_StrictClaimServiceModel):
     coverage: CoverageDescriptorV1
     admission_evaluation_time: datetime
     admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
+
+
+class EvidenceRecaptureOperationV1(_StrictClaimServiceModel):
+    tag: Literal["playbill-evidence-recapture-operation-v1"] = (
+        "playbill-evidence-recapture-operation-v1"
+    )
+    operation: Literal["playbill.authoring.bind"] = "playbill.authoring.bind"
+    claim_identity: str
+    capture_contract_identity: str
+    logical_source: str
+
+
+class ClaimEvidenceFreshnessLineV1(_StrictClaimServiceModel):
+    tag: Literal["playbill-claim-evidence-freshness-line-v1"] = (
+        "playbill-claim-evidence-freshness-line-v1"
+    )
+    capture_digest: str
+    citation_ids: tuple[str, ...]
+    capture_contract_identity: str
+    logical_source: str
+    observed_at: datetime
+    expires_at: datetime
+    state: Literal["current", "expiring", "expired"]
+    recapture_operation: EvidenceRecaptureOperationV1
+
+
+class PlaybillClaimExplanationV3(_StrictClaimServiceModel):
+    tag: Literal["playbill-claim-explanation-v3"] = "playbill-claim-explanation-v3"
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: datetime
+    claim: PlaybillClaimView
+    law_evidence: ClaimLawEvidenceAny
+    verdict: ClaimVerdictResultV2
+    exact_attestations: tuple[VerifiedClaimAttestationV1, ...]
+    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
+    source_handles: tuple[SourceHandleV1, ...]
+    coverage: CoverageDescriptorV1
+    admission_evaluation_time: datetime
+    admission_accounts: tuple[CaptureAdmissionAccountV1, ...]
+    freshness: tuple[ClaimEvidenceFreshnessLineV1, ...]
 
 
 def _resolve_coordinate(
@@ -1044,8 +1104,8 @@ def _claim_law_evidence(
     *,
     path: str,
     at: AcceptedProjectionCoordinate,
-) -> ClaimLawEvidenceV1:
-    found: ClaimLawEvidenceV1 | None = None
+) -> ClaimLawEvidenceAny:
+    found: ClaimLawEvidenceAny | None = None
     target_sequence = next(
         item.sequence for item in instance.accepted_history() if item.oid == at.git_oid
     )
@@ -1062,7 +1122,7 @@ def _claim_law_evidence(
                 continue
             raw = evidence.result.get("claim_evidence")
             if raw is not None:
-                found = ClaimLawEvidenceV1.model_validate(raw)
+                found = parse_claim_law_evidence(raw)
     if found is None:
         raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
     return found
@@ -1085,7 +1145,7 @@ def _claim_admission_accounts(
     *,
     claim: ClaimArtifactAny,
     tree: dict[str, bytes],
-    law: ClaimLawEvidenceV1,
+    law: ClaimLawEvidenceAny,
 ) -> tuple[CaptureAdmissionAccountV1, ...]:
     from cruxible_core.service.playbill_evidence import _capture_contracts
 
@@ -1165,7 +1225,7 @@ def service_query_playbill_claims(
     predicate: str,
     at: PlaybillAcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
-) -> PlaybillClaimQueryResult:
+) -> PlaybillClaimQueryResult | PlaybillClaimQueryResultV2:
     from cruxible_core.service.playbill_evidence import (
         service_evaluate_playbill_claim_verdict,
     )
@@ -1185,7 +1245,7 @@ def service_query_playbill_claims(
         raise ClaimNotFoundError(f"ClaimType:{predicate}")
     claim_type = parse_claim_type(content, path=type_path)
     contenders: list[ResolutionContenderV1] = []
-    verdicts: list[ClaimVerdictResultV1] = []
+    verdicts: list[ClaimVerdictResultAny] = []
     for view in listed.claims:
         claim = _claim_from_view(view)
         evaluated = service_evaluate_playbill_claim_verdict(
@@ -1200,7 +1260,9 @@ def service_query_playbill_claims(
             value = claim.statement.object.value
         else:
             value = claim.statement.object.model_dump(mode="json")
-        contender_verdict: ClaimVerdict = evaluated.verdict.verdict
+        contender_verdict: ClaimVerdict = (
+            "stale" if evaluated.verdict.verdict == "stale_evidence" else evaluated.verdict.verdict
+        )
         contenders.append(
             ResolutionContenderV1(
                 claim_identity=claim.identity.name,
@@ -1215,6 +1277,20 @@ def service_query_playbill_claims(
     )
     selected = tuple(f"Claim:{item}" for item in resolution.selected_claim_identities)
     all_contenders = tuple(f"Claim:{item}" for item in resolution.contender_claim_identities)
+    if any(isinstance(item, ClaimVerdictResultV2) for item in verdicts):
+        return PlaybillClaimQueryResultV2(
+            coordinate=listed.coordinate,
+            evaluation_time=evaluated_at,
+            subject=subject,
+            predicate=predicate,
+            cardinality=claim_type.cardinality,
+            status=resolution.status,
+            selected_claim_identities=selected,
+            contender_claim_identities=all_contenders,
+            claims=listed.claims,
+            verdicts=tuple(verdicts),
+        )
+    v1_verdicts = tuple(item for item in verdicts if isinstance(item, ClaimVerdictResultV1))
     return PlaybillClaimQueryResult(
         coordinate=listed.coordinate,
         evaluation_time=evaluated_at,
@@ -1225,7 +1301,7 @@ def service_query_playbill_claims(
         selected_claim_identities=selected,
         contender_claim_identities=all_contenders,
         claims=listed.claims,
-        verdicts=tuple(verdicts),
+        verdicts=v1_verdicts,
     )
 
 
@@ -1274,7 +1350,7 @@ def service_explain_playbill_claim(
     identity: str,
     at: PlaybillAcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
-) -> PlaybillClaimExplanationV2:
+) -> PlaybillClaimExplanationV2 | PlaybillClaimExplanationV3:
     from cruxible_core.service.playbill_evidence import (
         service_evaluate_playbill_claim_verdict,
     )
@@ -1305,6 +1381,13 @@ def service_explain_playbill_claim(
         at=PlaybillAcceptedCoordinate.from_internal(coordinate),
     )
     handles: list[SourceHandleV1] = []
+    capture_context: dict[str, tuple[tuple[str, ...], str, str]] = {}
+    citations_by_capture: dict[str, list[str]] = {}
+    for citation in claim_citation_references(claim):
+        citations_by_capture.setdefault(citation.capture_digest, []).append(citation.citation_id)
+    from cruxible_core.service.playbill_evidence import _capture_contracts
+
+    contracts = _capture_contracts(instance.tree_at(coordinate.git_oid))
     for digest in claim.backing.capture_digests:
         envelope = parse_capture_envelope(
             instance.body_store().read(
@@ -1331,18 +1414,80 @@ def service_explain_playbill_claim(
                 access_class="instance",
             )
         )
+        contract = contracts.get(envelope.capture_contract_digest)
+        if contract is None:
+            raise ProposalIntegrityError("accepted Claim CaptureContract no longer resolves")
+        logical_source = getattr(envelope.source, "source_identity", None)
+        if logical_source is None:
+            logical_source = contract.contract.logical_source_identities[0]
+        capture_context[digest] = (
+            tuple(
+                sorted(
+                    citations_by_capture.get(digest, ()),
+                    key=lambda item: item.encode("ascii"),
+                )
+            ),
+            contract.contract.identity.qualified,
+            logical_source,
+        )
+    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    coverage = CoverageDescriptorV1(
+        requested_facets=("governance", "provenance", "sources"),
+        available_facets=("governance", "provenance", "sources"),
+    )
+    if isinstance(verdict.verdict, ClaimVerdictResultV2):
+        freshness: list[ClaimEvidenceFreshnessLineV1] = []
+        for expiration in verdict.verdict.freshness_expirations:
+            context = capture_context.get(expiration.capture_digest)
+            if context is None:
+                raise ProposalIntegrityError(
+                    "playbill.claim.evidence_freshness_invalid: expiration has no Claim citation"
+                )
+            citation_ids, contract_identity, logical_source = context
+            freshness.append(
+                ClaimEvidenceFreshnessLineV1(
+                    capture_digest=expiration.capture_digest,
+                    citation_ids=citation_ids,
+                    capture_contract_identity=contract_identity,
+                    logical_source=logical_source,
+                    observed_at=expiration.observed_at,
+                    expires_at=expiration.expires_at,
+                    state="expired" if evaluated_at >= expiration.expires_at else "current",
+                    recapture_operation=EvidenceRecaptureOperationV1(
+                        claim_identity=claim.identity.qualified,
+                        capture_contract_identity=contract_identity,
+                        logical_source=logical_source,
+                    ),
+                )
+            )
+        return PlaybillClaimExplanationV3(
+            coordinate=public_coordinate,
+            evaluation_time=evaluated_at,
+            claim=view,
+            law_evidence=law,
+            verdict=verdict.verdict,
+            exact_attestations=law.verified_attestations,
+            source_handles=tuple(handles),
+            coverage=coverage,
+            admission_evaluation_time=evaluated_at,
+            admission_accounts=read.admission_accounts,
+            freshness=tuple(
+                sorted(freshness, key=lambda item: item.capture_digest.encode("ascii"))
+            ),
+        )
+    if not isinstance(law, ClaimLawEvidenceV1):
+        raise ProposalIntegrityError(
+            "playbill.claim.evidence_freshness_invalid: v2 law evidence produced a v1 verdict"
+        )
     return PlaybillClaimExplanationV2(
-        coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        coordinate=public_coordinate,
         evaluation_time=evaluated_at,
         claim=view,
         law_evidence=law,
         verdict=verdict.verdict,
         exact_attestations=law.verified_attestations,
         source_handles=tuple(handles),
-        coverage=CoverageDescriptorV1(
-            requested_facets=("governance", "provenance", "sources"),
-            available_facets=("governance", "provenance", "sources"),
-        ),
+        coverage=coverage,
         admission_evaluation_time=evaluated_at,
         admission_accounts=read.admission_accounts,
     )
@@ -1880,6 +2025,7 @@ __all__ = [
     "AuthoredClaimV1",
     "CaptureAdmissionAccountV1",
     "CaptureEvidenceKindAdmissionV1",
+    "ClaimEvidenceFreshnessLineV1",
     "DirectClaimAuthoringV1",
     "DirectClaimBatchProposalV1",
     "DirectClaimProposalV1",
@@ -1887,10 +2033,12 @@ __all__ = [
     "ExistingStatementHandoffV1",
     "PlaybillClaimExplanationV1",
     "PlaybillClaimExplanationV2",
+    "PlaybillClaimExplanationV3",
     "PlaybillClaimHistory",
     "PlaybillClaimHistoryEntry",
     "PlaybillClaimList",
     "PlaybillClaimQueryResult",
+    "PlaybillClaimQueryResultV2",
     "PlaybillClaimView",
     "PlaybillClaimViewV2",
     "service_expand_playbill_semantic",

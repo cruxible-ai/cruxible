@@ -504,13 +504,14 @@ def parse_projection_tree(
         capture_contract_digest,
         parse_capture_contract,
     )
+    from cruxible_core.playbill.claim_verdicts import claim_verdict_v1_compat
     from cruxible_core.playbill.claims import (
         ClaimFormatError,
-        ClaimLawEvidenceV1,
         claim_artifact_digest,
         claim_statement_address,
         claim_statement_digest,
         parse_claim,
+        parse_claim_law_evidence,
     )
     from cruxible_core.playbill.projection import AcceptedCoordinate
     from cruxible_core.playbill.settlement import parse_change_set_record
@@ -1784,7 +1785,7 @@ def parse_projection_tree(
                         raise ProjectionFormatError(
                             f"accepted Claim has no exact law evidence: {path}"
                         )
-                    law_evidence = ClaimLawEvidenceV1.model_validate(raw_claim_evidence)
+                    law_evidence = parse_claim_law_evidence(raw_claim_evidence)
                     for index, fact in enumerate(explanation_facts):
                         if fact.schema_id != "playbill.claim.attestation_coverage":
                             continue
@@ -1810,7 +1811,9 @@ def parse_projection_tree(
                                 schema_version=1,
                                 subject_identity=identity,
                                 fact_key="accepted_evaluation",
-                                value=law_evidence.verdict_result.model_dump(mode="json"),
+                                value=claim_verdict_v1_compat(
+                                    law_evidence.verdict_result
+                                ).model_dump(mode="json"),
                             ),
                             ProjectionFact(
                                 schema_id="playbill.claim.evidence_basis",

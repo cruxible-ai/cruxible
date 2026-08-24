@@ -27,9 +27,11 @@ from cruxible_core.playbill.claim_attestations import (
 from cruxible_core.playbill.claim_types import claim_type_digest, claim_type_path, parse_claim_type
 from cruxible_core.playbill.claim_verdicts import (
     ClaimVerdictResultV1,
+    ClaimVerdictResultV2,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
+    verify_claim_verdict_freshness,
 )
 from cruxible_core.playbill.claims import (
     AcceptedClaim,
@@ -37,12 +39,13 @@ from cruxible_core.playbill.claims import (
     ClaimArtifactV2,
     ClaimBacking,
     ClaimBackingV2,
-    ClaimLawEvidenceV1,
+    ClaimLawEvidenceAny,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
     parse_claim,
+    parse_claim_law_evidence,
     render_claim,
 )
 from cruxible_core.playbill.errors import ClaimNotFoundError, ProposalIntegrityError
@@ -108,6 +111,24 @@ class PlaybillClaimVerdictQueryV1(_StrictEvidenceServiceModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("Claim verdict evaluation time must be timezone-aware")
         return value
+
+
+class PlaybillClaimVerdictQueryV2(_StrictEvidenceServiceModel):
+    tag: Literal["playbill-claim-verdict-query-v2"] = "playbill-claim-verdict-query-v2"
+    coordinate: PlaybillAcceptedCoordinate
+    claim_identity: str
+    evaluation_time: datetime
+    verdict: ClaimVerdictResultV2
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Claim verdict evaluation time must be timezone-aware")
+        return value
+
+
+PlaybillClaimVerdictQueryAny = PlaybillClaimVerdictQueryV1 | PlaybillClaimVerdictQueryV2
 
 
 def _resolve_coordinate(
@@ -393,11 +414,11 @@ def _claim_law_evidence(
     *,
     path: str,
     coordinate: AcceptedProjectionCoordinate,
-) -> ClaimLawEvidenceV1:
+) -> ClaimLawEvidenceAny:
     target_sequence = next(
         item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
     )
-    found: ClaimLawEvidenceV1 | None = None
+    found: ClaimLawEvidenceAny | None = None
     for generation in instance.accepted_history()[1:]:
         if generation.sequence > target_sequence:
             break
@@ -407,7 +428,7 @@ def _claim_law_evidence(
             continue
         for evidence in generation.record.law_evidence:
             if evidence.path == path and evidence.result.get("claim_evidence") is not None:
-                found = ClaimLawEvidenceV1.model_validate(evidence.result["claim_evidence"])
+                found = parse_claim_law_evidence(evidence.result["claim_evidence"])
     if found is None:
         raise ProposalIntegrityError("accepted Claim has no verdict law evidence")
     return found
@@ -451,7 +472,7 @@ def service_evaluate_playbill_claim_verdict(
     evaluation_time: datetime,
     at: PlaybillAcceptedCoordinate | None = None,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
-) -> PlaybillClaimVerdictQueryV1:
+) -> PlaybillClaimVerdictQueryAny:
     """Recompute currency/verdict from accepted evidence at one explicit time."""
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
@@ -481,6 +502,12 @@ def service_evaluate_playbill_claim_verdict(
         )
         for item in evidence.verdict_captures
     )
+    if evidence.verdict_result is not None:
+        verify_claim_verdict_freshness(
+            evidence.verdict_result,
+            rule=rule,
+            captures=evidence.verdict_captures,
+        )
     subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
     referent_current = (
         accepted.claim.backing.referent_context.subject_content_digest == subject_content_digest
@@ -515,6 +542,13 @@ def service_evaluate_playbill_claim_verdict(
         # resolver. Acceptance-time verdict output is never carried forward.
         resolved_authority_basis=(),
     )
+    if isinstance(verdict, ClaimVerdictResultV2):
+        return PlaybillClaimVerdictQueryV2(
+            coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            claim_identity=accepted.claim.identity.qualified,
+            evaluation_time=evaluation_time,
+            verdict=verdict,
+        )
     return PlaybillClaimVerdictQueryV1(
         coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
         claim_identity=accepted.claim.identity.qualified,
@@ -551,6 +585,8 @@ def service_get_playbill_standing_mandate(
 __all__ = [
     "ClaimAttestationProposalV1",
     "PlaybillClaimVerdictQueryV1",
+    "PlaybillClaimVerdictQueryV2",
+    "PlaybillClaimVerdictQueryAny",
     "PreparedClaimAttestationV1",
     "service_evaluate_playbill_claim_verdict",
     "service_get_playbill_standing_mandate",

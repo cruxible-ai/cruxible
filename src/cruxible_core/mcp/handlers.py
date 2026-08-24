@@ -1001,7 +1001,7 @@ def handle_playbill_explain_claim(
     identity: str,
     *,
     evaluation_time: str | None,
-) -> contracts.PlaybillClaimExplanationV2:
+) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
     evaluated_at = parse_datetime(evaluation_time)
     return _dispatch_remote_or_local(
         lambda client: client.explain_playbill_claim(

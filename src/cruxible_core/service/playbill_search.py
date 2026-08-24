@@ -50,6 +50,7 @@ from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
     PlaybillClaimQueryResult,
+    PlaybillClaimQueryResultV2,
     _claim_from_view,
     service_list_playbill_claims,
     service_query_playbill_claims,
@@ -121,7 +122,7 @@ def _claim_resolution_statuses(
 
 
 def _apply_resolution_statuses(
-    result: PlaybillClaimQueryResult,
+    result: PlaybillClaimQueryResult | PlaybillClaimQueryResultV2,
     statuses: dict[str, SearchStatus],
 ) -> None:
     selected = {item.removeprefix("Claim:") for item in result.selected_claim_identities}

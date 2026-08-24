@@ -3311,6 +3311,504 @@
         "verdict"
       ]
     },
+    "PlaybillClaimExplanationV3": {
+      "fields": {
+        "admission_accounts": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admission_accounts",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillCaptureAdmissionAccount"
+            },
+            "title": "Admission Accounts",
+            "type": "array"
+          }
+        },
+        "admission_evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "admission_evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Admission Evaluation Time",
+            "type": "string"
+          }
+        },
+        "approval_coverage": {
+          "default": "containing_change_set",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "approval_coverage",
+          "required": false,
+          "schema": {
+            "const": "containing_change_set",
+            "default": "containing_change_set",
+            "title": "Approval Coverage",
+            "type": "string"
+          }
+        },
+        "claim": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillClaimView"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "coverage": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coverage",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Coverage",
+            "type": "object"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "exact_attestations": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "exact_attestations",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Exact Attestations",
+            "type": "array"
+          }
+        },
+        "freshness": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "freshness",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Freshness",
+            "type": "array"
+          }
+        },
+        "law_evidence": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "law_evidence",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Law Evidence",
+            "type": "object"
+          }
+        },
+        "source_handles": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_handles",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Source Handles",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-claim-explanation-v3",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Verdict",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillCaptureAdmissionAccount": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_contract_digest": {
+                "title": "Capture Contract Digest",
+                "type": "string"
+              },
+              "capture_contract_identity": {
+                "title": "Capture Contract Identity",
+                "type": "string"
+              },
+              "capture_digest": {
+                "title": "Capture Digest",
+                "type": "string"
+              },
+              "citation_id": {
+                "title": "Citation Id",
+                "type": "string"
+              },
+              "citation_origin": {
+                "enum": [
+                  "independent",
+                  "self_source",
+                  "self_published",
+                  "legacy"
+                ],
+                "title": "Citation Origin",
+                "type": "string"
+              },
+              "citation_role": {
+                "enum": [
+                  "evidence",
+                  "copy",
+                  "legacy"
+                ],
+                "title": "Citation Role",
+                "type": "string"
+              },
+              "decisions": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillCaptureEvidenceKindAdmission"
+                },
+                "title": "Decisions",
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "admitted",
+                  "not_admitted",
+                  "not_evidence"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-capture-admission-account-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "citation_id",
+              "capture_digest",
+              "citation_role",
+              "citation_origin",
+              "capture_contract_identity",
+              "capture_contract_digest",
+              "status",
+              "decisions"
+            ],
+            "title": "PlaybillCaptureAdmissionAccount",
+            "type": "object"
+          },
+          "PlaybillCaptureEvidenceKindAdmission": {
+            "additionalProperties": false,
+            "properties": {
+              "admission": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "origin_only",
+                      "direct",
+                      "derivational"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Admission"
+              },
+              "closest_rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Closest Rule Id"
+              },
+              "evidence_kind": {
+                "title": "Evidence Kind",
+                "type": "string"
+              },
+              "refusal_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Refusal Code"
+              },
+              "rule_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Rule Id"
+              },
+              "status": {
+                "enum": [
+                  "admitted",
+                  "not_admitted"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-capture-evidence-kind-admission-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "evidence_kind",
+              "status"
+            ],
+            "title": "PlaybillCaptureEvidenceKindAdmission",
+            "type": "object"
+          },
+          "PlaybillClaimView": {
+            "additionalProperties": false,
+            "properties": {
+              "coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "coordinate_kind": {
+                "const": "canonical",
+                "default": "canonical",
+                "title": "Coordinate Kind",
+                "type": "string"
+              },
+              "envelope": {
+                "additionalProperties": true,
+                "title": "Envelope",
+                "type": "object"
+              },
+              "facts": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Facts",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-claim-read-v1",
+                "default": "playbill-claim-read-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "coordinate",
+              "envelope",
+              "facts"
+            ],
+            "title": "PlaybillClaimView",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "admission_accounts": {
+            "items": {
+              "$ref": "#/$defs/PlaybillCaptureAdmissionAccount"
+            },
+            "title": "Admission Accounts",
+            "type": "array"
+          },
+          "admission_evaluation_time": {
+            "title": "Admission Evaluation Time",
+            "type": "string"
+          },
+          "approval_coverage": {
+            "const": "containing_change_set",
+            "default": "containing_change_set",
+            "title": "Approval Coverage",
+            "type": "string"
+          },
+          "claim": {
+            "$ref": "#/$defs/PlaybillClaimView"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "coverage": {
+            "additionalProperties": true,
+            "title": "Coverage",
+            "type": "object"
+          },
+          "evaluation_time": {
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "exact_attestations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Exact Attestations",
+            "type": "array"
+          },
+          "freshness": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Freshness",
+            "type": "array"
+          },
+          "law_evidence": {
+            "additionalProperties": true,
+            "title": "Law Evidence",
+            "type": "object"
+          },
+          "source_handles": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Source Handles",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-claim-explanation-v3",
+            "title": "Tag",
+            "type": "string"
+          },
+          "verdict": {
+            "additionalProperties": true,
+            "title": "Verdict",
+            "type": "object"
+          }
+        },
+        "required": [
+          "tag",
+          "coordinate",
+          "evaluation_time",
+          "claim",
+          "law_evidence",
+          "verdict",
+          "exact_attestations",
+          "source_handles",
+          "coverage",
+          "admission_evaluation_time",
+          "admission_accounts",
+          "freshness"
+        ],
+        "title": "PlaybillClaimExplanationV3",
+        "type": "object"
+      },
+      "required_fields": [
+        "admission_accounts",
+        "admission_evaluation_time",
+        "claim",
+        "coordinate",
+        "coverage",
+        "evaluation_time",
+        "exact_attestations",
+        "freshness",
+        "law_evidence",
+        "source_handles",
+        "tag",
+        "verdict"
+      ]
+    },
     "PlaybillClaimHistory": {
       "fields": {
         "entries": {

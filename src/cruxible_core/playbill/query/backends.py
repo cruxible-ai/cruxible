@@ -45,6 +45,7 @@ from cruxible_core.playbill.claim_verdicts import (
     ClaimAdjudicationRuleV1,
     EvidenceCurrency,
     EvidenceRelativeClaimVerdict,
+    claim_verdict_v1_compat,
     evaluate_claim_verdict,
 )
 from cruxible_core.playbill.claims import AcceptedClaim, SubjectClaimObject
@@ -212,7 +213,7 @@ def claim_row_visibility(
             artifact_digest=row.accepted.artifact_digest,
             predicate=statement.predicate,
             subject_identity=subject.shell.identity.qualified,
-            verdict=verdict.verdict,
+            verdict=claim_verdict_v1_compat(verdict).verdict,
             currency=verdict.currency,
         ),
     )

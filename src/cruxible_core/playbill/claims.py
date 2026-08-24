@@ -52,6 +52,7 @@ from cruxible_core.playbill.claim_types import (
 from cruxible_core.playbill.claim_verdicts import (
     CaptureVerdictEvidenceV1,
     ClaimVerdictResultV1,
+    ClaimVerdictResultV2,
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
@@ -699,13 +700,88 @@ class ClaimLawEvidenceV1(_StrictClaimModel):
         return value
 
 
+class ClaimLawEvidenceV2(_StrictClaimModel):
+    tag: Literal["playbill-claim-law-evidence-v2"] = "playbill-claim-law-evidence-v2"
+    law_digest: str
+    adjudication_rule_digest: str
+    statement_digest: str
+    artifact_digest: str
+    initial_verdict: Literal[
+        "supported",
+        "uncovered",
+        "stale",
+        "stale_evidence",
+        "contradicted",
+        "unresolved",
+    ]
+    evidence_basis: tuple[Literal["origin_only", "direct", "derivational"], ...]
+    evaluation_time: datetime | None = None
+    verdict_result: ClaimVerdictResultV2
+    verified_attestation_digests: tuple[str, ...] = ()
+    verified_attestations: tuple[VerifiedClaimAttestationV1, ...] = ()
+    verdict_captures: tuple[CaptureVerdictEvidenceV1, ...] = ()
+
+    @field_validator(
+        "law_digest", "adjudication_rule_digest", "statement_digest", "artifact_digest"
+    )
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("Claim law evaluation time must be timezone-aware")
+        return value
+
+    @field_validator("verified_attestation_digests")
+    @classmethod
+    def _attestation_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("verified ClaimAttestation digests must be sorted and unique")
+        for item in value:
+            CasDigest.from_tagged(item)
+        return value
+
+    @field_validator("verified_attestations")
+    @classmethod
+    def _verified_attestations(
+        cls, value: tuple[VerifiedClaimAttestationV1, ...]
+    ) -> tuple[VerifiedClaimAttestationV1, ...]:
+        digests = tuple(item.attestation_digest for item in value)
+        if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
+            raise ValueError("verified ClaimAttestations must be sorted and unique")
+        return value
+
+    @field_validator("verdict_captures")
+    @classmethod
+    def _verdict_captures(
+        cls, value: tuple[CaptureVerdictEvidenceV1, ...]
+    ) -> tuple[CaptureVerdictEvidenceV1, ...]:
+        digests = tuple(item.capture_digest for item in value)
+        if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
+            raise ValueError("verdict Captures must be sorted and unique")
+        return value
+
+
+ClaimLawEvidenceAny = ClaimLawEvidenceV1 | ClaimLawEvidenceV2
+
+
+def parse_claim_law_evidence(value: object) -> ClaimLawEvidenceAny:
+    if isinstance(value, dict) and value.get("tag") == "playbill-claim-law-evidence-v2":
+        return ClaimLawEvidenceV2.model_validate(value)
+    return ClaimLawEvidenceV1.model_validate(value)
+
+
 class ClaimLawResult(_StrictClaimModel):
     verdict: Literal["accepted", "refused"]
     artifact_digest: str | None = None
     statement_digest: str | None = None
     required_tier: PermissionTier | None = None
     approval_scope: tuple[str, ...] = ()
-    evidence: ClaimLawEvidenceV1 | None = None
+    evidence: ClaimLawEvidenceAny | None = None
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
 
     @model_validator(mode="after")
@@ -1644,24 +1720,46 @@ def evaluate_claim_law(
         statement_digest=statement_digest,
         required_tier="governed_write",
         approval_scope=claim.authority.approve_roles,
-        evidence=ClaimLawEvidenceV1(
-            law_digest=law_digest,
-            adjudication_rule_digest=adjudication_rule_digest,
-            statement_digest=statement_digest,
-            artifact_digest=digest,
-            initial_verdict=verdict_result.verdict,
-            evidence_basis=basis,
-            evaluation_time=evaluated_at,
-            verdict_result=verdict_result,
-            verified_attestation_digests=tuple(
-                sorted(item.attestation_digest for item in verified_attestations)
-            ),
-            verified_attestations=tuple(
-                sorted(verified_attestations, key=lambda item: item.attestation_digest)
-            ),
-            verdict_captures=tuple(
-                sorted(verdict_capture_evidence, key=lambda item: item.capture_digest)
-            ),
+        evidence=(
+            ClaimLawEvidenceV2(
+                law_digest=law_digest,
+                adjudication_rule_digest=adjudication_rule_digest,
+                statement_digest=statement_digest,
+                artifact_digest=digest,
+                initial_verdict=verdict_result.verdict,
+                evidence_basis=basis,
+                evaluation_time=evaluated_at,
+                verdict_result=verdict_result,
+                verified_attestation_digests=tuple(
+                    sorted(item.attestation_digest for item in verified_attestations)
+                ),
+                verified_attestations=tuple(
+                    sorted(verified_attestations, key=lambda item: item.attestation_digest)
+                ),
+                verdict_captures=tuple(
+                    sorted(verdict_capture_evidence, key=lambda item: item.capture_digest)
+                ),
+            )
+            if isinstance(verdict_result, ClaimVerdictResultV2)
+            else ClaimLawEvidenceV1(
+                law_digest=law_digest,
+                adjudication_rule_digest=adjudication_rule_digest,
+                statement_digest=statement_digest,
+                artifact_digest=digest,
+                initial_verdict=verdict_result.verdict,
+                evidence_basis=basis,
+                evaluation_time=evaluated_at,
+                verdict_result=verdict_result,
+                verified_attestation_digests=tuple(
+                    sorted(item.attestation_digest for item in verified_attestations)
+                ),
+                verified_attestations=tuple(
+                    sorted(verified_attestations, key=lambda item: item.attestation_digest)
+                ),
+                verdict_captures=tuple(
+                    sorted(verdict_capture_evidence, key=lambda item: item.capture_digest)
+                ),
+            )
         ),
     )
 
@@ -1677,6 +1775,8 @@ __all__ = [
     "ClaimCitationV1",
     "ClaimFormatError",
     "ClaimLawEvidenceV1",
+    "ClaimLawEvidenceV2",
+    "ClaimLawEvidenceAny",
     "ClaimLawResult",
     "ClaimObject",
     "ClaimReferentContext",
@@ -1697,6 +1797,7 @@ __all__ = [
     "new_claim_id",
     "merge_claim_citations",
     "parse_claim",
+    "parse_claim_law_evidence",
     "render_claim",
     "validate_claim_path",
 ]

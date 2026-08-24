@@ -878,7 +878,7 @@ class CruxibleClient:
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         evaluation_time: str | None = None,
-    ) -> contracts.PlaybillClaimExplanationV2:
+    ) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claims/{identity}/explanation",
             json={
@@ -886,7 +886,10 @@ class CruxibleClient:
                 "evaluation_time": evaluation_time,
             },
         )
-        return self._parse_model(response, contracts.PlaybillClaimExplanationV2)
+        payload = self._parse_json(response)
+        if payload.get("tag") == "playbill-claim-explanation-v3":
+            return contracts.PlaybillClaimExplanationV3.model_validate(payload)
+        return contracts.PlaybillClaimExplanationV2.model_validate(payload)
 
     def propose_playbill_query_definition(
         self,

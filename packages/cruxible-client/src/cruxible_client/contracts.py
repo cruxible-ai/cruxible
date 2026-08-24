@@ -566,6 +566,24 @@ class PlaybillClaimExplanationV2(BaseModel):
     admission_accounts: list[PlaybillCaptureAdmissionAccount]
 
 
+class PlaybillClaimExplanationV3(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-explanation-v3"]
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: str
+    claim: PlaybillClaimView
+    law_evidence: dict[str, Any]
+    verdict: dict[str, Any]
+    exact_attestations: list[dict[str, Any]]
+    approval_coverage: Literal["containing_change_set"] = "containing_change_set"
+    source_handles: list[dict[str, Any]]
+    coverage: dict[str, Any]
+    admission_evaluation_time: str
+    admission_accounts: list[PlaybillCaptureAdmissionAccount]
+    freshness: list[dict[str, Any]]
+
+
 class PlaybillCandidateStatus(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

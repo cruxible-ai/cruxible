@@ -933,7 +933,7 @@ def playbill_explain_claim(
     *,
     at: AcceptedCoordinate | None = None,
     evaluation_time: datetime | None = None,
-) -> contracts.PlaybillClaimExplanationV2:
+) -> contracts.PlaybillClaimExplanationV2 | contracts.PlaybillClaimExplanationV3:
     check_permission("cruxible_playbill_explain", instance_id=instance_id)
     result = service_explain_playbill_claim(
         get_playbill_manager().get(instance_id),
@@ -941,7 +941,10 @@ def playbill_explain_claim(
         at=at,
         evaluation_time=_evaluation_time(evaluation_time),
     )
-    return contracts.PlaybillClaimExplanationV2.model_validate(result.model_dump(mode="json"))
+    payload = result.model_dump(mode="json")
+    if payload.get("tag") == "playbill-claim-explanation-v3":
+        return contracts.PlaybillClaimExplanationV3.model_validate(payload)
+    return contracts.PlaybillClaimExplanationV2.model_validate(payload)
 
 
 def playbill_propose_query_definition(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
@@ -32,9 +32,18 @@ ObservationTrustGrade = Literal[
 ]
 EvidenceEpistemicGrade = Literal["observed", "derived", "predicted"]
 EvidenceCurrency = Literal["current", "stale", "not_applicable"]
-EvidenceRelativeClaimVerdict = Literal[
+EvidenceRelativeClaimVerdictV1 = Literal[
     "supported", "uncovered", "stale", "contradicted", "unresolved"
 ]
+EvidenceRelativeClaimVerdictV2 = Literal[
+    "supported",
+    "uncovered",
+    "stale",
+    "stale_evidence",
+    "contradicted",
+    "unresolved",
+]
+EvidenceRelativeClaimVerdict = EvidenceRelativeClaimVerdictV1
 
 
 class _StrictVerdictModel(BaseModel):
@@ -104,6 +113,13 @@ def claim_adjudication_rule(
         claim_type_digest=claim_type_digest,
         evidence_policy_digest=_policy_digest(claim_type.evidence_admission_policy),
         shell_sensitive=claim_type.referent_sensitivity == "shell",
+        max_evidence_age=(
+            None
+            if claim_type.evidence_freshness is None
+            else CanonicalDurationV1.model_validate(
+                claim_type.evidence_freshness.stale_after.model_dump(mode="json")
+            )
+        ),
         require_current_replay=claim_type.resolution_policy.require_current,
         conflict_behavior=(
             "contradiction_precedence" if claim_type.cardinality == "one" else "unresolved"
@@ -272,7 +288,7 @@ class ClaimVerdictResultV1(_StrictVerdictModel):
     claim_statement_digest: str
     adjudication_rule_digest: str
     evaluation_time: datetime
-    verdict: EvidenceRelativeClaimVerdict
+    verdict: EvidenceRelativeClaimVerdictV1
     currency: EvidenceCurrency
     basis_kinds: tuple[EvidenceBasisKind, ...]
     authority_basis: tuple[str, ...]
@@ -296,6 +312,138 @@ class ClaimVerdictResultV1(_StrictVerdictModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("Claim verdict evaluation time must be timezone-aware")
         return value
+
+
+class EvidenceFreshnessExpirationV1(_StrictVerdictModel):
+    tag: Literal["playbill-evidence-freshness-expiration-v1"] = (
+        "playbill-evidence-freshness-expiration-v1"
+    )
+    capture_digest: str
+    observed_at: datetime
+    expires_at: datetime
+
+    @field_validator("capture_digest")
+    @classmethod
+    def _capture_digest(cls, value: str) -> str:
+        CasDigest.from_tagged(value)
+        return value
+
+    @field_validator("observed_at", "expires_at")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("evidence freshness times must be timezone-aware")
+        return value
+
+    @model_validator(mode="after")
+    def _positive_interval(self) -> "EvidenceFreshnessExpirationV1":
+        if self.expires_at <= self.observed_at:
+            raise ValueError("evidence freshness expiration must follow observation")
+        return self
+
+
+class ClaimVerdictResultV2(_StrictVerdictModel):
+    """Verdict carrying the exact horizon-expiration vector for ClaimType v3."""
+
+    tag: Literal["playbill-claim-verdict-v2"] = "playbill-claim-verdict-v2"
+    claim_statement_digest: str
+    adjudication_rule_digest: str
+    evaluation_time: datetime
+    verdict: EvidenceRelativeClaimVerdictV2
+    currency: EvidenceCurrency
+    basis_kinds: tuple[EvidenceBasisKind, ...]
+    authority_basis: tuple[str, ...]
+    provenance_grades: tuple[EvidenceProvenanceGrade, ...]
+    epistemic_grades: tuple[EvidenceEpistemicGrade, ...]
+    supporting_evidence_digests: tuple[str, ...]
+    contradicting_evidence_digests: tuple[str, ...]
+    unsure_evidence_digests: tuple[str, ...]
+    control_components: tuple[EvidenceControlComponentV1, ...]
+    freshness_expirations: tuple[EvidenceFreshnessExpirationV1, ...]
+    refusal_codes: tuple[str, ...] = ()
+
+    @field_validator("claim_statement_digest", "adjudication_rule_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Claim verdict evaluation time must be timezone-aware")
+        return value
+
+    @field_validator("freshness_expirations")
+    @classmethod
+    def _freshness_expirations(
+        cls, value: tuple[EvidenceFreshnessExpirationV1, ...]
+    ) -> tuple[EvidenceFreshnessExpirationV1, ...]:
+        digests = tuple(item.capture_digest for item in value)
+        if digests != tuple(sorted(set(digests), key=lambda item: item.encode("ascii"))):
+            raise ValueError("freshness expirations must be byte-sorted and unique")
+        return value
+
+
+ClaimVerdictResultAny = ClaimVerdictResultV1 | ClaimVerdictResultV2
+
+
+def claim_verdict_v1_compat(result: ClaimVerdictResultAny) -> ClaimVerdictResultV1:
+    """Project v2 freshness into the conservative v1 stale vocabulary."""
+
+    if isinstance(result, ClaimVerdictResultV1):
+        return result
+    return ClaimVerdictResultV1(
+        claim_statement_digest=result.claim_statement_digest,
+        adjudication_rule_digest=result.adjudication_rule_digest,
+        evaluation_time=result.evaluation_time,
+        verdict=("stale" if result.verdict == "stale_evidence" else result.verdict),
+        currency=result.currency,
+        basis_kinds=result.basis_kinds,
+        authority_basis=result.authority_basis,
+        provenance_grades=result.provenance_grades,
+        epistemic_grades=result.epistemic_grades,
+        supporting_evidence_digests=result.supporting_evidence_digests,
+        contradicting_evidence_digests=result.contradicting_evidence_digests,
+        unsure_evidence_digests=result.unsure_evidence_digests,
+        control_components=result.control_components,
+        refusal_codes=result.refusal_codes,
+    )
+
+
+def verify_claim_verdict_freshness(
+    result: ClaimVerdictResultAny,
+    *,
+    rule: ClaimAdjudicationRuleV1,
+    captures: tuple[CaptureVerdictEvidenceV1, ...],
+) -> None:
+    """Refuse a v3 verdict whose committed expiration vector cannot reproduce."""
+
+    if rule.max_evidence_age is None:
+        if isinstance(result, ClaimVerdictResultV2):
+            raise ValueError(
+                "playbill.claim.evidence_freshness_invalid: v2 verdict has no freshness rule"
+            )
+        return
+    if not isinstance(result, ClaimVerdictResultV2):
+        raise ValueError(
+            "playbill.claim.evidence_freshness_invalid: freshness rule requires a v2 verdict"
+        )
+    expected = tuple(
+        EvidenceFreshnessExpirationV1(
+            capture_digest=item.capture_digest,
+            observed_at=item.observed_at,
+            expires_at=item.observed_at
+            + timedelta(microseconds=rule.max_evidence_age.microseconds),
+        )
+        for item in sorted(captures, key=lambda item: item.capture_digest.encode("ascii"))
+        if item.admission in {"direct", "derivational"}
+    )
+    if result.freshness_expirations != expected:
+        raise ValueError(
+            "playbill.claim.evidence_freshness_invalid: expiration vector does not reproduce"
+        )
 
 
 def _capture_current(
@@ -331,7 +479,7 @@ def evaluate_claim_verdict(
     claim_effective_until: datetime | None = None,
     referent_current: bool = True,
     resolved_authority_basis: tuple[str, ...] = (),
-) -> ClaimVerdictResultV1:
+) -> ClaimVerdictResultAny:
     """Compute one replayable verdict from current evidence and resolved authority.
 
     ``resolved_authority_basis`` must already have been revalidated at
@@ -420,7 +568,7 @@ def evaluate_claim_verdict(
         independent_count(contradicting) >= rule.minimum_contradicting_control_domains
     )
     if before_claim_interval:
-        verdict: EvidenceRelativeClaimVerdict = "uncovered"
+        verdict: EvidenceRelativeClaimVerdictV2 = "uncovered"
     elif after_claim_interval:
         verdict = "stale"
     elif support_satisfies and contradict_satisfies:
@@ -431,6 +579,17 @@ def evaluate_claim_verdict(
         verdict = "contradicted"
     elif support_satisfies or resolved_authority_basis:
         verdict = "supported"
+    elif rule.max_evidence_age is not None and any(
+        item.admission in {"direct", "derivational"}
+        and item.observed_at <= evaluation_time
+        and evaluation_time
+        >= item.observed_at + timedelta(microseconds=rule.max_evidence_age.microseconds)
+        and (item.source_effective_until is None or evaluation_time < item.source_effective_until)
+        and (not rule.require_current_replay or item.current_replay_available)
+        and (not rule.shell_sensitive or referent_current)
+        for item in captures
+    ):
+        verdict = "stale_evidence"
     elif captures or attestations:
         any_potentially_supporting = any(
             item.admission != "origin_only" for item in captures
@@ -464,16 +623,45 @@ def evaluate_claim_verdict(
     epistemic = {
         item.epistemic_grade for item in current_captures if item.capture_digest in support
     }
+    currency: EvidenceCurrency = (
+        "not_applicable"
+        if before_claim_interval
+        else ("stale" if verdict in {"stale", "stale_evidence"} else "current")
+    )
+    if rule.max_evidence_age is not None:
+        result = ClaimVerdictResultV2(
+            claim_statement_digest=claim_statement_digest,
+            adjudication_rule_digest=rule_digest,
+            evaluation_time=evaluation_time,
+            verdict=verdict,
+            currency=currency,
+            basis_kinds=tuple(sorted(basis)),
+            authority_basis=resolved_authority_basis,
+            provenance_grades=tuple(sorted(provenance)),
+            epistemic_grades=tuple(sorted(epistemic)),
+            supporting_evidence_digests=tuple(sorted(all_support)),
+            contradicting_evidence_digests=tuple(sorted(all_contradicting)),
+            unsure_evidence_digests=tuple(sorted(all_unsure)),
+            control_components=all_components,
+            freshness_expirations=tuple(
+                EvidenceFreshnessExpirationV1(
+                    capture_digest=item.capture_digest,
+                    observed_at=item.observed_at,
+                    expires_at=item.observed_at
+                    + timedelta(microseconds=rule.max_evidence_age.microseconds),
+                )
+                for item in sorted(captures, key=lambda item: item.capture_digest.encode("ascii"))
+                if item.admission in {"direct", "derivational"}
+            ),
+        )
+        verify_claim_verdict_freshness(result, rule=rule, captures=captures)
+        return result
     return ClaimVerdictResultV1(
         claim_statement_digest=claim_statement_digest,
         adjudication_rule_digest=rule_digest,
         evaluation_time=evaluation_time,
-        verdict=verdict,
-        currency=(
-            "not_applicable"
-            if before_claim_interval
-            else ("stale" if verdict == "stale" else "current")
-        ),
+        verdict=cast(EvidenceRelativeClaimVerdictV1, verdict),
+        currency=currency,
         basis_kinds=tuple(sorted(basis)),
         authority_basis=resolved_authority_basis,
         provenance_grades=tuple(sorted(provenance)),
@@ -489,16 +677,23 @@ __all__ = [
     "CaptureVerdictEvidenceV1",
     "ClaimAdjudicationRuleV1",
     "ClaimVerdictResultV1",
+    "ClaimVerdictResultV2",
+    "ClaimVerdictResultAny",
     "EvidenceBasisKind",
     "EvidenceControlComponentV1",
     "EvidenceCurrency",
     "EvidenceEpistemicGrade",
     "EvidenceProvenanceGrade",
     "EvidenceRelativeClaimVerdict",
+    "EvidenceRelativeClaimVerdictV1",
+    "EvidenceRelativeClaimVerdictV2",
+    "EvidenceFreshnessExpirationV1",
     "ObservationTrustGrade",
     "claim_adjudication_rule",
     "claim_adjudication_rule_digest",
+    "claim_verdict_v1_compat",
     "evaluate_claim_verdict",
     "evidence_control_components",
     "observation_trust_grade",
+    "verify_claim_verdict_freshness",
 ]
