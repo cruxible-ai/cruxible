@@ -53,7 +53,7 @@ from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
     claim_type_input_example,
 )
-from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequestV1
+from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingSourceObservationV1,
@@ -134,6 +134,9 @@ def _read_mapping(path: str) -> dict[str, Any]:
 
 
 _AUTHORING_INPUT_ADAPTER: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
+_CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
+    ClaimTypeMigrationRequest
+)
 
 
 def _authoring_examples_for(payload: Mapping[str, Any]) -> tuple[str, ...]:
@@ -998,7 +1001,7 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
     """Propose one ClaimType successor and every dependent disposition atomically."""
 
     try:
-        request = ClaimTypeMigrationRequestV1.model_validate(_read_mapping(request_file))
+        request = _CLAIM_TYPE_MIGRATION_ADAPTER.validate_python(_read_mapping(request_file))
     except ValidationError as exc:
         raise click.ClickException(f"Invalid ClaimType migration: {exc}") from exc
     result = _server_call(

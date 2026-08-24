@@ -13,7 +13,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal, cast
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client import contracts
 from cruxible_core.errors import AuthenticationError, ConfigError, DataValidationError
@@ -29,7 +29,7 @@ from cruxible_core.playbill.candidates import canonical_candidate_timestamp
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.claim_type_migrations import (
-    ClaimTypeMigrationRequestV1,
+    ClaimTypeMigrationRequest,
     service_migrate_claim_type,
 )
 from cruxible_core.playbill.claim_types import ClaimType
@@ -134,6 +134,10 @@ from cruxible_core.service.playbill_proposals import (
 from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.service.playbill_search import service_search_playbill
 from cruxible_core.temporal import utc_now
+
+_CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.PlaybillClaimTypeMigrationResponse] = (
+    TypeAdapter(contracts.PlaybillClaimTypeMigrationResponse)
+)
 
 
 def _credential_actor_context() -> GovernedActorContext | None:
@@ -627,15 +631,15 @@ def playbill_propose_claim_type_input(
 def playbill_migrate_claim_type(
     instance_id: str,
     *,
-    request: ClaimTypeMigrationRequestV1,
-) -> contracts.PlaybillClaimTypeMigrationResult:
+    request: ClaimTypeMigrationRequest,
+) -> contracts.PlaybillClaimTypeMigrationResponse:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
     result = service_migrate_claim_type(
         get_playbill_manager().get(instance_id),
         request=request,
         actor=AuthenticatedActor(actor_id=_actor_id()),
     )
-    return contracts.PlaybillClaimTypeMigrationResult.model_validate(result.model_dump(mode="json"))
+    return _CLAIM_TYPE_MIGRATION_RESPONSE.validate_python(result.model_dump(mode="json"))
 
 
 def playbill_list_claim_types(

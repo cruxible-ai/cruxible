@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeVar
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from cruxible_client import contracts
 from cruxible_client.errors import (
@@ -19,6 +19,9 @@ from cruxible_client.errors import (
 )
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+_CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.PlaybillClaimTypeMigrationResponse] = (
+    TypeAdapter(contracts.PlaybillClaimTypeMigrationResponse)
+)
 
 
 def _default_timeout() -> httpx.Timeout:
@@ -596,12 +599,13 @@ class CruxibleClient:
         instance_id: str,
         *,
         request: Mapping[str, Any],
-    ) -> contracts.PlaybillClaimTypeMigrationResult:
+    ) -> contracts.PlaybillClaimTypeMigrationResponse:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/claim-types/migrations",
             json=dict(request),
         )
-        return self._parse_model(response, contracts.PlaybillClaimTypeMigrationResult)
+        self._check_error(response)
+        return _CLAIM_TYPE_MIGRATION_RESPONSE.validate_python(response.json())
 
     def list_playbill_claim_types(
         self,

@@ -15,8 +15,12 @@ from cruxible_core.playbill.authoring.inputs import (
 )
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
+    ClaimTypeDependentDispositionV2,
+    ClaimTypeMigrationDependentSetMismatch,
     ClaimTypeMigrationError,
     ClaimTypeMigrationRequestV1,
+    ClaimTypeMigrationRequestV2,
+    ClaimTypeMigrationResultV2,
     service_migrate_claim_type,
 )
 from cruxible_core.playbill.claim_types import (
@@ -26,14 +30,21 @@ from cruxible_core.playbill.claim_types import (
 )
 from cruxible_core.playbill.claims import claim_path, parse_claim
 from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.query.definitions import (
+    parse_query_definition,
+    query_definition_path,
+    render_query_definition,
+)
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from tests.test_playbill._adoption_fixture import _query_definition
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_playbill.test_claims import _claim_type
+from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 
 def _accepted_claim_world(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -162,3 +173,73 @@ def test_invalidation_normalizes_to_a_retired_candidate_member(tmp_path: Path) -
         path=claim_path(claim_id),
     )
     assert claim.lifecycle.state == "retired"
+
+
+def test_v1_refuses_when_complete_closure_contains_a_query_definition(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    current_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    current_type = parse_claim_type(
+        current_tree[claim_type_path(_claim_type().predicate)],
+        path=claim_type_path(_claim_type().predicate),
+    )
+    query = _query_definition(1, current_type)
+    current_tree[query_definition_path(query.identity.name)] = render_query_definition(query)
+    _accept_tree(instance, owner, current_tree, timestamp=TIMESTAMP, proposal_name="seed-query")
+
+    with pytest.raises(ClaimTypeMigrationDependentSetMismatch, match="query-definition"):
+        service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequestV1(successor=_successor(instance), dependents=()),
+            actor=AuthenticatedActor(actor_id="owner"),
+        )
+
+
+def test_v2_preflight_and_submit_cover_claim_and_query_dependents(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    current_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    current_type = parse_claim_type(
+        current_tree[claim_type_path(_claim_type().predicate)],
+        path=claim_type_path(_claim_type().predicate),
+    )
+    query = _query_definition(1, current_type)
+    current_tree[query_definition_path(query.identity.name)] = render_query_definition(query)
+    _accept_tree(instance, owner, current_tree, timestamp=TIMESTAMP, proposal_name="seed-query")
+
+    preflight = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV2(
+            mode="preflight",
+            successor=_successor(instance),
+        ),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert preflight.tag == "playbill-claim-type-migration-preflight-v1"
+    assert [(item.artifact_kind, item.identity) for item in preflight.dependents] == [
+        ("query-definition", query.identity),
+    ]
+
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV2(
+            mode="submit",
+            successor=_successor(instance),
+            dependents=(
+                ClaimTypeDependentDispositionV2(
+                    identity=query.identity,
+                    disposition="successor",
+                ),
+            ),
+        ),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert isinstance(result, ClaimTypeMigrationResultV2)
+    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    migrated_query = parse_query_definition(
+        instance.proposal_tree(tree_oid)[query_definition_path(query.identity.name)],
+        path=query_definition_path(query.identity.name),
+    )
+    assert migrated_query.pins[0].artifact_digest == claim_type_digest(_successor(instance)).tagged
+    assert migrated_query.lifecycle.predecessor_digest is not None

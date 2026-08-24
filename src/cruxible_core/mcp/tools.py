@@ -295,7 +295,7 @@ def register_tools(
     def cruxible_playbill_claim_type_migrate(
         instance_id: str,
         request: dict[str, Any],
-    ) -> contracts.PlaybillClaimTypeMigrationResult:
+    ) -> contracts.PlaybillClaimTypeMigrationResponse:
         """Propose one ClaimType successor and its dependent dispositions atomically."""
         return handlers.handle_playbill_migrate_claim_type(instance_id, request)
 

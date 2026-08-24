@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -398,6 +398,35 @@ class PlaybillClaimTypeMigrationResult(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+
+
+class PlaybillClaimTypeMigrationPreflight(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-type-migration-preflight-v1"] = (
+        "playbill-claim-type-migration-preflight-v1"
+    )
+    coordinate: PlaybillAcceptedCoordinate
+    successor_artifact_digest: str
+    dependents: list[dict[str, Any]]
+
+
+class PlaybillClaimTypeMigrationResultV2(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-type-migration-result-v2"] = (
+        "playbill-claim-type-migration-result-v2"
+    )
+    operation_digest: str
+    dependents: list[dict[str, Any]]
+    proposal: PlaybillProposalInspection
+
+
+PlaybillClaimTypeMigrationResponse: TypeAlias = (
+    PlaybillClaimTypeMigrationResult
+    | PlaybillClaimTypeMigrationPreflight
+    | PlaybillClaimTypeMigrationResultV2
+)
 
 
 class PlaybillClaimView(BaseModel):

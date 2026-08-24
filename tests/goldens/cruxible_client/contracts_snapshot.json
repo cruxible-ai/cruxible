@@ -4129,6 +4129,136 @@
         "coordinate"
       ]
     },
+    "PlaybillClaimTypeMigrationPreflight": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "dependents": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "dependents",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependents",
+            "type": "array"
+          }
+        },
+        "successor_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "successor_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Successor Artifact Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-claim-type-migration-preflight-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-claim-type-migration-preflight-v1",
+            "default": "playbill-claim-type-migration-preflight-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "dependents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependents",
+            "type": "array"
+          },
+          "successor_artifact_digest": {
+            "title": "Successor Artifact Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-claim-type-migration-preflight-v1",
+            "default": "playbill-claim-type-migration-preflight-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "successor_artifact_digest",
+          "dependents"
+        ],
+        "title": "PlaybillClaimTypeMigrationPreflight",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "dependents",
+        "successor_artifact_digest"
+      ]
+    },
     "PlaybillClaimTypeMigrationResult": {
       "fields": {
         "dependents": {
@@ -4276,6 +4406,161 @@
           "proposal"
         ],
         "title": "PlaybillClaimTypeMigrationResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "dependents",
+        "operation_digest",
+        "proposal"
+      ]
+    },
+    "PlaybillClaimTypeMigrationResultV2": {
+      "fields": {
+        "dependents": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "dependents",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependents",
+            "type": "array"
+          }
+        },
+        "operation_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operation_digest",
+          "required": true,
+          "schema": {
+            "title": "Operation Digest",
+            "type": "string"
+          }
+        },
+        "proposal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillProposalInspection"
+          }
+        },
+        "tag": {
+          "default": "playbill-claim-type-migration-result-v2",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-claim-type-migration-result-v2",
+            "default": "playbill-claim-type-migration-result-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillProposalInspection": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "proposal": {
+                "additionalProperties": true,
+                "title": "Proposal",
+                "type": "object"
+              },
+              "tag": {
+                "const": "playbill-proposal-inspection-v1",
+                "default": "playbill-proposal-inspection-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal",
+              "accepted_coordinate"
+            ],
+            "title": "PlaybillProposalInspection",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "dependents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependents",
+            "type": "array"
+          },
+          "operation_digest": {
+            "title": "Operation Digest",
+            "type": "string"
+          },
+          "proposal": {
+            "$ref": "#/$defs/PlaybillProposalInspection"
+          },
+          "tag": {
+            "const": "playbill-claim-type-migration-result-v2",
+            "default": "playbill-claim-type-migration-result-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_digest",
+          "dependents",
+          "proposal"
+        ],
+        "title": "PlaybillClaimTypeMigrationResultV2",
         "type": "object"
       },
       "required_fields": [

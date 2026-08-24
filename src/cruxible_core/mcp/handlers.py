@@ -38,7 +38,7 @@ from cruxible_core.playbill.authoring.models import (
     InsertionConfirmationObservationV1,
 )
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_example
-from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequestV1
+from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -73,6 +73,9 @@ _client_cache_key: tuple[str | None, str | None, str | None] | None = None
 _client_cache_lock = threading.RLock()
 ResultT = TypeVar("ResultT")
 _AUTHORING_INPUT: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
+_CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
+    ClaimTypeMigrationRequest
+)
 
 
 class _LocalFloorClient:
@@ -682,8 +685,8 @@ def handle_playbill_propose_claim_type(
 def handle_playbill_migrate_claim_type(
     instance_id: str,
     request: dict[str, Any],
-) -> contracts.PlaybillClaimTypeMigrationResult:
-    migration = ClaimTypeMigrationRequestV1.model_validate(request)
+) -> contracts.PlaybillClaimTypeMigrationResponse:
+    migration = _CLAIM_TYPE_MIGRATION.validate_python(request)
     return _dispatch_remote_or_local(
         lambda client: client.migrate_playbill_claim_type(
             instance_id,
