@@ -23,10 +23,10 @@ from cruxible_core.playbill.documents import (
 from cruxible_core.playbill.errors import ProposalAdmissionError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
-    ProposalEvidenceStore,
     ProposalService,
     deterministic_rebase,
     evaluate_proposal_tree,

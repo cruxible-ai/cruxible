@@ -47,9 +47,9 @@ from cruxible_core.playbill.projection import (
     AssemblerResult,
     projection_manifest_name,
 )
+from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.playbill.proposals import (
     ExhaustPromotionVerifierProtocol,
-    ProposalEvidenceStore,
     ProposalService,
 )
 from cruxible_core.playbill.recovery import (
