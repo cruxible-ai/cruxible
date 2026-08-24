@@ -14,12 +14,12 @@ from cruxible_core.playbill.canonical import (
     ChangeSetDigest,
     GenerationRoot,
     SemanticRoot,
-    canonical_bytes,
     manifest_root,
     typed_digest,
 )
 from cruxible_core.playbill.errors import PlaybillBootstrapError
 from cruxible_core.playbill.git import GitLedger
+from cruxible_core.playbill.principal_rendering import render_principal
 from cruxible_core.playbill.types import (
     GenerationDescriptor,
     PlaybillTrustRoot,
@@ -97,10 +97,6 @@ def generation_root(descriptor: GenerationDescriptor) -> GenerationRoot:
             "parent_generation_root": descriptor.parent_generation_root,
         },
     )
-
-
-def render_principal(record: PrincipalRecord) -> bytes:
-    return canonical_bytes(record.model_dump(mode="json")) + b"\n"
 
 
 def genesis_tree(principals: Sequence[PrincipalRecord]) -> dict[str, bytes]:

@@ -13,7 +13,6 @@ from cruxible_core.playbill.attestations import (
     VerifiedApproval,
     verify_approval,
 )
-from cruxible_core.playbill.bootstrap import render_principal
 from cruxible_core.playbill.candidates import CandidateRecordAnyVersion
 from cruxible_core.playbill.cas import BodyAccessContext, CasObjectMetadata
 from cruxible_core.playbill.diagnostics import CompilerDiagnostic
@@ -30,6 +29,7 @@ from cruxible_core.playbill.errors import (
     SettlementIntegrityError,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.principal_rendering import render_principal
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_documents import DocumentProjectionView
 from cruxible_core.playbill.proposals import (

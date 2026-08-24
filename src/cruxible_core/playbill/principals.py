@@ -8,9 +8,9 @@ from collections.abc import Mapping
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.bootstrap import render_principal
 from cruxible_core.playbill.canonical import SemanticRoot
 from cruxible_core.playbill.errors import PrincipalIntegrityError
+from cruxible_core.playbill.principal_rendering import render_principal
 from cruxible_core.playbill.types import PrincipalRecord
 
 _PRINCIPAL_PATH_RE = re.compile(r"^principals/([a-z][a-z0-9_.-]{0,127})\.yaml$")

@@ -17,7 +17,6 @@ from cruxible_core.playbill.artifacts import (
     ArtifactKindRegistry,
     ArtifactPathKind,
 )
-from cruxible_core.playbill.bootstrap import render_principal
 from cruxible_core.playbill.canonical import (
     ArtifactDigest,
     canonical_bytes,
@@ -44,6 +43,7 @@ from cruxible_core.playbill.explanation import (
     accepted_artifact_explanation_facts,
     accepted_document_explanation_facts,
 )
+from cruxible_core.playbill.principal_rendering import render_principal
 from cruxible_core.playbill.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
