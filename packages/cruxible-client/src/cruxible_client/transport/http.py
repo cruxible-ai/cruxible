@@ -671,13 +671,23 @@ class CruxibleClient:
         instance_id: str,
         *,
         payload: Mapping[str, Any],
+        reference_expectations: Sequence[Mapping[str, Any]] | None = None,
     ) -> contracts.PlaybillAuthoringIntentView:
+        request: dict[str, Any] = {
+            "tag": (
+                "playbill-authoring-intent-create-request-v1"
+                if reference_expectations is None
+                else "playbill-authoring-intent-create-request-v2"
+            ),
+            "payload": dict(payload),
+        }
+        if reference_expectations is not None:
+            request["reference_expectations"] = [
+                dict(item) for item in reference_expectations
+            ]
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/intents",
-            json={
-                "tag": "playbill-authoring-intent-create-request-v1",
-                "payload": dict(payload),
-            },
+            json=request,
         )
         return self._parse_model(response, contracts.PlaybillAuthoringIntentView)
 
@@ -727,14 +737,24 @@ class CruxibleClient:
         *,
         payload: Mapping[str, Any],
         intent_id: str | None = None,
+        reference_expectations: Sequence[Mapping[str, Any]] | None = None,
     ) -> contracts.PlaybillAuthoringPreflightResult:
+        request: dict[str, Any] = {
+            "tag": (
+                "playbill-authoring-intent-compile-request-v1"
+                if reference_expectations is None
+                else "playbill-authoring-intent-compile-request-v2"
+            ),
+            "payload": dict(payload),
+            "intent_id": intent_id,
+        }
+        if reference_expectations is not None:
+            request["reference_expectations"] = [
+                dict(item) for item in reference_expectations
+            ]
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/compile",
-            json={
-                "tag": "playbill-authoring-intent-compile-request-v1",
-                "payload": dict(payload),
-                "intent_id": intent_id,
-            },
+            json=request,
         )
         return self._parse_model(response, contracts.PlaybillAuthoringPreflightResult)
 

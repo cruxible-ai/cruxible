@@ -12,8 +12,10 @@ from cruxible_client.contracts.authoring.models import (
     AcceptanceConditionV1,
     AuthoringIntentListV1,
     AuthoringIntentV1,
+    AuthoringIntentV2,
     AuthoringIntentViewV1,
     AuthoringPayloadV1,
+    AuthoringReferenceExpectationV1,
     AuthoringSubmitResultV1,
     CandidateStatusState,
     CandidateStatusV1,
@@ -29,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     authoring_create_fingerprint,
     authoring_payload_digest,
     insertion_confirmation_operation_key,
+    reference_expectations_digest,
     update_insertion_expectation,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
@@ -123,6 +126,7 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         base_coordinate: AcceptedCoordinate | None = None,
+        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
     ) -> AuthoringIntentViewV1:
         at = base_coordinate or AcceptedCoordinate.from_internal(
             self.instance.accepted_coordinate()
@@ -133,21 +137,31 @@ class AuthoringIntentCoordinator:
             state="draft",
             current_accepted_coordinate=at,
         )
-        intent = AuthoringIntentV1(
-            intent_id=intent_id,
-            instance_id=self.instance.descriptor.instance_id,
-            actor_id=actor.actor_id,
-            canonical_timestamp=canonical_timestamp,
-            base_coordinate=at,
-            semantic_identity=semantic_identity,
-            payload=payload,
-            payload_digest=authoring_payload_digest(payload),
-            create_fingerprint=authoring_create_fingerprint(
+        intent_values = {
+            "intent_id": intent_id,
+            "instance_id": self.instance.descriptor.instance_id,
+            "actor_id": actor.actor_id,
+            "canonical_timestamp": canonical_timestamp,
+            "base_coordinate": at,
+            "semantic_identity": semantic_identity,
+            "payload": payload,
+            "payload_digest": authoring_payload_digest(payload),
+            "create_fingerprint": authoring_create_fingerprint(
                 instance_id=self.instance.descriptor.instance_id,
                 actor_id=actor.actor_id,
                 payload=payload,
             ),
-            candidate_status=status,
+            "candidate_status": status,
+        }
+        intent = (
+            AuthoringIntentV1.model_validate(intent_values)
+            if reference_expectations is None
+            else AuthoringIntentV2.model_validate(
+                {
+                    **intent_values,
+                    "reference_expectations": reference_expectations,
+                }
+            )
         )
         operation_key = typed_digest(
             Sha256Value,
@@ -159,6 +173,15 @@ class AuthoringIntentCoordinator:
             },
         ).tagged
         stored = self.store.create(intent, operation_key=operation_key)
+        if reference_expectations is not None and (
+            not isinstance(stored, AuthoringIntentV2)
+            or stored.reference_expectations != reference_expectations
+        ):
+            stored = self._replace_reference_expectations(
+                stored,
+                actor=actor,
+                reference_expectations=reference_expectations,
+            )
         return AuthoringIntentViewV1(intent=stored)
 
     def create_input(
@@ -328,15 +351,22 @@ class AuthoringIntentCoordinator:
         payload: AuthoringPayloadV1,
         canonical_timestamp: str,
         intent_id: str | None = None,
+        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
     ) -> PreflightResultV1:
         view = (
             self.create(
                 actor=actor,
                 payload=payload,
                 canonical_timestamp=canonical_timestamp,
+                reference_expectations=reference_expectations,
             )
             if intent_id is None
-            else self.replace_payload(intent_id, actor=actor, payload=payload)
+            else self.replace_payload(
+                intent_id,
+                actor=actor,
+                payload=payload,
+                reference_expectations=reference_expectations,
+            )
         )
         return self.preflight(view.intent.intent_id, actor=actor)
 
@@ -671,15 +701,30 @@ class AuthoringIntentCoordinator:
         *,
         actor: AuthenticatedActor,
         payload: AuthoringPayloadV1,
+        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
     ) -> AuthoringIntentViewV1:
         payload_digest = authoring_payload_digest(payload)
+        expectations_digest = (
+            None
+            if reference_expectations is None
+            else reference_expectations_digest(reference_expectations)
+        )
         operation_key = typed_digest(
             Sha256Value,
-            "playbill-authoring-replace-payload-v1",
+            (
+                "playbill-authoring-replace-payload-v1"
+                if expectations_digest is None
+                else "playbill-authoring-replace-payload-v2"
+            ),
             {
                 "actor_id": actor.actor_id,
                 "intent_id": intent_id,
                 "payload_digest": payload_digest,
+                **(
+                    {}
+                    if expectations_digest is None
+                    else {"reference_expectations_digest": expectations_digest}
+                ),
             },
         ).tagged
 
@@ -710,8 +755,7 @@ class AuthoringIntentCoordinator:
             elif not isinstance(payload, ClaimAuthoringPayloadV1):  # pragma: no cover
                 raise ValueError("unsupported AuthoringIntent payload kind")
             at = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
-            return current.model_copy(
-                update={
+            updates = {
                     "payload": payload,
                     "payload_digest": payload_digest,
                     "create_fingerprint": authoring_create_fingerprint(
@@ -727,6 +771,17 @@ class AuthoringIntentCoordinator:
                         current_accepted_coordinate=at,
                     ),
                 }
+            if reference_expectations is None:
+                return current.model_copy(update=updates)
+            return AuthoringIntentV2.model_validate(
+                {
+                    **current.model_dump(mode="json"),
+                    **updates,
+                    "tag": "playbill-authoring-intent-v2",
+                    "reference_expectations": [
+                        item.model_dump(mode="json") for item in reference_expectations
+                    ],
+                }
             )
 
         updated = self.store.transition(
@@ -736,6 +791,60 @@ class AuthoringIntentCoordinator:
             transform=replace,
         )
         return AuthoringIntentViewV1(intent=updated)
+
+    def _replace_reference_expectations(
+        self,
+        current: AuthoringIntentV1,
+        *,
+        actor: AuthenticatedActor,
+        reference_expectations: tuple[AuthoringReferenceExpectationV1, ...],
+    ) -> AuthoringIntentV1:
+        if current.candidate_status.state not in {
+            "draft",
+            "preflight_refused",
+            "ready_to_submit",
+        }:
+            return current
+        expectations_digest = reference_expectations_digest(reference_expectations)
+        operation_key = typed_digest(
+            Sha256Value,
+            "playbill-authoring-replace-reference-expectations-v1",
+            {
+                "actor_id": actor.actor_id,
+                "intent_id": current.intent_id,
+                "reference_expectations_digest": expectations_digest,
+            },
+        ).tagged
+
+        def replace(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+            if isinstance(intent, AuthoringIntentV2) and (
+                intent.reference_expectations == reference_expectations
+            ):
+                return intent
+            return AuthoringIntentV2.model_validate(
+                {
+                    **intent.model_dump(mode="json"),
+                    "tag": "playbill-authoring-intent-v2",
+                    "reference_expectations": [
+                        item.model_dump(mode="json") for item in reference_expectations
+                    ],
+                    "intent_revision": intent.intent_revision + 1,
+                    "last_preflight": None,
+                    "candidate_status": CandidateStatusV1(
+                        state="draft",
+                        current_accepted_coordinate=AcceptedCoordinate.from_internal(
+                            self.instance.accepted_coordinate()
+                        ),
+                    ).model_dump(mode="json"),
+                }
+            )
+
+        return self.store.transition(
+            current.intent_id,
+            actor_id=actor.actor_id,
+            operation_key=operation_key,
+            transform=replace,
+        )
 
     def _mint_semantic_identity(self, payload: AuthoringPayloadV1) -> str:
         if isinstance(payload, ClaimAuthoringPayloadV1):

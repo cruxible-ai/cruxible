@@ -17,7 +17,9 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,
     PlaybillApprovalRequest,
     PlaybillAuthoringCompileRequest,
+    PlaybillAuthoringCompileRequestV2,
     PlaybillAuthoringCreateRequest,
+    PlaybillAuthoringCreateRequestV2,
     PlaybillAuthoringInputCompileRequest,
     PlaybillAuthoringInputCreateRequest,
     PlaybillAuthoringPreflightRequest,
@@ -571,14 +573,25 @@ async def propose_claims(
 )
 async def create_authoring_intent(
     instance_id: str,
-    req: PlaybillAuthoringCreateRequest | PlaybillAuthoringInputCreateRequest,
+    req: (
+        PlaybillAuthoringCreateRequest
+        | PlaybillAuthoringCreateRequestV2
+        | PlaybillAuthoringInputCreateRequest
+    ),
 ) -> contracts.PlaybillAuthoringIntentView:
     if isinstance(req, PlaybillAuthoringInputCreateRequest):
         return playbill_api.playbill_authoring_create_input(
             resolve_server_instance_id(instance_id), input=req.input
         )
+    if isinstance(req, PlaybillAuthoringCreateRequestV2):
+        return playbill_api.playbill_authoring_create(
+            resolve_server_instance_id(instance_id),
+            payload=req.payload,
+            reference_expectations=req.reference_expectations,
+        )
     return playbill_api.playbill_authoring_create(
-        resolve_server_instance_id(instance_id), payload=req.payload
+        resolve_server_instance_id(instance_id),
+        payload=req.payload,
     )
 
 
@@ -598,13 +611,24 @@ async def list_pending_authoring_intents(
 )
 async def compile_authoring(
     instance_id: str,
-    req: PlaybillAuthoringCompileRequest | PlaybillAuthoringInputCompileRequest,
+    req: (
+        PlaybillAuthoringCompileRequest
+        | PlaybillAuthoringCompileRequestV2
+        | PlaybillAuthoringInputCompileRequest
+    ),
 ) -> contracts.PlaybillAuthoringPreflightResult:
     if isinstance(req, PlaybillAuthoringInputCompileRequest):
         return playbill_api.playbill_authoring_compile_input(
             resolve_server_instance_id(instance_id),
             input=req.input,
             intent_id=req.intent_id,
+        )
+    if isinstance(req, PlaybillAuthoringCompileRequestV2):
+        return playbill_api.playbill_authoring_compile(
+            resolve_server_instance_id(instance_id),
+            payload=req.payload,
+            intent_id=req.intent_id,
+            reference_expectations=req.reference_expectations,
         )
     return playbill_api.playbill_authoring_compile(
         resolve_server_instance_id(instance_id),

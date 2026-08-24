@@ -20,6 +20,7 @@ from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
 from cruxible_client.contracts.authoring.models import (
     AuthoringPayloadV1,
+    AuthoringReferenceExpectationV1,
     InsertionConfirmationObservationV1,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
@@ -729,6 +730,7 @@ def playbill_authoring_create(
     instance_id: str,
     *,
     payload: AuthoringPayloadV1,
+    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
 ) -> contracts.PlaybillAuthoringIntentView:
     check_permission("cruxible_playbill_authoring_create", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
@@ -736,6 +738,7 @@ def playbill_authoring_create(
         actor=actor,
         payload=payload,
         canonical_timestamp=canonical_candidate_timestamp(utc_now()),
+        reference_expectations=reference_expectations,
     )
     return contracts.PlaybillAuthoringIntentView.model_validate(result.model_dump(mode="json"))
 
@@ -789,6 +792,7 @@ def playbill_authoring_compile(
     *,
     payload: AuthoringPayloadV1,
     intent_id: str | None = None,
+    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
 ) -> contracts.PlaybillAuthoringPreflightResult:
     check_permission("cruxible_playbill_authoring_compile", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
@@ -797,6 +801,7 @@ def playbill_authoring_compile(
         payload=payload,
         canonical_timestamp=canonical_candidate_timestamp(utc_now()),
         intent_id=intent_id,
+        reference_expectations=reference_expectations,
     )
     return contracts.PlaybillAuthoringPreflightResult.model_validate(result.model_dump(mode="json"))
 

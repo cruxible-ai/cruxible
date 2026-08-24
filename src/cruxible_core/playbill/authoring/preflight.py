@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import json
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -14,6 +16,9 @@ from cruxible_client.contracts.authoring.models import (
     MAX_DIAGNOSTICS,
     AuthoringDiagnosticV1,
     AuthoringIntentV1,
+    AuthoringIntentV2,
+    AuthoringReferenceExpectationV1,
+    AuthoringReferenceSuccessorV1,
     BlockedCheckV1,
     CandidateStatusV1,
     ClaimAuthoringPayloadV1,
@@ -26,8 +31,29 @@ from cruxible_client.contracts.authoring.models import (
     build_preflight_certificate,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claim_types import (
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+)
+from cruxible_client.contracts.claims import (
+    claim_artifact_digest,
+    claim_path,
+    parse_claim,
+)
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.errors import ProposalAdmissionError
+from cruxible_client.contracts.errors import PlaybillError, ProposalAdmissionError
+from cruxible_client.contracts.procedures.artifacts import (
+    parse_procedure,
+    procedure_artifact_digest,
+    procedure_path,
+)
+from cruxible_client.contracts.query.definitions import (
+    parse_query_definition,
+    query_definition_digest,
+    query_definition_path,
+)
+from cruxible_client.contracts.subjects import parse_subject, subject_digest, subject_path
 from cruxible_core.playbill.authoring.lowering import (
     AuthoringLoweringError,
     LoweredAuthoring,
@@ -50,6 +76,256 @@ class ComputedPreflight:
     lowered: LoweredAuthoring | None
     evaluated_tree: dict[str, bytes]
     evaluation: CandidateEvaluation | None
+
+
+_PAYLOAD_PATH_PART_RE = re.compile(r"([^.\[\]]+)|\[([0-9]+)\]")
+
+
+def _reference_artifact_path(expectation: AuthoringReferenceExpectationV1) -> str:
+    if expectation.artifact_kind == "Subject":
+        kind, separator, identifier = expectation.address.partition("/")
+        if not separator:
+            raise ValueError("Subject ref must use <kind>/<id>")
+        return subject_path(kind, identifier)
+    if expectation.artifact_kind == "ClaimType":
+        return claim_type_path(expectation.address)
+    if expectation.artifact_kind == "Claim":
+        return claim_path(expectation.address)
+    if expectation.artifact_kind == "Procedure":
+        return procedure_path(expectation.address)
+    if expectation.artifact_kind == "QueryDefinition":
+        return query_definition_path(expectation.address)
+    # A Source ref carries the accepted ledger artifact path, not a workstation path.
+    if expectation.address.startswith("/") or ".." in expectation.address.split("/"):
+        raise ValueError("Source ref must use a canonical ledger artifact path")
+    return expectation.address
+
+
+def _reference_artifact_digest(
+    expectation: AuthoringReferenceExpectationV1,
+    *,
+    path: str,
+    content: bytes,
+) -> str:
+    if expectation.artifact_kind == "Subject":
+        return subject_digest(parse_subject(content, path=path)).tagged
+    if expectation.artifact_kind == "ClaimType":
+        return claim_type_digest(parse_claim_type(content, path=path)).tagged
+    if expectation.artifact_kind == "Claim":
+        return claim_artifact_digest(parse_claim(content, path=path)).tagged
+    if expectation.artifact_kind == "Procedure":
+        return procedure_artifact_digest(parse_procedure(content, path=path)).tagged
+    if expectation.artifact_kind == "QueryDefinition":
+        return query_definition_digest(parse_query_definition(content, path=path)).tagged
+    return typed_digest(
+        Sha256Value,
+        "playbill-authoring-source-reference-v1",
+        {"content": content.hex(), "path": path},
+    ).tagged
+
+
+def _payload_path_value(payload: object, path: str) -> object:
+    current = payload.model_dump(mode="json") if hasattr(payload, "model_dump") else payload
+    offset = 0
+    for match in _PAYLOAD_PATH_PART_RE.finditer(path):
+        if match.start() != offset and path[offset : match.start()] != ".":
+            raise KeyError(path)
+        key, index = match.groups()
+        if key is not None:
+            if not isinstance(current, dict) or key not in current:
+                raise KeyError(path)
+            current = current[key]
+        else:
+            if not isinstance(current, list):
+                raise KeyError(path)
+            current = current[int(index)]
+        offset = match.end()
+    if offset != len(path):
+        raise KeyError(path)
+    return current
+
+
+def _payload_value_matches_reference(
+    value: object,
+    *,
+    expectation: AuthoringReferenceExpectationV1,
+    artifact_path: str,
+) -> bool:
+    if isinstance(value, str):
+        return value in {
+            expectation.address,
+            artifact_path,
+            f"{expectation.artifact_kind}:{expectation.address}",
+        }
+    if isinstance(value, dict):
+        return any(
+            value.get(key) in {expectation.address, artifact_path}
+            for key in ("address", "artifact_path", "name")
+        )
+    return False
+
+
+def _reference_diagnostics(
+    instance: PlaybillInstance,
+    *,
+    intent: AuthoringIntentV1,
+    base_tree: dict[str, bytes],
+) -> tuple[AuthoringDiagnosticV1, ...]:
+    if not isinstance(intent, AuthoringIntentV2):
+        return ()
+    diagnostics: list[AuthoringDiagnosticV1] = []
+    for expectation in intent.reference_expectations:
+        try:
+            path = _reference_artifact_path(expectation)
+            value = _payload_path_value(intent.payload, expectation.payload_path)
+        except (KeyError, TypeError, ValueError):
+            diagnostics.append(
+                _diagnostic(
+                    code="playbill.authoring.reference_payload_mismatch",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The reference assertion does not describe its emitted payload path.",
+                    repairs=(
+                        _repair(
+                            "replace_reference",
+                            "Replace the ref at the named builder expression.",
+                            {
+                                "address": expectation.address,
+                                "artifact_kind": expectation.artifact_kind,
+                            },
+                        ),
+                    ),
+                )
+            )
+            continue
+        if not _payload_value_matches_reference(
+            value,
+            expectation=expectation,
+            artifact_path=path,
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    code="playbill.authoring.reference_payload_mismatch",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The emitted value differs from the asserted typed reference.",
+                    repairs=(
+                        _repair(
+                            "replace_reference",
+                            "Replace the ref at the named builder expression.",
+                            {
+                                "address": expectation.address,
+                                "artifact_kind": expectation.artifact_kind,
+                            },
+                        ),
+                    ),
+                )
+            )
+            continue
+        try:
+            minted = instance.resolve_accepted_coordinate(
+                git_oid=expectation.minted_coordinate.git_oid,
+                semantic_root=expectation.minted_coordinate.semantic_root,
+                generation_root=expectation.minted_coordinate.generation_root,
+                compiler_digest=expectation.minted_coordinate.compiler_digest,
+            )
+            minted_tree = instance.tree_at(minted.git_oid)
+        except (OSError, PlaybillError, ValueError):
+            diagnostics.append(
+                _diagnostic(
+                    code="playbill.authoring.reference_coordinate_unavailable",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The accepted coordinate that minted this ref cannot be verified.",
+                    owner="daemon",
+                    disposition="terminal",
+                    repairs=(),
+                )
+            )
+            continue
+        minted_content = minted_tree.get(path)
+        if minted_content is None:
+            diagnostics.append(
+                _diagnostic(
+                    code="playbill.authoring.reference_absent_at_minted_coordinate",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The named artifact was absent where this ref claims it was minted.",
+                    owner="daemon",
+                    disposition="terminal",
+                    repairs=(),
+                )
+            )
+            continue
+        current_content = base_tree.get(path)
+        if current_content == minted_content:
+            continue
+        if current_content is not None:
+            successor = AuthoringReferenceSuccessorV1(
+                payload_path=expectation.payload_path,
+                artifact_kind=expectation.artifact_kind,
+                address=expectation.address,
+                coordinate=intent.base_coordinate,
+            )
+            diagnostics.append(
+                _diagnostic(
+                    code="playbill.authoring.reference_stale",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The typed reference has a newer accepted successor.",
+                    disposition="superseded",
+                    repairs=(
+                        _repair(
+                            "replace_reference",
+                            "Replace the stale ref with the named successor generation.",
+                            successor.model_dump(mode="json"),
+                        ),
+                    ),
+                )
+            )
+            continue
+        # A moved successor is identified by the exact predecessor artifact digest.
+        try:
+            predecessor_digest = _reference_artifact_digest(
+                expectation,
+                path=path,
+                content=minted_content,
+            )
+        except ValueError:
+            predecessor_digest = ""
+        successors: list[str] = []
+        if predecessor_digest:
+            for candidate_path, candidate_content in base_tree.items():
+                try:
+                    candidate = json.loads(candidate_content)
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                if not isinstance(candidate, dict):
+                    continue
+                lifecycle = candidate.get("lifecycle")
+                if (
+                    isinstance(lifecycle, dict)
+                    and lifecycle.get("predecessor_digest") == predecessor_digest
+                ):
+                    successors.append(candidate_path)
+        if len(successors) > 1:
+            code = "playbill.authoring.reference_successor_ambiguous"
+            message = "More than one accepted artifact claims to succeed this reference."
+        else:
+            code = "playbill.authoring.reference_retired"
+            message = "The typed reference has no live successor at the intent base."
+        diagnostics.append(
+            _diagnostic(
+                code=code,
+                stage="reference_assertion",
+                offending_element=expectation.payload_path,
+                message=message,
+                owner="daemon",
+                disposition="terminal",
+                repairs=(),
+            )
+        )
+    return tuple(diagnostics)
 
 
 def _repair(
@@ -241,6 +517,9 @@ def compute_preflight(
         compiler_digest=intent.base_coordinate.compiler_digest,
     )
     base_tree = instance.tree_at(base.git_oid)
+    diagnostics.extend(
+        _reference_diagnostics(instance, intent=intent, base_tree=base_tree)
+    )
     service = instance.proposal_service()
     proposal_ref = f"refs/proposals/{actor.actor_id}/intent-{intent.intent_id[4:]}"
     proposal_ref_oid = service.transport.read_proposal_ref(proposal_ref)

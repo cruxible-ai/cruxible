@@ -3,20 +3,22 @@
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import secrets
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from cruxible_client.contracts.authoring.models import AuthoringIntentV1
+from cruxible_client.contracts.authoring.models import AuthoringIntentV1, AuthoringIntentV2
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.errors import PlaybillError
 
 AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
+AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})
 _LIVE_INSERTION_STATES = frozenset({"awaiting_claim_acceptance", "pending", "confirming"})
 
@@ -58,13 +60,42 @@ class AuthoringIntentEventV1(_StrictStoreModel):
         return self
 
 
-def authoring_intent_event_digest(event: AuthoringIntentEventV1) -> str:
+class AuthoringIntentEventV2(_StrictStoreModel):
+    tag: Literal["playbill-authoring-intent-event-v2"] = "playbill-authoring-intent-event-v2"
+    sequence: int = Field(ge=0)
+    previous_event_digest: str | None
+    operation_key: str
+    intent: AuthoringIntentV2
+    event_digest: str
+
+    @field_validator("previous_event_digest", "operation_key", "event_digest")
+    @classmethod
+    def _digests(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _reproduces(self) -> "AuthoringIntentEventV2":
+        if self.event_digest != authoring_intent_event_digest(self):
+            raise ValueError("AuthoringIntent event digest does not reproduce")
+        return self
+
+
+AuthoringIntentEventAny: TypeAlias = AuthoringIntentEventV1 | AuthoringIntentEventV2
+
+
+def authoring_intent_event_digest(event: AuthoringIntentEventAny) -> str:
     payload = event.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("event_digest")
     return typed_digest(
         Sha256Value,
-        AUTHORING_INTENT_EVENT_DIGEST_DOMAIN,
+        (
+            AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN
+            if isinstance(event, AuthoringIntentEventV2)
+            else AUTHORING_INTENT_EVENT_DIGEST_DOMAIN
+        ),
         payload,
     ).tagged
 
@@ -75,8 +106,24 @@ def build_authoring_intent_event(
     previous_event_digest: str | None,
     operation_key: str,
     intent: AuthoringIntentV1,
-) -> AuthoringIntentEventV1:
+) -> AuthoringIntentEventAny:
     placeholder = "sha256:" + "0" * 64
+    if isinstance(intent, AuthoringIntentV2):
+        event_v2 = AuthoringIntentEventV2.model_construct(
+            tag="playbill-authoring-intent-event-v2",
+            sequence=sequence,
+            previous_event_digest=previous_event_digest,
+            operation_key=operation_key,
+            intent=intent,
+            event_digest=placeholder,
+        )
+        return AuthoringIntentEventV2(
+            sequence=sequence,
+            previous_event_digest=previous_event_digest,
+            operation_key=operation_key,
+            intent=intent,
+            event_digest=authoring_intent_event_digest(event_v2),
+        )
     event = AuthoringIntentEventV1.model_construct(
         tag="playbill-authoring-intent-event-v1",
         sequence=sequence,
@@ -92,6 +139,15 @@ def build_authoring_intent_event(
         intent=intent,
         event_digest=authoring_intent_event_digest(event),
     )
+
+
+def _parse_authoring_intent_event(raw: bytes) -> AuthoringIntentEventAny:
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError("AuthoringIntent event must be an object")
+    if payload.get("tag") == "playbill-authoring-intent-event-v2":
+        return AuthoringIntentEventV2.model_validate(payload)
+    return AuthoringIntentEventV1.model_validate(payload)
 
 
 def _fsync_directory(path: Path) -> None:
@@ -203,7 +259,7 @@ class AuthoringIntentStore:
                 raise AuthoringIntentStoreError("AuthoringIntent create staging is incomplete")
             try:
                 raw = paths[0].read_bytes()
-                event = AuthoringIntentEventV1.model_validate_json(raw)
+                event = _parse_authoring_intent_event(raw)
             except (OSError, ValidationError, ValueError) as exc:
                 raise AuthoringIntentStoreError(
                     "AuthoringIntent create staging is malformed"
@@ -243,7 +299,7 @@ class AuthoringIntentStore:
         intent_id: str,
         *,
         actor_id: str,
-    ) -> tuple[AuthoringIntentV1 | None, AuthoringIntentEventV1]:
+    ) -> tuple[AuthoringIntentV1 | None, AuthoringIntentEventAny]:
         """Return the exact predecessor and latest event for protocol retry checks."""
 
         with self._locked():
@@ -313,7 +369,7 @@ class AuthoringIntentStore:
             if path.is_dir() and not path.is_symlink()
         )
 
-    def _load_events(self, directory: Path) -> tuple[AuthoringIntentEventV1, ...]:
+    def _load_events(self, directory: Path) -> tuple[AuthoringIntentEventAny, ...]:
         if directory.is_symlink() or not directory.is_dir():
             raise AuthoringIntentStoreError("AuthoringIntent does not exist")
         events_directory = directory / "events"
@@ -322,7 +378,7 @@ class AuthoringIntentStore:
         paths = tuple(sorted(events_directory.glob("*.json"), key=lambda item: item.name))
         if not paths:
             raise AuthoringIntentStoreError("AuthoringIntent event stream is empty")
-        events: list[AuthoringIntentEventV1] = []
+        events: list[AuthoringIntentEventAny] = []
         previous: str | None = None
         operation_keys: set[str] = set()
         for sequence, path in enumerate(paths):
@@ -330,7 +386,7 @@ class AuthoringIntentStore:
                 raise AuthoringIntentStoreError("AuthoringIntent event sequence is not contiguous")
             try:
                 raw = path.read_bytes()
-                event = AuthoringIntentEventV1.model_validate_json(raw)
+                event = _parse_authoring_intent_event(raw)
             except (OSError, ValidationError, ValueError) as exc:
                 raise AuthoringIntentStoreError("AuthoringIntent event is malformed") from exc
             if raw != self._render_event(event):
@@ -347,7 +403,7 @@ class AuthoringIntentStore:
         return tuple(events)
 
     @staticmethod
-    def _render_event(event: AuthoringIntentEventV1) -> bytes:
+    def _render_event(event: AuthoringIntentEventAny) -> bytes:
         return canonical_bytes(event.model_dump(mode="json")) + b"\n"
 
     @staticmethod
@@ -389,7 +445,10 @@ class AuthoringIntentStore:
 
 __all__ = [
     "AUTHORING_INTENT_EVENT_DIGEST_DOMAIN",
+    "AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN",
+    "AuthoringIntentEventAny",
     "AuthoringIntentEventV1",
+    "AuthoringIntentEventV2",
     "AuthoringIntentStore",
     "AuthoringIntentStoreError",
     "authoring_intent_event_digest",
