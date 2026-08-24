@@ -7,7 +7,6 @@ with the Family-1 vertical slice after proposal and activation semantics exist.
 
 from typing import TYPE_CHECKING, Any
 
-from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.types import PlaybillTrustRoot, PrincipalRecord
 
 if TYPE_CHECKING:
@@ -49,5 +48,4 @@ __all__ = [
     "ProjectionHandle",
     "bind_projection",
     "detect_projection_orphans",
-    "generate_client_principal_key",
 ]
