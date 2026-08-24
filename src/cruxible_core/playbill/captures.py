@@ -25,7 +25,7 @@ from cruxible_core.playbill.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_core.playbill.cas import (
+from cruxible_core.playbill.cas_contracts import (
     BodyAccessContext,
     CasObjectMetadata,
 )

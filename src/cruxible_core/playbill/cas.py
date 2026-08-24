@@ -2,50 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import stat
 from pathlib import Path
-from typing import Literal, Protocol
-
-from pydantic import BaseModel, ConfigDict
 
 from cruxible_core.playbill.canonical import CasDigest
+from cruxible_core.playbill.cas_contracts import (
+    BodyAccessContext,
+    BodyProjectionProtocol,
+    CasObjectMetadata,
+    digest_bytes,
+)
 from cruxible_core.playbill.errors import PlaybillCasError
-
-
-class _StrictCasModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class BodyAccessContext(_StrictCasModel):
-    """Policy seam for protected body and body-derived metadata access."""
-
-    tag: Literal["playbill-body-access-v1"] = "playbill-body-access-v1"
-    principal_id: str
-    can_read_body: bool = False
-
-
-class CasObjectMetadata(_StrictCasModel):
-    digest: str
-    present: bool
-    byte_length: int | None
-    redacted: bool
-
-
-class BodyProjectionProtocol(Protocol):
-    """Compiler-only CAS seam; every byte read still requires explicit access."""
-
-    def verify(self, digest: str) -> bool: ...
-
-    def read(self, digest: str, *, access: BodyAccessContext) -> bytes: ...
-
-    def metadata(
-        self,
-        digest: str,
-        *,
-        access: BodyAccessContext,
-    ) -> CasObjectMetadata: ...
 
 
 def _fsync_directory(path: Path) -> None:
@@ -72,7 +40,7 @@ class ContentAddressedBodyStore:
 
     @staticmethod
     def digest_bytes(content: bytes) -> CasDigest:
-        return CasDigest(hashlib.sha256(content).hexdigest())
+        return digest_bytes(content)
 
     def _path(self, digest: str) -> Path:
         value = CasDigest.from_tagged(digest)
