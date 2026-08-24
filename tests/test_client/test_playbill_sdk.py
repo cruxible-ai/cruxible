@@ -15,6 +15,7 @@ from cruxible_client import (
     SubjectRef,
 )
 from cruxible_client import contracts as api
+from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import ClaimAuthoringPayloadV2
 from cruxible_client.contracts.policies import (
@@ -247,3 +248,41 @@ def test_typed_refs_emit_coordinate_assertions_without_entering_the_payload(
     payload = client.compiled["payload"]
     assert "reference_expectations" not in payload
     assert "program_stamp" not in payload
+
+
+def test_connect_refuses_an_unknown_daemon_before_instance_io(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    context = tmp_path / "context.json"
+    context.write_text(
+        '{"server_url":"http://remembered","server_socket":"/tmp/remembered.sock",'
+        '"instance_id":"inst_test"}\n',
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+    connection: dict[str, object] = {}
+
+    class _UnknownClient:
+        def __init__(self, **values: object) -> None:
+            calls.append("connect")
+            connection.update(values)
+
+        def version(self) -> str:
+            calls.append("version")
+            return "9.0.0"
+
+        def close(self) -> None:
+            calls.append("close")
+
+    monkeypatch.setattr("cruxible_client.authoring.sdk.CruxibleClient", _UnknownClient)
+
+    try:
+        Playbill.connect(context=context, target="http://explicit", workspace=tmp_path)
+    except IncompatibleDaemonVersion as exc:
+        assert exc.daemon_version == "9.0.0"
+    else:  # pragma: no cover - the handshake must fail closed
+        raise AssertionError("unknown daemon version was accepted")
+    assert calls == ["connect", "version", "close"]
+    assert connection["base_url"] == "http://explicit"
+    assert connection["socket_path"] is None

@@ -73,6 +73,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringProgramOperationV1,
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
+    ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
     ClaimDependencyDraftsV1,
     ProcedureAuthoringPayloadV2,
@@ -92,7 +93,9 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifact,
     ClaimArtifactAny,
+    ClaimArtifactV2,
     LiteralClaimObject,
     claim_statement_digest,
 )
@@ -219,6 +222,62 @@ def _program_stamp(operation: str, decisions: Mapping[str, object]) -> Authoring
     )
 
 
+def _claim_from_public_view(view: api.PlaybillClaimViewV2) -> ClaimArtifactAny:
+    """Reconstruct the exact Claim from its pure projection envelope and facts."""
+
+    statement = next(
+        (
+            fact.get("value")
+            for fact in view.facts
+            if fact.get("schema_id") == "playbill.claim.statement"
+        ),
+        None,
+    )
+    backing = next(
+        (
+            fact.get("value")
+            for fact in view.facts
+            if fact.get("schema_id") == "playbill.claim.backing"
+        ),
+        None,
+    )
+    lifecycle = next(
+        (
+            fact.get("value")
+            for fact in view.facts
+            if fact.get("schema_id") == "playbill.claim.lifecycle"
+        ),
+        None,
+    )
+    identity = view.envelope.get("identity")
+    artifact_format = view.envelope.get("format_tag")
+    if not (
+        isinstance(identity, str)
+        and isinstance(statement, dict)
+        and isinstance(backing, dict)
+        and isinstance(lifecycle, dict)
+        and isinstance(artifact_format, str)
+    ):
+        raise ValueError("Claim read lacks its complete canonical artifact")
+    model = ClaimArtifactV2 if artifact_format == "playbill-claim-v2" else ClaimArtifact
+    return _CLAIM_ADAPTER.validate_python(
+        model.model_validate(
+            {
+                "artifact_format": artifact_format,
+                "identity": {
+                    "kind": "Claim",
+                    "name": identity.removeprefix("Claim:"),
+                },
+                "statement": statement,
+                "backing": backing,
+                "authority": lifecycle.get("authority"),
+                "pins": lifecycle.get("pins"),
+                "lifecycle": lifecycle.get("lifecycle"),
+            }
+        )
+    )
+
+
 @dataclass(frozen=True)
 class KnowledgeCard:
     kind: RefKind
@@ -307,7 +366,7 @@ class ClaimTypeDraft:
 @dataclass(frozen=True)
 class _IntentDraft:
     _playbill: Playbill = field(repr=False, compare=False)
-    payload: ClaimAuthoringPayloadV2 | ProcedureAuthoringPayloadV2
+    payload: ClaimAuthoringPayloadV1 | ClaimAuthoringPayloadV2 | ProcedureAuthoringPayloadV2
     reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
     program_stamp: AuthoringProgramStampV1
     source_map: DiagnosticSourceMap
@@ -429,6 +488,11 @@ class Intent:
     @property
     def publication(self) -> Publication | None:
         expectation = self._raw.get("insertion_expectation")
+        if not isinstance(expectation, Mapping):
+            self._raw = self._playbill._client.get_playbill_authoring_intent(
+                self._playbill._instance_id, self.intent_id
+            ).intent
+            expectation = self._raw.get("insertion_expectation")
         if not isinstance(expectation, Mapping):
             return None
         return Publication(self, dict(expectation))
@@ -561,9 +625,11 @@ class Publication:
             expectation=self._expectation,
             retained_body=payload.source.content,
         )
+        original_mode = path.stat().st_mode
         with NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
             handle.write(application.content)
             temporary = Path(handle.name)
+        temporary.chmod(original_mode)
         temporary.replace(path)
         result = self._intent._playbill._client.confirm_playbill_authoring_insertion(
             self._intent._playbill._instance_id,
@@ -652,9 +718,12 @@ class Playbill:
             remembered = loaded
         resolved_target = target or cast(str | None, remembered.get("server_url"))
         socket = cast(str | None, remembered.get("server_socket"))
-        if target is not None and target.startswith("unix:"):
-            resolved_target = None
-            socket = target.removeprefix("unix:")
+        if target is not None:
+            if target.startswith("unix:"):
+                resolved_target = None
+                socket = target.removeprefix("unix:")
+            else:
+                socket = None
         if resolved_target is None and socket is None:
             raise ValueError("Playbill connection requires a server target")
         resolved_instance = instance or cast(str | None, remembered.get("instance_id"))
@@ -732,7 +801,13 @@ class Playbill:
         return self._coordinate
 
     def refresh(self) -> SearchPage:
-        page = self.orient()
+        page = self._search(
+            mode="orient",
+            query=None,
+            kinds=("brief", "claim", "demand", "procedure"),
+            statuses=(),
+            at_active_coordinate=False,
+        )
         self._coordinate = page.coordinate
         return page
 
@@ -781,6 +856,9 @@ class Playbill:
         evidence_freshness: Duration | None,
     ) -> ClaimTypeDraft:
         name = _address(predicate, RefKind.CLAIM_TYPE)
+        for source in sources:
+            if isinstance(source, SourceRef):
+                self._assert_coordinate(source.coordinate)
         source_ids = tuple(sorted({_address(item, RefKind.SOURCE) for item in sources}))
         rules = tuple(
             ClaimEvidenceAdmissionRuleV1(
@@ -1039,7 +1117,7 @@ class Playbill:
                 at=_api_coordinate(self.coordinate),
                 evaluation_time=self._evaluation_time(),
             )
-            artifact = _CLAIM_ADAPTER.validate_python(claim_view.envelope)
+            artifact = _claim_from_public_view(claim_view)
             expected_subject = (
                 None
                 if expectation.subject is None
@@ -1108,7 +1186,7 @@ class Playbill:
                 key=lambda item: item[0].encode("ascii"),
             )
         )
-        payload = ClaimAuthoringPayloadV2(
+        payload = ClaimAuthoringPayloadV1(
             statement=AuthoringClaimStatementV1(
                 subject=_subject_address(subject_name),
                 predicate=KNOWLEDGE_BRIEF_PREDICATE,
@@ -1124,7 +1202,6 @@ class Playbill:
                 AuthoringExistingClaimDispositionV1(claim_id=identity, disposition=decision.value)
                 for identity, decision in sorted_dispositions
             ),
-            dependency_drafts=ClaimDependencyDraftsV1(),
         )
         expectations: list[AuthoringReferenceExpectationV1 | None] = [
             _expectation(subject, expected=RefKind.SUBJECT, payload_path="statement.subject")
@@ -1281,7 +1358,7 @@ class Playbill:
                 self._instance_id,
                 kind,
                 identifier,
-                at=_api_coordinate(self.coordinate),
+                at=_api_coordinate(ref.coordinate),
             )
             return KnowledgeCard(
                 RefKind.SUBJECT,
@@ -1291,7 +1368,7 @@ class Playbill:
             )
         if isinstance(ref, ClaimTypeRef):
             claim_type_view = self._client.get_playbill_claim_type(
-                self._instance_id, ref.address, at=_api_coordinate(self.coordinate)
+                self._instance_id, ref.address, at=_api_coordinate(ref.coordinate)
             )
             return KnowledgeCard(
                 RefKind.CLAIM_TYPE,
@@ -1303,7 +1380,7 @@ class Playbill:
             claim_view = self._client.get_playbill_claim(
                 self._instance_id,
                 ref.address,
-                at=_api_coordinate(self.coordinate),
+                at=_api_coordinate(ref.coordinate),
                 evaluation_time=self._evaluation_time(),
             )
             return KnowledgeCard(
@@ -1314,7 +1391,7 @@ class Playbill:
             )
         if isinstance(ref, QueryRef):
             query_view = self._client.get_playbill_query_definition(
-                self._instance_id, ref.address, at=_api_coordinate(self.coordinate)
+                self._instance_id, ref.address, at=_api_coordinate(ref.coordinate)
             )
             return KnowledgeCard(
                 RefKind.QUERY,
@@ -1331,6 +1408,7 @@ class Playbill:
                 self.search(query=ref.address, kinds=("procedure",), statuses=()),
             )
         if isinstance(ref, SourceRef):
+            self._assert_coordinate(ref.coordinate)
             context = self._client.playbill_source_context(self._instance_id)
             matches = [item for item in context.documents if item.get("source_id") == ref.address]
             if len(matches) != 1:
@@ -1348,10 +1426,26 @@ class Playbill:
             kinds=("brief", "claim", "procedure"),
             statuses=(),
         )
-        exact = [row for row in page.rows if ref in {row.get("identity"), row.get("name")}]
+        exact = [
+            row
+            for row in page.rows
+            if ref
+            in {
+                row.get("identity"),
+                row.get("name"),
+                str(row.get("identity", "")).removeprefix("Claim:"),
+            }
+        ]
         if len(exact) != 1:
             raise ValueError(f"literal reference {ref!r} resolved to {len(exact)} exact rows")
-        return KnowledgeCard(RefKind.CLAIM, ref, page.coordinate, exact[0])
+        row_kind = exact[0].get("kind")
+        card_kind = RefKind.PROCEDURE if row_kind == "procedure" else RefKind.CLAIM
+        identity = (
+            str(exact[0].get("identity", ref)).removeprefix("Claim:")
+            if card_kind is RefKind.CLAIM
+            else ref
+        )
+        return KnowledgeCard(card_kind, identity, page.coordinate, exact[0])
 
     def search(
         self,
@@ -1385,6 +1479,7 @@ class Playbill:
         query: str | None,
         kinds: Collection[str],
         statuses: Collection[str],
+        at_active_coordinate: bool = True,
     ) -> SearchPage:
         result = self._client.search_playbill(
             self._instance_id,
@@ -1392,7 +1487,11 @@ class Playbill:
             query=query,
             kinds=tuple(kinds),
             statuses=tuple(statuses),
-            at=(None if self._coordinate is None else _api_coordinate(self.coordinate)),
+            at=(
+                None
+                if self._coordinate is None or not at_active_coordinate
+                else _api_coordinate(self.coordinate)
+            ),
             evaluation_time=self._evaluation_time(),
         )
         return SearchPage(
@@ -1411,14 +1510,16 @@ class Playbill:
             return self._client.explain_playbill_claim(
                 self._instance_id,
                 identity,
-                at=_api_coordinate(self.coordinate),
+                at=_api_coordinate(
+                    ref.coordinate if isinstance(ref, ClaimRef) else self.coordinate
+                ),
                 evaluation_time=self._evaluation_time(),
             )
         if isinstance(ref, SubjectRef):
             return self._client.explain_playbill_subject(
                 self._instance_id,
                 subject=_subject_address(ref.address).model_dump(mode="json"),
-                at=_api_coordinate(self.coordinate),
+                at=_api_coordinate(ref.coordinate),
             )
         raise ReferenceKindError("explain requires a ClaimRef or SubjectRef in G6")
 
@@ -1475,6 +1576,7 @@ class Procedure:
             slot = key if isinstance(key, str) else _address(key, RefKind.SLOT)
             if isinstance(value, SlotRef):
                 raise ReferenceKindError("a slot cannot be bound to another slot")
+            self._playbill._assert_coordinate(value.coordinate)
             target_kind = _REFERENCE_KINDS.get(value.kind)
             if target_kind is None:
                 raise ReferenceKindError(f"cannot bind {value.kind.value} to a procedure slot")
