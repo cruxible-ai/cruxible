@@ -7,8 +7,8 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import GenerationRoot, SemanticRoot, canonical_bytes
-from cruxible_core.playbill.types import GitObjectFormat
+from cruxible_client.contracts.canonical import GenerationRoot, SemanticRoot, canonical_bytes
+from cruxible_client.contracts.types import GitObjectFormat
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 

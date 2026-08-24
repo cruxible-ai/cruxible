@@ -12,8 +12,8 @@ import unicodedata
 
 import pytest
 
-from cruxible_core.playbill import canonical
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts import canonical
+from cruxible_client.contracts.canonical import (
     Manifest,
     file_digest,
     manifest_for_tree,
@@ -24,7 +24,7 @@ from cruxible_core.playbill.canonical import (
     semantic_diff_from_members,
     semantic_projection,
 )
-from cruxible_core.playbill.errors import CanonicalEncodingError
+from cruxible_client.contracts.errors import CanonicalEncodingError
 
 # One constant drives every randomized law below. Replay determinism is the
 # property under test, so the generator must never read a clock.

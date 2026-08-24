@@ -54,7 +54,8 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageError,
@@ -71,7 +72,6 @@ from cruxible_core.playbill.coverage.indexes import (
     working_occurrence_overlay_digest,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.grammar import byte_sorted
 
 COVERAGE_DIRECTORY: Final = "coverage"
 COVERAGE_MANIFEST_FILE: Final = "coverage-manifest-v1.json"

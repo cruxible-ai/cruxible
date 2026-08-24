@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.capture_journal import CaptureLandingEventV1
-from cruxible_core.playbill.captures import CaptureRunCoordinateV1
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.capture_journal import CaptureLandingEventV1
+from cruxible_client.contracts.captures import CaptureRunCoordinateV1
 from cruxible_core.playbill.occurrences import capture_landing_occurrence, occurrence_digest
 from tests.test_playbill._pc_c_support import NOW, digest
 

@@ -6,7 +6,16 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    CaptureRunCoordinateV1,
+    build_cas_capture,
+    build_coordinator_self_source_capture,
+    capture_contract_digest,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import OpenSourceRequestV1, SourceHandleV1
 from cruxible_core.playbill.capture_erasure import (
     CaptureErasureError,
     CaptureErasureStatementV1,
@@ -16,18 +25,9 @@ from cruxible_core.playbill.capture_erasure import (
     render_capture_erasure_receipt,
     verify_erasure_receipt,
 )
-from cruxible_core.playbill.captures import (
-    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    CaptureRunCoordinateV1,
-    build_cas_capture,
-    build_coordinator_self_source_capture,
-    capture_contract_digest,
-)
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.dereference import dereference_source_handle
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_references import OpenSourceRequestV1, SourceHandleV1
 from tests.test_playbill._pc_c_support import (
     NOW,
     body_store,

@@ -10,10 +10,10 @@ from pathlib import Path
 import pytest
 
 from cruxible_client import contracts
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.workspace import resolve_workspace_path
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 
 
 def _coordinate(seed: str = "1") -> contracts.PlaybillAcceptedCoordinate:

@@ -7,17 +7,17 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cruxible_core.playbill.canonical import ArtifactDigest, Sha256Value, typed_digest
-from cruxible_core.playbill.procedures.models import (
+from cruxible_client.contracts.canonical import ArtifactDigest, Sha256Value, typed_digest
+from cruxible_client.contracts.procedures.models import (
     ExhaustTapNodeV3,
     SourceNodeV3,
     StateTapNodeV3,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.source_references import (
+from cruxible_client.contracts.source_references import (
     SemanticReadCoordinateV1,
     validate_local_read_coordinate,
 )
+from cruxible_core.playbill.projection import AcceptedCoordinate
 
 _INPUT_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _CURSOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")

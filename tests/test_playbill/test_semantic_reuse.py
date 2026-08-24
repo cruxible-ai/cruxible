@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.discovery import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.discovery import (
     DESCRIPTOR_CLAIM_TYPE_SEEDS,
     DescriptorAuthorityContextV1,
     DiscoveryHintsV1,
@@ -18,8 +18,8 @@ from cruxible_core.playbill.discovery import (
     evaluate_descriptor_authority,
     evaluate_vocabulary_reuse,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import SemanticAddress
 
 IMPLEMENTATION = "sha256:" + "91" * 32
 STRUCTURE = "sha256:" + "92" * 32

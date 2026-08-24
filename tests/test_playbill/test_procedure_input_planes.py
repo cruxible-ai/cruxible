@@ -4,20 +4,20 @@ from __future__ import annotations
 
 import pytest
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.procedures.models import (
+    ExhaustTapNodeV3,
+    ProcedurePinSlotRefV1,
+    SourceNodeV3,
+    StateTapNodeV3,
+)
 from cruxible_core.playbill.procedures.input_planes import (
     AcceptedStateRunInputV1,
     ExhaustRunInputV1,
     LandedCaptureRunInputV1,
     validate_node_input_plane,
     validate_run_input_vector,
-)
-from cruxible_core.playbill.procedures.models import (
-    ExhaustTapNodeV3,
-    ProcedurePinSlotRefV1,
-    SourceNodeV3,
-    StateTapNodeV3,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 

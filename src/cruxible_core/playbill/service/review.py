@@ -8,21 +8,21 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.attestations import ApprovalStatement, approval_digest
-from cruxible_core.playbill.candidates import (
+from cruxible_client.contracts.attestations import ApprovalStatement, approval_digest
+from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
     CandidateMemberLawEvidenceV2,
     CandidateRecord,
     CandidateRecordAnyVersion,
 )
+from cruxible_client.contracts.documents import parse_document
+from cruxible_client.contracts.errors import ApprovalIntegrityError, ProposalIntegrityError
+from cruxible_client.contracts.semantic import SourceMapping, whole_body_mapping
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.documents import parse_document
-from cruxible_core.playbill.errors import ApprovalIntegrityError, ProposalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import SourceMapping, whole_body_mapping
 from cruxible_core.playbill.service.documents import service_inspect_playbill_proposal
-from cruxible_core.playbill.types import PrincipalRecord
 
 
 class _StrictReviewModel(BaseModel):

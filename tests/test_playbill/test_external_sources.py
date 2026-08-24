@@ -5,30 +5,35 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactPin
-from cruxible_core.playbill.candidates import CandidateRecordV3
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
     evaluate_capture_contract_law,
     render_capture_contract,
     verify_capture,
 )
-from cruxible_core.playbill.claim_types import claim_type_digest, render_claim_type
-from cruxible_core.playbill.claims import ClaimBacking, ClaimLawEvidenceV1, claim_path, render_claim
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.claim_types import claim_type_digest, render_claim_type
+from cruxible_client.contracts.claims import (
+    ClaimBacking,
+    ClaimLawEvidenceV1,
+    claim_path,
+    render_claim,
+)
+from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
+from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import render_subject, subject_digest, subject_path
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.providers import provider_digest, provider_path, render_provider
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.source_readers import (
     ExternalSourceReadRequestV1,
     FakeVersionedExternalSourceReader,
     ProducerBindingV1,
 )
-from cruxible_core.playbill.subjects import render_subject, subject_digest, subject_path
 from tests.test_playbill._pc_c_support import (
     NOW,
     body_store,

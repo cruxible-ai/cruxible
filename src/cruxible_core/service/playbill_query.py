@@ -14,24 +14,26 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.claim_attestations import VerifiedClaimAttestationV1
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
+from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
 )
-from cruxible_core.playbill.claim_verdicts import (
+from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule,
     claim_adjudication_rule_digest,
 )
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     claim_artifact_digest,
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_core.playbill.errors import ClaimNotFoundError, ProposalIntegrityError
+from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.exhaust.records import (
     QUERY_RECEIPT_EVENT_KIND,
     QUERY_RECEIPT_JOURNAL_FAMILY,
@@ -48,11 +50,9 @@ from cruxible_core.playbill.query.engine import (
     evaluate_claim_query,
     query_execution_receipt,
 )
-from cruxible_core.playbill.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.service.query_definitions import accepted_query_definition
 from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
-from cruxible_core.playbill.subjects import AcceptedSubject, parse_subject, subject_digest
 from cruxible_core.service.playbill_claims import _claim_law_evidence
 from cruxible_core.service.playbill_evidence import (
     _current_replay_available,

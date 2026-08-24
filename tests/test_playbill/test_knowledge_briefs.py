@@ -6,37 +6,37 @@ import base64
 import json
 from pathlib import Path
 
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
     AuthoringExistingClaimDispositionV1,
     ClaimAuthoringPayloadV1,
     SelfSourceBodyV1,
 )
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     claim_path,
     parse_claim,
 )
-from cruxible_core.playbill.knowledge_briefs import (
+from cruxible_client.contracts.knowledge_briefs import (
     KNOWLEDGE_BRIEF_CLAIM_TYPE,
     KNOWLEDGE_BRIEF_PREDICATE,
     KnowledgeBriefValueV1,
     knowledge_brief_purpose_digest,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import subject_path
+from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from cruxible_core.playbill.subjects import subject_path
 from cruxible_core.service.playbill_floor import service_export_playbill_floor
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign

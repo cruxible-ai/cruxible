@@ -1,6 +1,6 @@
 """Playbill-native governed Procedure and LineSpec artifacts."""
 
-from cruxible_core.playbill.procedures.artifacts import (
+from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactV1,
     ProcedureArtifactV2,
@@ -13,7 +13,7 @@ from cruxible_core.playbill.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_core.playbill.procedures.authoring import (
+from cruxible_client.contracts.procedures.authoring import (
     AcceptedClaimGuardBuilderV1,
     ExhaustGuardBuilderV1,
     ProcedureGuardExpansionV1,
@@ -22,16 +22,51 @@ from cruxible_core.playbill.procedures.authoring import (
     build_exhaust_guard,
     build_source_capture_guard,
 )
-from cruxible_core.playbill.procedures.closure import (
+from cruxible_client.contracts.procedures.closure import (
     LineSlotBindingV1,
     ProcedurePinClosureError,
     ProcedureSlotInterfaceV1,
     close_procedure_pin_slots,
     procedure_slot_interface_digest,
 )
-from cruxible_core.playbill.procedures.contracts import (
+from cruxible_client.contracts.procedures.contracts import (
     OwnedProcedureContractValidator,
     ProcedureContractValidationError,
+)
+from cruxible_client.contracts.procedures.graph import (
+    ProcedureGraphV3,
+    ProcedureNodeDigestsV3,
+    analyze_procedure_v3,
+    compute_procedure_definition_digest_v3,
+    compute_procedure_node_digests_v3,
+)
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpecV1,
+    CadenceTriggerPolicyV1,
+    CaptureLandingTriggerPolicyV1,
+    LineSpecV1,
+    ManualTriggerPolicyV1,
+    WindowCloseTriggerPolicyV1,
+    evaluate_line_spec_law,
+    line_spec_digest,
+    line_spec_path,
+    parse_line_spec,
+    render_line_spec,
+)
+from cruxible_client.contracts.procedures.measurements import (
+    AcceptedQueryProcedureMeasurementV1,
+    ClaimAttestationProcedureMeasurementV1,
+    ClaimStatementProcedureMeasurementV1,
+    ProcedureMeasurementDeclarationV1,
+    ProcedureMeasurementExpectationV1,
+    ProcedureMeasurementReviewTriggerV1,
+    ProcedureMeasurementSituationShapeV1,
+    ProcedureMeasurementV1,
+)
+from cruxible_client.contracts.procedures.models import (
+    ProcedureDefinitionV3,
+    ProcedurePinSlotRefV1,
+    ProcedurePinSlotV1,
 )
 from cruxible_core.playbill.procedures.execution import (
     AcceptedStateRunMaterialV1,
@@ -51,13 +86,6 @@ from cruxible_core.playbill.procedures.execution import (
     prepare_direct_procedure_run,
     procedure_run_receipt_digest,
 )
-from cruxible_core.playbill.procedures.graph import (
-    ProcedureGraphV3,
-    ProcedureNodeDigestsV3,
-    analyze_procedure_v3,
-    compute_procedure_definition_digest_v3,
-    compute_procedure_node_digests_v3,
-)
 from cruxible_core.playbill.procedures.input_planes import (
     AcceptedStateRunInputV1,
     ExhaustRunInputV1,
@@ -65,34 +93,6 @@ from cruxible_core.playbill.procedures.input_planes import (
     ProcedureRunInputV1,
     validate_node_input_plane,
     validate_run_input_vector,
-)
-from cruxible_core.playbill.procedures.line_specs import (
-    AcceptedLineSpecV1,
-    CadenceTriggerPolicyV1,
-    CaptureLandingTriggerPolicyV1,
-    LineSpecV1,
-    ManualTriggerPolicyV1,
-    WindowCloseTriggerPolicyV1,
-    evaluate_line_spec_law,
-    line_spec_digest,
-    line_spec_path,
-    parse_line_spec,
-    render_line_spec,
-)
-from cruxible_core.playbill.procedures.measurements import (
-    AcceptedQueryProcedureMeasurementV1,
-    ClaimAttestationProcedureMeasurementV1,
-    ClaimStatementProcedureMeasurementV1,
-    ProcedureMeasurementDeclarationV1,
-    ProcedureMeasurementExpectationV1,
-    ProcedureMeasurementReviewTriggerV1,
-    ProcedureMeasurementSituationShapeV1,
-    ProcedureMeasurementV1,
-)
-from cruxible_core.playbill.procedures.models import (
-    ProcedureDefinitionV3,
-    ProcedurePinSlotRefV1,
-    ProcedurePinSlotV1,
 )
 from cruxible_core.playbill.procedures.readings import (
     ProcedureReadingGradeV1,

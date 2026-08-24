@@ -11,8 +11,8 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any
 
+from cruxible_client.contracts.primitives import new_id
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.primitives import new_id
 from cruxible_core.receipt_tree.payloads import (
     MAX_RETAINED_PAYLOAD_BYTES,
     MutationPayloadRetention,

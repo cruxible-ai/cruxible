@@ -6,14 +6,14 @@ import os
 import stat
 from pathlib import Path
 
-from cruxible_core.playbill.canonical import CasDigest
-from cruxible_core.playbill.cas_contracts import (
+from cruxible_client.contracts.canonical import CasDigest
+from cruxible_client.contracts.cas_contracts import (
     BodyAccessContext,
     BodyProjectionProtocol,
     CasObjectMetadata,
     digest_bytes,
 )
-from cruxible_core.playbill.errors import PlaybillCasError
+from cruxible_client.contracts.errors import PlaybillCasError
 
 
 def _fsync_directory(path: Path) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timezone
 from typing import Any, Literal
 
-from cruxible_core.temporal import ensure_utc, parse_datetime
+from cruxible_client.contracts.temporal import ensure_utc, parse_datetime
 
 ComparisonOp = Literal["eq", "ne", "gt", "gte", "lt", "lte"]
 PredicateValueType = Literal[

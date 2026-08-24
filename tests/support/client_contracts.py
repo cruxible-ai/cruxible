@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from pydantic_core import PydanticUndefined
 
 from cruxible_client import contracts
-from cruxible_core.primitives import canonical_json
+from cruxible_client.contracts.primitives import canonical_json
 
 CONTRACT_MANIFEST_VERSION = 1
 

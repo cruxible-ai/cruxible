@@ -6,15 +6,18 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
+from cruxible_client.contracts.query.definitions import (
+    query_definition_path,
+    render_query_definition,
+)
 from cruxible_core.playbill.authoring.coordinator import (
     AuthoringIntentCoordinator,
     AuthoringIntentRebaseError,
     AuthoringIntentRebaseSubmitted,
 )
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.claim_types import claim_type_path, parse_claim_type
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.query.definitions import query_definition_path, render_query_definition
 from tests.test_playbill._adoption_fixture import _query_definition
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_authoring_preflight import (

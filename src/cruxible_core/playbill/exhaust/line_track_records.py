@@ -22,31 +22,31 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
     Sha256Value,
     typed_digest,
 )
-from cruxible_core.playbill.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.procedures.models import (
+    ExhaustTapNodeV3,
+    SourceNodeV3,
+    StateTapNodeV3,
+)
+from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_core.playbill.exhaust.promotions import (
     AcceptedExhaustPromotionV1,
     VerifiedExhaustRecordV1,
 )
-from cruxible_core.playbill.procedures.artifacts import AcceptedProcedureV1
 from cruxible_core.playbill.procedures.egress import (
     EFFECTIVE_RUNG_TERMS,
     NO_TERMINAL_EGRESS,
     EffectiveRungTermV1,
     TerminalEgressKindV1,
 )
-from cruxible_core.playbill.procedures.line_specs import AcceptedLineSpecV1
-from cruxible_core.playbill.procedures.models import (
-    ExhaustTapNodeV3,
-    SourceNodeV3,
-    StateTapNodeV3,
-)
-from cruxible_core.playbill.projection_extensions import ProjectionFact
 
 LINE_TRACK_RECORD_TAG = "playbill-line-track-record-v1"
 

@@ -58,6 +58,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.coverage.contracts import CoverageLineOverlayV1
 from cruxible_core.playbill.native.grammar import (
     DERIVED_REGENERATION_INSTRUCTION,
@@ -73,8 +75,6 @@ from cruxible_core.playbill.native.manifest import (
     NativeRegionBaselineV1,
     NativeRenderManifestV1,
 )
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
 
 NativeRegionState = Literal["clean", "dirty", "tampered", "ambiguous", "unbaselined"]
 

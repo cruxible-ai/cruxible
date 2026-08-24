@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.errors import ReplayCheckpointError
 from cruxible_core.playbill.checkpoints import (
     CHECKPOINT_DIRECTORY,
     ReplayCheckpointBodyV2,
@@ -20,7 +21,6 @@ from cruxible_core.playbill.checkpoints import (
     verify_checkpoint,
     write_checkpoint,
 )
-from cruxible_core.playbill.errors import ReplayCheckpointError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.recovery import RecoveredInstanceState
 

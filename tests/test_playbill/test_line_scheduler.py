@@ -10,26 +10,54 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     GenerationRoot,
     SemanticRoot,
     Sha256Value,
     typed_digest,
 )
-from cruxible_core.playbill.capture_journal import (
+from cruxible_client.contracts.capture_journal import (
     CaptureCursorV1,
     CaptureLandingEventV1,
     capture_landing_event_id,
 )
-from cruxible_core.playbill.captures import CanonicalDurationV1, CaptureRunCoordinateV1
+from cruxible_client.contracts.captures import CanonicalDurationV1, CaptureRunCoordinateV1
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedureV1,
+    ProcedureArtifactV1,
+    procedure_artifact_digest,
+    procedure_path,
+)
+from cruxible_client.contracts.procedures.closure import LineSlotBindingV1
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpecV1,
+    CadenceTriggerPolicyV1,
+    CaptureLandingTriggerPolicyV1,
+    LineSpecV1,
+    ManualTriggerPolicyV1,
+    TriggerPolicyV1,
+    WindowCloseTriggerPolicyV1,
+    line_spec_digest,
+    line_spec_path,
+)
+from cruxible_client.contracts.procedures.models import (
+    ProcedureBudgetV3,
+    ProcedureDefinitionV3,
+    ProcedureHardCapsV3,
+    ProcedurePinSlotRefV1,
+    ProcedurePinSlotV1,
+    ProjectNodeV3,
+    StateTapNodeV3,
+)
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -75,34 +103,6 @@ from cruxible_core.playbill.occurrences import (
     capture_landing_occurrence,
     line_occurrence_digest,
     occurrence_digest,
-)
-from cruxible_core.playbill.procedures.artifacts import (
-    AcceptedProcedureV1,
-    ProcedureArtifactV1,
-    procedure_artifact_digest,
-    procedure_path,
-)
-from cruxible_core.playbill.procedures.closure import LineSlotBindingV1
-from cruxible_core.playbill.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_core.playbill.procedures.line_specs import (
-    AcceptedLineSpecV1,
-    CadenceTriggerPolicyV1,
-    CaptureLandingTriggerPolicyV1,
-    LineSpecV1,
-    ManualTriggerPolicyV1,
-    TriggerPolicyV1,
-    WindowCloseTriggerPolicyV1,
-    line_spec_digest,
-    line_spec_path,
-)
-from cruxible_core.playbill.procedures.models import (
-    ProcedureBudgetV3,
-    ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProcedurePinSlotRefV1,
-    ProcedurePinSlotV1,
-    ProjectNodeV3,
-    StateTapNodeV3,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 

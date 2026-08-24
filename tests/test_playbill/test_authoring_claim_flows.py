@@ -6,19 +6,19 @@ import base64
 import hashlib
 from pathlib import Path
 
-from cruxible_core.playbill.authoring.lowering import lower_authoring
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.authoring.models import (
     AuthoringExactContentObjectV1,
     WorkingAnchorWindowV1,
     WorkingDigestCoordinateV1,
     WorkingSelectionObservationV1,
 )
-from cruxible_core.playbill.captures import foreign_source_capture_contract
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.captures import foreign_source_capture_contract
+from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
     ExactContentClaimObject,
     parse_claim,
 )
+from cruxible_core.playbill.authoring.lowering import lower_authoring
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_authoring_preflight import (

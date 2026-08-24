@@ -20,18 +20,18 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.acquisition_policies import (
+from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyError,
     acquisition_policy_digest,
     parse_acquisition_policy,
 )
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_core.playbill.candidates import DependencyProofReferenceV1
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.candidates import DependencyProofReferenceV1
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
     DependencyEdgeRoot,
@@ -41,64 +41,64 @@ from cruxible_core.playbill.canonical import (
     normalize_manifest_paths,
     typed_digest,
 )
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.captures import (
     CaptureFormatError,
     capture_contract_digest,
     parse_capture_contract,
 )
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.claim_types import (
     ClaimTypeFormatError,
     claim_type_digest,
     parse_claim_type,
 )
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     ClaimFormatError,
     claim_artifact_digest,
     parse_claim,
 )
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.documents import (
     DocumentArtifactAdapter,
     document_digest,
     parse_document,
 )
-from cruxible_core.playbill.errors import DocumentFormatError, SubjectFormatError
-from cruxible_core.playbill.exhaust.promotions import (
-    ExhaustPromotionError,
-    exhaust_promotion_digest,
-    parse_exhaust_promotion,
-)
-from cruxible_core.playbill.merkle import (
+from cruxible_client.contracts.errors import DocumentFormatError, SubjectFormatError
+from cruxible_client.contracts.merkle import (
     DEPENDENCY_EDGE_DOMAINS,
     MerkleTree,
     build_merkle_tree,
     update_merkle_tree,
     verify_merkle_tree,
 )
-from cruxible_core.playbill.procedures.artifacts import (
+from cruxible_client.contracts.procedures.artifacts import (
     ProcedureFormatError,
     parse_procedure,
     procedure_artifact_digest,
 )
-from cruxible_core.playbill.procedures.line_specs import (
+from cruxible_client.contracts.procedures.line_specs import (
     LineSpecFormatError,
     line_spec_digest,
     parse_line_spec,
 )
-from cruxible_core.playbill.providers import ProviderFormatError, parse_provider, provider_digest
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.providers import ProviderFormatError, parse_provider, provider_digest
+from cruxible_client.contracts.query.definitions import (
     QueryDefinitionFormatError,
     parse_query_definition,
     query_definition_digest,
 )
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.standing_mandates import (
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.standing_mandates import (
     StandingMandateError,
     parse_standing_mandate,
     standing_mandate_digest,
 )
-from cruxible_core.playbill.subjects import (
+from cruxible_client.contracts.subjects import (
     parse_subject,
     subject_digest,
+)
+from cruxible_core.playbill.exhaust.promotions import (
+    ExhaustPromotionError,
+    exhaust_promotion_digest,
+    parse_exhaust_promotion,
 )
 
 # Bounded so the memo can never grow with history. One accepted tree at the

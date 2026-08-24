@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactKindRegistry,
@@ -16,7 +16,7 @@ from cruxible_core.playbill.artifacts import (
     GovernedArtifactProtocol,
     parse_artifact_identity,
 )
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.documents import (
     DocumentArtifactAdapter,
     DocumentAuthority,
     DocumentLifecycle,
@@ -25,7 +25,7 @@ from cruxible_core.playbill.documents import (
     document_digest,
     render_document,
 )
-from cruxible_core.playbill.errors import ProjectionFormatError
+from cruxible_client.contracts.errors import ProjectionFormatError
 
 
 def test_artifact_value_objects_use_generic_kind_qualified_identity() -> None:

@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from cruxible_client.errors import ServerUnreachableError
-from cruxible_client.http_client import CruxibleClient, _default_timeout
+from cruxible_client.transport.http import CruxibleClient, _default_timeout
 
 
 def test_default_timeout_is_generous_on_read_and_snappy_on_connect() -> None:

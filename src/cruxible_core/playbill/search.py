@@ -14,16 +14,16 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
-from cruxible_core.playbill.discovery import (
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.discovery import (
     DiscoveryMatchBasisV1,
     normalize_discovery_term,
 )
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.temporal import ensure_utc, format_datetime
 
 SEARCH_SELECTION_BASIS_DOMAIN = "playbill-search-selection-basis-v1"
 SEARCH_RESULT_DOMAIN = "playbill-search-result-v1"

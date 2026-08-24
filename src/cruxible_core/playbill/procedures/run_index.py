@@ -8,9 +8,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.canonical import CanonicalValue, Sha256Value
+from cruxible_client.contracts.canonical import CanonicalValue, Sha256Value
+from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.playbill.errors import PlaybillExecutionError
 from cruxible_core.playbill.exhaust import (
     StoredProcedureJournalRecordV1,
     parse_journal_payload,

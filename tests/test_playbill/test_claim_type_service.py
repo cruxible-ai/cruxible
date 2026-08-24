@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity
-from cruxible_core.playbill.claim_types import claim_type_digest, claim_type_path
-from cruxible_core.playbill.errors import ClaimNotFoundError
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
+from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
+from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_core.playbill.service.claim_types import (
     service_get_playbill_claim_type,
     service_list_playbill_claim_types,

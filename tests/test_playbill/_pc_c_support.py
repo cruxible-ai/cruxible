@@ -5,13 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import ArtifactDigest, Sha256Value, typed_digest
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.canonical import ArtifactDigest, Sha256Value, typed_digest
+from cruxible_client.contracts.captures import (
     CaptureContractV1,
     CaptureRetentionErasurePolicyV1,
     CaptureRunCoordinateV1,
@@ -19,8 +19,8 @@ from cruxible_core.playbill.captures import (
     capture_component_pin,
     capture_contract_digest,
 )
+from cruxible_client.contracts.providers import ProviderSigningKeyV1, ProviderV1, provider_digest
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
-from cruxible_core.playbill.providers import ProviderSigningKeyV1, ProviderV1, provider_digest
 
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
 

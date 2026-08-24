@@ -38,9 +38,9 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.claim_attestations import VerifiedClaimAttestationV1
-from cruxible_core.playbill.claim_verdicts import (
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
+from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidenceV1,
     ClaimAdjudicationRuleV1,
     EvidenceCurrency,
@@ -48,16 +48,16 @@ from cruxible_core.playbill.claim_verdicts import (
     claim_verdict_v1_compat,
     evaluate_claim_verdict,
 )
-from cruxible_core.playbill.claims import AcceptedClaim, SubjectClaimObject
-from cruxible_core.playbill.errors import PlaybillError
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.providers import ProviderV1
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.claims import AcceptedClaim, SubjectClaimObject
+from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.providers import ProviderV1
+from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
     QueryEvaluationPolicyV1,
 )
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.subjects import AcceptedSubject
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.subjects import AcceptedSubject
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 
 VIEW_DIGEST_DOMAIN = "playbill-subject-query-view-v1"
 

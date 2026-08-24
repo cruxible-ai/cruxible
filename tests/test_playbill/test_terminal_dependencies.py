@@ -4,8 +4,16 @@ from __future__ import annotations
 
 import pytest
 
+from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.procedures.models import (
+    ExhaustTapNodeV3,
+    InboxEgressNodeV3,
+    ProcedureNodeV3,
+    ProcedurePinSlotRefV1,
+    StateTapNodeV3,
+    TransformNodeV3,
+)
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.errors import PlaybillExecutionError
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
@@ -17,14 +25,6 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureRunResultV1,
 )
 from cruxible_core.playbill.procedures.input_planes import run_input_digest
-from cruxible_core.playbill.procedures.models import (
-    ExhaustTapNodeV3,
-    InboxEgressNodeV3,
-    ProcedureNodeV3,
-    ProcedurePinSlotRefV1,
-    StateTapNodeV3,
-    TransformNodeV3,
-)
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.procedures.terminal_dependencies import (
     TAINT_ACCEPTED_STATE,

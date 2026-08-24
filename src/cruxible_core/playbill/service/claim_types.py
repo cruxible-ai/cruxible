@@ -10,6 +10,14 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+    render_claim_type,
+)
+from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_core.playbill.actor_context import TransportCapability
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputProposalResultV1,
@@ -17,14 +25,6 @@ from cruxible_core.playbill.claim_type_inputs import (
     lint_claim_type_input,
     lower_claim_type_input,
 )
-from cruxible_core.playbill.claim_types import (
-    ClaimType,
-    claim_type_digest,
-    claim_type_path,
-    parse_claim_type,
-    render_claim_type,
-)
-from cruxible_core.playbill.errors import ClaimNotFoundError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import (

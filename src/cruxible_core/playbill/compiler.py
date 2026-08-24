@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from cruxible_core.playbill.canonical import canonical_digest
-from cruxible_core.playbill.errors import PlaybillFormatError
-from cruxible_core.playbill.projection_extensions import (
+from cruxible_client.contracts.canonical import canonical_digest
+from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
     fixture_extension_registry,
     playbill_claim_extension_registry,
@@ -16,7 +16,7 @@ from cruxible_core.playbill.projection_extensions import (
     playbill_runtime_extension_registry,
     playbill_subject_extension_registry,
 )
-from cruxible_core.playbill.types import CompilerCoordinate
+from cruxible_client.contracts.types import CompilerCoordinate
 
 
 def _coordinate(*, projection_content: str | None = None) -> CompilerCoordinate:

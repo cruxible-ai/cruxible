@@ -43,19 +43,20 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.playbill.acquisition_policies import (
+from cruxible_client.contracts.acquisition_policies import (
     SourceAcquisitionPolicyV1,
     acquisition_policy_digest,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
-from cruxible_core.playbill.capture_journal import (
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.capture_journal import (
     CaptureCursorV1,
     CaptureJournalError,
     CaptureLandingEventV1,
 )
+from cruxible_client.contracts.errors import PlaybillCasError, PlaybillJournalError
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.playbill.errors import PlaybillCasError, PlaybillJournalError
 from cruxible_core.playbill.exhaust import (
     JournalHeadVectorV1,
     JournalPartitionHeadV1,
@@ -90,7 +91,6 @@ from cruxible_core.playbill.occurrences import (
     line_occurrence_digest,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.temporal import ensure_utc, format_datetime
 
 OccurrenceBacklogStateV1 = Literal["late_eligible", "lapsed"]
 OperationalCoverageV1 = Literal["available", "unavailable"]

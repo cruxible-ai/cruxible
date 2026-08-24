@@ -23,9 +23,9 @@ from click.testing import CliRunner, Result
 from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient
+from cruxible_client.contracts.claim_types import claim_type_digest
+from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.claim_types import claim_type_digest
-from cruxible_core.playbill.claims import ClaimStatement, LiteralClaimObject
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app

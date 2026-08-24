@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.errors import ClaimNotFoundError
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.errors import ClaimNotFoundError
+from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
     query_definition_path,
 )

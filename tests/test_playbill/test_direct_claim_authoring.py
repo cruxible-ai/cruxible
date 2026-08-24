@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import (
     CaptureFormatError,
     DirectByteSpanSelectionV1,
     DirectExternalSelectionV1,
@@ -21,32 +21,32 @@ from cruxible_core.playbill.captures import (
     evaluate_capture_contract_law,
     foreign_source_capture_contract,
 )
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_types import claim_type_digest
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claim_types import claim_type_digest
+from cruxible_client.contracts.claims import (
     ClaimStatement,
     LiteralClaimObject,
     SubjectClaimObject,
 )
-from cruxible_core.playbill.descriptor_claim_types import descriptor_claim_type
-from cruxible_core.playbill.discovery import ExpandRequestV1
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.descriptor_claim_types import descriptor_claim_type
+from cruxible_client.contracts.discovery import ExpandRequestV1
+from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
     ProposalIntegrityError,
     SettlementIntegrityError,
 )
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.policies import (
     ActorRequirementV1,
     ClaimAdmissionPolicyV1,
     FreezeRequirementV1,
     TransitionRequirementV1,
 )
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.source_references import EvidenceCommitmentV1, OpenSourceRequestV1
+from cruxible_client.contracts.subjects import subject_digest
+from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeActorBinding
-from cruxible_core.playbill.source_references import EvidenceCommitmentV1, OpenSourceRequestV1
-from cruxible_core.playbill.subjects import subject_digest
 from cruxible_core.service.playbill_claims import (
     DirectClaimAuthoringV1,
     ExistingStatementHandoffV1,

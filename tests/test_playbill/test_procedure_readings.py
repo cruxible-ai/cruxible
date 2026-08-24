@@ -6,8 +6,8 @@ from datetime import timedelta
 
 import pytest
 
+from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
-from cruxible_core.playbill.errors import PlaybillExecutionError
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,

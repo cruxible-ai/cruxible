@@ -6,9 +6,9 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from cruxible_core.playbill.canonical import Sha256Value
+from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.types import GitObjectFormat, PlaybillInspection
 from cruxible_core.playbill.git import GitTreeEntry
-from cruxible_core.playbill.types import GitObjectFormat, PlaybillInspection
 
 
 @runtime_checkable

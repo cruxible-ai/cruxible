@@ -7,16 +7,16 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactPin
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_core.playbill.claim_types import claim_type_path
-from cruxible_core.playbill.discovery import DiscoveryBudgetV1
+from cruxible_client.contracts.claim_types import claim_type_path
+from cruxible_client.contracts.discovery import DiscoveryBudgetV1
+from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.providers import provider_digest, provider_path, render_provider
 from cruxible_core.playbill.query.semantic_discovery import DiscoveryError
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,

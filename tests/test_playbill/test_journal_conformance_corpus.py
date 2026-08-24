@@ -26,8 +26,8 @@ from typing import Any
 
 import pytest
 
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.errors import PlaybillJournalError
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import PlaybillJournalError
 from cruxible_core.playbill.exhaust import (
     JournalExportBundleV1,
     JournalHeadManifestV1,

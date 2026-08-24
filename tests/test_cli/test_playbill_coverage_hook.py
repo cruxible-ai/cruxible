@@ -34,10 +34,10 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.context import load_cli_context
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.claude_code import (
     ANNOTATABLE_TOOLS,

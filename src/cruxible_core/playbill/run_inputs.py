@@ -21,23 +21,34 @@ from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.acquisition_policies import (
+from cruxible_client.contracts.acquisition_policies import (
     AcquisitionCandidateV1,
     SourceAcquisitionPolicyV1,
     SourceSelectionReceiptV1,
     acquisition_policy_digest,
     select_sources,
 )
-from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import (
     Sha256Value,
     canonical_bytes,
     normalize_canonical,
     typed_digest,
 )
-from cruxible_core.playbill.capture_journal import CaptureLandingEventV1
-from cruxible_core.playbill.captures import CaptureContractV1, capture_contract_digest
+from cruxible_client.contracts.capture_journal import CaptureLandingEventV1
+from cruxible_client.contracts.captures import CaptureContractV1, capture_contract_digest
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.closure import close_procedure_pin_slots
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.procedures.models import (
+    ExhaustTapNodeV3,
+    ProcedureBudgetV3,
+    SourceNodeV3,
+    StateTapNodeV3,
+)
+from cruxible_client.contracts.standing_mandates import MandateGrantV1, MandateRuntimeCapV1
+from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -56,8 +67,6 @@ from cruxible_core.playbill.lines import (
 )
 from cruxible_core.playbill.occurrences import LineOccurrenceV1, line_occurrence_digest
 from cruxible_core.playbill.procedures.acquisition import ProcedureSourceAcquirerProtocol
-from cruxible_core.playbill.procedures.artifacts import AcceptedProcedureV1
-from cruxible_core.playbill.procedures.closure import close_procedure_pin_slots
 from cruxible_core.playbill.procedures.egress import (
     EffectiveRungV1,
     compute_effective_rung,
@@ -80,13 +89,6 @@ from cruxible_core.playbill.procedures.input_planes import (
     ExhaustRunInputV1,
     LandedCaptureRunInputV1,
 )
-from cruxible_core.playbill.procedures.line_specs import AcceptedLineSpecV1
-from cruxible_core.playbill.procedures.models import (
-    ExhaustTapNodeV3,
-    ProcedureBudgetV3,
-    SourceNodeV3,
-    StateTapNodeV3,
-)
 from cruxible_core.playbill.procedures.resolution import (
     AcceptedAuthorityBasisV1,
     resolve_authority_basis,
@@ -96,8 +98,6 @@ from cruxible_core.playbill.procedures.terminal_dependencies import (
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.source_readers import ProducerBindingV1
-from cruxible_core.playbill.standing_mandates import MandateGrantV1, MandateRuntimeCapV1
-from cruxible_core.temporal import ensure_utc
 
 # ---------------------------------------------------------------------------
 # Nonsecret binding vocabulary

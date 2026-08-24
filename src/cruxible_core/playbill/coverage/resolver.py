@@ -41,6 +41,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Literal, TypeAlias, cast
 
+from cruxible_client.contracts.discovery import DiscoveryMatchBasis
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.source_references import CoverageDescriptorV1
 from cruxible_core.playbill.coverage.contracts import (
     COVERAGE_HEALTH_PROVES_FRESHNESS,
     CoverageAccessProfileV1,
@@ -76,10 +79,7 @@ from cruxible_core.playbill.coverage.manifest import (
     coverage_manifest_digest,
     coverage_manifest_digest_v2,
 )
-from cruxible_core.playbill.discovery import DiscoveryMatchBasis
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.source_references import CoverageDescriptorV1
 
 COVERAGE_FACET = "coverage"
 

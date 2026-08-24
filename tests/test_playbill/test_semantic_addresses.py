@@ -5,8 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.cas import ContentAddressedBodyStore
-from cruxible_core.playbill.semantic import (
+from cruxible_client.contracts.semantic import (
     ContentSpan,
     SemanticAddress,
     SemanticSelector,
@@ -14,6 +13,7 @@ from cruxible_core.playbill.semantic import (
     registered_selector_schemes,
     whole_body_mapping,
 )
+from cruxible_core.playbill.cas import ContentAddressedBodyStore
 
 
 def test_whole_document_address_is_stable_while_exact_body_span_changes() -> None:

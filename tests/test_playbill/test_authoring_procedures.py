@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.models import ProcedureAuthoringPayloadV1
-from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.procedures.models import (
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV1
+from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureHardCapsV3,
@@ -19,6 +17,8 @@ from cruxible_core.playbill.procedures.models import (
     ProjectNodeV3,
     StateTapNodeV3,
 )
+from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from tests.test_playbill._support import initialize_local
 

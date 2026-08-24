@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
     document_digest,
 )
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.service.playbill_documents import (
     service_activate_playbill_proposal,

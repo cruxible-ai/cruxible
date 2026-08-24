@@ -7,27 +7,27 @@ from collections.abc import Mapping
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.procedures.artifacts import (
+from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactV1,
     procedure_artifact_digest,
     procedure_path,
 )
-from cruxible_core.playbill.procedures.closure import (
+from cruxible_client.contracts.procedures.closure import (
     LineSlotBindingV1,
     ProcedurePinClosureError,
     close_procedure_pin_slots,
 )
-from cruxible_core.playbill.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_core.playbill.procedures.line_specs import (
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
     CadenceTriggerPolicyV1,
     CaptureLandingTriggerPolicyV1,
@@ -41,7 +41,7 @@ from cruxible_core.playbill.procedures.line_specs import (
     parse_line_spec,
     render_line_spec,
 )
-from cruxible_core.playbill.procedures.models import (
+from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureHardCapsV3,

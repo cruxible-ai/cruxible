@@ -9,18 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.playbill_insertions import (
+from cruxible_client.authoring.insertions import (
     PlaybillInsertionApplyError,
     apply_playbill_insertion,
 )
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.insertions import (
-    InsertionProtocolError,
-    mark_abandoned,
-    mark_claim_accepted,
-    mark_expired,
-)
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
     AuthoringExistingClaimDispositionV1,
     ClaimAuthoringPayloadV1,
@@ -36,16 +29,23 @@ from cruxible_core.playbill.authoring.models import (
     insertion_result_key,
     insertion_target_digest,
 )
-from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
     LiteralClaimObject,
     claim_path,
     parse_claim,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.insertions import (
+    InsertionProtocolError,
+    mark_abandoned,
+    mark_claim_accepted,
+    mark_expired,
+)
+from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,

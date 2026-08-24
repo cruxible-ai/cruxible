@@ -33,6 +33,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.native.context import RenderContextV1
 from cruxible_core.playbill.native.grammar import NativeDiagnosticV1, NativeRenderError
@@ -47,7 +48,6 @@ from cruxible_core.playbill.native.parse import (
     NativeTreeParseV1,
     parse_native_tree,
 )
-from cruxible_core.playbill.query.grammar import byte_sorted
 
 
 class NativeSyncRefusal(NativeRenderError):

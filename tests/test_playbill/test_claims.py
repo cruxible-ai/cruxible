@@ -6,13 +6,13 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
-from cruxible_core.playbill.candidates import CandidateRecordV3
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     build_direct_claim_capture,
     capture_contract_digest,
@@ -21,9 +21,8 @@ from cruxible_core.playbill.captures import (
     render_capture_contract,
     render_capture_envelope,
 )
-from cruxible_core.playbill.cas import ContentAddressedBodyStore
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest, render_claim_type
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
+from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimBacking,
     ClaimLawEvidenceV1,
@@ -38,21 +37,22 @@ from cruxible_core.playbill.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress, SourceMapping
-from cruxible_core.playbill.subjects import (
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.subjects import (
     SubjectShell,
     render_subject,
     subject_digest,
     subject_path,
 )
+from cruxible_core.playbill.cas import ContentAddressedBodyStore
+from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from tests.test_playbill._support import initialize_local
 
 TIMESTAMP = "2026-08-16T18:30:00.000000Z"

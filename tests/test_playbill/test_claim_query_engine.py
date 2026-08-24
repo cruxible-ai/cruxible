@@ -6,14 +6,17 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import GenerationRoot, SemanticRoot, canonical_bytes
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest
-from cruxible_core.playbill.claim_verdicts import ClaimAdjudicationRuleV1, claim_adjudication_rule
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.canonical import GenerationRoot, SemanticRoot, canonical_bytes
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+from cruxible_client.contracts.claim_verdicts import (
+    ClaimAdjudicationRuleV1,
+    claim_adjudication_rule,
+)
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifact,
     ClaimBacking,
@@ -25,12 +28,35 @@ from cruxible_core.playbill.claims import (
     claim_path,
     claim_statement_digest,
 )
-from cruxible_core.playbill.compiler import PC_E1_COMPILER
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
     QueryEvaluationPolicyV1,
 )
+from cruxible_client.contracts.query.grammar import (
+    QueryBudgetsV1,
+    QueryClaimPresenceFilterV1,
+    QueryClaimValueRefV1,
+    QueryComparisonFilterV1,
+    QueryDisjunctionFilterV1,
+    QueryEntryV1,
+    QueryEvaluationTimeRefV1,
+    QueryLiteralRefV1,
+    QueryMembershipFilterV1,
+    QueryNegationFilterV1,
+    QueryOrderingV1,
+    QueryProjectionFieldV1,
+    QueryProjectionV1,
+    QuerySubjectFieldRefV1,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import (
+    AcceptedSubject,
+    SubjectShell,
+    subject_digest,
+    subject_path,
+)
+from cruxible_core.playbill.compiler import PC_E1_COMPILER
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.engine import (
     BUDGET_EXCEEDS_MAXIMUM,
     CLAIM_CONFLICT,
@@ -51,29 +77,6 @@ from cruxible_core.playbill.query.engine import (
     query_execution_receipt,
     query_parameter_digest,
     resolve_query_parameters,
-)
-from cruxible_core.playbill.query.grammar import (
-    QueryBudgetsV1,
-    QueryClaimPresenceFilterV1,
-    QueryClaimValueRefV1,
-    QueryComparisonFilterV1,
-    QueryDisjunctionFilterV1,
-    QueryEntryV1,
-    QueryEvaluationTimeRefV1,
-    QueryLiteralRefV1,
-    QueryMembershipFilterV1,
-    QueryNegationFilterV1,
-    QueryOrderingV1,
-    QueryProjectionFieldV1,
-    QueryProjectionV1,
-    QuerySubjectFieldRefV1,
-)
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.subjects import (
-    AcceptedSubject,
-    SubjectShell,
-    subject_digest,
-    subject_path,
 )
 from tests.test_playbill.test_query_definitions import (
     OWNER_AUTHORITY,

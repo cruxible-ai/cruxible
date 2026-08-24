@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -14,28 +14,14 @@ from pydantic import (
     field_validator,
 )
 
-from cruxible_core.errors import ConfigError
-from cruxible_core.temporal import ensure_utc, format_datetime
-
-ActorType = Literal["human_user", "service_account", "system"]
-DerivedActorKind = Literal["human", "agent", "system", "unknown"]
-TransportCapability = Literal[
-    "read",
-    "propose",
-    "review",
-    "activate",
-    "operate",
-    "administer",
-]
-
-TRANSPORT_CAPABILITIES: tuple[TransportCapability, ...] = (
-    "activate",
-    "administer",
-    "operate",
-    "propose",
-    "read",
-    "review",
+from cruxible_client.contracts.actor_types import (
+    TRANSPORT_CAPABILITIES,
+    ActorType,
+    DerivedActorKind,
+    TransportCapability,
 )
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_core.errors import ConfigError
 
 _ACTOR_KIND_BY_TYPE: dict[str, DerivedActorKind] = {
     "human_user": "human",

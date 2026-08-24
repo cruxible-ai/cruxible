@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
     coverage_span_requests,

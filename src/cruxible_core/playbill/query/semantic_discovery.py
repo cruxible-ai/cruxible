@@ -24,12 +24,12 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.claim_type_structure import claim_type_structural_signature
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_path
-from cruxible_core.playbill.claims import LiteralClaimObject, SubjectClaimObject
-from cruxible_core.playbill.discovery import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_path
+from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject
+from cruxible_client.contracts.discovery import (
     DiscoveryHitV1,
     DiscoveryMatchBasis,
     DiscoveryMatchBasisV1,
@@ -38,16 +38,16 @@ from cruxible_core.playbill.discovery import (
     normalize_discovery_term,
     reject_locator_or_secret,
 )
-from cruxible_core.playbill.errors import PlaybillError
-from cruxible_core.playbill.procedures.artifacts import AcceptedProcedureV1
-from cruxible_core.playbill.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.query.definitions import AcceptedQueryDefinitionV1
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import CoverageDescriptorV1
+from cruxible_client.contracts.subjects import subject_reuse_signature
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.query.backends import ClaimQueryFactsV1, SubjectQueryViewV1
-from cruxible_core.playbill.query.definitions import AcceptedQueryDefinitionV1
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_references import CoverageDescriptorV1
-from cruxible_core.playbill.subjects import subject_reuse_signature
 
 VOCABULARY_DIGEST_DOMAIN = "playbill-discovery-vocabulary-v1"
 SELECTION_BASIS_DIGEST_DOMAIN = "playbill-discovery-selection-basis-v1"

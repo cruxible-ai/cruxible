@@ -5,20 +5,20 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.models import AuthoringExistingClaimDispositionV1
-from cruxible_core.playbill.brief_health import (
-    KnowledgeBriefHealthRequestV1,
-    evaluate_knowledge_brief_health,
-)
-from cruxible_core.playbill.claims import claim_path, claim_statement_digest, parse_claim
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
-from cruxible_core.playbill.knowledge_briefs import (
+from cruxible_client.contracts.authoring.models import AuthoringExistingClaimDispositionV1
+from cruxible_client.contracts.claims import claim_path, claim_statement_digest, parse_claim
+from cruxible_client.contracts.knowledge_briefs import (
     KnowledgeBriefClaimExpectationV1,
     KnowledgeBriefClaimRefV1,
     KnowledgeBriefQueryRefV1,
     KnowledgeBriefValueV1,
 )
+from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.brief_health import (
+    KnowledgeBriefHealthRequestV1,
+    evaluate_knowledge_brief_health,
+)
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.service.playbill_briefs import (

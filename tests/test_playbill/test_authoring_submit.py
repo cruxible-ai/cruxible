@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cruxible_client.contracts.captures import foreign_source_capture_contract
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.captures import foreign_source_capture_contract
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,

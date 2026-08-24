@@ -9,23 +9,26 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.captures import (
     AcceptedCaptureContract,
     capture_contract_digest,
     parse_capture_contract,
     parse_capture_envelope,
 )
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_attestations import (
+from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
     ClaimAttestationStatement,
     VerifiedClaimAttestationV1,
     store_claim_attestation,
     verify_claim_attestation,
 )
-from cruxible_core.playbill.claim_types import claim_type_digest, claim_type_path, parse_claim_type
-from cruxible_core.playbill.claim_verdicts import (
+from cruxible_client.contracts.claim_types import (
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+)
+from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResultV1,
     ClaimVerdictResultV2,
     claim_adjudication_rule,
@@ -33,7 +36,7 @@ from cruxible_core.playbill.claim_verdicts import (
     evaluate_claim_verdict,
     verify_claim_verdict_freshness,
 )
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactAny,
     ClaimArtifactV2,
@@ -48,29 +51,30 @@ from cruxible_core.playbill.claims import (
     parse_claim_law_evidence,
     render_claim,
 )
-from cruxible_core.playbill.errors import ClaimNotFoundError, ProposalIntegrityError
+from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
+from cruxible_client.contracts.principals import principal_registry_from_tree
+from cruxible_client.contracts.providers import ProviderV1, parse_provider, provider_digest
+from cruxible_client.contracts.source_references import (
+    CasSourceReferenceV1,
+    LedgerSourceReferenceV1,
+)
+from cruxible_client.contracts.standing_mandates import (
+    StandingMandateQueryResultV1,
+    parse_standing_mandate,
+    standing_mandate_digest,
+    standing_mandate_path,
+)
+from cruxible_client.contracts.subjects import parse_subject, subject_digest
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.principals import principal_registry_from_tree
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.providers import ProviderV1, parse_provider, provider_digest
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
 from cruxible_core.playbill.settlement import ChangeSetRecord
 from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
-from cruxible_core.playbill.source_references import (
-    CasSourceReferenceV1,
-    LedgerSourceReferenceV1,
-)
-from cruxible_core.playbill.standing_mandates import (
-    StandingMandateQueryResultV1,
-    parse_standing_mandate,
-    standing_mandate_digest,
-    standing_mandate_path,
-)
-from cruxible_core.playbill.subjects import parse_subject, subject_digest
 
 
 class _StrictEvidenceServiceModel(BaseModel):

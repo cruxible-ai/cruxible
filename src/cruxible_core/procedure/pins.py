@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.errors import ConfigError
-from cruxible_core.primitives import canonical_json
 from cruxible_core.procedure.analysis import build_procedure_graph
 from cruxible_core.procedure.resolution_oracle import compute_query_definition_digest
 from cruxible_core.procedure.types import ProcedureRepeatStepSchema, unwrap_procedure_step

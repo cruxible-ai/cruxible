@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CaptureRunCoordinateV1,
     InputReceiptSetManifestV1,
@@ -17,10 +17,10 @@ from cruxible_core.playbill.captures import (
     evaluate_capture_contract_law,
     verify_capture,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import LedgerSourceReferenceV1
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_references import LedgerSourceReferenceV1
 from tests.test_playbill._pc_c_support import (
     NOW,
     artifact_digest,

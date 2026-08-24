@@ -11,15 +11,15 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.assembler import ProjectionAssembler
-from cruxible_core.playbill.errors import ProjectionFormatError
-from cruxible_core.playbill.projection_extensions import (
+from cruxible_client.contracts.errors import ProjectionFormatError
+from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
     ProjectionFactDeclaration,
     fixture_extension_registry,
     normalize_projection_value,
 )
+from cruxible_core.playbill.assembler import ProjectionAssembler
 from cruxible_core.storage.playbill_projection import (
     canonical_logical_export,
     physical_file_digest,

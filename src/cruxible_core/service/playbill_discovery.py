@@ -13,21 +13,25 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import ArtifactDigest
-from cruxible_core.playbill.claim_types import ClaimType, parse_claim_type
-from cruxible_core.playbill.discovery import DiscoveryBudgetV1, DiscoveryPageV1, DiscoveryRequestV1
-from cruxible_core.playbill.errors import ProposalIntegrityError
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.procedures.artifacts import AcceptedProcedureV1
-from cruxible_core.playbill.procedures.line_specs import AcceptedLineSpecV1
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.providers import parse_provider, provider_digest
-from cruxible_core.playbill.query.backends import ClaimQueryFactsV1, subject_query_view
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.canonical import ArtifactDigest
+from cruxible_client.contracts.claim_types import ClaimType, parse_claim_type
+from cruxible_client.contracts.discovery import (
+    DiscoveryBudgetV1,
+    DiscoveryPageV1,
+    DiscoveryRequestV1,
+)
+from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.providers import parse_provider, provider_digest
+from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     parse_query_definition,
     query_definition_digest,
 )
+from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.query.backends import ClaimQueryFactsV1, subject_query_view
 from cruxible_core.playbill.query.semantic_discovery import (
     DiscoveryVocabularyV1,
     build_discovery_vocabulary,

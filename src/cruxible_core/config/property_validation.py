@@ -6,10 +6,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Mapping
 
+from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 from cruxible_core.config.schema import CoreConfig, PropertySchema
 from cruxible_core.graph.types import EntityInstance
-from cruxible_core.primitives import canonical_json
-from cruxible_core.temporal import format_datetime, parse_datetime
 
 
 @dataclass(frozen=True)

@@ -8,9 +8,11 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
+from cruxible_client.contracts.query.definitions import query_definition_path
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
-from cruxible_core.playbill.errors import ClaimNotFoundError, ProposalIntegrityError
 from cruxible_core.playbill.exhaust.backends import LocalJournalBackend
 from cruxible_core.playbill.exhaust.records import (
     QUERY_RECEIPT_EVENT_KIND,
@@ -18,9 +20,7 @@ from cruxible_core.playbill.exhaust.records import (
     journal_payload_bytes,
 )
 from cruxible_core.playbill.exhaust.writer import ProcedureExhaustWriter
-from cruxible_core.playbill.query.definitions import query_definition_path
 from cruxible_core.playbill.query.engine import claim_query_result_digest
-from cruxible_core.playbill.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,

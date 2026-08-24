@@ -15,38 +15,15 @@ from typing import Any
 
 import pytest
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.claim_types import claim_type_digest
-from cruxible_core.playbill.claims import LiteralClaimObject
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.query.backends import (
-    ClaimFactRowV1,
-    ClaimQueryBackendError,
-    ClaimQueryBackendFactoryV1,
-    ClaimQueryFactsV1,
-    DirectClaimFactIndex,
-    SubjectQueryViewV1,
-    VisibleClaimRow,
-    render_subject_query_view,
-    subject_query_view,
-    subject_query_view_digest,
-)
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import claim_type_digest
+from cruxible_client.contracts.claims import LiteralClaimObject
+from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
     QueryEvaluationPolicyV1,
 )
-from cruxible_core.playbill.query.engine import (
-    CLAIM_CONFLICT,
-    COORDINATE_MISMATCH,
-    RESULT_CONFLICT,
-    SUBJECT_UNRESOLVED,
-    TRAVERSAL_OBJECT_NOT_SUBJECT,
-    ClaimQueryResultV1,
-    claim_query_result_digest,
-    evaluate_claim_query,
-)
-from cruxible_core.playbill.query.grammar import (
+from cruxible_client.contracts.query.grammar import (
     QueryBudgetsV1,
     QueryClaimPresenceFilterV1,
     QueryClaimValueRefV1,
@@ -63,8 +40,31 @@ from cruxible_core.playbill.query.grammar import (
     QuerySubjectFieldRefV1,
     QueryTraversalStepV1,
 )
+from cruxible_client.contracts.subjects import AcceptedSubject, subject_path
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.query.backends import (
+    ClaimFactRowV1,
+    ClaimQueryBackendError,
+    ClaimQueryBackendFactoryV1,
+    ClaimQueryFactsV1,
+    DirectClaimFactIndex,
+    SubjectQueryViewV1,
+    VisibleClaimRow,
+    render_subject_query_view,
+    subject_query_view,
+    subject_query_view_digest,
+)
+from cruxible_core.playbill.query.engine import (
+    CLAIM_CONFLICT,
+    COORDINATE_MISMATCH,
+    RESULT_CONFLICT,
+    SUBJECT_UNRESOLVED,
+    TRAVERSAL_OBJECT_NOT_SUBJECT,
+    ClaimQueryResultV1,
+    claim_query_result_digest,
+    evaluate_claim_query,
+)
 from cruxible_core.playbill.query.networkx_backend import NetworkXClaimQueryBackend
-from cruxible_core.playbill.subjects import AcceptedSubject, subject_path
 from tests.test_playbill.test_claim_query_engine import (
     AMOUNT_PREDICATE,
     DUE_PREDICATE,

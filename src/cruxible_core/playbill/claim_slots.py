@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Literal
 
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.claims import ClaimArtifactAny
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claims import ClaimArtifactAny
 
 ClaimSlotResolution = Literal["empty", "single", "unresolved"]
 ClaimSlotMemberState = Literal["accepted_current", "conflicted", "absent"]

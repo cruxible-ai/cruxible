@@ -21,7 +21,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_core.primitives import canonical_json
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.procedure.graph_format import definition_format_version
 from cruxible_core.procedure.types import (
     ProcedureDefinition,

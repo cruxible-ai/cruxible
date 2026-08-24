@@ -39,7 +39,9 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.coverage.contracts import (
     CoverageManifestProfileV1,
     LogicalSourceIdentityV1,
@@ -50,8 +52,6 @@ from cruxible_core.playbill.native.grammar import (
     NativeRegionKind,
     NativeRenderError,
 )
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
 
 NATIVE_RENDER_MANIFEST_PATH: Final = "render-manifest.json"
 NATIVE_RENDER_DIGEST_DOMAIN: Final = "playbill-native-render-v1"

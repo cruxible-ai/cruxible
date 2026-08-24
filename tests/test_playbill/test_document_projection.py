@@ -6,12 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.assembler import ProjectionAssembler
-from cruxible_core.playbill.candidates import SemanticCandidate, candidate_digest
-from cruxible_core.playbill.canonical import canonical_bytes, manifest_root, semantic_diff
-from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.playbill.compiler import PB_B_COMPILER, PB_C_COMPILER
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
+from cruxible_client.contracts.canonical import canonical_bytes, manifest_root, semantic_diff
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentLink,
@@ -19,7 +16,10 @@ from cruxible_core.playbill.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_core.playbill.errors import ProjectionCoordinateError, ProjectionFormatError
+from cruxible_client.contracts.errors import ProjectionCoordinateError, ProjectionFormatError
+from cruxible_core.playbill.assembler import ProjectionAssembler
+from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
+from cruxible_core.playbill.compiler import PB_B_COMPILER, PB_C_COMPILER
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import ProvisionalProjectionCoordinate
 from cruxible_core.playbill.projection_documents import (

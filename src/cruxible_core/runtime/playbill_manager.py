@@ -8,11 +8,11 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillFormatError
+from cruxible_client.contracts.types import OperatingProfile, PlaybillTrustRoot, PrincipalRecord
 from cruxible_core.errors import InstanceNotFoundError
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.errors import PlaybillBootstrapError, PlaybillFormatError
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.types import OperatingProfile, PlaybillTrustRoot, PrincipalRecord
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 
 _PLAYBILL_DIRECTORY = "playbill-v1"

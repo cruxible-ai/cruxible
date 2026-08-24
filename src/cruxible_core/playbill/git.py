@@ -17,10 +17,10 @@ from typing import cast
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from cruxible_core.playbill.canonical import normalize_manifest_paths
-from cruxible_core.playbill.errors import PlaybillGitError
+from cruxible_client.contracts.canonical import normalize_manifest_paths
+from cruxible_client.contracts.errors import PlaybillGitError
+from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.playbill.keys import raw_public_key_hex_from_openssh
-from cruxible_core.playbill.types import GitObjectFormat
 
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")

@@ -42,13 +42,15 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claims import (
     ClaimObject,
     ExactContentClaimObject,
     LiteralClaimObject,
     SubjectClaimObject,
 )
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.coverage.contracts import LogicalSourceIdentityV1
 from cruxible_core.playbill.native.context import RenderContextV1
 from cruxible_core.playbill.native.grammar import (
@@ -80,8 +82,6 @@ from cruxible_core.playbill.native.state import (
     NativeArtifactRecordV1,
     NativeClaimRecordV1,
 )
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
 
 README_PATH: Final = "README.md"
 NATIVE_SOURCE_DIGEST_DOMAIN: Final = "playbill-native-render-source-v1"

@@ -16,13 +16,12 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.playbill.attestations import (
+from cruxible_client.contracts.attestations import (
     ApprovalSubmission,
     VerifiedApproval,
     verify_candidate_approvals,
 )
-from cruxible_core.playbill.bootstrap import generation_root
-from cruxible_core.playbill.candidates import (
+from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
     CandidateMemberLawEvidenceV2,
     CandidateRecord,
@@ -36,7 +35,7 @@ from cruxible_core.playbill.candidates import (
     SemanticCandidateV2,
     candidate_digest,
 )
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     ApprovalDigest,
     CandidateDigest,
     ChangeSetDigest,
@@ -48,25 +47,27 @@ from cruxible_core.playbill.canonical import (
     canonical_bytes,
     typed_digest,
 )
-from cruxible_core.playbill.documents import BodyVerifierProtocol
-from cruxible_core.playbill.errors import SettlementIntegrityError
-from cruxible_core.playbill.git import GitLedger
-from cruxible_core.playbill.governance import (
+from cruxible_client.contracts.documents import BodyVerifierProtocol
+from cruxible_client.contracts.errors import SettlementIntegrityError
+from cruxible_client.contracts.governance import (
     ActivationPolicy,
     ApprovalRequirement,
     PermissionTier,
     governance_identifier,
 )
-from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS, AcceptanceLawRegistry
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS, AcceptanceLawRegistry
+from cruxible_client.contracts.policies import (
     ClaimAdmissionCandidateResultV1,
     VerifiedPolicySignerV1,
     evaluate_claim_admission_settlement,
 )
-from cruxible_core.playbill.principals import (
+from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
 )
+from cruxible_client.contracts.types import GenerationDescriptor
+from cruxible_core.playbill.bootstrap import generation_root
+from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.projection import (
     AcceptedProjectionCoordinate,
     CandidateGenerationProjectionCoordinate,
@@ -76,7 +77,6 @@ from cruxible_core.playbill.proposals import (
     claim_type_expansions_from_candidate,
     evaluate_proposal_tree,
 )
-from cruxible_core.playbill.types import GenerationDescriptor
 
 
 class _StrictSettlementModel(BaseModel):

@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.claim_attestations import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
     ClaimAttestationError,
     ClaimAttestationStatement,
@@ -16,17 +16,17 @@ from cruxible_core.playbill.claim_attestations import (
     store_claim_attestation,
     verify_claim_attestation,
 )
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
 )
-from cruxible_core.playbill.principals import PrincipalRegistrySnapshot
+from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
+from cruxible_client.contracts.providers import ProviderSigningKeyV1
+from cruxible_client.contracts.subjects import subject_digest
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.providers import ProviderSigningKeyV1
 from cruxible_core.playbill.signing import LocalEd25519ClaimAttestationSigner
-from cruxible_core.playbill.subjects import subject_digest
 from tests.test_playbill._pc_c_support import NOW, capture_contract, provider
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_claims import OBSERVED_AT, _claim, _subject
@@ -34,7 +34,7 @@ from tests.test_playbill.test_claims import OBSERVED_AT, _claim, _subject
 
 def _accepted_claim(instance, claim_id: str = "CLM-0123456789abcdef0123456789abcdef"):
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    from cruxible_core.playbill.captures import build_direct_claim_capture
+    from cruxible_client.contracts.captures import build_direct_claim_capture
 
     capture = build_direct_claim_capture(
         store=instance.body_store(),

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.captures import capture_contract_digest
-from cruxible_core.playbill.claim_types import claim_type_digest
-from cruxible_core.playbill.providers import provider_digest
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.standing_mandates import (
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.captures import capture_contract_digest
+from cruxible_client.contracts.claim_types import claim_type_digest
+from cruxible_client.contracts.providers import provider_digest
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.standing_mandates import (
     MandateGrantV1,
     MandateInvocationV1,
     MandateRuntimeCapV1,

@@ -48,7 +48,9 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
     build_overlay,
@@ -81,8 +83,6 @@ from cruxible_core.playbill.native.manifest import (
 )
 from cruxible_core.playbill.native.parse import NativeTreeParseV1, parse_native_tree
 from cruxible_core.playbill.native.state import NativeAcceptedStateV1
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
 
 LOCATOR_HANDLE_DIGEST_DOMAIN: Final = "playbill-native-locator-handle-v1"
 

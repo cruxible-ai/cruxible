@@ -6,12 +6,14 @@ import hashlib
 from collections.abc import Sequence
 from pathlib import Path
 
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     GenerationRoot,
     SemanticRoot,
     canonical_bytes,
 )
+from cruxible_client.contracts.projection_extensions import ProjectionFact
+from cruxible_client.contracts.types import CompilerCoordinate, GitObjectFormat
 from cruxible_core.playbill.git import GitTreeEntry
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_artifacts import (
@@ -19,8 +21,6 @@ from cruxible_core.playbill.projection_artifacts import (
     FixturePin,
     FixturePresentation,
 )
-from cruxible_core.playbill.projection_extensions import ProjectionFact
-from cruxible_core.playbill.types import CompilerCoordinate, GitObjectFormat
 
 COMPILER_DIGEST = "sha256:cc2ec0b2922da1c83a65734be3f911c782a7b2ab34ce2e4a5f006e47aa52b2d4"
 SEMANTIC_ROOT = SemanticRoot("11" * 32).tagged

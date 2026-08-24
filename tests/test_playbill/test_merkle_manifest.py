@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     CanonicalEncodingError,
     SemanticManifestRoot,
     SemanticMerkleRoot,
@@ -18,8 +18,8 @@ from cruxible_core.playbill.canonical import (
     manifest_for_tree,
     manifest_root,
 )
-from cruxible_core.playbill.errors import MerkleIntegrityError
-from cruxible_core.playbill.merkle import (
+from cruxible_client.contracts.errors import MerkleIntegrityError
+from cruxible_client.contracts.merkle import (
     EMPTY_MERKLE_ROOT,
     MERKLE_LEAF_DOMAIN,
     MERKLE_NODE_DOMAIN,

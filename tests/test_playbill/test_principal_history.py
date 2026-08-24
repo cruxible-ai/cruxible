@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.errors import ApprovalIntegrityError, PrincipalIntegrityError
+from cruxible_client.contracts.principals import principal_registry_from_tree
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.bootstrap import render_principal
-from cruxible_core.playbill.errors import ApprovalIntegrityError, PrincipalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.keys import GeneratedKeyMaterial, generate_client_principal_key
-from cruxible_core.playbill.principals import principal_registry_from_tree
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.settlement import ChangeActorBinding, prepare_generation
-from cruxible_core.playbill.types import PrincipalRecord
 
 from ._support import FIXED_TIMESTAMP, generate_client
 from .test_activation import _candidate, _sign

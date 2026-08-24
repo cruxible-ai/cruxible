@@ -6,14 +6,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from cruxible_core.playbill.errors import PrincipalIntegrityError
-from cruxible_core.playbill.principals import (
+from cruxible_client.contracts.errors import PrincipalIntegrityError
+from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
     principal_registry_from_tree,
 )
+from cruxible_client.contracts.types import PrincipalRecord, PrincipalRole
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.types import PrincipalRecord, PrincipalRole
 
 PrincipalLifecycleAction = Literal["register", "rotate", "revoke", "recover"]
 

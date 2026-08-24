@@ -10,13 +10,13 @@ from typing import Any
 from click.testing import CliRunner
 
 from cruxible_client import contracts
-from cruxible_core.cli.main import cli
-from cruxible_core.playbill.authoring.examples import claim_self_source_example
-from cruxible_core.playbill.seed import (
+from cruxible_client.authoring.examples import claim_self_source_example
+from cruxible_client.authoring.seed import (
     plan_seed_bundle,
     seed_group_operation_digest,
     seed_group_proposal_name,
 )
+from cruxible_core.cli.main import cli
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,

@@ -10,8 +10,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import CasDigest, canonical_bytes
-from cruxible_core.playbill.errors import PlaybillJournalError
+from cruxible_client.contracts.canonical import CasDigest, canonical_bytes
+from cruxible_client.contracts.errors import PlaybillJournalError
 from cruxible_core.playbill.exhaust.backends import JournalBackendProtocol, LocalJournalBackend
 from cruxible_core.playbill.exhaust.records import (
     JournalHeadManifestV1,

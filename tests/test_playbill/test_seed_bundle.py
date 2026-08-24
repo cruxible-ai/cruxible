@@ -20,8 +20,7 @@ from typing import Any
 
 import pytest
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
-from cruxible_core.playbill.seed import (
+from cruxible_client.authoring.seed import (
     SEED_GROUP_OPERATION_DIGEST_DOMAIN,
     SEED_GROUP_OPERATIONS,
     SeedBundleError,
@@ -32,6 +31,7 @@ from cruxible_core.playbill.seed import (
     seed_group_proposal_name,
     seed_plan_digest,
 )
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "benchmarks/playbill_taubench/seed-example"
 

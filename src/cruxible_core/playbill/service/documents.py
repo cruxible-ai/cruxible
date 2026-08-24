@@ -7,29 +7,30 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.attestations import (
+from cruxible_client.contracts.attestations import (
     ApprovalAttestation,
     ApprovalSubmission,
     VerifiedApproval,
     verify_approval,
 )
-from cruxible_core.playbill.candidates import CandidateRecordAnyVersion
-from cruxible_core.playbill.cas import BodyAccessContext, CasObjectMetadata
-from cruxible_core.playbill.diagnostics import CompilerDiagnostic
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
+from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.documents import (
     DocumentShell,
     document_digest,
     document_path,
     parse_document,
     render_document,
 )
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
     ProposalIntegrityError,
     SettlementIntegrityError,
 )
+from cruxible_client.contracts.principal_rendering import render_principal
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.playbill.cas import BodyAccessContext, CasObjectMetadata
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.principal_rendering import render_principal
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_documents import DocumentProjectionView
 from cruxible_core.playbill.proposals import (
@@ -38,7 +39,6 @@ from cruxible_core.playbill.proposals import (
     ProposalResult,
 )
 from cruxible_core.playbill.settlement import ChangeActorBinding
-from cruxible_core.playbill.types import PrincipalRecord
 
 
 class _StrictServiceModel(BaseModel):

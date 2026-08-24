@@ -35,21 +35,21 @@ from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.canonical import Sha256Value, normalize_ledger_path, typed_digest
-from cruxible_core.playbill.claim_verdicts import ObservationTrustGrade
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import Sha256Value, normalize_ledger_path, typed_digest
+from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade
+from cruxible_client.contracts.claims import (
     ClaimCitationV1,
     LegacyCitationReferenceV1,
     claim_citation_id,
 )
-from cruxible_core.playbill.discovery import DiscoveryMatchBasis
-from cruxible_core.playbill.errors import CanonicalEncodingError, PlaybillError
+from cruxible_client.contracts.discovery import DiscoveryMatchBasis
+from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillError
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import CoverageDescriptorV1, SourceAccessClass
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.grammar import byte_sorted
 from cruxible_core.playbill.query.semantic_discovery import MATCH_BASIS_RESOLVES_EQUIVALENCE
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_references import CoverageDescriptorV1, SourceAccessClass
 
 OCCURRENCE_IDENTITY_DIGEST_DOMAIN = "playbill-coverage-occurrence-identity-v1"
 

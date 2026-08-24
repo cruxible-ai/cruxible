@@ -8,14 +8,14 @@ from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import (
     Sha256Value,
     canonical_bytes,
     normalize_canonical,
     typed_digest,
 )
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.captures import (
     CaptureContractV1,
     CaptureEnvelopeV1,
     CaptureObjectStoreProtocol,
@@ -26,9 +26,9 @@ from cruxible_core.playbill.captures import (
     capture_digest,
     render_capture_envelope,
 )
-from cruxible_core.playbill.errors import PlaybillFormatError
-from cruxible_core.playbill.providers import ProviderV1
-from cruxible_core.playbill.source_references import (
+from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.providers import ProviderV1
+from cruxible_client.contracts.source_references import (
     EvidenceCommitmentV1,
     ExternalSourceReferenceV1,
 )
@@ -158,7 +158,7 @@ class ExternalSourceReadRequestV1(_StrictSourceReaderModel):
 
     @property
     def provider_digest(self) -> str:
-        from cruxible_core.playbill.providers import provider_digest
+        from cruxible_client.contracts.providers import provider_digest
 
         return provider_digest(self.provider).tagged
 

@@ -45,7 +45,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from cruxible_core.playbill.canonical import file_digest
+from cruxible_client.contracts.canonical import file_digest
+from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_core.playbill.native.context import RenderContextV1
 from cruxible_core.playbill.native.grammar import (
     FILE_MARKER_PREFIX,
@@ -71,7 +72,6 @@ from cruxible_core.playbill.native.manifest import (
     render_native_manifest_bytes,
 )
 from cruxible_core.playbill.native.sync import render_context_from_manifest
-from cruxible_core.playbill.query.grammar import byte_sorted
 
 _CLOSE_BYTES: Final = REGION_CLOSE.encode("utf-8")
 

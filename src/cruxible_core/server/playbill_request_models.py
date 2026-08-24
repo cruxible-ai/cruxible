@@ -7,22 +7,26 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.attestations import ApprovalAttestation
-from cruxible_core.playbill.authoring.inputs import AuthoringInputV1
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.attestations import ApprovalAttestation
+from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
+from cruxible_client.contracts.authoring.models import (
     AuthoringPayloadV1,
     InsertionConfirmationObservationV1,
 )
+from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
+from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_catalog import SourceCompilationBundle
+from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_client.contracts.types import OperatingProfile, PrincipalRecord
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
-from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
-from cruxible_core.playbill.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
-from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.definitions import QueryDefinitionV1
-from cruxible_core.playbill.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.search import (
     SEARCH_KINDS,
     PlaybillSearchBudgetsV1,
@@ -31,10 +35,6 @@ from cruxible_core.playbill.search import (
     SearchMode,
     SearchStatus,
 )
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_catalog import SourceCompilationBundle
-from cruxible_core.playbill.subjects import SubjectShell
-from cruxible_core.playbill.types import OperatingProfile, PrincipalRecord
 from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
 
 

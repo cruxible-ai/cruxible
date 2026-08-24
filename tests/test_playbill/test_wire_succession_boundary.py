@@ -19,26 +19,27 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.candidates import (
+from cruxible_client.contracts.candidates import (
     CandidateRecord,
     CandidateRecordV2,
     CandidateRecordV3,
     CandidateWireVersion,
 )
-from cruxible_core.playbill.checkpoints import (
-    checkpoint_body,
-    checkpoint_path,
-    write_checkpoint,
-)
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
     render_document,
 )
+from cruxible_client.contracts.projection_extensions import playbill_runtime_extension_registry
+from cruxible_client.contracts.subjects import SubjectShell, render_subject
+from cruxible_core.playbill.checkpoints import (
+    checkpoint_body,
+    checkpoint_path,
+    write_checkpoint,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
-from cruxible_core.playbill.projection_extensions import playbill_runtime_extension_registry
 from cruxible_core.playbill.settlement import (
     SEMANTIC_ROOT_V2_DOMAIN,
     ChangeSetRecord,
@@ -47,7 +48,6 @@ from cruxible_core.playbill.settlement import (
     compute_semantic_root_v2,
     record_semantic_root_derivation,
 )
-from cruxible_core.playbill.subjects import SubjectShell, render_subject
 from tests.test_playbill._adoption_fixture import _Builder
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_change_set_closure import claim_type, subject
@@ -105,7 +105,7 @@ def _members(builder: _Builder, index: int, version: CandidateWireVersion) -> di
 
 
 def render_claim_type_for(index: int) -> bytes:
-    from cruxible_core.playbill.claim_types import render_claim_type
+    from cruxible_client.contracts.claim_types import render_claim_type
 
     return render_claim_type(claim_type(f"project.work_item.status{index}"))
 
@@ -214,7 +214,7 @@ def test_the_boundary_generation_names_a_v1_parent_and_the_next_names_a_v2_paren
 
 
 def _approval_digests(record: ChangeSetRecordV3) -> list[str]:
-    from cruxible_core.playbill.attestations import approval_digest
+    from cruxible_client.contracts.attestations import approval_digest
 
     return [approval_digest(item.attestation).tagged for item in record.approvals]
 

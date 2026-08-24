@@ -22,14 +22,10 @@ from datetime import datetime
 
 import pytest
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.claim_slots import (
-    classify_claim_slot,
-    classify_claim_slot_member,
-)
-from cruxible_core.playbill.claim_types import claim_type_digest, claim_type_path
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifact,
     ClaimBacking,
@@ -41,7 +37,16 @@ from cruxible_core.playbill.claims import (
     claim_path,
     claim_statement_digest,
 )
-from cruxible_core.playbill.discovery import DiscoveryRequestV1
+from cruxible_client.contracts.discovery import DiscoveryRequestV1
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import (
+    AcceptedSubject,
+    subject_path,
+)
+from cruxible_core.playbill.claim_slots import (
+    classify_claim_slot,
+    classify_claim_slot_member,
+)
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.query.backends import (
     ClaimFactRowV1,
@@ -68,11 +73,6 @@ from cruxible_core.playbill.query.semantic_discovery import (
     MATCH_BASIS_PRIORITY,
     DiscoveryError,
     build_discovery_vocabulary,
-)
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.subjects import (
-    AcceptedSubject,
-    subject_path,
 )
 from tests.test_playbill.test_claim_query_engine import (
     NOW,

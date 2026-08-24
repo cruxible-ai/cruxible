@@ -6,26 +6,27 @@ from collections import Counter, defaultdict
 from collections.abc import Mapping
 from typing import Protocol
 
-from cruxible_core.playbill.brief_health import (
-    KnowledgeBriefHealthEvaluator,
-    KnowledgeBriefHealthRequestV1,
-)
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV2,
     LiteralClaimObject,
     claim_path,
     claim_statement_digest,
 )
-from cruxible_core.playbill.discovery import DiscoveryMatchBasisV1
-from cruxible_core.playbill.errors import PlaybillError, ProposalIntegrityError
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.knowledge_briefs import (
+from cruxible_client.contracts.discovery import DiscoveryMatchBasisV1
+from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
+from cruxible_client.contracts.knowledge_briefs import (
     KNOWLEDGE_BRIEF_PREDICATE,
     parse_knowledge_brief_value,
 )
-from cruxible_core.playbill.procedures.artifacts import parse_procedure
+from cruxible_client.contracts.procedures.artifacts import parse_procedure
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.playbill.brief_health import (
+    KnowledgeBriefHealthEvaluator,
+    KnowledgeBriefHealthRequestV1,
+)
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.query.semantic_discovery import (
     MATCH_BASIS_PRIORITY,
     discovery_tokens,
@@ -46,7 +47,6 @@ from cruxible_core.playbill.search import (
     playbill_search_result_bytes,
     playbill_search_selection_basis_digest,
 )
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
     PlaybillClaimQueryResult,

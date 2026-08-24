@@ -7,14 +7,14 @@ from collections.abc import Iterable
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.procedures.graph import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     analyze_procedure_v3,
 )
-from cruxible_core.playbill.procedures.models import (
+from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
     ExhaustTapNodeV3,
     GuardNodeV3,

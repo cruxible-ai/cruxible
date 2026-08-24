@@ -25,13 +25,11 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes
-from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.playbill.claim_types import claim_type_path, render_claim_type
-from cruxible_core.playbill.claims import LiteralClaimObject
-from cruxible_core.playbill.dereference import dereference_source_handle
-from cruxible_core.playbill.discovery import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
+from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+from cruxible_client.contracts.claims import LiteralClaimObject
+from cruxible_client.contracts.discovery import (
     DiscoveryBudgetV1,
     DiscoveryHitV1,
     DiscoveryMatchBasis,
@@ -40,7 +38,24 @@ from cruxible_core.playbill.discovery import (
     ExpandRequestV1,
     ExpansionBudgetV1,
 )
-from cruxible_core.playbill.errors import PlaybillJournalError, ProposalIntegrityError
+from cruxible_client.contracts.errors import PlaybillJournalError, ProposalIntegrityError
+from cruxible_client.contracts.query.definitions import (
+    query_definition_path,
+    render_query_definition,
+)
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.source_references import (
+    CasSourceReferenceV1,
+    EvidenceCommitmentV1,
+    ExternalSourceReferenceV1,
+    LedgerSourceReferenceV1,
+    OpenSourceRequestV1,
+    SourceHandleV1,
+    source_handle_digest,
+)
+from cruxible_client.contracts.subjects import subject_path
+from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
+from cruxible_core.playbill.dereference import dereference_source_handle
 from cruxible_core.playbill.exhaust.backends import LocalJournalBackend
 from cruxible_core.playbill.exhaust.records import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -63,10 +78,6 @@ from cruxible_core.playbill.query.capsules import (
     render_bounded_context_capsule,
 )
 from cruxible_core.playbill.query.cards import InterfaceMatchBasisV1
-from cruxible_core.playbill.query.definitions import (
-    query_definition_path,
-    render_query_definition,
-)
 from cruxible_core.playbill.query.engine import evaluate_claim_query, query_execution_receipt
 from cruxible_core.playbill.query.indexes import (
     DISCOVERY_INDEX_FILE_NAMES,
@@ -93,18 +104,7 @@ from cruxible_core.playbill.query.semantic_discovery import (
     discovery_vocabulary_digest,
     resolved_equivalence_address,
 )
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
-from cruxible_core.playbill.source_references import (
-    CasSourceReferenceV1,
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
-    OpenSourceRequestV1,
-    SourceHandleV1,
-    source_handle_digest,
-)
-from cruxible_core.playbill.subjects import subject_path
 from cruxible_core.service.playbill_claims import service_expand_playbill_semantic
 from tests.test_playbill._line_runtime_support import (
     accepted_line,
@@ -871,7 +871,7 @@ def _sign(material, candidate_digest: str, parent_root: str):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-    from cruxible_core.playbill.attestations import (
+    from cruxible_client.contracts.attestations import (
         ApprovalAttestation,
         ApprovalStatement,
         ApprovalSubmission,

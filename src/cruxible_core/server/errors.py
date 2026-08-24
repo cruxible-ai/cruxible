@@ -4,6 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
+from cruxible_client.contracts.errors import (
+    ApprovalIntegrityError,
+    CanonicalEncodingError,
+    DocumentFormatError,
+    DocumentNotFoundError,
+    PlaybillBootstrapError,
+    PlaybillFormatError,
+    PrincipalIntegrityError,
+    ProjectionCoordinateError,
+    ProposalAdmissionError,
+    ProposalIntegrityError,
+    SettlementIntegrityError,
+)
 from cruxible_client.errors import ErrorResponse, response_to_error
 from cruxible_core.errors import (
     AuthenticationError,
@@ -45,19 +58,6 @@ from cruxible_core.errors import (
     StaleContinuationError,
     TerminalLifecycleWriteRefusedError,
     TraceNotFoundError,
-)
-from cruxible_core.playbill.errors import (
-    ApprovalIntegrityError,
-    CanonicalEncodingError,
-    DocumentFormatError,
-    DocumentNotFoundError,
-    PlaybillBootstrapError,
-    PlaybillFormatError,
-    PrincipalIntegrityError,
-    ProjectionCoordinateError,
-    ProposalAdmissionError,
-    ProposalIntegrityError,
-    SettlementIntegrityError,
 )
 
 STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {

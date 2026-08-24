@@ -6,8 +6,8 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cruxible_core.playbill.canonical import normalize_ledger_path, normalize_manifest_paths
-from cruxible_core.playbill.errors import ProjectionFormatError
+from cruxible_client.contracts.canonical import normalize_ledger_path, normalize_manifest_paths
+from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_core.playbill.projection_artifacts import registered_path_kind
 from cruxible_core.playbill.protocols import LedgerRepositoryProtocol
 

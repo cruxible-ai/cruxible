@@ -8,21 +8,14 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.documents import (
     DocumentShell,
     document_digest,
     parse_document,
     render_document,
 )
-from cruxible_core.playbill.errors import PlaybillFormatError, ProposalIntegrityError
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.service.documents import (
-    PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
-    service_propose_playbill_document,
-    service_store_playbill_body,
-)
-from cruxible_core.playbill.source_catalog import (
+from cruxible_client.contracts.errors import PlaybillFormatError, ProposalIntegrityError
+from cruxible_client.contracts.source_catalog import (
     CompiledSourceDocument,
     SourceAlignment,
     SourceAlignmentState,
@@ -30,6 +23,13 @@ from cruxible_core.playbill.source_catalog import (
     SourceCompilationBundle,
     compile_source_catalog,
     content_digest_bytes,
+)
+from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.service.documents import (
+    PlaybillAcceptedCoordinate,
+    PlaybillProposalInspection,
+    service_propose_playbill_document,
+    service_store_playbill_body,
 )
 
 

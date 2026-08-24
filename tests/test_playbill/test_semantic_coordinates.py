@@ -9,14 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.bootstrap import (
-    bootstrap_changeset_digest,
-    bootstrap_root,
-    generation_root,
-    genesis_semantic_root,
-    genesis_tree,
-)
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     BootstrapRoot,
     CanonicalEncodingError,
@@ -26,7 +19,14 @@ from cruxible_core.playbill.canonical import (
     canonical_bytes,
     manifest_root,
 )
-from cruxible_core.playbill.types import GenerationDescriptor, PrincipalRecord, StorageLayout
+from cruxible_client.contracts.types import GenerationDescriptor, PrincipalRecord, StorageLayout
+from cruxible_core.playbill.bootstrap import (
+    bootstrap_changeset_digest,
+    bootstrap_root,
+    generation_root,
+    genesis_semantic_root,
+    genesis_tree,
+)
 
 
 def test_bootstrap_root_and_change_set_have_frozen_golden_preimages() -> None:

@@ -19,9 +19,8 @@ import base64
 import hashlib
 from typing import Protocol
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.source_references import (
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
+from cruxible_client.contracts.source_references import (
     BodyAccessResultV1,
     CoverageDescriptorV1,
     ExternalSourceReferenceV1,
@@ -30,6 +29,7 @@ from cruxible_core.playbill.source_references import (
     SourceHandleV1,
     source_handle_digest,
 )
+from cruxible_core.playbill.cas import BodyAccessContext
 
 SOURCE_MATERIAL_FACET = "source_material"
 

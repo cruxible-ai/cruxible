@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.diagnostics import (
+from cruxible_client.contracts.diagnostics import (
     CompilerDiagnostic,
     GovernedOperationReference,
     LocalDraftEdit,
 )
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 
 
 def _subject(name: str) -> SemanticAddress:

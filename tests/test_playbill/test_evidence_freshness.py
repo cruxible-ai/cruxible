@@ -5,14 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import ArtifactLifecycle
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.claim_type_migrations import (
-    ClaimTypeDependentDispositionV1,
-    ClaimTypeMigrationRequestV1,
-    service_migrate_claim_type,
-)
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.claim_types import (
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
     ClaimType,
@@ -20,11 +15,16 @@ from cruxible_core.playbill.claim_types import (
     claim_type_path,
     parse_claim_type,
 )
-from cruxible_core.playbill.claim_verdicts import ClaimVerdictResultV2
-from cruxible_core.playbill.claims import ClaimLawEvidenceV2
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV2
+from cruxible_client.contracts.claims import ClaimLawEvidenceV2
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.playbill.claim_type_migrations import (
+    ClaimTypeDependentDispositionV1,
+    ClaimTypeMigrationRequestV1,
+    service_migrate_claim_type,
+)
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,

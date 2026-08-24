@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.config.property_validation import enum_ref_values
-from cruxible_core.primitives import canonical_json
 
 SUPPORTED_KEYWORDS = frozenset(
     {

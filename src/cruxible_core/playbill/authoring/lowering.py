@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import NoReturn
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.authoring.models import (
     AuthoringArtifactReferenceV1,
     AuthoringExactContentObjectV1,
     AuthoringIntentV1,
@@ -20,8 +20,8 @@ from cruxible_core.playbill.authoring.models import (
     SelfSourceBodyV1,
     WorkingSelectionObservationV1,
 )
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CaptureBuildResult,
     DirectCaptureBuildResult,
@@ -31,13 +31,13 @@ from cruxible_core.playbill.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     CitationOrigin,
     CitationRole,
     ClaimArtifactAny,
@@ -58,15 +58,13 @@ from cruxible_core.playbill.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_core.playbill.compiler import projection_registry_for_compiler
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.knowledge_briefs import (
+from cruxible_client.contracts.knowledge_briefs import (
     KNOWLEDGE_BRIEF_CLAIM_TYPE,
     KNOWLEDGE_BRIEF_PREDICATE,
     knowledge_brief_purpose_digest,
     parse_knowledge_brief_value,
 )
-from cruxible_core.playbill.procedures.artifacts import (
+from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny,
     ProcedureArtifactV1,
     ProcedureArtifactV2,
@@ -77,12 +75,14 @@ from cruxible_core.playbill.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_core.playbill.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_core.playbill.procedures.models import ProcedureDefinitionV3, iter_pin_bindings
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, iter_pin_bindings
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.subjects import parse_subject, subject_digest
+from cruxible_core.playbill.compiler import projection_registry_for_compiler
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress, SourceMapping
-from cruxible_core.playbill.subjects import parse_subject, subject_digest
 
 
 @dataclass(frozen=True)

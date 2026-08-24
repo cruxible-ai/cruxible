@@ -6,18 +6,18 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+from cruxible_client.contracts.claims import (
     ClaimStatement,
     LiteralClaimObject,
     SubjectClaimObject,
     claim_path,
 )
-from cruxible_core.playbill.descriptor_claim_types import descriptor_claim_type
-from cruxible_core.playbill.errors import ProposalIntegrityError
+from cruxible_client.contracts.descriptor_claim_types import descriptor_claim_type
+from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_claims import (

@@ -9,13 +9,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest
-from cruxible_core.playbill.claims import ClaimStatement, LiteralClaimObject
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.keys import GeneratedKeyMaterial
-from cruxible_core.playbill.query.definitions import QueryDefinitionV1, QueryEvaluationPolicyV1
-from cruxible_core.playbill.query.grammar import (
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
+from cruxible_client.contracts.query.definitions import QueryDefinitionV1, QueryEvaluationPolicyV1
+from cruxible_client.contracts.query.grammar import (
     QueryBudgetsV1,
     QueryClaimValueRefV1,
     QueryEntryV1,
@@ -23,9 +21,11 @@ from cruxible_core.playbill.query.grammar import (
     QueryProjectionV1,
     QuerySubjectFieldRefV1,
 )
-from cruxible_core.playbill.semantic import SemanticAddress
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.keys import GeneratedKeyMaterial
 from cruxible_core.playbill.settlement import ChangeActorBinding
-from cruxible_core.playbill.subjects import SubjectShell
 from cruxible_core.service.playbill_claims import (
     DirectClaimAuthoringV1,
     service_propose_playbill_claim,

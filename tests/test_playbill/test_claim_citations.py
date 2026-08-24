@@ -7,10 +7,10 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_core.playbill.candidates import CandidateRecordV3
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     DirectByteSpanSelectionV1,
@@ -21,8 +21,8 @@ from cruxible_core.playbill.captures import (
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_core.playbill.claim_types import render_claim_type
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claim_types import render_claim_type
+from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimArtifactV2,
     ClaimBackingV2,
@@ -36,12 +36,12 @@ from cruxible_core.playbill.claims import (
     parse_claim,
     render_claim,
 )
+from cruxible_client.contracts.semantic import ContentSpan
+from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.semantic import ContentSpan
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeActorBinding
-from cruxible_core.playbill.subjects import render_subject, subject_path
 from cruxible_core.service.playbill_claims import service_get_playbill_claim
 from cruxible_core.service.playbill_coverage import build_accepted_evidence_index_v2
 from tests.test_playbill._support import initialize_local

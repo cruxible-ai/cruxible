@@ -38,7 +38,7 @@ def test_no_canonical_json_inline_outside_primitives() -> None:
             offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, (
         "Inline canonical-JSON serialization detected. "
-        "Use cruxible_core.primitives.canonical_json instead. Offenders:\n  - "
+        "Use cruxible_client.contracts.primitives.canonical_json instead. Offenders:\n  - "
         + "\n  - ".join(offenders)
     )
 
@@ -53,6 +53,6 @@ def test_no_record_id_inline_outside_primitives() -> None:
             offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, (
         "Inline UUID-hex ID minting detected. "
-        "Use cruxible_core.primitives.new_id(...) instead. Offenders:\n  - "
+        "Use cruxible_client.contracts.primitives.new_id(...) instead. Offenders:\n  - "
         + "\n  - ".join(offenders)
     )

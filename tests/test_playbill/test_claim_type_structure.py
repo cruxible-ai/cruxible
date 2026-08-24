@@ -5,11 +5,11 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.claim_type_structure import (
+from cruxible_client.contracts.claim_type_structure import (
     ClaimTypeStructure,
     check_claim_type_structure,
 )
-from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS
+from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS
 
 
 def _literal() -> dict[str, object]:

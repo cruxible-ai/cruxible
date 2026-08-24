@@ -10,14 +10,24 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import (
     GenerationRoot,
     SemanticRoot,
     Sha256Value,
     typed_digest,
 )
-from cruxible_core.playbill.captures import CaptureEnvelopeV1, CaptureRunCoordinateV1
+from cruxible_client.contracts.captures import CaptureEnvelopeV1, CaptureRunCoordinateV1
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.source_references import (
+    CasSourceReferenceV1,
+    EvidenceCommitmentV1,
+    ExternalSourceReferenceV1,
+    LedgerSourceReferenceV1,
+    SourceAccessClass,
+    SourceHandleV1,
+    SourceReferenceV1,
+)
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageRequestV1,
@@ -37,16 +47,6 @@ from cruxible_core.playbill.coverage.manifest import (
     coverage_manifest_body,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
-from cruxible_core.playbill.source_references import (
-    CasSourceReferenceV1,
-    EvidenceCommitmentV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
-    SourceAccessClass,
-    SourceHandleV1,
-    SourceReferenceV1,
-)
 
 INSTANCE_ID = "inst_coverage"
 NOW = datetime(2026, 8, 19, 9, 0, tzinfo=UTC)

@@ -2,25 +2,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.playbill.acquisition_policies import (
+from cruxible_client.contracts.acquisition_policies import (
     acquisition_policy_path,
     render_acquisition_policy,
 )
+from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.captures import capture_contract_path, render_capture_contract
+from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+from cruxible_client.contracts.providers import provider_path, render_provider
+from cruxible_client.contracts.standing_mandates import (
+    render_standing_mandate,
+    standing_mandate_path,
+)
 from cruxible_core.playbill.assembler import ProjectionAssembler
-from cruxible_core.playbill.candidates import CandidateRecordV3
-from cruxible_core.playbill.captures import capture_contract_path, render_capture_contract
-from cruxible_core.playbill.claim_types import claim_type_path, render_claim_type
 from cruxible_core.playbill.compiler import projection_registry_for_compiler
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.providers import provider_path, render_provider
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
-)
-from cruxible_core.playbill.standing_mandates import (
-    render_standing_mandate,
-    standing_mandate_path,
 )
 from cruxible_core.service.playbill_evidence import service_get_playbill_standing_mandate
 from tests.test_playbill._pc_c_support import capture_contract, provider

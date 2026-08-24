@@ -8,36 +8,36 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.claim_slots import (
-    classify_claim_slot,
-    classify_claim_slot_member,
-)
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     claim_path,
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
-from cruxible_core.playbill.errors import PlaybillError
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.knowledge_briefs import (
+from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.knowledge_briefs import (
     KNOWLEDGE_BRIEF_PREDICATE,
     KnowledgeBriefClaimRefV1,
     KnowledgeBriefQueryRefV1,
     KnowledgeBriefValueV1,
     parse_knowledge_brief_value,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_digest,
     query_definition_path,
 )
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_core.playbill.claim_slots import (
+    classify_claim_slot,
+    classify_claim_slot_member,
+)
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_query import service_run_playbill_query
-from cruxible_core.temporal import ensure_utc, format_datetime
 
 BRIEF_HEALTH_REQUEST_DOMAIN = "playbill-knowledge-brief-health-request-v1"
 BRIEF_HEALTH_RESULT_DOMAIN = "playbill-knowledge-brief-health-result-v1"

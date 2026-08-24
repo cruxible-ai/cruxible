@@ -9,20 +9,37 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from cruxible_core.playbill.assembler import ProjectionAssembler
-from cruxible_core.playbill.attestations import verify_candidate_approvals
-from cruxible_core.playbill.bootstrap import VerifiedGenesis, generation_root
-from cruxible_core.playbill.candidates import (
+from cruxible_client.contracts.attestations import verify_candidate_approvals
+from cruxible_client.contracts.candidates import (
     CandidateRecord,
     CandidateRecordAnyVersion,
     CandidateRecordV2,
     CandidateRecordV3,
 )
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     GenerationRoot,
     SemanticRoot,
     canonical_bytes,
 )
+from cruxible_client.contracts.errors import (
+    PlaybillError,
+    PlaybillGitError,
+    ProjectionIntegrityError,
+    SettlementIntegrityError,
+)
+from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS, AcceptanceLawRegistry
+from cruxible_client.contracts.principals import (
+    PrincipalRegistrySnapshot,
+    principal_registry_from_tree,
+)
+from cruxible_client.contracts.types import (
+    CompilerCoordinate,
+    GenerationDescriptor,
+    GenesisCoordinate,
+    GitObjectFormat,
+)
+from cruxible_core.playbill.assembler import ProjectionAssembler
+from cruxible_core.playbill.bootstrap import VerifiedGenesis, generation_root
 from cruxible_core.playbill.cas import BodyProjectionProtocol
 from cruxible_core.playbill.checkpoints import (
     ReplayCheckpointBodyV2,
@@ -30,18 +47,7 @@ from cruxible_core.playbill.checkpoints import (
     load_verified_checkpoint,
     write_checkpoint,
 )
-from cruxible_core.playbill.errors import (
-    PlaybillError,
-    PlaybillGitError,
-    ProjectionIntegrityError,
-    SettlementIntegrityError,
-)
 from cruxible_core.playbill.git import GitLedger
-from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS, AcceptanceLawRegistry
-from cruxible_core.playbill.principals import (
-    PrincipalRegistrySnapshot,
-    principal_registry_from_tree,
-)
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -72,12 +78,6 @@ from cruxible_core.playbill.settlement import (
     parse_change_set_record,
     render_generation_descriptor,
     semantic_root_for_record,
-)
-from cruxible_core.playbill.types import (
-    CompilerCoordinate,
-    GenerationDescriptor,
-    GenesisCoordinate,
-    GitObjectFormat,
 )
 from cruxible_core.playbill.witness import WitnessRecord, WitnessSink
 from cruxible_core.storage.playbill_projection import (

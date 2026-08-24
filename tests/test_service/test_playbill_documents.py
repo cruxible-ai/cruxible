@@ -7,18 +7,18 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
 )
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
     DocumentNotFoundError,
     PlaybillCasError,
     PlaybillFormatError,
 )
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.service.playbill_documents import (
     PlaybillAcceptedCoordinate,

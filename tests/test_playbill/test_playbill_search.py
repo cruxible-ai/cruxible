@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from cruxible_client.contracts.knowledge_briefs import KnowledgeBriefValueV1
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
-from cruxible_core.playbill.knowledge_briefs import KnowledgeBriefValueV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.search import PlaybillSearchBudgetsV1, PlaybillSearchRequestV1

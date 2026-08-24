@@ -17,8 +17,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
-from cruxible_core.playbill.claim_verdicts import (
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.claim_verdicts import (
     EvidenceEpistemicGrade,
     EvidenceProvenanceGrade,
 )

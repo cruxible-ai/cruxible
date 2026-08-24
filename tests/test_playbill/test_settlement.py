@@ -8,22 +8,22 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity
-from cruxible_core.playbill.authoring_profiles import (
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
+from cruxible_client.contracts.authoring_profiles import (
     CLAIM_TYPE_AUTHORING_PROFILES,
     AuthorityProfileParametersV1,
     ClaimTypeProfileInputV1,
     expand_claim_type_profile,
 )
-from cruxible_core.playbill.candidates import CandidateRecordV3, candidate_digest
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest, render_claim_type
-from cruxible_core.playbill.compiler import current_compiler_coordinate
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.candidates import CandidateRecordV3, candidate_digest
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
+from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
 )
+from cruxible_core.playbill.compiler import current_compiler_coordinate
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.serving import bind_current_projection
 from cruxible_core.playbill.settlement import (

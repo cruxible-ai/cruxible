@@ -9,43 +9,35 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     GenerationRoot,
     SemanticRoot,
     typed_digest,
 )
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.cas import ContentAddressedBodyStore
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
     render_document,
 )
-from cruxible_core.playbill.errors import PlaybillExecutionError
-from cruxible_core.playbill.exhaust import (
-    PROCEDURE_EXHAUST_JOURNAL_FAMILY,
-    JournalStreamIdentityV1,
-    LocalJournalBackend,
-    ProcedureExhaustWriter,
-)
-from cruxible_core.playbill.procedures.artifacts import (
+from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactV1,
     procedure_artifact_digest,
     procedure_path,
     render_procedure,
 )
-from cruxible_core.playbill.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_core.playbill.procedures.measurements import (
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.measurements import (
     AcceptedQueryProcedureMeasurementV1,
     ProcedureMeasurementDeclarationV1,
     ProcedureMeasurementExpectationV1,
 )
-from cruxible_core.playbill.procedures.models import (
+from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     GuardPredicateV1,
     PredicateOperandV1,
@@ -55,6 +47,14 @@ from cruxible_core.playbill.procedures.models import (
     ProjectNodeV3,
     StateTapNodeV3,
     iter_pin_bindings,
+)
+from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.cas import ContentAddressedBodyStore
+from cruxible_core.playbill.exhaust import (
+    PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+    JournalStreamIdentityV1,
+    LocalJournalBackend,
+    ProcedureExhaustWriter,
 )
 from cruxible_core.playbill.procedures.resolution import (
     AcceptedAuthorityBasisV1,

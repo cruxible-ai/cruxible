@@ -8,9 +8,8 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
-from cruxible_core.playbill.source_references import (
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.source_references import (
     CasSourceReferenceV1,
     EvidenceCommitmentV1,
     ExternalSourceReferenceV1,
@@ -22,6 +21,7 @@ from cruxible_core.playbill.source_references import (
     validate_local_read_coordinate,
     validate_source_commitment,
 )
+from cruxible_core.playbill.projection import AcceptedCoordinate
 
 DIGEST_A = "sha256:" + "11" * 32
 DIGEST_B = "sha256:" + "22" * 32

@@ -8,15 +8,15 @@ import hashlib
 import pytest
 from pydantic import TypeAdapter
 
-from cruxible_core.playbill.authoring.bind import (
+from cruxible_client.authoring.bind import (
     AuthoringBindAmbiguityError,
     bind_working_selection_input,
 )
-from cruxible_core.playbill.authoring.examples import (
+from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     claim_flow_a_example,
 )
-from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 
 
 def _input() -> ClaimInput:

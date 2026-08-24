@@ -22,6 +22,29 @@ from cruxible_client import (
     contracts,
     observe_playbill_next_workspace,
 )
+from cruxible_client.authoring.bind import bind_working_selection_input
+from cruxible_client.authoring.examples import (
+    AUTHORING_EXAMPLE_FACTORIES,
+    AuthoringExampleName,
+    authoring_example,
+)
+from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.seed_client import (
+    apply_seed_directory_group,
+    plan_seed_directory,
+)
+from cruxible_client.authoring.sources import (
+    compile_client_source_context,
+    load_source_catalog,
+    root_aliases,
+)
+from cruxible_client.contracts.attestations import ApprovalStatement
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
@@ -31,29 +54,11 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.client.playbill_seed import (
-    apply_seed_directory_group,
-    plan_seed_directory,
-)
-from cruxible_core.client.playbill_sources import (
-    compile_client_source_context,
-    load_source_catalog,
-    root_aliases,
-)
 from cruxible_core.deprecation import (
     PLAYBILL_DIRECT_CLAIM_PROPOSE,
     emit_cli_deprecation,
 )
 from cruxible_core.playbill import native
-from cruxible_core.playbill.attestations import ApprovalStatement
-from cruxible_core.playbill.authoring.bind import bind_working_selection_input
-from cruxible_core.playbill.authoring.examples import (
-    AUTHORING_EXAMPLE_FACTORIES,
-    AuthoringExampleName,
-    authoring_example,
-)
-from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
     claim_type_input_example,
@@ -83,20 +88,15 @@ from cruxible_core.playbill.coverage.render import (
     render_coverage_result,
 )
 from cruxible_core.playbill.coverage.workspace import bindings_from_mapping, observe_workspace
-from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.native.grammar import NativeRenderError
 from cruxible_core.playbill.native.manifest import parse_native_manifest
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.review import (
     PlaybillProposalReview,
     render_playbill_proposal_review,
 )
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
-from cruxible_core.playbill.source_catalog import SourceCatalog, SourceCompilationBundle
-from cruxible_core.playbill.types import PrincipalRecord
-from cruxible_core.primitives import canonical_json
 from cruxible_core.service.playbill_procedure_runs import ProcedureBindRequestV1
 
 ResultT = TypeVar("ResultT")

@@ -8,36 +8,36 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
     parse_artifact_identity,
 )
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lower_claim_type_input
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     claim_artifact_digest,
     parse_claim,
     render_claim,
 )
+from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lower_claim_type_input
 from cruxible_core.playbill.closure import (
     ArtifactDependencyStateV1,
     build_dependency_index,
     parse_dependency_artifact,
 )
-from cruxible_core.playbill.errors import PlaybillError
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_core.playbill.procedures.models import ProcedureDefinitionV3
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,

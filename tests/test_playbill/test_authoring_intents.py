@@ -7,16 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
     ClaimAuthoringPayloadV1,
     SelfSourceBodyV1,
 )
+from cruxible_client.contracts.claims import LiteralClaimObject
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.claims import LiteralClaimObject
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.semantic import SemanticAddress
 from tests.test_playbill._support import initialize_local
 
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"

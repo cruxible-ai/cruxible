@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.assembler import ProjectionAssembler
-from cruxible_core.playbill.canonical import SemanticRoot, canonical_bytes
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.canonical import SemanticRoot, canonical_bytes
+from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
     ProjectionFormatError,
 )
+from cruxible_client.contracts.types import GitObjectFormat
+from cruxible_core.playbill.assembler import ProjectionAssembler
 from cruxible_core.playbill.projection import AssemblerRequest, AssemblerResult
 from cruxible_core.playbill.projection_tree import TreeReadLimits
-from cruxible_core.playbill.types import GitObjectFormat
 from cruxible_core.storage.playbill_projection import bind_projection
 from tests.test_playbill._projection_support import (
     MemoryLedger,

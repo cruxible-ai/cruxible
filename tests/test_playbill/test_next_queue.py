@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.authoring.models import AuthoringExistingClaimDispositionV1
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.captures import parse_capture_envelope
+from cruxible_client.contracts.claims import claim_citation_references
+from cruxible_client.contracts.knowledge_briefs import KnowledgeBriefValueV1
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.models import AuthoringExistingClaimDispositionV1
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
-from cruxible_core.playbill.captures import parse_capture_envelope
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claims import claim_citation_references
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
-from cruxible_core.playbill.knowledge_briefs import KnowledgeBriefValueV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.service.playbill_claims import _claim_from_view, service_list_playbill_claims

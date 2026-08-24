@@ -9,8 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.documents import (
     AcceptedDocument,
     DocumentAuthority,
     DocumentLifecycle,
@@ -22,7 +21,8 @@ from cruxible_core.playbill.documents import (
     parse_document,
     render_document,
 )
-from cruxible_core.playbill.errors import DocumentFormatError, PlaybillCasError
+from cruxible_client.contracts.errors import DocumentFormatError, PlaybillCasError
+from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.instance import PlaybillInstance
 from tests.test_playbill._support import initialize_local
 

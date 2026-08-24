@@ -24,21 +24,21 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.discovery import (
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.discovery import (
     ContextCapsuleV1,
     ContextMaterialV1,
     DiscoveryPageV1,
     reject_locator_or_secret,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.cards import InterfaceDiscoveryPageV1
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.query.semantic_discovery import DiscoveryError
-from cruxible_core.playbill.source_references import (
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.source_references import (
     CoverageDescriptorV1,
     SemanticReadCoordinateV1,
 )
+from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.query.cards import InterfaceDiscoveryPageV1
+from cruxible_core.playbill.query.semantic_discovery import DiscoveryError
 
 CAPSULE_RECEIPT_DIGEST_DOMAIN = "playbill-bounded-context-capsule-v1"
 DATA_FENCE_OPEN = "<<<PLAYBILL-DATA"

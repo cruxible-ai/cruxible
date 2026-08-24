@@ -10,14 +10,14 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import ValidationError
 
-from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     GenerationRoot,
     SemanticRoot,
     typed_digest,
 )
-from cruxible_core.playbill.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalHeadVectorV1,

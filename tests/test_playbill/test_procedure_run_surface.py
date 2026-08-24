@@ -5,14 +5,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.procedures.artifacts import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactV2,
     procedure_artifact_digest,
 )
-from cruxible_core.playbill.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_core.playbill.procedures.models import (
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     GuardPredicateV1,
     PredicateOperandV1,
@@ -20,8 +19,9 @@ from cruxible_core.playbill.procedures.models import (
     ProcedurePinSlotV1,
     StateTapNodeV3,
 )
+from cruxible_client.contracts.query.definitions import query_definition_digest
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.query.definitions import query_definition_digest
 from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
 )

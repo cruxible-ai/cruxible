@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from cruxible_core.primitives import canonical_json
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.provider.types import ProviderContext
 
 

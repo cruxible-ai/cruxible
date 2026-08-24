@@ -43,7 +43,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from cruxible_core.primitives import canonical_json, json_type_name
+from cruxible_client.contracts.primitives import canonical_json, json_type_name
 
 MutationPayloadRetention = Literal["full", "preview", "metadata"]
 

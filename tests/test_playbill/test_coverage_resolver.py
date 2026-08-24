@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.playbill.coverage.contracts import (
     COVERAGE_HEALTH_ABSENCE_IS_FACTUAL,
     COVERAGE_HEALTH_PROVES_FRESHNESS,

@@ -6,9 +6,16 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.artifacts import parse_artifact_identity
+from cruxible_client.contracts.errors import ProposalIntegrityError, SubjectNotFoundError
+from cruxible_client.contracts.subjects import (
+    SubjectShell,
+    parse_subject,
+    render_subject,
+    subject_digest,
+    subject_path,
+)
 from cruxible_core.playbill.actor_context import TransportCapability
-from cruxible_core.playbill.artifacts import parse_artifact_identity
-from cruxible_core.playbill.errors import ProposalIntegrityError, SubjectNotFoundError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_subjects import SubjectProjectionView
@@ -19,13 +26,6 @@ from cruxible_core.playbill.proposals import (
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
-)
-from cruxible_core.playbill.subjects import (
-    SubjectShell,
-    parse_subject,
-    render_subject,
-    subject_digest,
-    subject_path,
 )
 
 

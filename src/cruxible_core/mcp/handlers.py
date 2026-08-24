@@ -16,30 +16,39 @@ from cruxible_client import (
     inspect_workspace_floor,
     materialize_playbill_floor,
 )
-from cruxible_client.errors import ServerUnreachableError
-from cruxible_core.client.playbill_seed import (
+from cruxible_client.authoring.bind import bind_working_selection_input
+from cruxible_client.authoring.examples import authoring_example
+from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.seed_client import (
     SeedApplicationResultV1,
     SeedPlanResultV1,
     apply_seed_directory_group,
     plan_seed_directory,
 )
-from cruxible_core.client.playbill_sources import (
+from cruxible_client.authoring.sources import (
     compile_client_source_context,
     load_source_catalog,
     mapped_root_aliases,
 )
-from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.mcp.workspace import mcp_workspace_root, resolve_workspace_path
-from cruxible_core.playbill.attestations import ApprovalAttestation
-from cruxible_core.playbill.authoring.bind import bind_working_selection_input
-from cruxible_core.playbill.authoring.examples import authoring_example
-from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.attestations import ApprovalAttestation
+from cruxible_client.contracts.authoring.models import (
     InsertionConfirmationObservationV1,
 )
+from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
+from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_catalog import SourceCompilationBundle
+from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_client.contracts.temporal import parse_datetime
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.errors import ServerUnreachableError
+from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.mcp.workspace import mcp_workspace_root, resolve_workspace_path
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_example
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
-from cruxible_core.playbill.claim_types import ClaimType
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
@@ -47,11 +56,7 @@ from cruxible_core.playbill.coverage.workspace import (
     bindings_from_mapping,
     observe_workspace,
 )
-from cruxible_core.playbill.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
-from cruxible_core.playbill.documents import DocumentShell
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.definitions import QueryDefinitionV1
-from cruxible_core.playbill.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.search import (
     SEARCH_KINDS,
     PlaybillSearchBudgetsV1,
@@ -59,10 +64,6 @@ from cruxible_core.playbill.search import (
     SearchKind,
     SearchStatus,
 )
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_catalog import SourceCompilationBundle
-from cruxible_core.playbill.subjects import SubjectShell
-from cruxible_core.playbill.types import PrincipalRecord
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
 from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
@@ -71,7 +72,6 @@ from cruxible_core.service.playbill_procedure_runs import (
     ProcedureReadinessRequestV1,
     ProcedureRunRequestV1,
 )
-from cruxible_core.temporal import parse_datetime
 
 _client_cache: CruxibleClient | None = None
 _client_cache_key: tuple[str | None, str | None, str | None] | None = None

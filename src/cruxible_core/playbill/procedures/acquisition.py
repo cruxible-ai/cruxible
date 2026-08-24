@@ -15,17 +15,17 @@ from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.acquisition_policies import (
+from cruxible_client.contracts.acquisition_policies import (
     AcquisitionInputDecisionV1,
     InputAcquisitionRuleV1,
 )
-from cruxible_core.playbill.artifacts import ArtifactPin
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.artifacts import ArtifactPin
+from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
     normalize_canonical,
 )
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.captures import (
     CaptureContractV1,
     CaptureEnvelopeV1,
     CaptureObjectStoreProtocol,
@@ -36,13 +36,13 @@ from cruxible_core.playbill.captures import (
     capture_digest,
     parse_capture_envelope,
 )
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_verdicts import (
+from cruxible_client.contracts.claim_verdicts import (
     EvidenceEpistemicGrade,
     EvidenceProvenanceGrade,
 )
-from cruxible_core.playbill.errors import PlaybillCasError
-from cruxible_core.playbill.providers import ProviderV1, provider_digest
+from cruxible_client.contracts.errors import PlaybillCasError
+from cruxible_client.contracts.providers import ProviderV1, provider_digest
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.source_readers import (
     ExternalCaptureAcquisitionV1,
     ExternalSourceError,

@@ -17,14 +17,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.claim_types import claim_type_digest
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import claim_type_digest
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifact,
     ClaimBacking,
@@ -35,19 +35,21 @@ from cruxible_core.playbill.claims import (
     claim_path,
     claim_statement_digest,
 )
-from cruxible_core.playbill.procedures.artifacts import AcceptedProcedureV1
-from cruxible_core.playbill.procedures.line_specs import (
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
     LineSpecV1,
     line_spec_digest,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDefinitionV1,
     query_definition_digest,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import subject_path
+from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.playbill.query.impact import (
     SOURCE_SUPERSEDED,
     SOURCE_UNCOVERED,
@@ -57,8 +59,6 @@ from cruxible_core.playbill.query.impact import (
     DependencyImpactV1,
     build_dependency_impact,
 )
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.subjects import subject_path
 from tests.test_playbill._line_runtime_support import (
     accepted_line,
     accepted_procedure,

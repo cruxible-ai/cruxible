@@ -28,7 +28,7 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.native.grammar import NativeLensV1, default_native_lens
 from cruxible_core.playbill.projection import AcceptedCoordinate

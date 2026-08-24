@@ -4,18 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
 )
-from cruxible_core.playbill.candidates import SemanticCandidate, candidate_digest
-from cruxible_core.playbill.canonical import manifest_root, semantic_diff
+from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
+from cruxible_client.contracts.canonical import manifest_root, semantic_diff
+from cruxible_client.contracts.subjects import SubjectShell, render_subject
 from cruxible_core.playbill.compiler import PC_A1_COMPILER
 from cruxible_core.playbill.projection import ProvisionalProjectionCoordinate
 from cruxible_core.playbill.projection_subjects import (
     compile_provisional_subject_projection,
 )
-from cruxible_core.playbill.subjects import SubjectShell, render_subject
 from tests.test_playbill._projection_support import MemoryLedger, accepted_coordinate
 
 

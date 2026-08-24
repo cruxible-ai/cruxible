@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.errors import PlaybillFormatError
-from cruxible_core.playbill.source_catalog import (
+from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.source_catalog import (
     SourceCatalog,
     SourceCatalogEntry,
     merge_source_catalogs,
 )
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.service.playbill_documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,

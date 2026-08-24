@@ -11,51 +11,51 @@ from typing import TYPE_CHECKING, Literal, Mapping, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactFormatRegistry,
     ArtifactFormatTag,
     ArtifactKindRegistry,
     ArtifactPathKind,
 )
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     canonical_bytes,
     file_digest,
     normalize_canonical,
 )
-from cruxible_core.playbill.cas import BodyAccessContext, BodyProjectionProtocol
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.claim_types import (
     ClaimTypeFormatError,
     claim_type_digest,
     claim_type_projection_structure,
     parse_claim_type,
 )
-from cruxible_core.playbill.documents import document_digest, parse_document
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.documents import document_digest, parse_document
+from cruxible_client.contracts.errors import (
     DocumentFormatError,
     PlaybillCasError,
     ProjectionFormatError,
     SettlementIntegrityError,
     SubjectFormatError,
 )
-from cruxible_core.playbill.explanation import (
-    ProjectionCoordinateContext,
-    accepted_artifact_explanation_facts,
-    accepted_document_explanation_facts,
-)
-from cruxible_core.playbill.principal_rendering import render_principal
-from cruxible_core.playbill.projection_extensions import (
+from cruxible_client.contracts.principal_rendering import render_principal
+from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
 )
-from cruxible_core.playbill.semantic import (
+from cruxible_client.contracts.semantic import (
     ContentSpan,
     SemanticAddress,
     SourceMapping,
     whole_body_mapping,
 )
-from cruxible_core.playbill.subjects import parse_subject, subject_digest
-from cruxible_core.playbill.types import PrincipalRecord
+from cruxible_client.contracts.subjects import parse_subject, subject_digest
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.playbill.cas import BodyAccessContext, BodyProjectionProtocol
+from cruxible_core.playbill.explanation import (
+    ProjectionCoordinateContext,
+    accepted_artifact_explanation_facts,
+    accepted_document_explanation_facts,
+)
 
 if TYPE_CHECKING:
     from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -499,13 +499,13 @@ def parse_projection_tree(
 ) -> ParsedProjectionTree:
     """Parse all registered blobs and produce one sorted, typed row stream."""
 
-    from cruxible_core.playbill.captures import (
+    from cruxible_client.contracts.captures import (
         CaptureFormatError,
         capture_contract_digest,
         parse_capture_contract,
     )
-    from cruxible_core.playbill.claim_verdicts import claim_verdict_v1_compat
-    from cruxible_core.playbill.claims import (
+    from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
+    from cruxible_client.contracts.claims import (
         ClaimFormatError,
         claim_artifact_digest,
         claim_statement_address,
@@ -894,7 +894,7 @@ def parse_projection_tree(
                     )
                 continue
             if kind == "provider":
-                from cruxible_core.playbill.providers import parse_provider, provider_digest
+                from cruxible_client.contracts.providers import parse_provider, provider_digest
 
                 provider = parse_provider(content, path=path)
                 identity = provider.identity.qualified
@@ -974,7 +974,7 @@ def parse_projection_tree(
                 )
                 continue
             if kind == "source-acquisition-policy":
-                from cruxible_core.playbill.acquisition_policies import (
+                from cruxible_client.contracts.acquisition_policies import (
                     acquisition_policy_digest,
                     parse_acquisition_policy,
                 )
@@ -1021,7 +1021,7 @@ def parse_projection_tree(
                 )
                 continue
             if kind == "standing-mandate":
-                from cruxible_core.playbill.standing_mandates import (
+                from cruxible_client.contracts.standing_mandates import (
                     parse_standing_mandate,
                     standing_mandate_digest,
                 )
@@ -1068,11 +1068,11 @@ def parse_projection_tree(
                 )
                 continue
             if kind == "procedure":
-                from cruxible_core.playbill.procedures.artifacts import (
+                from cruxible_client.contracts.procedures.artifacts import (
                     parse_procedure,
                     procedure_artifact_digest,
                 )
-                from cruxible_core.playbill.procedures.graph import (
+                from cruxible_client.contracts.procedures.graph import (
                     analyze_procedure_v3,
                     compute_procedure_node_digests_v3,
                 )
@@ -1222,7 +1222,7 @@ def parse_projection_tree(
                     1,
                     classification="semantic",
                 ):
-                    from cruxible_core.playbill.procedures.artifacts import (
+                    from cruxible_client.contracts.procedures.artifacts import (
                         AcceptedProcedureV1,
                     )
                     from cruxible_core.playbill.procedures.resolution import (
@@ -1283,7 +1283,7 @@ def parse_projection_tree(
                     )
                 continue
             if kind == "line":
-                from cruxible_core.playbill.procedures.line_specs import (
+                from cruxible_client.contracts.procedures.line_specs import (
                     line_spec_digest,
                     parse_line_spec,
                 )
@@ -1367,7 +1367,7 @@ def parse_projection_tree(
                     )
                 continue
             if kind == "query-definition":
-                from cruxible_core.playbill.query.definitions import (
+                from cruxible_client.contracts.query.definitions import (
                     parse_query_definition,
                     query_definition_digest,
                 )

@@ -9,12 +9,13 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Final, Protocol, TypeVar
 
-from cruxible_core.playbill.cas import BodyProjectionProtocol
-from cruxible_core.playbill.compiler import projection_registry_for_compiler
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.errors import (
     ProjectionCoordinateError,
     ProjectionPublicationError,
 )
+from cruxible_client.contracts.projection_extensions import ProjectionExtensionRegistry
+from cruxible_core.playbill.cas import BodyProjectionProtocol
+from cruxible_core.playbill.compiler import projection_registry_for_compiler
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -29,7 +30,6 @@ from cruxible_core.playbill.projection import (
     render_projection_manifest,
 )
 from cruxible_core.playbill.projection_artifacts import ParsedProjectionTree, parse_projection_tree
-from cruxible_core.playbill.projection_extensions import ProjectionExtensionRegistry
 from cruxible_core.playbill.projection_tree import read_registered_tree
 from cruxible_core.playbill.protocols import LedgerRepositoryProtocol
 from cruxible_core.storage.playbill_projection import (

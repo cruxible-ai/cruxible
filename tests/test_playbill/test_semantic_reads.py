@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.discovery import ExpandRequestV1, ExpansionBudgetV1
+from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import OpenSourceRequestV1
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.discovery import ExpandRequestV1, ExpansionBudgetV1
-from cruxible_core.playbill.errors import PlaybillFormatError
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
-from cruxible_core.playbill.source_references import OpenSourceRequestV1
 from cruxible_core.service.playbill_claims import (
     service_expand_playbill_semantic,
     service_explain_playbill_claim,

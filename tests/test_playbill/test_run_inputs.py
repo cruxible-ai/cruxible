@@ -6,9 +6,9 @@ from datetime import timedelta
 
 import pytest
 
-from cruxible_core.playbill.captures import parse_capture_envelope
+from cruxible_client.contracts.captures import parse_capture_envelope
+from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.errors import PlaybillExecutionError
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,

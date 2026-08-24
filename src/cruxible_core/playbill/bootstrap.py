@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     BootstrapRoot,
     ChangeSetDigest,
     GenerationRoot,
@@ -17,14 +17,14 @@ from cruxible_core.playbill.canonical import (
     manifest_root,
     typed_digest,
 )
-from cruxible_core.playbill.errors import PlaybillBootstrapError
-from cruxible_core.playbill.git import GitLedger
-from cruxible_core.playbill.principal_rendering import render_principal
-from cruxible_core.playbill.types import (
+from cruxible_client.contracts.errors import PlaybillBootstrapError
+from cruxible_client.contracts.principal_rendering import render_principal
+from cruxible_client.contracts.types import (
     GenerationDescriptor,
     PlaybillTrustRoot,
     PrincipalRecord,
 )
+from cruxible_core.playbill.git import GitLedger
 
 
 @dataclass(frozen=True)

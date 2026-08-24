@@ -8,21 +8,21 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from cruxible_core.playbill.acquisition_policies import (
+from cruxible_client.contracts.acquisition_policies import (
     IndependentCoherenceV1,
     InputAcquisitionRuleV1,
     SourceAcquisitionPolicyV1,
     acquisition_policy_digest,
 )
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.capture_journal import (
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.capture_journal import (
     CaptureJournalError,
     CaptureLandingEventV1,
     InMemoryCaptureLandingJournal,
     capture_landing_idempotency_key,
 )
-from cruxible_core.playbill.captures import CanonicalDurationV1, build_cas_capture
+from cruxible_client.contracts.captures import CanonicalDurationV1, build_cas_capture
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
     JournalHeadVectorV1,

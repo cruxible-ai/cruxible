@@ -9,13 +9,13 @@ from typing import Any, Callable, Literal
 from mcp.server.fastmcp import FastMCP
 
 from cruxible_client import contracts
+from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.seed_client import SeedApplicationResultV1, SeedPlanResultV1
+from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_core import __version__
-from cruxible_core.client.playbill_seed import SeedApplicationResultV1, SeedPlanResultV1
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.tool_prompts import tool_description
-from cruxible_core.playbill.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
-from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 
 
 def register_tools(

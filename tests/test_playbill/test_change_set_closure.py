@@ -4,25 +4,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_core.playbill.candidates import CandidateRecordV3
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.candidates import CandidateRecordV3
+from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     render_claim_type,
 )
-from cruxible_core.playbill.closure import evaluate_dependency_closure
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
 )
+from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
+from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.closure import evaluate_dependency_closure
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -38,7 +39,6 @@ from cruxible_core.playbill.service.review import (
     render_playbill_proposal_review,
     service_review_playbill_proposal,
 )
-from cruxible_core.playbill.subjects import SubjectShell, render_subject, subject_digest
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
 

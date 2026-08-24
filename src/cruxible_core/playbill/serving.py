@@ -11,21 +11,21 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     GenerationRoot,
     LogicalDigest,
     SemanticRoot,
     Sha256Value,
     canonical_bytes,
 )
-from cruxible_core.playbill.errors import ProjectionIntegrityError, ProjectionPublicationError
+from cruxible_client.contracts.errors import ProjectionIntegrityError, ProjectionPublicationError
+from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.playbill.projection import (
     AcceptedProjectionCoordinate,
     AssemblerResult,
     ProjectionManifest,
     projection_manifest_name,
 )
-from cruxible_core.playbill.types import GitObjectFormat
 from cruxible_core.storage.playbill_projection import ProjectionHandle, bind_projection
 
 SERVING_MANIFEST_FILE = "serving.json"

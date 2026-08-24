@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 
 from cruxible_client import CruxibleClient
-from cruxible_client.playbill_briefs import prepare_playbill_brief
+from cruxible_client.authoring.briefs import prepare_playbill_brief
 
 COORDINATE = {
     "tag": "playbill-accepted-coordinate-v1",

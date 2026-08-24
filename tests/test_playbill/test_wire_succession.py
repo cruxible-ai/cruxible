@@ -21,7 +21,7 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.candidates import (
+from cruxible_client.contracts.candidates import (
     PRODUCED_CANDIDATE_VERSION,
     CandidateRecord,
     CandidateRecordV2,
@@ -32,7 +32,7 @@ from cruxible_core.playbill.candidates import (
     candidate_digest,
     render_candidate_record,
 )
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     DependencyEdgeRoot,
     SemanticManifestRoot,
     SemanticMerkleRoot,
@@ -40,20 +40,21 @@ from cruxible_core.playbill.canonical import (
     manifest_root,
     semantic_projection,
 )
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+    render_document,
+)
+from cruxible_client.contracts.errors import SettlementIntegrityError
+from cruxible_client.contracts.merkle import merkle_manifest_root
+from cruxible_client.contracts.types import GenerationDescriptor
 from cruxible_core.playbill.closure import (
     ClosureEvaluationV3,
     dependency_edge_root,
     evaluate_dependency_closure,
     evaluate_dependency_closure_v3,
 )
-from cruxible_core.playbill.documents import (
-    DocumentAuthority,
-    DocumentLifecycle,
-    DocumentShell,
-    render_document,
-)
-from cruxible_core.playbill.errors import SettlementIntegrityError
-from cruxible_core.playbill.merkle import merkle_manifest_root
 from cruxible_core.playbill.proposals import evaluate_proposal_tree
 from cruxible_core.playbill.settlement import (
     SEMANTIC_ROOT_V2_DOMAIN,
@@ -66,7 +67,6 @@ from cruxible_core.playbill.settlement import (
     parse_change_set_record,
     render_change_set,
 )
-from cruxible_core.playbill.types import GenerationDescriptor
 from tests.test_playbill._support import initialize_local
 
 DOCUMENT_PATH = "documents/playbill-design.yaml"

@@ -7,24 +7,24 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.claims import (
+    ClaimArtifactV2,
+    LiteralClaimObject,
+    claim_statement_digest,
+)
+from cruxible_client.contracts.knowledge_briefs import (
+    KNOWLEDGE_BRIEF_PREDICATE,
+    parse_knowledge_brief_value,
+)
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.brief_health import (
     KnowledgeBriefHealthEvaluationV1,
     KnowledgeBriefHealthEvaluator,
     KnowledgeBriefHealthRequestV1,
 )
-from cruxible_core.playbill.claims import (
-    ClaimArtifactV2,
-    LiteralClaimObject,
-    claim_statement_digest,
-)
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.knowledge_briefs import (
-    KNOWLEDGE_BRIEF_PREDICATE,
-    parse_knowledge_brief_value,
-)
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
     _claim_from_view,

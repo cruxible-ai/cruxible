@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from cruxible_core.playbill.discovery import DESCRIPTOR_CLAIM_TYPE_SEEDS
+from cruxible_client.contracts.discovery import DESCRIPTOR_CLAIM_TYPE_SEEDS
 from cruxible_core.playbill.projection_artifacts import (
     PLAYBILL_ARTIFACT_KINDS,
     PLAYBILL_FORMAT_RESERVATIONS,

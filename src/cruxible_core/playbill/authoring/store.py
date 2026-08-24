@@ -12,9 +12,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from cruxible_core.playbill.authoring.models import AuthoringIntentV1
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.errors import PlaybillError
+from cruxible_client.contracts.authoring.models import AuthoringIntentV1
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.errors import PlaybillError
 
 AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})

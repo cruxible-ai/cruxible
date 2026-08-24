@@ -13,8 +13,8 @@ from pydantic import (
     field_validator,
 )
 
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.temporal import ensure_utc, format_datetime, utc_now
 
 
 class RelationshipProvenance(BaseModel):

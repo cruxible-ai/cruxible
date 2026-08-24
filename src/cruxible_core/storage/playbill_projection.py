@@ -11,14 +11,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     LogicalDigest,
     Sha256Value,
     canonical_bytes,
     typed_digest,
 )
+from cruxible_client.contracts.errors import ProjectionIntegrityError
+from cruxible_client.contracts.projection_extensions import (
+    ProjectionExtensionRegistry,
+    ProjectionFact,
+)
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.errors import ProjectionIntegrityError
 from cruxible_core.playbill.projection import (
     PROJECTION_SCHEMA_VERSION,
     AcceptedProjectionCoordinate,
@@ -33,10 +37,6 @@ from cruxible_core.playbill.projection_claims import ClaimProjectionView, claim_
 from cruxible_core.playbill.projection_documents import (
     DocumentProjectionView,
     document_projection_view,
-)
-from cruxible_core.playbill.projection_extensions import (
-    ProjectionExtensionRegistry,
-    ProjectionFact,
 )
 from cruxible_core.playbill.projection_subjects import (
     SubjectProjectionView,

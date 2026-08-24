@@ -11,7 +11,7 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.canonical import CasDigest, canonical_bytes
+from cruxible_client.contracts.canonical import CasDigest, canonical_bytes
 
 MARKDOWN_SPANS_V1 = "playbill-markdown-spans-v1"
 _FRONT_MATTER_DELIMITER = "---"

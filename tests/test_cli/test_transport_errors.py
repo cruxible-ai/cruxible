@@ -14,7 +14,7 @@ import pytest
 from click.testing import CliRunner
 
 from cruxible_client.errors import ServerUnreachableError
-from cruxible_client.http_client import CruxibleClient
+from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.main import cli
 
 

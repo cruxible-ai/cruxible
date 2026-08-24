@@ -30,17 +30,17 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.query.definitions import QueryDefinitionV1
-from cruxible_core.playbill.query.engine import (
-    CLAIM_CONFLICT,
-    ClaimQueryResultV1,
-    evaluate_claim_query,
-)
-from cruxible_core.playbill.query.grammar import (
+from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.grammar import (
     QueryComparisonOperatorV1,
     QueryFilterV1,
     QueryTraversalStepV1,
     QueryValueTypeV1,
+)
+from cruxible_core.playbill.query.engine import (
+    CLAIM_CONFLICT,
+    ClaimQueryResultV1,
+    evaluate_claim_query,
 )
 from tests.test_playbill import _modeling_parity_worlds as worlds
 from tests.test_playbill._modeling_parity_support import (

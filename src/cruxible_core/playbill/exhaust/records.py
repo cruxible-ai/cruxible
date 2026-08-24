@@ -19,8 +19,7 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
     CasDigest,
@@ -29,9 +28,10 @@ from cruxible_core.playbill.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_core.playbill.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import PlaybillJournalError
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.temporal import ensure_utc, format_datetime
 
 PROCEDURE_EXHAUST_JOURNAL_FAMILY = "procedure-exhaust-v1"
 QUERY_RECEIPT_JOURNAL_FAMILY = "query-receipt-v1"

@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_core.playbill.attestations import ApprovalStatement
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.attestations import ApprovalStatement
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,

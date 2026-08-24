@@ -6,12 +6,7 @@ import base64
 from dataclasses import dataclass
 from typing import Literal
 
-from cruxible_core.playbill.authoring.lowering import (
-    AuthoringLoweringError,
-    LoweredAuthoring,
-    lower_authoring,
-)
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.authoring.models import (
     AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN,
     AUTHORING_INSTANCE_DESCRIPTOR_DIGEST_DOMAIN,
     AUTHORING_RESOLVED_DIGEST_DOMAIN,
@@ -30,9 +25,14 @@ from cruxible_core.playbill.authoring.models import (
     WorkingSelectionObservationV1,
     build_preflight_certificate,
 )
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.diagnostics import CompilerDiagnostic
-from cruxible_core.playbill.errors import ProposalAdmissionError
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.errors import ProposalAdmissionError
+from cruxible_core.playbill.authoring.lowering import (
+    AuthoringLoweringError,
+    LoweredAuthoring,
+    lower_authoring,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import (

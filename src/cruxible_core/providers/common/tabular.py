@@ -12,9 +12,9 @@ from typing import Any
 
 import polars as pl
 
-from cruxible_core.primitives import canonical_json
+from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.temporal import format_datetime
 from cruxible_core.provider.types import ProviderContext
-from cruxible_core.temporal import format_datetime
 
 _SUPPORTED_EXTENSIONS = {".csv", ".json", ".jsonl", ".ndjson", ".xlsx", ".xls"}
 _METADATA_FIELDS = {

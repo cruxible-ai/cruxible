@@ -19,6 +19,8 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_client.contracts.primitives import new_id
+from cruxible_client.contracts.temporal import is_effective
 from cruxible_core.graph.assertion_state import (
     EntityLifecycleState,
     EntityLifecycleStatus,
@@ -39,8 +41,6 @@ from cruxible_core.graph.provenance import (
     stamp_provenance_modified,
 )
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.primitives import new_id
-from cruxible_core.temporal import is_effective
 
 CLAIM_ID_PREFIX = "CLM"
 """Prefix for minted claim identities (``CLM-<16 hex>``)."""

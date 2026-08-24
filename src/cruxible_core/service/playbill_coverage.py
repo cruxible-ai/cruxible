@@ -26,23 +26,25 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.captures import (
     CaptureContractV1,
     capture_contract_digest,
     capture_contract_is_self_asserted,
     parse_capture_contract,
     parse_capture_envelope,
 )
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_verdicts import (
+from cruxible_client.contracts.claim_verdicts import (
     EvidenceProvenanceGrade,
     observation_trust_grade,
 )
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     claim_artifact_digest,
     claim_statement_digest,
 )
+from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.source_references import SourceAccessClass
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
     build_overlay,
@@ -77,10 +79,8 @@ from cruxible_core.playbill.coverage.manifest import (
     write_coverage_manifest_v2,
 )
 from cruxible_core.playbill.coverage.resolver import resolve_coverage_v2
-from cruxible_core.playbill.errors import ProposalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
-from cruxible_core.playbill.source_references import SourceAccessClass
 from cruxible_core.service.playbill_claims import (
     _claim_from_view,
     service_list_playbill_claims,

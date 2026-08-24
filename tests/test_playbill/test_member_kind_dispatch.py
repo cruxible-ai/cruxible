@@ -17,16 +17,16 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.claim_types import render_claim_type
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import render_claim_type
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
     render_document,
 )
+from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.playbill.proposals import evaluate_proposal_tree
-from cruxible_core.playbill.subjects import render_subject
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_change_set_closure import claim_type, subject
 

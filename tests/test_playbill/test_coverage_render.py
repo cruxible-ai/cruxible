@@ -9,12 +9,13 @@ that never reads as an absence.
 
 from __future__ import annotations
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.claims import (
     build_claim_citation,
     claim_path,
     claim_statement_address,
 )
+from cruxible_client.contracts.source_references import CoverageDescriptorV1
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageBatchSummaryV1,
@@ -36,7 +37,6 @@ from cruxible_core.playbill.coverage.render import (
     render_coverage_result,
 )
 from cruxible_core.playbill.coverage.resolver import resolve_coverage
-from cruxible_core.playbill.source_references import CoverageDescriptorV1
 from tests.test_playbill._coverage_support import (
     CITED,
     EPILOGUE,

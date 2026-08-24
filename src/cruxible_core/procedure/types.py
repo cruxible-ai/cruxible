@@ -17,6 +17,8 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_client.contracts.primitives import new_id
+from cruxible_client.contracts.temporal import ensure_utc, utc_now
 from cruxible_core.config.schema import (
     AssertSpec,
     ContractReference,
@@ -28,7 +30,6 @@ from cruxible_core.config.schema import (
 )
 from cruxible_core.graph.evidence import EvidenceRef
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.primitives import new_id
 from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,
     coerce_present_declared_format,
@@ -40,7 +41,6 @@ from cruxible_core.procedure.guards import GuardSpec
 from cruxible_core.procedure.proposal import ProcedureProposeGroupSpec
 from cruxible_core.procedure.resolution_oracle import ContractMeasurement
 from cruxible_core.receipt_tree.types import Receipt
-from cruxible_core.temporal import ensure_utc, utc_now
 
 ProcedureStatus = Literal["pending", "live", "rejected", "retired", "withdrawn"]
 """Lifecycle states. ``withdrawn`` is the author's own retraction of a pending

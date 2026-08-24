@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 import cruxible_core.storage.playbill_projection as projection_module
+from cruxible_client.contracts.errors import ProjectionIntegrityError
 from cruxible_core.playbill.assembler import PROJECTION_CRASH_POINTS, ProjectionAssembler
-from cruxible_core.playbill.errors import ProjectionIntegrityError
 from cruxible_core.playbill.projection import (
     ProjectionManifest,
     projection_manifest_name,

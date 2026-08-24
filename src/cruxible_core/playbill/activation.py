@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Protocol
 
+from cruxible_client.contracts.errors import SettlementIntegrityError
+from cruxible_client.contracts.types import GenesisCoordinate
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
 from cruxible_core.playbill.cas import BodyProjectionProtocol
 from cruxible_core.playbill.checkpoints import (
@@ -15,7 +17,6 @@ from cruxible_core.playbill.checkpoints import (
     checkpoint_body,
     write_checkpoint,
 )
-from cruxible_core.playbill.errors import SettlementIntegrityError
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
@@ -30,7 +31,6 @@ from cruxible_core.playbill.settlement import (
     VerifiedGenerationBundle,
     render_generation_descriptor,
 )
-from cruxible_core.playbill.types import GenesisCoordinate
 from cruxible_core.playbill.witness import WitnessRecord, WitnessSink
 from cruxible_core.storage.playbill_projection import bind_projection
 

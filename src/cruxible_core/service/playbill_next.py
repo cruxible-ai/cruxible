@@ -9,32 +9,32 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from cruxible_core.playbill.brief_health import KnowledgeBriefHealthResultV1
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
     canonical_bytes,
     normalize_canonical,
     typed_digest,
 )
-from cruxible_core.playbill.captures import CanonicalDurationV1, parse_capture_envelope
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_slots import classify_claim_slot
-from cruxible_core.playbill.claim_verdicts import ClaimVerdictResultV2
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.captures import CanonicalDurationV1, parse_capture_envelope
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV2
+from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     claim_citation_references,
 )
+from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.knowledge_briefs import KNOWLEDGE_BRIEF_PREDICATE
+from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_core.playbill.brief_health import KnowledgeBriefHealthResultV1
+from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.claim_slots import classify_claim_slot
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
-from cruxible_core.playbill.errors import PlaybillError
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.knowledge_briefs import KNOWLEDGE_BRIEF_PREDICATE
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_briefs import service_list_playbill_brief_reauthor_queue
 from cruxible_core.service.playbill_claims import _claim_from_view, service_list_playbill_claims
 from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
-from cruxible_core.temporal import ensure_utc
 
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
 NEXT_RESULT_DIGEST_DOMAIN = "playbill-next-result-v1"

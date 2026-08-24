@@ -21,11 +21,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.discovery import reject_locator_or_secret
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.discovery import reject_locator_or_secret
+from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.query.backends import SubjectQueryViewV1
-from cruxible_core.playbill.query.grammar import byte_sorted
 from cruxible_core.playbill.query.semantic_discovery import (
     DISCOVERY_ENTRY_KINDS,
     DiscoveryEntryV1,

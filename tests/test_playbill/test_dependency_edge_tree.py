@@ -10,23 +10,15 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.candidates import DependencyProofReferenceV1
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.candidates import DependencyProofReferenceV1
+from cruxible_client.contracts.canonical import (
     DependencyEdgeRoot,
     SemanticManifestRoot,
     SemanticMerkleRoot,
     canonical_bytes,
 )
-from cruxible_core.playbill.closure import (
-    DEPENDENCY_EDGE_SET_DOMAIN,
-    build_dependency_edge_tree,
-    dependency_edge_members,
-    dependency_edge_root,
-    update_dependency_edge_tree,
-    verify_dependency_edge_root,
-)
-from cruxible_core.playbill.errors import CanonicalEncodingError, MerkleIntegrityError
-from cruxible_core.playbill.merkle import (
+from cruxible_client.contracts.errors import CanonicalEncodingError, MerkleIntegrityError
+from cruxible_client.contracts.merkle import (
     DEPENDENCY_EDGE_DOMAINS,
     DEPGRAPH_LEAF_DOMAIN,
     DEPGRAPH_NODE_DOMAIN,
@@ -38,6 +30,14 @@ from cruxible_core.playbill.merkle import (
     MerkleNode,
     build_merkle_tree,
     verify_merkle_tree_nodes,
+)
+from cruxible_core.playbill.closure import (
+    DEPENDENCY_EDGE_SET_DOMAIN,
+    build_dependency_edge_tree,
+    dependency_edge_members,
+    dependency_edge_root,
+    update_dependency_edge_tree,
+    verify_dependency_edge_root,
 )
 
 GOLDEN = Path(__file__).parents[1] / "goldens" / "playbill" / "depgraph-v3.json"

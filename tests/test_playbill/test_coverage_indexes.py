@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactV2,
     ClaimBackingV2,

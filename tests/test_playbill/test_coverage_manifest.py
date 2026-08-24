@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.playbill.coverage.contracts import CoverageWatcherHealthV1
 from cruxible_core.playbill.coverage.indexes import (
     CaptureCitationInputV2,

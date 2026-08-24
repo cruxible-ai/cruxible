@@ -42,7 +42,9 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.native.grammar import (
     NativeDiagnosticV1,
     NativeLensV1,
@@ -53,8 +55,6 @@ from cruxible_core.playbill.native.grammar import (
 from cruxible_core.playbill.native.manifest import NativeRenderManifestV1
 from cruxible_core.playbill.native.parse import NativeTreeParseV1, parse_native_tree
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
 
 NATIVE_STASH_DIRECTORY: Final = ".playbill-stash"
 """Where a caller keeps stash entries, relative to the render root.

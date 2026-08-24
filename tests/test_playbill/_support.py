@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cruxible_client.contracts.types import GitObjectFormat, PrincipalRole
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.keys import GeneratedKeyMaterial, generate_client_principal_key
-from cruxible_core.playbill.types import GitObjectFormat, PrincipalRole
 
 FIXED_TIMESTAMP = "2026-08-10T12:00:00+00:00"
 

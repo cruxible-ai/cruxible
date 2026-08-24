@@ -6,8 +6,13 @@ import json
 import sqlite3
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import canonical_bytes
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedureV1,
+    procedure_artifact_digest,
+    render_procedure,
+)
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -25,11 +30,6 @@ from cruxible_core.playbill.exhaust import (
     render_exhaust_promotion,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.procedures.artifacts import (
-    AcceptedProcedureV1,
-    procedure_artifact_digest,
-    render_procedure,
-)
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.serving import bind_current_projection
 from cruxible_core.service.playbill_procedures import (

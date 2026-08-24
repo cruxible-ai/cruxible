@@ -7,7 +7,7 @@ with the Family-1 vertical slice after proposal and activation semantics exist.
 
 from typing import TYPE_CHECKING, Any
 
-from cruxible_core.playbill.types import PlaybillTrustRoot, PrincipalRecord
+from cruxible_client.contracts.types import PlaybillTrustRoot, PrincipalRecord
 
 if TYPE_CHECKING:
     from cruxible_core.playbill.assembler import ProjectionAssembler

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.errors import PlaybillGitError, SettlementIntegrityError
+from cruxible_client.contracts.errors import PlaybillGitError, SettlementIntegrityError
 from cruxible_core.playbill.git import GitTreeChange
 from cruxible_core.playbill.recovery import _materialize_successor_tree
 

@@ -4,14 +4,14 @@ from datetime import timedelta
 
 import pytest
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.claim_attestations import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationStatement,
     VerifiedClaimAttestationV1,
 )
-from cruxible_core.playbill.claim_types import claim_type_digest
-from cruxible_core.playbill.claim_verdicts import (
+from cruxible_client.contracts.claim_types import claim_type_digest
+from cruxible_client.contracts.claim_verdicts import (
     CaptureVerdictEvidenceV1,
     ClaimAdjudicationRuleV1,
     ClaimVerdictResultV2,
@@ -22,8 +22,8 @@ from cruxible_core.playbill.claim_verdicts import (
     observation_trust_grade,
     verify_claim_verdict_freshness,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import SemanticAddress
 from tests.test_playbill._pc_c_support import NOW, artifact_digest, digest
 from tests.test_playbill.test_claims import _claim_type
 

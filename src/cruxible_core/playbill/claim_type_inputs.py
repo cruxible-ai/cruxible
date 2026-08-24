@@ -6,13 +6,17 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactLifecycle
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.artifacts import (
+    ArtifactAuthority,
+    ArtifactIdentity,
+    ArtifactLifecycle,
+)
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.captures import (
     capture_contract_digest,
     parse_capture_contract,
 )
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     claim_type_path,

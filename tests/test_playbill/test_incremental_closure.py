@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import random
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
+from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
 from cruxible_core.playbill.closure import (
     DependencyIndexV1,
     build_dependency_index,
@@ -28,7 +29,6 @@ from cruxible_core.playbill.closure import (
     judge_dependency_closure,
     update_dependency_index,
 )
-from cruxible_core.playbill.subjects import SubjectShell, render_subject, subject_digest
 
 _SEED = "playbill-incremental-closure-v1"
 

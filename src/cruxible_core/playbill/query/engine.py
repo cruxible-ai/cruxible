@@ -7,7 +7,7 @@ accepted Claims: a one-cardinality read either surfaces its conflict set or
 refuses with the exact conflicting statement digests.
 
 Every Claim row becomes visible only through the existing evidence-relative
-verdict machinery in :mod:`cruxible_core.playbill.claim_verdicts`; this module
+verdict machinery in :mod:`cruxible_client.contracts.claim_verdicts`; this module
 never re-implements adjudication. Every budget that clips a result is named in
 the result's truncation accounting, so a silently narrowed answer is
 unrepresentable.
@@ -32,32 +32,22 @@ from typing import Any, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     Sha256Value,
     canonical_bytes,
     normalize_canonical,
     typed_digest,
 )
-from cruxible_core.playbill.claims import SubjectClaimObject
-from cruxible_core.playbill.errors import CanonicalEncodingError, PlaybillError
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.query.backends import (
-    ClaimFactRowV1,
-    ClaimQueryBackendFactoryV1,
-    ClaimQueryBackendV1,
-    ClaimQueryFactsV1,
-    DirectClaimFactIndex,
-    QueryClaimVisibilityV1,
-    VisibleClaimRow,
-)
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.claims import SubjectClaimObject
+from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillError
+from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDedupeV1,
     QueryDefinitionV1,
     QueryResultCardinalityV1,
     QueryResultShapeV1,
 )
-from cruxible_core.playbill.query.grammar import (
+from cruxible_client.contracts.query.grammar import (
     QueryBudgetsV1,
     QueryClaimPresenceFilterV1,
     QueryComparisonFilterV1,
@@ -76,6 +66,16 @@ from cruxible_core.playbill.query.grammar import (
     QueryValueRefV1,
     QueryValueTypeV1,
     byte_sorted,
+)
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.query.backends import (
+    ClaimFactRowV1,
+    ClaimQueryBackendFactoryV1,
+    ClaimQueryBackendV1,
+    ClaimQueryFactsV1,
+    DirectClaimFactIndex,
+    QueryClaimVisibilityV1,
+    VisibleClaimRow,
 )
 
 QueryClippedBudgetV1 = Literal[

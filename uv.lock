@@ -481,14 +481,18 @@ name = "cruxible-client"
 version = "0.4.0"
 source = { editable = "packages/cruxible-client" }
 dependencies = [
+    { name = "cryptography" },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=46.0" },
     { name = "httpx", specifier = ">=0.24" },
     { name = "pydantic", specifier = ">=2.12" },
+    { name = "pyyaml", specifier = ">=6.0" },
 ]
 
 [[package]]

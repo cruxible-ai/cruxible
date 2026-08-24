@@ -6,16 +6,17 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.documents import parse_document
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.documents import parse_document
+from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
     ProjectionIntegrityError,
     SubjectNotFoundError,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import parse_subject
+from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection_artifacts import registered_path_kind
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillDocumentView,
@@ -25,7 +26,6 @@ from cruxible_core.playbill.service.subjects import (
     PlaybillSubjectView,
     service_get_playbill_subject,
 )
-from cruxible_core.playbill.subjects import parse_subject
 
 PlaybillExplainDetail = Literal["summary", "evidence", "proof"]
 PLAYBILL_EXPLAIN_SUPPORTED_DETAILS: tuple[Literal["summary", "evidence"], ...] = (

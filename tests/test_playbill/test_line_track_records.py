@@ -8,9 +8,39 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import canonical_bytes, normalize_canonical
-from cruxible_core.playbill.captures import CanonicalDurationV1
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_bytes, normalize_canonical
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedureV1,
+    ProcedureArtifactV1,
+    procedure_artifact_digest,
+    procedure_path,
+    render_procedure,
+)
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpecV1,
+    CadenceTriggerPolicyV1,
+    LineSpecV1,
+    line_spec_digest,
+    line_spec_path,
+    render_line_spec,
+)
+from cruxible_client.contracts.procedures.models import (
+    GuardNodeV3,
+    GuardPredicateV1,
+    InboxEgressNodeV3,
+    PredicateOperandV1,
+    ProcedureBudgetV3,
+    ProcedureDefinitionV3,
+    ProcedureHardCapsV3,
+    ProcedureNodeV3,
+    ProcedurePinSlotRefV1,
+    StateTapNodeV3,
+    TransformNodeV3,
+)
+from cruxible_client.contracts.projection_extensions import playbill_runtime_extension_registry
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
@@ -49,43 +79,13 @@ from cruxible_core.playbill.lines import (
     revise_line_deployment,
     take_over_line_lease,
 )
-from cruxible_core.playbill.procedures.artifacts import (
-    AcceptedProcedureV1,
-    ProcedureArtifactV1,
-    procedure_artifact_digest,
-    procedure_path,
-    render_procedure,
-)
 from cruxible_core.playbill.procedures.egress import (
     EFFECTIVE_RUNG_TERMS,
     EffectiveRungV1,
     effective_rung_digest,
 )
 from cruxible_core.playbill.procedures.execution import ProcedureExecutor
-from cruxible_core.playbill.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_core.playbill.procedures.line_specs import (
-    AcceptedLineSpecV1,
-    CadenceTriggerPolicyV1,
-    LineSpecV1,
-    line_spec_digest,
-    line_spec_path,
-    render_line_spec,
-)
-from cruxible_core.playbill.procedures.models import (
-    GuardNodeV3,
-    GuardPredicateV1,
-    InboxEgressNodeV3,
-    PredicateOperandV1,
-    ProcedureBudgetV3,
-    ProcedureDefinitionV3,
-    ProcedureHardCapsV3,
-    ProcedureNodeV3,
-    ProcedurePinSlotRefV1,
-    StateTapNodeV3,
-    TransformNodeV3,
-)
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.projection_extensions import playbill_runtime_extension_registry
 from cruxible_core.playbill.run_inputs import (
     ProcedureMandateReadV1,
     admit_line_procedure_run,

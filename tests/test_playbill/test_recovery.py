@@ -7,6 +7,14 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+    document_digest,
+    document_path,
+    parse_document,
+)
 from cruxible_core.playbill.activation import (
     GENERATION_NOTE,
     MAIN_CAS,
@@ -16,14 +24,6 @@ from cruxible_core.playbill.activation import (
 )
 from cruxible_core.playbill.assembler import PROJECTION_CRASH_POINTS
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.documents import (
-    DocumentAuthority,
-    DocumentLifecycle,
-    DocumentShell,
-    document_digest,
-    document_path,
-    parse_document,
-)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.recovery import RecoveredGeneration
 from cruxible_core.playbill.serving import SERVING_MANIFEST_FILE, bind_current_projection

@@ -8,15 +8,22 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.actor_context import TransportCapability
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
 )
+from cruxible_client.contracts.errors import ProposalAdmissionError, SubjectFormatError
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import (
+    SubjectShell,
+    parse_subject,
+    render_subject,
+    subject_digest,
+    subject_path,
+)
+from cruxible_core.playbill.actor_context import TransportCapability
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.errors import ProposalAdmissionError, SubjectFormatError
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
@@ -30,13 +37,6 @@ from cruxible_core.playbill.service.subjects import (
     service_list_playbill_subjects,
     service_playbill_subject_history,
     service_propose_playbill_subject,
-)
-from cruxible_core.playbill.subjects import (
-    SubjectShell,
-    parse_subject,
-    render_subject,
-    subject_digest,
-    subject_path,
 )
 from cruxible_core.storage.playbill_projection import canonical_logical_export
 from tests.test_playbill.test_activation import _sign

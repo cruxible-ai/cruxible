@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from cruxible_core.primitives import canonical_json
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.procedure.analysis import build_procedure_graph, procedure_node_kind
 from cruxible_core.procedure.graph_format import (
     DEFINITION_FORMAT_V1,

@@ -26,8 +26,10 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
-from cruxible_core.playbill.errors import PlaybillError, PlaybillJournalError
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.errors import PlaybillError, PlaybillJournalError
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.playbill.exhaust import (
     JournalHeadSignerProtocol,
     JournalHeadVectorV1,
@@ -37,8 +39,6 @@ from cruxible_core.playbill.exhaust import (
     build_journal_head_manifest,
     verified_journal_handoff,
 )
-from cruxible_core.playbill.procedures.line_specs import AcceptedLineSpecV1
-from cruxible_core.temporal import ensure_utc, format_datetime
 
 _LINE_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _LABEL_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")

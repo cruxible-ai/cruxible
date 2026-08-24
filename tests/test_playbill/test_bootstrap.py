@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.errors import PlaybillBootstrapError, PlaybillKeyError
+from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillKeyError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.keys import (
     DAEMON_PRIVATE_KEY_FILE,

@@ -8,20 +8,20 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.bootstrap import prepare_genesis
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
     PlaybillFormatError,
     PlaybillKeyError,
 )
+from cruxible_client.contracts.types import PlaybillTrustRoot, PrincipalRecord
+from cruxible_core.playbill.bootstrap import prepare_genesis
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.instance import DESCRIPTOR_FILE, PlaybillInstance
 from cruxible_core.playbill.keys import (
     ALLOWED_SIGNERS_FILE,
     generate_daemon_key,
 )
-from cruxible_core.playbill.types import PlaybillTrustRoot, PrincipalRecord
 
 from ._support import FIXED_TIMESTAMP, generate_client, initialize_local
 

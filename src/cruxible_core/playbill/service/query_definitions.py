@@ -10,21 +10,21 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from cruxible_core.playbill.actor_context import TransportCapability
-from cruxible_core.playbill.errors import ClaimNotFoundError
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.proposals import (
-    AuthenticatedActor,
-    ProposalAdmissionRequest,
-)
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.errors import ClaimNotFoundError
+from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDefinitionV1,
     parse_query_definition,
     query_definition_digest,
     query_definition_path,
     render_query_definition,
+)
+from cruxible_core.playbill.actor_context import TransportCapability
+from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.proposals import (
+    AuthenticatedActor,
+    ProposalAdmissionRequest,
 )
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,

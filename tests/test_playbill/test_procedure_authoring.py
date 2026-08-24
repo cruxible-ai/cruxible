@@ -7,15 +7,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.compiler import current_compiler_coordinate
-from cruxible_core.playbill.procedures.artifacts import (
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactV1,
     render_procedure,
 )
-from cruxible_core.playbill.procedures.authoring import (
+from cruxible_client.contracts.procedures.authoring import (
     AcceptedClaimGuardBuilderV1,
     ExhaustGuardBuilderV1,
     SourceCaptureGuardBuilderV1,
@@ -23,14 +22,15 @@ from cruxible_core.playbill.procedures.authoring import (
     build_exhaust_guard,
     build_source_capture_guard,
 )
-from cruxible_core.playbill.procedures.graph import compute_procedure_definition_digest_v3
-from cruxible_core.playbill.procedures.models import (
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.models import (
     ExhaustTapNodeV3,
     ProcedureBudgetV3,
     ProcedureHardCapsV3,
     SourceNodeV3,
     StateTapNodeV3,
 )
+from cruxible_core.playbill.compiler import current_compiler_coordinate
 from cruxible_core.playbill.proposals import evaluate_proposal_tree
 from tests.test_playbill._support import initialize_local
 

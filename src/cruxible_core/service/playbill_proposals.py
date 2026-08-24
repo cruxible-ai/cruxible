@@ -6,8 +6,8 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
-from cruxible_core.playbill.errors import ProposalAdmissionError, ProposalIntegrityError
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.errors import ProposalAdmissionError, ProposalIntegrityError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,

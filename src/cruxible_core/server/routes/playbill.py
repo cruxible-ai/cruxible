@@ -8,10 +8,10 @@ from typing import Literal
 from fastapi import APIRouter
 
 from cruxible_client import contracts
+from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
-from cruxible_core.playbill.errors import PlaybillFormatError
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.runtime import playbill_api
 from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,

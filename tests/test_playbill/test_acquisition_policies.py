@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
-from cruxible_core.playbill.acquisition_policies import (
+from cruxible_client.contracts.acquisition_policies import (
     AcquisitionCandidateV1,
     BoundedWindowCoherenceV1,
     DeclaredSnapshotGroupCoherenceV1,
@@ -14,12 +14,12 @@ from cruxible_core.playbill.acquisition_policies import (
     evaluate_acquisition_policy_law,
     select_sources,
 )
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.capture_journal import (
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.capture_journal import (
     InMemoryCaptureLandingJournal,
     capture_landing_idempotency_key,
 )
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.captures import (
     CanonicalDurationV1,
     build_cas_capture,
     capture_component_pin,

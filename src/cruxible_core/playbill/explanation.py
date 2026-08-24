@@ -6,15 +6,15 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.attestations import approval_digest
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.attestations import approval_digest
+from cruxible_client.contracts.canonical import (
     CandidateDigest,
     ChangeSetDigest,
     Sha256Value,
     normalize_ledger_path,
 )
-from cruxible_core.playbill.governance import governance_identifier
-from cruxible_core.playbill.projection_extensions import ProjectionFact
+from cruxible_client.contracts.governance import governance_identifier
+from cruxible_client.contracts.projection_extensions import ProjectionFact
 
 if TYPE_CHECKING:
     from cruxible_core.playbill.settlement import ChangeSetRecordAnyVersion

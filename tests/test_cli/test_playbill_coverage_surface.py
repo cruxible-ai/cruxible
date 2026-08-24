@@ -34,15 +34,15 @@ from typing import Any
 
 from click.testing import CliRunner
 
-from cruxible_core.cli.main import cli
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.captures import (
     DirectByteSpanSelectionV1,
     DirectForeignSourceSelectionV1,
 )
-from cruxible_core.playbill.claim_types import claim_type_digest
-from cruxible_core.playbill.claims import ClaimStatement, LiteralClaimObject
+from cruxible_client.contracts.claim_types import claim_type_digest
+from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
+from cruxible_client.contracts.semantic import ContentSpan
+from cruxible_core.cli.main import cli
 from cruxible_core.playbill.coverage.render import BATCH_SUMMARY_PREFIX
-from cruxible_core.playbill.semantic import ContentSpan
 from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
 from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
     SIGNER_ID,

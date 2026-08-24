@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from cruxible_core.playbill.errors import ProposalIntegrityError
-from cruxible_core.playbill.laws import (
+from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.laws import (
     CLAIM_LAW,
     CLAIM_LAW_V2,
     DOCUMENT_LAW,

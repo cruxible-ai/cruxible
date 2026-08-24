@@ -6,8 +6,7 @@ import base64
 import hashlib
 from pathlib import Path
 
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
     ClaimAuthoringPayloadV1,
     InsertionAnchorWindowV1,
@@ -17,28 +16,29 @@ from cruxible_core.playbill.authoring.models import (
     WorkingDigestCoordinateV1,
     WorkingSelectionObservationV1,
 )
-from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     CaptureContractV1,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_core.playbill.claim_types import claim_type_path, render_claim_type
-from cruxible_core.playbill.claims import LiteralClaimObject
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.claim_types import claim_type_path, render_claim_type
+from cruxible_client.contracts.claims import LiteralClaimObject
+from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import render_subject, subject_path
+from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.store import AuthoringIntentStore
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
 )
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.playbill.settlement import ChangeActorBinding
-from cruxible_core.playbill.subjects import render_subject, subject_path
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_claims import _claim_type, _subject

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.signing import LocalEd25519ClaimAttestationSigner
 from cruxible_core.service.playbill_claims import (

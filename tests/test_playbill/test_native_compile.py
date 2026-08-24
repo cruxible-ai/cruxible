@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.claims import LiteralClaimObject, claim_statement_digest
+from cruxible_client.contracts.claims import LiteralClaimObject, claim_statement_digest
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.keys import GeneratedKeyMaterial
 from cruxible_core.playbill.native import (
@@ -475,11 +475,11 @@ def test_a_forged_locator_lens_refuses_at_the_parse_gate(
 def test_a_foreign_region_is_categorically_not_a_mutation_target(tmp_path: Path) -> None:
     """The guard reads the accepted source binding, never caller-supplied metadata."""
 
-    from cruxible_core.playbill.canonical import file_digest
+    from cruxible_client.contracts.canonical import file_digest
+    from cruxible_client.contracts.query.grammar import byte_sorted
     from cruxible_core.playbill.coverage.contracts import LogicalSourceIdentityV1
     from cruxible_core.playbill.native.grammar import NativeFileMarkerV1, render_file_marker
     from cruxible_core.playbill.native.manifest import NativeRenderFileV1, native_render_digest
-    from cruxible_core.playbill.query.grammar import byte_sorted
 
     instance, _owner, files, manifest = _seeded(tmp_path)
     path = "external/vendor-notes.md"

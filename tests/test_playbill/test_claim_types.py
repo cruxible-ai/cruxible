@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
 )
-from cruxible_core.playbill.authoring_profiles import (
+from cruxible_client.contracts.authoring_profiles import (
     CLAIM_TYPE_AUTHORING_PROFILES,
     AuthoringProfileError,
     AuthorityProfileParametersV1,
@@ -21,9 +21,8 @@ from cruxible_core.playbill.authoring_profiles import (
     expand_claim_type_profile,
     verify_claim_type_expansion_evidence,
 )
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import (
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
     ClaimType,
@@ -34,12 +33,13 @@ from cruxible_core.playbill.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_core.playbill.compiler import current_compiler_coordinate
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
 )
+from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.compiler import current_compiler_coordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.service.review import service_review_playbill_proposal
 from tests.test_playbill._support import initialize_local

@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
-from cruxible_core.playbill.capture_journal import (
+from cruxible_client.contracts.capture_journal import (
     CaptureCursorV1,
     InMemoryCaptureLandingJournal,
     capture_landing_idempotency_key,
 )
-from cruxible_core.playbill.captures import build_cas_capture
+from cruxible_client.contracts.captures import build_cas_capture
 from tests.test_playbill._pc_c_support import (
     NOW,
     body_store,

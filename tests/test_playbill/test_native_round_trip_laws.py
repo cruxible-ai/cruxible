@@ -37,7 +37,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.claims import LiteralClaimObject
+from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.native import (
     NativeAcceptedStateV1,

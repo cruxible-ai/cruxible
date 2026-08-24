@@ -14,8 +14,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from cruxible_core.playbill.errors import PlaybillKeyError
-from cruxible_core.playbill.types import PrincipalRecord, PrincipalRole
+from cruxible_client.contracts.errors import PlaybillKeyError
+from cruxible_client.contracts.types import PrincipalRecord, PrincipalRole
 
 DAEMON_PRIVATE_KEY_FILE = "daemon_ed25519"
 DAEMON_PUBLIC_KEY_FILE = "daemon_ed25519.pub"

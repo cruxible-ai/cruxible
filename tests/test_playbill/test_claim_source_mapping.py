@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.captures import DirectByteSpanSelectionV1
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest
-from cruxible_core.playbill.claims import ClaimStatement, ExactContentClaimObject
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import DirectByteSpanSelectionV1
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+from cruxible_client.contracts.claims import ClaimStatement, ExactContentClaimObject
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_core.service.playbill_claims import (
     DirectClaimAuthoringV1,
     service_propose_playbill_claim,

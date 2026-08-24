@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.errors import PlaybillKeyError
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.errors import PlaybillKeyError
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.service.playbill_documents import (
     service_propose_playbill_document,

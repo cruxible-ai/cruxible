@@ -7,9 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from cruxible_client.contracts.errors import ProjectionCoordinateError
+from cruxible_client.contracts.projection_extensions import (
+    ProjectionExtensionRegistry,
+    ProjectionFact,
+)
 from cruxible_core.playbill.cas import BodyAccessContext, BodyProjectionProtocol
 from cruxible_core.playbill.compiler import projection_registry_for_compiler
-from cruxible_core.playbill.errors import ProjectionCoordinateError
 from cruxible_core.playbill.projection import (
     AcceptedProjectionCoordinate,
     ProvisionalProjectionCoordinate,
@@ -19,10 +23,6 @@ from cruxible_core.playbill.projection_artifacts import (
     ArtifactEnvelopeRow,
     ParsedProjectionTree,
     parse_projection_tree,
-)
-from cruxible_core.playbill.projection_extensions import (
-    ProjectionExtensionRegistry,
-    ProjectionFact,
 )
 
 _PROTECTED_DOCUMENT_SCHEMAS = frozenset({"playbill.document.source_mapping"})

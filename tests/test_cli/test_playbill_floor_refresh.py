@@ -11,9 +11,9 @@ from typing import Literal
 from click.testing import CliRunner
 
 from cruxible_client import contracts
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 
 
 def _coordinate() -> contracts.PlaybillAcceptedCoordinate:

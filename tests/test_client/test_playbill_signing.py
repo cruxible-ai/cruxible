@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
-from cruxible_core.playbill.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import PlaybillFormatError
 from tests.test_client.test_playbill_documents import COORDINATE, _client, _review
 
 

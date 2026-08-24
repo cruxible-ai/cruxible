@@ -9,10 +9,10 @@ from typing import Any
 from click.testing import CliRunner
 
 from cruxible_client import contracts
+from cruxible_client.contracts.attestations import ApprovalAttestation
+from cruxible_client.contracts.documents import DocumentAuthority, DocumentLifecycle, DocumentShell
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.attestations import ApprovalAttestation
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.documents import DocumentAuthority, DocumentLifecycle, DocumentShell
 from cruxible_core.service.playbill_documents import (
     service_propose_playbill_document,
     service_store_playbill_body,

@@ -38,9 +38,9 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.errors import PlaybillError
-from cruxible_core.playbill.semantic import SemanticAddress
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.semantic import SemanticAddress
 
 # -- the versioned lens ----------------------------------------------------
 

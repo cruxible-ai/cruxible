@@ -37,23 +37,25 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.claim_slots import classify_claim_slot
-from cruxible_core.playbill.claim_type_structure import claim_type_structural_signature
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest, claim_type_path
-from cruxible_core.playbill.claim_verdicts import evaluate_claim_verdict
-from cruxible_core.playbill.claims import ClaimArtifactAny, SubjectClaimObject
-from cruxible_core.playbill.diagnostics import GovernedOperationReference
-from cruxible_core.playbill.discovery import (
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, claim_type_path
+from cruxible_client.contracts.claim_verdicts import evaluate_claim_verdict
+from cruxible_client.contracts.claims import ClaimArtifactAny, SubjectClaimObject
+from cruxible_client.contracts.diagnostics import GovernedOperationReference
+from cruxible_client.contracts.discovery import (
     DiscoveryMatchBasis,
     DiscoveryPageV1,
     DiscoveryRequestV1,
     reject_locator_or_secret,
 )
+from cruxible_client.contracts.providers import ProviderV1
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import CoverageDescriptorV1
+from cruxible_core.playbill.claim_slots import classify_claim_slot
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.providers import ProviderV1
 from cruxible_core.playbill.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
-from cruxible_core.playbill.query.grammar import byte_sorted
 from cruxible_core.playbill.query.semantic_discovery import (
     MATCH_BASIS_PRIORITY,
     MATCH_BASIS_RESOLVES_EQUIVALENCE,
@@ -63,8 +65,6 @@ from cruxible_core.playbill.query.semantic_discovery import (
     discover,
     resolved_equivalence_address,
 )
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_references import CoverageDescriptorV1
 
 CLAIM_TYPE_CARD_DIGEST_DOMAIN = "playbill-claim-type-card-v1"
 SUBJECT_PROFILE_DIGEST_DOMAIN = "playbill-subject-profile-v1"
@@ -690,7 +690,7 @@ def claim_predicate_verdicts(
 
     Adjudication stays outside the projection: a card or a profile renders what
     it is handed, and the single verdict path in
-    :mod:`cruxible_core.playbill.claim_verdicts` remains the only place a
+    :mod:`cruxible_client.contracts.claim_verdicts` remains the only place a
     verdict is computed.
     """
 

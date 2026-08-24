@@ -9,24 +9,25 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from cruxible_core.playbill.activation import ActivationPublisher
-from cruxible_core.playbill.attestations import (
+from cruxible_client.contracts.attestations import (
     ApprovalAttestation,
     ApprovalStatement,
     ApprovalSubmission,
     approval_statement_bytes,
 )
-from cruxible_core.playbill.bootstrap import generation_root, prepare_genesis
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.playbill.compiler import current_compiler_coordinate
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
     render_document,
 )
-from cruxible_core.playbill.errors import SettlementIntegrityError
+from cruxible_client.contracts.errors import SettlementIntegrityError
+from cruxible_client.contracts.types import GenerationDescriptor, PlaybillTrustRoot
+from cruxible_core.playbill.activation import ActivationPublisher
+from cruxible_core.playbill.bootstrap import generation_root, prepare_genesis
+from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
+from cruxible_core.playbill.compiler import current_compiler_coordinate
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.keys import (
@@ -48,7 +49,6 @@ from cruxible_core.playbill.settlement import (
     compute_semantic_root,
     prepare_generation,
 )
-from cruxible_core.playbill.types import GenerationDescriptor, PlaybillTrustRoot
 from cruxible_core.playbill.witness import WitnessRecord
 
 from ._support import FIXED_TIMESTAMP, generate_client

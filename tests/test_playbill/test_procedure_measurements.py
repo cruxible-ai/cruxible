@@ -5,20 +5,19 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.compiler import PC_D_COMPILER, projection_registry_for_compiler
-from cruxible_core.playbill.procedures.artifacts import ProcedureArtifactV1, render_procedure
-from cruxible_core.playbill.procedures.graph import (
+from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.procedures.artifacts import ProcedureArtifactV1, render_procedure
+from cruxible_client.contracts.procedures.graph import (
     compute_procedure_definition_digest_v3,
     compute_procedure_node_digests_v3,
 )
-from cruxible_core.playbill.procedures.measurements import (
+from cruxible_client.contracts.procedures.measurements import (
     AcceptedQueryProcedureMeasurementV1,
     ClaimAttestationProcedureMeasurementV1,
     ClaimStatementProcedureMeasurementV1,
@@ -27,7 +26,7 @@ from cruxible_core.playbill.procedures.measurements import (
     ProcedureMeasurementReviewTriggerV1,
     ProcedureMeasurementSituationShapeV1,
 )
-from cruxible_core.playbill.procedures.models import (
+from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     GuardPredicateV1,
     PredicateOperandV1,
@@ -38,8 +37,9 @@ from cruxible_core.playbill.procedures.models import (
     StateTapNodeV3,
     iter_pin_bindings,
 )
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.playbill.compiler import PC_D_COMPILER, projection_registry_for_compiler
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
-from cruxible_core.playbill.semantic import SemanticAddress
 from cruxible_core.procedure.digest import DIGEST_FUNCTIONS
 
 

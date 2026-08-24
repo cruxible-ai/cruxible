@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from cruxible_client import contracts
+from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCatalogEntry
 from cruxible_core.mcp import handlers
-from cruxible_core.playbill.source_catalog import SourceCatalog, SourceCatalogEntry
 
 
 def _coordinate() -> contracts.PlaybillAcceptedCoordinate:

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from cruxible_core.playbill.attestations import (
+from cruxible_client.contracts.attestations import (
     ApprovalAttestation,
     ApprovalStatement,
     ApprovalSubmission,
@@ -17,16 +17,16 @@ from cruxible_core.playbill.attestations import (
     verify_approval,
     verify_candidate_approvals,
 )
-from cruxible_core.playbill.candidates import (
+from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
     CandidateRecord,
     SemanticCandidate,
     candidate_digest,
 )
-from cruxible_core.playbill.errors import ApprovalIntegrityError
-from cruxible_core.playbill.governance import ApprovalRequirement
-from cruxible_core.playbill.principals import PrincipalRegistrySnapshot
-from cruxible_core.playbill.types import PrincipalRecord
+from cruxible_client.contracts.errors import ApprovalIntegrityError
+from cruxible_client.contracts.governance import ApprovalRequirement
+from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
+from cruxible_client.contracts.types import PrincipalRecord
 
 ROOT = "sha256:" + "11" * 32
 

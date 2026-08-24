@@ -35,19 +35,19 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.claim_verdicts import evaluate_claim_verdict
-from cruxible_core.playbill.errors import PlaybillError
-from cruxible_core.playbill.procedures.artifacts import AcceptedProcedureV1
-from cruxible_core.playbill.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.claim_verdicts import evaluate_claim_verdict
+from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
+from cruxible_client.contracts.providers import ProviderV1
+from cruxible_client.contracts.query.definitions import AcceptedQueryDefinitionV1
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import CoverageDescriptorV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.providers import ProviderV1
 from cruxible_core.playbill.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
-from cruxible_core.playbill.query.definitions import AcceptedQueryDefinitionV1
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_references import CoverageDescriptorV1
 
 DEPENDENCY_IMPACT_RECEIPT_DIGEST_DOMAIN = "playbill-dependency-impact-v1"
 

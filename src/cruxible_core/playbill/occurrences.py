@@ -7,8 +7,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
-from cruxible_core.playbill.capture_journal import CaptureCursorV1, CaptureLandingEventV1
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.capture_journal import CaptureCursorV1, CaptureLandingEventV1
 
 _LINE_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _RAW_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")

@@ -7,9 +7,9 @@ import json
 from pathlib import Path
 
 from cruxible_client import contracts
+from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV1
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.models import ProcedureAuthoringPayloadV1
-from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,

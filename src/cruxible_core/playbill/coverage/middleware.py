@@ -69,7 +69,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,

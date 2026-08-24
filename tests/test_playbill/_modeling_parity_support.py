@@ -13,11 +13,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
-from cruxible_core.playbill.canonical import GenerationRoot, SemanticRoot
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest
-from cruxible_core.playbill.claim_verdicts import ClaimAdjudicationRuleV1, claim_adjudication_rule
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import GenerationRoot, SemanticRoot
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+from cruxible_client.contracts.claim_verdicts import (
+    ClaimAdjudicationRuleV1,
+    claim_adjudication_rule,
+)
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifact,
     ClaimBacking,
@@ -29,29 +32,29 @@ from cruxible_core.playbill.claims import (
     claim_path,
     claim_statement_digest,
 )
-from cruxible_core.playbill.compiler import PC_E1_COMPILER
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
 )
-from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDefinitionV1,
     query_definition_digest,
     query_definition_path,
 )
-from cruxible_core.playbill.query.engine import ClaimQueryResultV1
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.subjects import (
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.subjects import (
     AcceptedSubject,
     SubjectShell,
     subject_digest,
     subject_path,
 )
+from cruxible_core.playbill.compiler import PC_E1_COMPILER
+from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
+from cruxible_core.playbill.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
+from cruxible_core.playbill.query.engine import ClaimQueryResultV1
 
 PARITY_AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
 AUTHORITY_BASIS = ("authority:owner",)

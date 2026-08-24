@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_core.primitives import canonical_json
+from cruxible_client.contracts.primitives import canonical_json
 
 
 class EvidenceRef(BaseModel):

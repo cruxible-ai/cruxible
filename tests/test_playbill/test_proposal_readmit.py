@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.canonical import Sha256Value, typed_digest
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
 )
-from cruxible_core.playbill.errors import ProposalAdmissionError
+from cruxible_client.contracts.errors import ProposalAdmissionError
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_propose_playbill_document,

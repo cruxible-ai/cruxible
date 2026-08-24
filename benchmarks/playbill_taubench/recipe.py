@@ -78,7 +78,7 @@ from cruxible_core.playbill.coverage.middleware import (  # noqa: E402
     grep_event,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate  # noqa: E402
-from cruxible_core.playbill.seed import (  # noqa: E402
+from cruxible_client.authoring.seed import (  # noqa: E402
     SEED_BODY_DIRECTORY,
     plan_seed_bundle,
     seed_plan_digest,

@@ -78,9 +78,8 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
-from cruxible_core.playbill.attestations import approval_digest
-from cruxible_core.playbill.bootstrap import VerifiedGenesis, generation_root
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.attestations import approval_digest
+from cruxible_client.contracts.canonical import (
     GenerationRoot,
     Manifest,
     SemanticManifestRoot,
@@ -93,18 +92,26 @@ from cruxible_core.playbill.canonical import (
     semantic_projection,
     typed_digest,
 )
-from cruxible_core.playbill.closure import build_dependency_index
-from cruxible_core.playbill.errors import PlaybillError, ReplayCheckpointError
-from cruxible_core.playbill.git import GitLedger
-from cruxible_core.playbill.merkle import (
+from cruxible_client.contracts.errors import PlaybillError, ReplayCheckpointError
+from cruxible_client.contracts.merkle import (
     MANIFEST_MERKLE_DOMAINS,
     build_merkle_manifest,
     verify_merkle_tree,
 )
-from cruxible_core.playbill.principals import (
+from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
 )
+from cruxible_client.contracts.temporal import format_datetime, utc_now
+from cruxible_client.contracts.types import (
+    CompilerCoordinate,
+    GenerationDescriptor,
+    GenesisCoordinate,
+    GitObjectFormat,
+)
+from cruxible_core.playbill.bootstrap import VerifiedGenesis, generation_root
+from cruxible_core.playbill.closure import build_dependency_index
+from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.proposals import EvaluatedTreeState
 from cruxible_core.playbill.settlement import (
     ChangeSetRecordAnyVersion,
@@ -112,13 +119,6 @@ from cruxible_core.playbill.settlement import (
     parse_change_set_record,
     semantic_root_for_record,
 )
-from cruxible_core.playbill.types import (
-    CompilerCoordinate,
-    GenerationDescriptor,
-    GenesisCoordinate,
-    GitObjectFormat,
-)
-from cruxible_core.temporal import format_datetime, utc_now
 
 CHECKPOINT_DIRECTORY: Final = "checkpoints"
 CHECKPOINT_FILE: Final = "replay-checkpoint-v2.json"

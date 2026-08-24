@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timedelta
 
-from cruxible_core.playbill.authoring.models import (
+from cruxible_client.contracts.authoring.models import (
     AuthoringIntentV1,
     ClaimAuthoringPayloadV1,
     InsertionConfirmationObservationV1,
@@ -19,9 +19,9 @@ from cruxible_core.playbill.authoring.models import (
     insertion_target_digest,
     update_insertion_expectation,
 )
-from cruxible_core.playbill.canonical import CasDigest
-from cruxible_core.playbill.errors import PlaybillError
-from cruxible_core.temporal import ensure_utc
+from cruxible_client.contracts.canonical import CasDigest
+from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.temporal import ensure_utc
 
 DEFAULT_INSERTION_TOMBSTONE_HORIZON = timedelta(days=30)
 

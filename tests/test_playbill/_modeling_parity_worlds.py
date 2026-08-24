@@ -13,13 +13,12 @@ identifiers, same property values, re-expressed as Subjects carrying Claims.
 
 from __future__ import annotations
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
     QueryEvaluationPolicyV1,
 )
-from cruxible_core.playbill.query.grammar import (
+from cruxible_client.contracts.query.grammar import (
     QueryBudgetsV1,
     QueryClaimPresenceFilterV1,
     QueryClaimValueRefV1,
@@ -35,6 +34,7 @@ from cruxible_core.playbill.query.grammar import (
     QuerySubjectFieldRefV1,
     QueryTraversalStepV1,
 )
+from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 from tests.test_playbill._modeling_parity_support import (
     EVALUATION_TIME,
     PARITY_AUTHORITY,

@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.coverage.contracts import CoverageLineOverlayV1
 from cruxible_core.playbill.native import (
     NativeRenderManifestV1,
@@ -38,8 +40,6 @@ from cruxible_core.playbill.native.stash import (
     NATIVE_STASH_DIRECTORY,
     NativeStashFileV1,
 )
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
 from tests.test_playbill._native_support import (
     WI_42,
     WI_43,

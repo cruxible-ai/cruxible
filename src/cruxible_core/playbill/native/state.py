@@ -22,7 +22,7 @@ time beside the verdict rather than implying the verdict was computed at the
 render's read time, so "verdict at render: supported, evaluated at T,
 generation G" states three separate facts and conflates none of them. It also
 means rendering never needs to adjudicate anything, which keeps the single
-verdict path in :mod:`cruxible_core.playbill.claim_verdicts` the only place a
+verdict path in :mod:`cruxible_client.contracts.claim_verdicts` the only place a
 verdict is ever computed.
 """
 
@@ -33,9 +33,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value
-from cruxible_core.playbill.claim_verdicts import ClaimVerdictResultV1
-from cruxible_core.playbill.claims import ClaimArtifact
+from cruxible_client.contracts.canonical import Sha256Value
+from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV1
+from cruxible_client.contracts.claims import ClaimArtifact
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.coverage.contracts import (
     CoverageManifestProfileV1,
     LogicalSourceIdentityV1,
@@ -43,8 +45,6 @@ from cruxible_core.playbill.coverage.contracts import (
 )
 from cruxible_core.playbill.native.grammar import NativeRenderError
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
 
 CLAIM_STATEMENT_SCHEMA = "playbill.claim.statement"
 CLAIM_BACKING_SCHEMA = "playbill.claim.backing"

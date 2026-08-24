@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import ArtifactDigest, canonical_bytes, typed_digest
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.procedures.artifacts import (
+from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactV1,
     ProcedureArtifactV2,
     ProcedureOwnedContractV1,
@@ -23,13 +23,13 @@ from cruxible_core.playbill.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_core.playbill.procedures.contract_schema import ContractSchema
-from cruxible_core.playbill.procedures.graph import (
+from cruxible_client.contracts.procedures.contract_schema import ContractSchema
+from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     compute_procedure_definition_digest_v3,
     compute_procedure_node_digests_v3,
 )
-from cruxible_core.playbill.procedures.models import (
+from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureHardCapsV3,

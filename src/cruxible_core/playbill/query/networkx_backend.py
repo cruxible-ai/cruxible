@@ -22,8 +22,11 @@ from typing import Any, Literal, cast
 
 import networkx as nx
 
+from cruxible_client.contracts.providers import ProviderV1
+from cruxible_client.contracts.query.definitions import QueryDefinitionV1
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.subjects import AcceptedSubject
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.providers import ProviderV1
 from cruxible_core.playbill.query.backends import (
     ClaimFactRowV1,
     ClaimQueryBackendError,
@@ -37,9 +40,6 @@ from cruxible_core.playbill.query.backends import (
     claim_view_row,
     subject_view_row,
 )
-from cruxible_core.playbill.query.definitions import QueryDefinitionV1
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.subjects import AcceptedSubject
 
 _SUBJECT: Literal["subject"] = "subject"
 _CLAIM: Literal["claim"] = "claim"

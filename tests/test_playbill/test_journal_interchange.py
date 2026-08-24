@@ -8,7 +8,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from pydantic import ValidationError
 
-from cruxible_core.playbill.errors import PlaybillJournalError
+from cruxible_client.contracts.errors import PlaybillJournalError
 from cruxible_core.playbill.exhaust import (
     JournalExportBundleV1,
     JournalHeadVectorV1,

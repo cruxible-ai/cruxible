@@ -8,19 +8,19 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.candidates import (
+from cruxible_client.contracts.candidates import (
     CandidateRecord,
     SemanticCandidate,
     candidate_digest,
 )
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
     render_document,
 )
-from cruxible_core.playbill.errors import ProposalAdmissionError
+from cruxible_client.contracts.errors import ProposalAdmissionError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore

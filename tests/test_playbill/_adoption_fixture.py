@@ -34,35 +34,30 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
-from cruxible_core.playbill.attestations import (
+from cruxible_client.contracts.attestations import (
     ApprovalAttestation,
     ApprovalStatement,
     ApprovalSubmission,
     approval_statement_bytes,
 )
-from cruxible_core.playbill.candidates import (
+from cruxible_client.contracts.candidates import (
     PRODUCED_CANDIDATE_VERSION,
     CandidateWireVersion,
 )
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     build_direct_claim_capture,
     capture_contract_digest,
     capture_contract_path,
     render_capture_contract,
 )
-from cruxible_core.playbill.checkpoints import (
-    DEFAULT_CHECKPOINT_INTERVAL,
-    checkpoint_body,
-    write_checkpoint,
-)
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest, render_claim_type
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
+from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimBacking,
     ClaimReferentContext,
@@ -72,30 +67,26 @@ from cruxible_core.playbill.claims import (
     claim_statement_address,
     render_claim,
 )
-from cruxible_core.playbill.documents import (
+from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
     document_path,
     render_document,
 )
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.keys import GeneratedKeyMaterial, generate_client_principal_key
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
 )
-from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
-from cruxible_core.playbill.proposals import evaluate_proposal_tree
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
     QueryEvaluationPolicyV1,
     query_definition_path,
     render_query_definition,
 )
-from cruxible_core.playbill.query.grammar import (
+from cruxible_client.contracts.query.grammar import (
     QueryBudgetsV1,
     QueryClaimValueRefV1,
     QueryEntryV1,
@@ -104,20 +95,29 @@ from cruxible_core.playbill.query.grammar import (
     QueryProjectionFieldV1,
     QueryProjectionV1,
 )
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.subjects import (
+    SubjectShell,
+    render_subject,
+    subject_digest,
+    subject_path,
+)
+from cruxible_client.contracts.types import PlaybillTrustRoot
+from cruxible_core.playbill.checkpoints import (
+    DEFAULT_CHECKPOINT_INTERVAL,
+    checkpoint_body,
+    write_checkpoint,
+)
+from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.keys import GeneratedKeyMaterial, generate_client_principal_key
+from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.playbill.proposals import evaluate_proposal_tree
 from cruxible_core.playbill.settlement import (
     ChangeActorBinding,
     prepare_generation,
     render_change_set,
     render_generation_descriptor,
 )
-from cruxible_core.playbill.subjects import (
-    SubjectShell,
-    render_subject,
-    subject_digest,
-    subject_path,
-)
-from cruxible_core.playbill.types import PlaybillTrustRoot
 
 OWNER_AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
 SUBJECT_KIND = "project.work_item"

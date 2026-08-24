@@ -12,17 +12,17 @@ from typing import Protocol
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from cruxible_core.playbill.attestations import (
+from cruxible_client.contracts.attestations import (
     ApprovalAttestation,
     ApprovalStatement,
     approval_statement_bytes,
 )
-from cruxible_core.playbill.claim_attestations import (
+from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
     ClaimAttestationStatement,
     claim_attestation_statement_bytes,
 )
-from cruxible_core.playbill.errors import PlaybillKeyError
+from cruxible_client.contracts.errors import PlaybillKeyError
 from cruxible_core.playbill.keys import assert_outside_roots
 
 

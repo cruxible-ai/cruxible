@@ -46,10 +46,10 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_client.contracts.primitives import canonical_json
 from cruxible_core.config.auth_managed import AUTH_MANAGED_CREDENTIAL_PROPERTY_NAMES
 from cruxible_core.config.predicates import StructuredPredicateSpec
 from cruxible_core.predicate import PredicateValueType
-from cruxible_core.primitives import canonical_json
 from cruxible_core.query.enums import QueryDedupe, QueryResultShape, QueryVisibilityState
 
 _PATH_TOKEN = r"[\w-]+"

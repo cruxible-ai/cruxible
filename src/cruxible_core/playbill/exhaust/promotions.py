@@ -9,13 +9,13 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CanonicalValue,
     CasDigest,
@@ -24,21 +24,21 @@ from cruxible_core.playbill.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.errors import (
     PlaybillCasError,
     PlaybillFormatError,
     PlaybillJournalError,
 )
+from cruxible_client.contracts.governance import ActivationPolicy, PermissionTier
+from cruxible_client.contracts.projection_extensions import ProjectionFact
+from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust.records import (
     JournalRangeV1,
     StoredProcedureJournalRecordV1,
     parse_journal_payload,
     verify_journal_range,
 )
-from cruxible_core.playbill.governance import ActivationPolicy, PermissionTier
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.projection_extensions import ProjectionFact
 
 _PROMOTION_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 _STREAM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$")

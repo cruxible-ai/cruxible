@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from cruxible_client.contracts.procedures.artifacts import render_procedure
+from cruxible_client.contracts.procedures.line_specs import render_line_spec
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.compiler import (
     PC_C_COMPILER,
     PC_D_COMPILER,
@@ -9,10 +12,7 @@ from cruxible_core.playbill.compiler import (
     current_compiler_coordinate,
     projection_registry_for_compiler,
 )
-from cruxible_core.playbill.procedures.artifacts import render_procedure
-from cruxible_core.playbill.procedures.line_specs import render_line_spec
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
-from cruxible_core.playbill.semantic import SemanticAddress
 from tests.test_playbill.test_line_specs import _accepted_procedure, _line
 
 

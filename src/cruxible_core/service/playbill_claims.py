@@ -7,9 +7,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     DirectByteSpanSelectionV1,
     DirectCaptureBuildResult,
@@ -22,22 +22,21 @@ from cruxible_core.playbill.captures import (
     parse_capture_envelope,
     render_capture_contract,
 )
-from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_attestations import VerifiedClaimAttestationV1
-from cruxible_core.playbill.claim_type_structure import claim_type_structural_signature
-from cruxible_core.playbill.claim_types import (
+from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
+from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
+from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_core.playbill.claim_verdicts import (
+from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResultAny,
     ClaimVerdictResultV1,
     ClaimVerdictResultV2,
 )
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
@@ -60,22 +59,45 @@ from cruxible_core.playbill.claims import (
     parse_claim_law_evidence,
     render_claim,
 )
-from cruxible_core.playbill.dereference import (
-    ExternalSelectionReaderProtocol,
-    dereference_source_handle,
-)
-from cruxible_core.playbill.diagnostics import GovernedOperationReference
-from cruxible_core.playbill.discovery import ContextCapsuleV1, ExpandRequestV1
-from cruxible_core.playbill.errors import (
+from cruxible_client.contracts.diagnostics import GovernedOperationReference
+from cruxible_client.contracts.discovery import ContextCapsuleV1, ExpandRequestV1
+from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
     ProposalIntegrityError,
 )
-from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.policies import (
     ClaimVerdict,
     ResolutionContenderV1,
     resolve_claim_contenders,
 )
+from cruxible_client.contracts.query.definitions import (
+    parse_query_definition,
+    query_definition_digest,
+)
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.source_references import (
+    CoverageDescriptorV1,
+    ExternalSourceReferenceV1,
+    OpenSourceRequestV1,
+    SourceDereferenceResultV1,
+    SourceHandleV1,
+    source_handle_digest,
+)
+from cruxible_client.contracts.subjects import (
+    SubjectShell,
+    parse_subject,
+    render_subject,
+    subject_digest,
+    subject_path,
+    subject_reuse_signature,
+)
+from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.dereference import (
+    ExternalSelectionReaderProtocol,
+    dereference_source_handle,
+)
+from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_claims import ClaimProjectionView
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -85,34 +107,12 @@ from cruxible_core.playbill.query.cards import (
     build_claim_type_card,
     build_subject_profile,
 )
-from cruxible_core.playbill.query.definitions import (
-    parse_query_definition,
-    query_definition_digest,
-)
-from cruxible_core.playbill.query.grammar import byte_sorted
 from cruxible_core.playbill.query.semantic_discovery import DiscoveryEntryV1
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
 from cruxible_core.playbill.settlement import ChangeSetRecord
-from cruxible_core.playbill.source_references import (
-    CoverageDescriptorV1,
-    ExternalSourceReferenceV1,
-    OpenSourceRequestV1,
-    SourceDereferenceResultV1,
-    SourceHandleV1,
-    source_handle_digest,
-)
-from cruxible_core.playbill.subjects import (
-    SubjectShell,
-    parse_subject,
-    render_subject,
-    subject_digest,
-    subject_path,
-    subject_reuse_signature,
-)
 
 
 class _StrictClaimServiceModel(BaseModel):

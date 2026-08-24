@@ -8,35 +8,23 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.artifacts import (
+from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_core.playbill.captures import CanonicalDurationV1
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest, render_claim_type
-from cruxible_core.playbill.closure import evaluate_dependency_closure, parse_dependency_artifact
-from cruxible_core.playbill.compiler import PC_D_COMPILER, projection_registry_for_compiler
-from cruxible_core.playbill.errors import CanonicalEncodingError, ProjectionFormatError
-from cruxible_core.playbill.laws import PLAYBILL_ACCEPTANCE_LAWS, QUERY_DEFINITION_ACCEPTANCE_LAW
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
+from cruxible_client.contracts.errors import CanonicalEncodingError, ProjectionFormatError
+from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS, QUERY_DEFINITION_ACCEPTANCE_LAW
+from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
 )
-from cruxible_core.playbill.projection_artifacts import (
-    PLAYBILL_ARTIFACT_KINDS,
-    parse_projection_tree,
-    registered_path_kind,
-)
-from cruxible_core.playbill.projection_extensions import playbill_runtime_extension_registry
-from cruxible_core.playbill.proposals import (
-    AuthenticatedActor,
-    ProposalAdmissionRequest,
-    evaluate_proposal_tree,
-)
-from cruxible_core.playbill.query.definitions import (
+from cruxible_client.contracts.projection_extensions import playbill_runtime_extension_registry
+from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDefinitionFormatError,
     QueryDefinitionV1,
@@ -48,7 +36,7 @@ from cruxible_core.playbill.query.definitions import (
     query_definition_path,
     render_query_definition,
 )
-from cruxible_core.playbill.query.grammar import (
+from cruxible_client.contracts.query.grammar import (
     QueryBudgetsV1,
     QueryClaimPresenceFilterV1,
     QueryClaimValueRefV1,
@@ -65,7 +53,19 @@ from cruxible_core.playbill.query.grammar import (
     QuerySubjectFieldRefV1,
     QueryTraversalStepV1,
 )
-from cruxible_core.playbill.semantic import SemanticAddress
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_core.playbill.closure import evaluate_dependency_closure, parse_dependency_artifact
+from cruxible_core.playbill.compiler import PC_D_COMPILER, projection_registry_for_compiler
+from cruxible_core.playbill.projection_artifacts import (
+    PLAYBILL_ARTIFACT_KINDS,
+    parse_projection_tree,
+    registered_path_kind,
+)
+from cruxible_core.playbill.proposals import (
+    AuthenticatedActor,
+    ProposalAdmissionRequest,
+    evaluate_proposal_tree,
+)
 from tests.test_playbill._support import initialize_local
 
 GOLDEN = Path(__file__).parents[1] / "goldens" / "playbill" / "query-definition-v1.json"
@@ -257,7 +257,7 @@ def test_query_definition_parse_render_digest_and_path_match_frozen_golden() -> 
 
 
 def test_query_definition_digest_uses_the_shared_envelope_domain() -> None:
-    from cruxible_core.playbill.canonical import ArtifactDigest, typed_digest
+    from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 
     query = active_work_query()
     assert query_definition_digest(query) == typed_digest(
@@ -1002,8 +1002,8 @@ def test_a_query_definition_proposal_is_admitted_as_an_authorable_path(tmp_path:
 
 
 def test_query_definition_grammar_never_imports_donor_query_symbols() -> None:
-    import cruxible_core.playbill.query.definitions as definitions
-    import cruxible_core.playbill.query.grammar as grammar
+    import cruxible_client.contracts.query.definitions as definitions
+    import cruxible_client.contracts.query.grammar as grammar
 
     for module in (grammar, definitions):
         source = Path(module.__file__ or "").read_text(encoding="utf-8")

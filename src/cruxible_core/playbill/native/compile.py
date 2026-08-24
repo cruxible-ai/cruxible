@@ -64,16 +64,16 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.artifacts import ArtifactIdentity
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import (
     Sha256Value,
     canonical_bytes,
     file_digest,
     typed_digest,
 )
-from cruxible_core.playbill.claim_type_structure import claim_type_structural_signature
-from cruxible_core.playbill.claim_types import ClaimType, claim_type_digest
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
+from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
+from cruxible_client.contracts.claims import (
     ClaimObject,
     ClaimStatement,
     ExactContentClaimObject,
@@ -81,8 +81,8 @@ from cruxible_core.playbill.claims import (
     SubjectClaimObject,
     claim_statement_digest,
 )
-from cruxible_core.playbill.descriptor_claim_types import descriptor_claim_type
-from cruxible_core.playbill.discovery import (
+from cruxible_client.contracts.descriptor_claim_types import descriptor_claim_type
+from cruxible_client.contracts.discovery import (
     DiscoveryHintsV1,
     ProposedSemanticInterfaceV1,
     ReuseCandidateV1,
@@ -92,6 +92,9 @@ from cruxible_core.playbill.discovery import (
     evaluate_vocabulary_reuse,
     normalize_discovery_term,
 )
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
+from cruxible_client.contracts.subjects import SubjectShell, subject_reuse_signature
 from cruxible_core.playbill.native.context import RenderContextV1
 from cruxible_core.playbill.native.grammar import (
     NativeDiagnosticV1,
@@ -105,9 +108,6 @@ from cruxible_core.playbill.native.manifest import NativeRenderManifestV1
 from cruxible_core.playbill.native.parse import NativeParsedRegionV1, parse_native_tree
 from cruxible_core.playbill.native.state import NativeAcceptedStateV1, NativeClaimRecordV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import ContentSpan, SemanticAddress
-from cruxible_core.playbill.subjects import SubjectShell, subject_reuse_signature
 
 DRAFT_DIGEST_DOMAIN = "playbill-native-draft-v1"
 DISTINCT_FROM_PREDICATE = "semantic.distinct_from"

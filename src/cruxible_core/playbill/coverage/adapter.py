@@ -54,7 +54,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value
+from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_core.playbill.coverage.contracts import (
     CoverageError,
     CoverageSelectionV1,

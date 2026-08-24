@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from cruxible_client import contracts
+from cruxible_client.authoring.examples import authoring_example
+from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_core.mcp import handlers
-from cruxible_core.playbill.authoring.examples import authoring_example
-from cruxible_core.playbill.authoring.inputs import ClaimInput
 from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
 
 

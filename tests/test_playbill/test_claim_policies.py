@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from cruxible_core.playbill.policies import (
+from cruxible_client.contracts.policies import (
     ActorRequirementV1,
     AdmissionActorV1,
     ClaimAdmissionCandidateContextV1,

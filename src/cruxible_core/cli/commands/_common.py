@@ -59,7 +59,7 @@ def _json_compact_enabled() -> bool:
 
 def _emit_json(data: Any, *, sort_keys: bool = False) -> None:
     if _json_compact_enabled():
-        from cruxible_core.primitives import compact_json
+        from cruxible_client.contracts.primitives import compact_json
 
         click.echo(compact_json(data, default=str, sort_keys=sort_keys))
         return

@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.semantic import SemanticAddress, SemanticSelector
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.errors import PlaybillFormatError
-from cruxible_core.playbill.semantic import SemanticAddress, SemanticSelector
 from cruxible_core.service.playbill_documents import (
     PlaybillAcceptedCoordinate,
     service_activate_playbill_proposal,

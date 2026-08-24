@@ -6,13 +6,24 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_core.playbill.artifacts import ArtifactLifecycle
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.authoring.inputs import (
+from cruxible_client.authoring.inputs import (
     ClaimInput,
     LiteralObjectInput,
     SelfSourceInput,
 )
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.claim_types import (
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+)
+from cruxible_client.contracts.claims import claim_path, parse_claim
+from cruxible_client.contracts.query.definitions import (
+    parse_query_definition,
+    query_definition_path,
+    render_query_definition,
+)
+from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeDependentDispositionV2,
@@ -23,18 +34,7 @@ from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeMigrationResultV2,
     service_migrate_claim_type,
 )
-from cruxible_core.playbill.claim_types import (
-    claim_type_digest,
-    claim_type_path,
-    parse_claim_type,
-)
-from cruxible_core.playbill.claims import claim_path, parse_claim
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.query.definitions import (
-    parse_query_definition,
-    query_definition_path,
-    render_query_definition,
-)
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,

@@ -10,9 +10,9 @@ from typing import Any
 from click.testing import CliRunner
 
 from cruxible_client import contracts
+from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_core.cli.main import cli
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.source_catalog import SourceCompilationBundle
 from tests.test_service.test_playbill_documents import _instance
 
 

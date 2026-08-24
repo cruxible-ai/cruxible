@@ -43,13 +43,24 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_core.playbill.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.captures import CaptureEnvelopeV1
-from cruxible_core.playbill.claim_verdicts import ObservationTrustGrade
-from cruxible_core.playbill.claims import (
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.captures import CaptureEnvelopeV1
+from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade
+from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimCitationReference,
     claim_citation_references,
+)
+from cruxible_client.contracts.query.grammar import byte_sorted
+from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.source_references import (
+    CasSourceReferenceV1,
+    ExternalSourceReferenceV1,
+    LedgerSourceReferenceV1,
+    SourceAccessClass,
+    SourceHandleV1,
+    SourceReferenceV1,
+    source_handle_digest,
 )
 from cruxible_core.playbill.coverage.contracts import (
     CoverageClaimCitationV2,
@@ -60,17 +71,6 @@ from cruxible_core.playbill.coverage.contracts import (
     occurrence_identity_digest,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.query.grammar import byte_sorted
-from cruxible_core.playbill.semantic import SemanticAddress
-from cruxible_core.playbill.source_references import (
-    CasSourceReferenceV1,
-    ExternalSourceReferenceV1,
-    LedgerSourceReferenceV1,
-    SourceAccessClass,
-    SourceHandleV1,
-    SourceReferenceV1,
-    source_handle_digest,
-)
 
 EVIDENCE_INDEX_DIGEST_DOMAIN = "playbill-coverage-evidence-index-v1"
 EVIDENCE_INDEX_V2_DIGEST_DOMAIN = "playbill-coverage-evidence-index-v2"

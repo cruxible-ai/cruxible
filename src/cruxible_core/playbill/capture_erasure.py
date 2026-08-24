@@ -12,18 +12,23 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.canonical import CasDigest, Sha256Value, canonical_bytes, typed_digest
-from cruxible_core.playbill.captures import (
+from cruxible_client.contracts.canonical import (
+    CasDigest,
+    Sha256Value,
+    canonical_bytes,
+    typed_digest,
+)
+from cruxible_client.contracts.captures import (
     CaptureContractV1,
     CaptureEnvelopeV1,
     CaptureObjectStoreProtocol,
     capture_contract_digest,
     verify_capture,
 )
+from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.governance import governance_identifier
+from cruxible_client.contracts.source_references import CasSourceReferenceV1
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.errors import PlaybillFormatError
-from cruxible_core.playbill.governance import governance_identifier
-from cruxible_core.playbill.source_references import CasSourceReferenceV1
 
 _SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
 _PUBLIC_KEY_RE = re.compile(r"^[0-9a-f]{64}$")

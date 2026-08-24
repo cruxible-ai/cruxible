@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from cruxible_core.primitives import canonical_json, json_type_name, new_id
+from cruxible_client.contracts.primitives import canonical_json, json_type_name, new_id
 
 
 class TestCanonicalJson:

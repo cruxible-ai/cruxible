@@ -11,8 +11,8 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from cruxible_core.playbill.canonical import canonical_bytes
-from cruxible_core.playbill.errors import PlaybillJournalError
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import PlaybillJournalError
 from cruxible_core.playbill.exhaust.records import (
     JournalHeadVectorV1,
     JournalPartitionHeadV1,

@@ -8,28 +8,28 @@ from typing import TypeVar
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from cruxible_core.playbill.attestations import (
+from cruxible_client.contracts.attestations import (
     ApprovalSubmission,
     approval_digest,
     approval_statement_bytes,
 )
-from cruxible_core.playbill.candidates import (
+from cruxible_client.contracts.candidates import (
     CandidateRecordAnyVersion,
     render_candidate_record,
 )
-from cruxible_core.playbill.canonical import (
+from cruxible_client.contracts.canonical import (
     CandidateDigest,
     ProposalDigest,
     Sha256Value,
     canonical_bytes,
     canonical_digest,
 )
-from cruxible_core.playbill.errors import ProposalIntegrityError
+from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.source_catalog import SourceCompilationManifest
 from cruxible_core.playbill.proposals import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
 )
-from cruxible_core.playbill.source_catalog import SourceCompilationManifest
 
 _EvidenceModelT = TypeVar("_EvidenceModelT", bound=BaseModel)
 
