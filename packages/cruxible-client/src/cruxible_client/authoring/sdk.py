@@ -1114,7 +1114,9 @@ class Playbill:
             claim_view = self._client.get_playbill_claim(
                 self._instance_id,
                 identity,
-                at=_api_coordinate(self.coordinate),
+                at=_api_coordinate(
+                    claim_key.coordinate if isinstance(claim_key, ClaimRef) else self.coordinate
+                ),
                 evaluation_time=self._evaluation_time(),
             )
             artifact = _claim_from_public_view(claim_view)
@@ -1145,7 +1147,11 @@ class Playbill:
         for query_key, render in queries.items():
             identity = _address(query_key, RefKind.QUERY)
             query_view = self._client.get_playbill_query_definition(
-                self._instance_id, identity, at=_api_coordinate(self.coordinate)
+                self._instance_id,
+                identity,
+                at=_api_coordinate(
+                    query_key.coordinate if isinstance(query_key, QueryRef) else self.coordinate
+                ),
             )
             definition = QueryDefinitionV1.model_validate(query_view.envelope)
             query_rows.append(
@@ -1571,6 +1577,7 @@ class Procedure:
         )
 
     def bind(self, *, bindings: Mapping[str | SlotRef, TypedRef]) -> Proposal:
+        self._playbill._assert_coordinate(self._coordinate)
         rows: list[dict[str, object]] = []
         for key, value in bindings.items():
             slot = key if isinstance(key, str) else _address(key, RefKind.SLOT)
@@ -1593,6 +1600,7 @@ class Procedure:
         return Proposal.from_inspection(self._playbill, result.proposal)
 
     def run(self, **inputs: CanonicalValue) -> ProcedureRun:
+        self._playbill._assert_coordinate(self._coordinate)
         normalized = normalize_canonical(inputs)
         result = self._playbill._client.run_playbill_procedure(
             self._playbill._instance_id,
@@ -1630,14 +1638,18 @@ class ProcedureRun:
 
     @property
     def track_record(self) -> object:
-        page = self._playbill.search(
+        result = self._playbill._client.search_playbill(
+            self._playbill._instance_id,
+            mode="search",
             query=str(self._raw.procedure_identity.get("name", "")),
             kinds=("procedure",),
             statuses=(),
+            at=self._raw.coordinate,
+            evaluation_time=self._raw.evaluation_time,
         )
         matches = [
             row
-            for row in page.rows
+            for row in result.rows
             if row.get("identity") == self._raw.procedure_identity.get("qualified")
             or row.get("name") == self._raw.procedure_identity.get("name")
         ]

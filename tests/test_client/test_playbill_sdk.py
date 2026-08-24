@@ -286,3 +286,58 @@ def test_connect_refuses_an_unknown_daemon_before_instance_io(
     assert calls == ["connect", "version", "close"]
     assert connection["base_url"] == "http://explicit"
     assert connection["socket_path"] is None
+
+
+def test_refusal_diagnostic_maps_exact_payload_path_to_the_call_expression(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+
+    class _RefusingClient(_Client):
+        def compile_playbill_authoring(
+            self, _instance_id: str, **values: object
+        ) -> api.PlaybillAuthoringPreflightResult:
+            self.compiled = dict(values)
+            return api.PlaybillAuthoringPreflightResult(
+                verdict="refused",
+                certificate={"intent_id": "AIT-" + "1" * 32},
+                frontier={
+                    "diagnostics": [
+                        {
+                            "code": "playbill.test.role_refused",
+                            "stage": "admission",
+                            "offending_element": "statement.role",
+                            "message": "role is not admitted",
+                            "repairs": [],
+                            "owner": "writer",
+                            "disposition": "repairable",
+                        }
+                    ]
+                },
+            )
+
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        _RefusingClient(), instance_id="inst_test", workspace=tmp_path
+    )
+    intent = pb.claim(
+        subject="secops.policy/patch-sla",
+        predicate="secops.policy.patch_sla",
+        value=48,
+        role=ClaimRole.NORMATIVE,
+        rationale="Map this refusal to its exact decision.",
+        supported_by=None,
+        copied_from=None,
+        self_source="Patch within 48 hours.",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        publish_to=None,
+        subject_definition=None,
+        claim_type_definition=None,
+    ).prepare()
+
+    diagnostic = intent.diagnostics[0]
+    assert diagnostic.offending_element == "statement.role"
+    assert diagnostic.call_site is not None
+    assert diagnostic.call_site.expression == "ClaimRole.NORMATIVE"
