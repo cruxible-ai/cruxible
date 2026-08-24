@@ -177,6 +177,33 @@ run executes one accepted QueryDefinition and prints its
 `playbill-query-execution-receipt-v1`: the definition digest, the resolved
 parameter digest, and the result digest that replays it.
 
+## playbill procedure
+
+~~~text
+cruxible playbill procedure readiness NAME --evaluation-time TS
+cruxible playbill procedure bind NAME REQUEST_FILE
+cruxible playbill procedure run NAME INPUT_FILE --evaluation-time TS
+cruxible playbill procedure status RUN_ID
+~~~
+
+The first served profile runs deterministic `state_tap`, `transform`, and
+`project` graphs only. `readiness` names open slots or unsupported nodes before
+execution. `bind` proposes a same-identity Procedure successor with exact accepted
+pins; it never mutates the accepted Procedure in place. Runs append replay-verifiable
+journal records and `status` reconstructs the one-read run state from those records.
+
+## playbill next
+
+~~~text
+cruxible playbill next --evaluation-time TS [--access-profile FILE]
+  [--expiring-within-us N] [--workspace-root DIR]
+~~~
+
+Returns the deterministic repair queue at one accepted coordinate. The client
+observes its configured floor locally; the daemon reads no workspace and reports
+source drift as unobserved unless exact citation observations were supplied. Empty
+output means only that no work exists in the explicitly observed domains.
+
 ## playbill discover
 
 ~~~text

@@ -7847,6 +7847,216 @@
         "tag"
       ]
     },
+    "PlaybillNextResult": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "items": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "items",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "observed_domains": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observed_domains",
+          "required": true,
+          "schema": {
+            "items": {
+              "enum": [
+                "accepted_state",
+                "workspace_floor",
+                "workspace_sources"
+              ],
+              "type": "string"
+            },
+            "title": "Observed Domains",
+            "type": "array"
+          }
+        },
+        "result_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "result_digest",
+          "required": true,
+          "schema": {
+            "title": "Result Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-next-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-next-result-v1",
+            "default": "playbill-next-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "unobserved_domains": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "unobserved_domains",
+          "required": true,
+          "schema": {
+            "items": {
+              "enum": [
+                "accepted_state",
+                "workspace_floor",
+                "workspace_sources"
+              ],
+              "type": "string"
+            },
+            "title": "Unobserved Domains",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "evaluation_time": {
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "observed_domains": {
+            "items": {
+              "enum": [
+                "accepted_state",
+                "workspace_floor",
+                "workspace_sources"
+              ],
+              "type": "string"
+            },
+            "title": "Observed Domains",
+            "type": "array"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-next-result-v1",
+            "default": "playbill-next-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "unobserved_domains": {
+            "items": {
+              "enum": [
+                "accepted_state",
+                "workspace_floor",
+                "workspace_sources"
+              ],
+              "type": "string"
+            },
+            "title": "Unobserved Domains",
+            "type": "array"
+          }
+        },
+        "required": [
+          "coordinate",
+          "evaluation_time",
+          "observed_domains",
+          "unobserved_domains",
+          "items",
+          "result_digest"
+        ],
+        "title": "PlaybillNextResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "evaluation_time",
+        "items",
+        "observed_domains",
+        "result_digest",
+        "unobserved_domains"
+      ]
+    },
     "PlaybillPrincipalList": {
       "fields": {
         "coordinate": {

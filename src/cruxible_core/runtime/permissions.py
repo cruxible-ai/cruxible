@@ -148,6 +148,7 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
 RUNTIME_OPERATION_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_inspect": PermissionMode.READ_ONLY,
     "cruxible_playbill_read": PermissionMode.READ_ONLY,
+    "cruxible_playbill_next": PermissionMode.READ_ONLY,
     "cruxible_playbill_propose": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_body_read": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_principal_change": PermissionMode.ADMIN,

@@ -1008,6 +1008,30 @@ class CruxibleClient:
         response = self._client.get(f"/api/v1/{instance_id}/playbill/procedure-runs/{run_id}")
         return self._parse_model(response, contracts.PlaybillProcedureRunState)
 
+    def next_playbill(
+        self,
+        instance_id: str,
+        *,
+        evaluation_time: str,
+        access_profile: Mapping[str, Any],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        expiring_within: Mapping[str, Any] | None = None,
+        workspace_observation: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillNextResult:
+        payload: dict[str, Any] = {
+            "tag": "playbill-next-request-v1",
+            "at": self._playbill_coordinate_body(at),
+            "evaluation_time": evaluation_time,
+            "access_profile": dict(access_profile),
+            "workspace_observation": (
+                None if workspace_observation is None else dict(workspace_observation)
+            ),
+        }
+        if expiring_within is not None:
+            payload["expiring_within"] = dict(expiring_within)
+        response = self._client.post(f"/api/v1/{instance_id}/playbill/next", json=payload)
+        return self._parse_model(response, contracts.PlaybillNextResult)
+
     def discover_playbill(
         self,
         instance_id: str,

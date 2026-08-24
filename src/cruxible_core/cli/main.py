@@ -555,6 +555,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="procedure_group",
             ),
+            "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
             "discover": _command(
                 "playbill", "discover", "Find accepted interfaces and Subjects by name."
             ),

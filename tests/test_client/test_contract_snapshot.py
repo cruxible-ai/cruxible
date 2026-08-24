@@ -91,6 +91,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillProcedureReadiness",
         "PlaybillProcedureBindResult",
         "PlaybillProcedureRunState",
+        "PlaybillNextResult",
         "PlaybillDiscoveryResult",
         "PlaybillContextCapsule",
         "PlaybillCoverageResult",

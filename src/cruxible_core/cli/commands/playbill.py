@@ -16,7 +16,12 @@ import click
 import yaml
 from pydantic import TypeAdapter, ValidationError
 
-from cruxible_client import CruxibleClient, activate_with_workspace_refresh, contracts
+from cruxible_client import (
+    CruxibleClient,
+    activate_with_workspace_refresh,
+    contracts,
+    observe_playbill_next_workspace,
+)
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
@@ -1629,6 +1634,72 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
         command_name="playbill procedure status",
     )
     _emit_json(result.model_dump(mode="json"))
+
+
+@playbill_group.command("next")
+@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--access-profile",
+    "access_profile_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
+)
+@click.option(
+    "--expiring-within-us",
+    type=click.IntRange(min=0),
+    default=604_800_000_000,
+    show_default=True,
+    help="Lead window for evidence-expiration warnings, in microseconds.",
+)
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace whose configured floor is observed locally.",
+)
+@json_option
+@handle_errors
+def next_work(
+    evaluation_time: str,
+    access_profile_path: str | None,
+    expiring_within_us: int,
+    workspace_root: str,
+    output_json: bool,
+) -> None:
+    profile = (
+        CoverageAccessProfileV1(
+            profile_id="cli-next",
+            permitted_access_classes=("instance", "public"),
+        ).model_dump(mode="json")
+        if access_profile_path is None
+        else _read_model(access_profile_path, CoverageAccessProfileV1).model_dump(mode="json")
+    )
+    workspace_observation = observe_playbill_next_workspace(Path(workspace_root))
+    result = _server_call(
+        lambda client, instance_id: client.next_playbill(
+            instance_id,
+            evaluation_time=evaluation_time,
+            access_profile=profile,
+            expiring_within={"microseconds": expiring_within_us},
+            workspace_observation=workspace_observation,
+        ),
+        command_name="playbill next",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    if not result.items:
+        click.echo("No repair work in the observed domains.")
+    for item in result.items:
+        repair = item["repair"]
+        click.echo(
+            f"{item['severity']}  {item['reason']}  {item['subject_identity']}  "
+            f"next={repair['operation']}"
+        )
+    if result.unobserved_domains:
+        click.echo("Unobserved: " + ", ".join(result.unobserved_domains))
 
 
 @playbill_group.command("discover")

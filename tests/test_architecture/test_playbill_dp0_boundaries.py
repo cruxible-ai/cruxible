@@ -510,6 +510,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "playbill_whoami",
         "readmit_playbill_proposal",
         "migrate_playbill_claim_type",
+        "next_playbill",
         "search_playbill",
     }
 

@@ -11,6 +11,7 @@ if TYPE_CHECKING:
         activate_with_workspace_refresh,
         inspect_workspace_floor,
         materialize_playbill_floor,
+        observe_playbill_next_workspace,
     )
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "activate_with_workspace_refresh",
     "apply_playbill_insertion",
     "inspect_workspace_floor",
+    "observe_playbill_next_workspace",
     "materialize_playbill_floor",
     "prepare_playbill_brief",
 ]
@@ -50,6 +52,7 @@ def __getattr__(name: str) -> Any:
         "PlaybillWorkspaceError",
         "activate_with_workspace_refresh",
         "inspect_workspace_floor",
+        "observe_playbill_next_workspace",
         "materialize_playbill_floor",
     }:
         from cruxible_client import playbill_workspace

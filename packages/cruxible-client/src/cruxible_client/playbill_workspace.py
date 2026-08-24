@@ -321,6 +321,27 @@ def inspect_workspace_floor(
     )
 
 
+def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
+    """Observe the configured floor once without claiming source coverage was scanned.
+
+    The daemon compares ``installed_coordinate`` with its resolved coordinate.  Therefore
+    the local ``stale`` spelling produced without a daemon coordinate is only a transport
+    hint; it cannot manufacture a stale or current queue item.
+    """
+
+    floor = inspect_workspace_floor(workspace, current_coordinate=None)
+    return {
+        "tag": "playbill-next-workspace-observation-v1",
+        "floor_status": floor.status,
+        "installed_coordinate": (
+            None
+            if floor.installed_coordinate is None
+            else floor.installed_coordinate.model_dump(mode="json")
+        ),
+        "drift_observations": None,
+    }
+
+
 def activate_with_workspace_refresh(
     client: _FloorClient,
     instance_id: str,
@@ -361,6 +382,7 @@ __all__ = [
     "activate_with_workspace_refresh",
     "configured_floor_path",
     "inspect_workspace_floor",
+    "observe_playbill_next_workspace",
     "materialize_playbill_floor",
     "verified_floor_files",
 ]

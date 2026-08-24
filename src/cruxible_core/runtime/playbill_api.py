@@ -125,6 +125,11 @@ from cruxible_core.service.playbill_coverage import (
 )
 from cruxible_core.service.playbill_discovery import service_discover_playbill_semantic
 from cruxible_core.service.playbill_floor import MANIFEST_PATH, service_export_playbill_floor
+from cruxible_core.service.playbill_next import (
+    PlaybillNextRequestV1,
+    service_playbill_next,
+    validate_playbill_next_request,
+)
 from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
@@ -1070,6 +1075,19 @@ def playbill_procedure_run_status(
         run_id=run_id,
     )
     return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_next(
+    instance_id: str,
+    *,
+    request: PlaybillNextRequestV1 | Mapping[str, object],
+) -> contracts.PlaybillNextResult:
+    check_permission("cruxible_playbill_next", instance_id=instance_id)
+    result = service_playbill_next(
+        get_playbill_manager().get(instance_id),
+        request=validate_playbill_next_request(request),
+    )
+    return contracts.PlaybillNextResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_discover(

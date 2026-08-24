@@ -748,6 +748,18 @@ class PlaybillProcedureRunState(BaseModel):
     receipt_digest: str | None = None
 
 
+class PlaybillNextResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-next-result-v1"] = "playbill-next-result-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: str
+    observed_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
+    unobserved_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
+    items: list[dict[str, Any]]
+    result_digest: str
+
+
 class PlaybillDiscoveryResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

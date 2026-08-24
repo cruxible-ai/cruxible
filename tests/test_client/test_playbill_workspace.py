@@ -15,6 +15,7 @@ from cruxible_client.playbill_workspace import (
     activate_with_workspace_refresh,
     inspect_workspace_floor,
     materialize_playbill_floor,
+    observe_playbill_next_workspace,
 )
 from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 
@@ -100,6 +101,9 @@ def test_materialization_exactly_replaces_and_reports_current(tmp_path: Path) ->
     assert (destination / "cards/fresh.json").read_bytes() == b'{"fresh":true}\n'
     assert status.status == "current"
     assert status.installed_coordinate == _coordinate()
+    observation = observe_playbill_next_workspace(workspace)
+    assert observation["installed_coordinate"] == _coordinate().model_dump(mode="json")
+    assert observation["drift_observations"] is None
 
 
 def test_materialization_refuses_symlink_escape(tmp_path: Path) -> None:

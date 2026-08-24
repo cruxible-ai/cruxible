@@ -31,6 +31,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillInitRequest,
     PlaybillInsertionAbandonRequest,
     PlaybillInsertionConfirmRequest,
+    PlaybillNextRequest,
     PlaybillProposalReadmitRequest,
     PlaybillProposeClaimRequest,
     PlaybillProposeClaimsRequest,
@@ -931,6 +932,20 @@ async def procedure_run_status(
     return playbill_api.playbill_procedure_run_status(
         resolve_server_instance_id(instance_id),
         run_id,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/next",
+    response_model=contracts.PlaybillNextResult,
+)
+async def next_work(
+    instance_id: str,
+    req: PlaybillNextRequest,
+) -> contracts.PlaybillNextResult:
+    return playbill_api.playbill_next(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json", exclude_none=True),
     )
 
 

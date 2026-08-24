@@ -225,6 +225,15 @@ class PlaybillSearchRequest(_StrictPlaybillRequest):
     budgets: PlaybillSearchBudgetsV1 = PlaybillSearchBudgetsV1()
 
 
+class PlaybillNextRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-next-request-v1"] = "playbill-next-request-v1"
+    at: AcceptedCoordinate | None = None
+    evaluation_time: datetime
+    access_profile: dict[str, Any]
+    expiring_within: dict[str, Any] | None = None
+    workspace_observation: dict[str, Any] | None = None
+
+
 class PlaybillExpandRequest(_StrictPlaybillRequest):
     address: SemanticAddress
     at: AcceptedCoordinate | None = None

@@ -27,13 +27,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from cruxible_core.playbill.captures import (
+    CaptureContractV1,
     capture_contract_digest,
     capture_contract_is_self_asserted,
     parse_capture_contract,
     parse_capture_envelope,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.claim_verdicts import observation_trust_grade
+from cruxible_core.playbill.claim_verdicts import (
+    EvidenceProvenanceGrade,
+    observation_trust_grade,
+)
 from cruxible_core.playbill.claims import (
     AcceptedClaim,
     claim_artifact_digest,
@@ -181,7 +185,7 @@ def build_accepted_evidence_index_v2(
     access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
     store = instance.body_store()
     tree = instance.tree_at(at.git_oid)
-    contracts = {}
+    contracts: dict[str, CaptureContractV1] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("capture-contracts/"):
             continue
@@ -192,12 +196,12 @@ def build_accepted_evidence_index_v2(
     captures: dict[str, CaptureCitationInputV2] = {}
     for view in listing.claims:
         artifact = _claim_from_view(view)
-        path = view.envelope.get("path")
-        if not isinstance(path, str):
+        claim_path_value = view.envelope.get("path")
+        if not isinstance(claim_path_value, str):
             raise ProposalIntegrityError("Claim projection envelope has no path")
         claims.append(
             AcceptedClaim(
-                path=path,
+                path=claim_path_value,
                 claim=artifact,
                 statement_digest=claim_statement_digest(artifact.statement).tagged,
                 artifact_digest=claim_artifact_digest(artifact).tagged,
@@ -207,11 +211,13 @@ def build_accepted_evidence_index_v2(
             if digest in captures:
                 continue
             envelope = parse_capture_envelope(store.read(digest, access=access))
-            contract = contracts.get(envelope.capture_contract_digest)
-            if contract is None:
+            accepted_contract = contracts.get(envelope.capture_contract_digest)
+            if accepted_contract is None:
                 raise ProposalIntegrityError("accepted CaptureContract is unavailable")
-            provenance = (
-                "self-asserted" if capture_contract_is_self_asserted(contract) else "daemon-fetched"
+            provenance: EvidenceProvenanceGrade = (
+                "self-asserted"
+                if capture_contract_is_self_asserted(accepted_contract)
+                else "daemon-fetched"
             )
             captures[digest] = CaptureCitationInputV2(
                 capture_digest=digest,

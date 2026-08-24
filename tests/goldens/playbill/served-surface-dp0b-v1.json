@@ -40,6 +40,7 @@
     "playbill_list_query_definitions",
     "playbill_list_subjects",
     "playbill_migrate_claim_type",
+    "playbill_next",
     "playbill_prepare_approval",
     "playbill_procedure_bind",
     "playbill_procedure_readiness",
@@ -65,6 +66,6 @@
     "playbill_submit_approval",
     "playbill_whoami"
   ],
-  "http_delegate_count": 63,
+  "http_delegate_count": 64,
   "mcp_delegate_count": 61
 }

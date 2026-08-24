@@ -27,6 +27,9 @@
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight": {
     "POST": "PlaybillAuthoringPreflightResult"
   },
+  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/rebase": {
+    "POST": "PlaybillAuthoringIntentView"
+  },
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/resume": {
     "GET": "PlaybillAuthoringIntentView"
   },
@@ -43,7 +46,7 @@
     "GET": "PlaybillClaimTypeList"
   },
   "/api/v1/{instance_id}/playbill/claim-types/migrations": {
-    "POST": "PlaybillClaimTypeMigrationResult"
+    "POST": "PlaybillClaimTypeMigrationResult | PlaybillClaimTypeMigrationPreflight | PlaybillClaimTypeMigrationResultV2"
   },
   "/api/v1/{instance_id}/playbill/claim-types/proposals": {
     "POST": "PlaybillProposalInspection | PlaybillClaimTypeInputProposalResult"
@@ -102,11 +105,26 @@
   "/api/v1/{instance_id}/playbill/init": {
     "POST": "PlaybillInitResult"
   },
+  "/api/v1/{instance_id}/playbill/next": {
+    "POST": "PlaybillNextResult"
+  },
   "/api/v1/{instance_id}/playbill/principals": {
     "GET": "PlaybillPrincipalList"
   },
   "/api/v1/{instance_id}/playbill/principals/proposals": {
     "POST": "PlaybillProposalInspection"
+  },
+  "/api/v1/{instance_id}/playbill/procedure-runs/{run_id}": {
+    "GET": "PlaybillProcedureRunState"
+  },
+  "/api/v1/{instance_id}/playbill/procedures/{name}/bind": {
+    "POST": "PlaybillProcedureBindResult"
+  },
+  "/api/v1/{instance_id}/playbill/procedures/{name}/readiness": {
+    "GET": "PlaybillProcedureReadiness"
+  },
+  "/api/v1/{instance_id}/playbill/procedures/{name}/runs": {
+    "POST": "PlaybillProcedureRunState"
   },
   "/api/v1/{instance_id}/playbill/proposals": {
     "GET": "PlaybillProposalList"

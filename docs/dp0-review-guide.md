@@ -72,6 +72,7 @@ playbill native stash list
 playbill native stash restore
 playbill native stash show
 playbill native status
+playbill next
 playbill orient
 playbill principal list
 playbill principal recover
@@ -178,6 +179,7 @@ POST /api/v1/{instance_id}/playbill/queries/proposals
 GET  /api/v1/{instance_id}/playbill/queries
 GET  /api/v1/{instance_id}/playbill/queries/{name}
 POST /api/v1/{instance_id}/playbill/queries/{name}/run
+POST /api/v1/{instance_id}/playbill/next
 GET  /api/v1/{instance_id}/playbill/procedures/{name}/readiness
 POST /api/v1/{instance_id}/playbill/procedures/{name}/bind
 POST /api/v1/{instance_id}/playbill/procedures/{name}/runs
