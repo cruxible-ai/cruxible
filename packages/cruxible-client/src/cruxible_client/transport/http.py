@@ -10,6 +10,14 @@ import httpx
 from pydantic import BaseModel, TypeAdapter
 
 from cruxible_client import contracts
+from cruxible_client.contracts.authoring.models import (
+    AuthoringIntentCompileRequestV1,
+    AuthoringIntentCompileRequestV2,
+    AuthoringIntentCompileRequestV3,
+    AuthoringIntentCreateRequestV1,
+    AuthoringIntentCreateRequestV2,
+    AuthoringIntentCreateRequestV3,
+)
 from cruxible_client.errors import (
     ConfigError,
     CoreError,
@@ -674,27 +682,33 @@ class CruxibleClient:
         reference_expectations: Sequence[Mapping[str, Any]] | None = None,
         program_stamp: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillAuthoringIntentView:
-        request: dict[str, Any] = {
-            "tag": (
-                "playbill-authoring-intent-create-request-v1"
-                if reference_expectations is None
-                else (
-                    "playbill-authoring-intent-create-request-v2"
-                    if program_stamp is None
-                    else "playbill-authoring-intent-create-request-v3"
-                )
-            ),
-            "payload": dict(payload),
-        }
-        if reference_expectations is not None:
-            request["reference_expectations"] = [dict(item) for item in reference_expectations]
-        if program_stamp is not None:
-            if reference_expectations is None:
+        request: (
+            AuthoringIntentCreateRequestV1
+            | AuthoringIntentCreateRequestV2
+            | AuthoringIntentCreateRequestV3
+        )
+        if reference_expectations is None:
+            if program_stamp is not None:
                 raise ValueError("program_stamp requires reference_expectations")
-            request["program_stamp"] = dict(program_stamp)
+            request = AuthoringIntentCreateRequestV1.model_validate({"payload": dict(payload)})
+        elif program_stamp is None:
+            request = AuthoringIntentCreateRequestV2.model_validate(
+                {
+                    "payload": dict(payload),
+                    "reference_expectations": [dict(item) for item in reference_expectations],
+                }
+            )
+        else:
+            request = AuthoringIntentCreateRequestV3.model_validate(
+                {
+                    "payload": dict(payload),
+                    "reference_expectations": [dict(item) for item in reference_expectations],
+                    "program_stamp": dict(program_stamp),
+                }
+            )
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/intents",
-            json=request,
+            json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, contracts.PlaybillAuthoringIntentView)
 
@@ -747,28 +761,37 @@ class CruxibleClient:
         reference_expectations: Sequence[Mapping[str, Any]] | None = None,
         program_stamp: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillAuthoringPreflightResult:
-        request: dict[str, Any] = {
-            "tag": (
-                "playbill-authoring-intent-compile-request-v1"
-                if reference_expectations is None
-                else (
-                    "playbill-authoring-intent-compile-request-v2"
-                    if program_stamp is None
-                    else "playbill-authoring-intent-compile-request-v3"
-                )
-            ),
-            "payload": dict(payload),
-            "intent_id": intent_id,
-        }
-        if reference_expectations is not None:
-            request["reference_expectations"] = [dict(item) for item in reference_expectations]
-        if program_stamp is not None:
-            if reference_expectations is None:
+        request: (
+            AuthoringIntentCompileRequestV1
+            | AuthoringIntentCompileRequestV2
+            | AuthoringIntentCompileRequestV3
+        )
+        if reference_expectations is None:
+            if program_stamp is not None:
                 raise ValueError("program_stamp requires reference_expectations")
-            request["program_stamp"] = dict(program_stamp)
+            request = AuthoringIntentCompileRequestV1.model_validate(
+                {"payload": dict(payload), "intent_id": intent_id}
+            )
+        elif program_stamp is None:
+            request = AuthoringIntentCompileRequestV2.model_validate(
+                {
+                    "payload": dict(payload),
+                    "reference_expectations": [dict(item) for item in reference_expectations],
+                    "intent_id": intent_id,
+                }
+            )
+        else:
+            request = AuthoringIntentCompileRequestV3.model_validate(
+                {
+                    "payload": dict(payload),
+                    "reference_expectations": [dict(item) for item in reference_expectations],
+                    "program_stamp": dict(program_stamp),
+                    "intent_id": intent_id,
+                }
+            )
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/compile",
-            json=request,
+            json=request.model_dump(mode="json"),
         )
         return self._parse_model(response, contracts.PlaybillAuthoringPreflightResult)
 

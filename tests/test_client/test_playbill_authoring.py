@@ -55,6 +55,35 @@ def _status() -> dict[str, Any]:
     }
 
 
+def _claim_payload() -> dict[str, Any]:
+    return {
+        "tag": "playbill-claim-authoring-payload-v1",
+        "statement": {
+            "tag": "playbill-authoring-claim-statement-v1",
+            "subject": {
+                "tag": "playbill-semantic-address-v1",
+                "artifact_path": "subjects/work_item/wi-42.yaml",
+                "selector": {"scheme": "artifact-v1", "value": ""},
+            },
+            "predicate": "work.status",
+            "qualifier": None,
+            "object": {"kind": "literal", "value": "ready"},
+            "role": "observation",
+            "effective_from": None,
+            "effective_until": None,
+        },
+        "rationale": "Observed ready.",
+        "source": {
+            "tag": "playbill-self-source-body-v1",
+            "content_base64": "cmVhZHk=",
+        },
+        "citation_role": None,
+        "claim_ref": None,
+        "existing_claim_dispositions": [],
+        "insertion_target": None,
+    }
+
+
 def test_client_speaks_frozen_compile_and_submit_requests() -> None:
     captured: list[httpx.Request] = []
 
@@ -80,7 +109,7 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
         )
 
     client = _client(handler)
-    payload = {"tag": "playbill-claim-authoring-payload-v1", "example": "payload"}
+    payload = _claim_payload()
     compiled = client.compile_playbill_authoring("inst", payload=payload)
     submitted = client.submit_playbill_authoring_intent("inst", INTENT_ID)
 
@@ -92,7 +121,9 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
         "intent_id": None,
     }
     assert json.loads(captured[1].content) == {"tag": "playbill-authoring-intent-submit-request-v1"}
-    assert all(key not in captured[0].content.decode() for key in ("base", "claim_id"))
+    compiled_request = json.loads(captured[0].content)
+    assert "base" not in compiled_request
+    assert "claim_id" not in compiled_request["payload"]
 
 
 def test_client_speaks_program_stamped_v3_request() -> None:
@@ -108,7 +139,7 @@ def test_client_speaks_program_stamped_v3_request() -> None:
             },
         )
 
-    payload = {"tag": "playbill-claim-authoring-payload-v1", "example": "payload"}
+    payload = _claim_payload()
     stamp = {
         "tag": "playbill-authoring-program-stamp-v1",
         "program_digest": "sha256:" + "7" * 64,

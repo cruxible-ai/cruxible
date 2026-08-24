@@ -10,9 +10,12 @@ from pydantic import BaseModel, ConfigDict
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
 from cruxible_client.contracts.authoring.models import (
-    AuthoringPayloadV1,
-    AuthoringProgramStampV1,
-    AuthoringReferenceExpectationV1,
+    AuthoringIntentCompileRequestV1,
+    AuthoringIntentCompileRequestV2,
+    AuthoringIntentCompileRequestV3,
+    AuthoringIntentCreateRequestV1,
+    AuthoringIntentCreateRequestV2,
+    AuthoringIntentCreateRequestV3,
     InsertionConfirmationObservationV1,
 )
 from cruxible_client.contracts.claim_types import ClaimType
@@ -42,6 +45,16 @@ from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
 
 class _StrictPlaybillRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# The route module retains its existing local names, but these are aliases to
+# the canonical client-owned wire models rather than parallel definitions.
+PlaybillAuthoringCreateRequest = AuthoringIntentCreateRequestV1
+PlaybillAuthoringCreateRequestV2 = AuthoringIntentCreateRequestV2
+PlaybillAuthoringCreateRequestV3 = AuthoringIntentCreateRequestV3
+PlaybillAuthoringCompileRequest = AuthoringIntentCompileRequestV1
+PlaybillAuthoringCompileRequestV2 = AuthoringIntentCompileRequestV2
+PlaybillAuthoringCompileRequestV3 = AuthoringIntentCompileRequestV3
 
 
 class PlaybillInitRequest(_StrictPlaybillRequest):
@@ -127,62 +140,11 @@ class PlaybillProposeClaimsRequest(_StrictPlaybillRequest):
     base: AcceptedCoordinate | None = None
 
 
-class PlaybillAuthoringCreateRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-authoring-intent-create-request-v1"] = (
-        "playbill-authoring-intent-create-request-v1"
-    )
-    payload: AuthoringPayloadV1
-
-
 class PlaybillAuthoringInputCreateRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-input-create-request-v1"] = (
         "playbill-authoring-input-create-request-v1"
     )
     input: AuthoringInputV1
-
-
-class PlaybillAuthoringCompileRequest(_StrictPlaybillRequest):
-    tag: Literal["playbill-authoring-intent-compile-request-v1"] = (
-        "playbill-authoring-intent-compile-request-v1"
-    )
-    payload: AuthoringPayloadV1
-    intent_id: str | None = None
-
-
-class PlaybillAuthoringCreateRequestV2(_StrictPlaybillRequest):
-    tag: Literal["playbill-authoring-intent-create-request-v2"] = (
-        "playbill-authoring-intent-create-request-v2"
-    )
-    payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
-
-
-class PlaybillAuthoringCompileRequestV2(_StrictPlaybillRequest):
-    tag: Literal["playbill-authoring-intent-compile-request-v2"] = (
-        "playbill-authoring-intent-compile-request-v2"
-    )
-    payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
-    intent_id: str | None = None
-
-
-class PlaybillAuthoringCreateRequestV3(_StrictPlaybillRequest):
-    tag: Literal["playbill-authoring-intent-create-request-v3"] = (
-        "playbill-authoring-intent-create-request-v3"
-    )
-    payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
-    program_stamp: AuthoringProgramStampV1
-
-
-class PlaybillAuthoringCompileRequestV3(_StrictPlaybillRequest):
-    tag: Literal["playbill-authoring-intent-compile-request-v3"] = (
-        "playbill-authoring-intent-compile-request-v3"
-    )
-    payload: AuthoringPayloadV1
-    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
-    program_stamp: AuthoringProgramStampV1
-    intent_id: str | None = None
 
 
 class PlaybillAuthoringInputCompileRequest(_StrictPlaybillRequest):
