@@ -67,8 +67,7 @@ def _accept_subject_successor(
     )
     projection = instance.activation_publisher().prebuild(bundle, base=base)
     assert (
-        instance.activation_publisher().activate(bundle, projection, base=base).status
-        == "accepted"
+        instance.activation_publisher().activate(bundle, projection, base=base).status == "accepted"
     )
     instance.refresh()
 

@@ -517,9 +517,7 @@ def compute_preflight(
         compiler_digest=intent.base_coordinate.compiler_digest,
     )
     base_tree = instance.tree_at(base.git_oid)
-    diagnostics.extend(
-        _reference_diagnostics(instance, intent=intent, base_tree=base_tree)
-    )
+    diagnostics.extend(_reference_diagnostics(instance, intent=intent, base_tree=base_tree))
     service = instance.proposal_service()
     proposal_ref = f"refs/proposals/{actor.actor_id}/intent-{intent.intent_id[4:]}"
     proposal_ref_oid = service.transport.read_proposal_ref(proposal_ref)
