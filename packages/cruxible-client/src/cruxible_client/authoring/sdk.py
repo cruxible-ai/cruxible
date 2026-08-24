@@ -826,6 +826,8 @@ class Playbill:
         lifecycle: ArtifactLifecycle,
     ) -> SubjectDraft:
         address = _address(subject, RefKind.SUBJECT)
+        if isinstance(subject, SubjectRef):
+            self._assert_coordinate(subject.coordinate)
         kind, identifier = _subject_parts(address)
         return SubjectDraft(
             self,
@@ -859,6 +861,8 @@ class Playbill:
         evidence_freshness: Duration | None,
     ) -> ClaimTypeDraft:
         name = _address(predicate, RefKind.CLAIM_TYPE)
+        if isinstance(predicate, ClaimTypeRef):
+            self._assert_coordinate(predicate.coordinate)
         for source in sources:
             if isinstance(source, SourceRef):
                 self._assert_coordinate(source.coordinate)
