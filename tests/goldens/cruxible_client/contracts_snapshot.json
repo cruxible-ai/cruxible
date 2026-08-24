@@ -7961,6 +7961,735 @@
         "principals"
       ]
     },
+    "PlaybillProcedureBindResult": {
+      "fields": {
+        "proposal": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposal",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillProposalInspection"
+          }
+        },
+        "readiness": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "readiness",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillProcedureReadiness"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-bind-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-bind-result-v1",
+            "default": "playbill-procedure-bind-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillProcedureReadiness": {
+            "additionalProperties": false,
+            "properties": {
+              "coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "evaluation_time": {
+                "title": "Evaluation Time",
+                "type": "string"
+              },
+              "next_operation": {
+                "additionalProperties": true,
+                "title": "Next Operation",
+                "type": "object"
+              },
+              "procedure_artifact_digest": {
+                "title": "Procedure Artifact Digest",
+                "type": "string"
+              },
+              "procedure_identity": {
+                "additionalProperties": true,
+                "title": "Procedure Identity",
+                "type": "object"
+              },
+              "required_slots": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Required Slots",
+                "type": "array"
+              },
+              "state": {
+                "enum": [
+                  "ready",
+                  "binding_required",
+                  "unsupported"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-readiness-result-v1",
+                "default": "playbill-procedure-readiness-result-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "unsupported_nodes": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Unsupported Nodes",
+                "type": "array"
+              }
+            },
+            "required": [
+              "coordinate",
+              "evaluation_time",
+              "procedure_identity",
+              "procedure_artifact_digest",
+              "state",
+              "required_slots",
+              "unsupported_nodes",
+              "next_operation"
+            ],
+            "title": "PlaybillProcedureReadiness",
+            "type": "object"
+          },
+          "PlaybillProposalInspection": {
+            "additionalProperties": false,
+            "properties": {
+              "accepted_coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "proposal": {
+                "additionalProperties": true,
+                "title": "Proposal",
+                "type": "object"
+              },
+              "tag": {
+                "const": "playbill-proposal-inspection-v1",
+                "default": "playbill-proposal-inspection-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "proposal",
+              "accepted_coordinate"
+            ],
+            "title": "PlaybillProposalInspection",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "proposal": {
+            "$ref": "#/$defs/PlaybillProposalInspection"
+          },
+          "readiness": {
+            "$ref": "#/$defs/PlaybillProcedureReadiness"
+          },
+          "tag": {
+            "const": "playbill-procedure-bind-result-v1",
+            "default": "playbill-procedure-bind-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal",
+          "readiness"
+        ],
+        "title": "PlaybillProcedureBindResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "proposal",
+        "readiness"
+      ]
+    },
+    "PlaybillProcedureReadiness": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "next_operation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "next_operation",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Next Operation",
+            "type": "object"
+          }
+        },
+        "procedure_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          }
+        },
+        "procedure_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_identity",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Procedure Identity",
+            "type": "object"
+          }
+        },
+        "required_slots": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "required_slots",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Slots",
+            "type": "array"
+          }
+        },
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "enum": [
+              "ready",
+              "binding_required",
+              "unsupported"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-readiness-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-readiness-result-v1",
+            "default": "playbill-procedure-readiness-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "unsupported_nodes": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "unsupported_nodes",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Unsupported Nodes",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "evaluation_time": {
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "next_operation": {
+            "additionalProperties": true,
+            "title": "Next Operation",
+            "type": "object"
+          },
+          "procedure_artifact_digest": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          },
+          "procedure_identity": {
+            "additionalProperties": true,
+            "title": "Procedure Identity",
+            "type": "object"
+          },
+          "required_slots": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Required Slots",
+            "type": "array"
+          },
+          "state": {
+            "enum": [
+              "ready",
+              "binding_required",
+              "unsupported"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-procedure-readiness-result-v1",
+            "default": "playbill-procedure-readiness-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "unsupported_nodes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Unsupported Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "coordinate",
+          "evaluation_time",
+          "procedure_identity",
+          "procedure_artifact_digest",
+          "state",
+          "required_slots",
+          "unsupported_nodes",
+          "next_operation"
+        ],
+        "title": "PlaybillProcedureReadiness",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "evaluation_time",
+        "next_operation",
+        "procedure_artifact_digest",
+        "procedure_identity",
+        "required_slots",
+        "state",
+        "unsupported_nodes"
+      ]
+    },
+    "PlaybillProcedureRunState": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "next_operation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "next_operation",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Next Operation",
+            "type": "object"
+          }
+        },
+        "outcomes": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "outcomes",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Outcomes",
+            "type": "array"
+          }
+        },
+        "pending_inputs": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "pending_inputs",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pending Inputs",
+            "type": "array"
+          }
+        },
+        "procedure_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          }
+        },
+        "procedure_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "procedure_identity",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Procedure Identity",
+            "type": "object"
+          }
+        },
+        "receipt_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Digest"
+          }
+        },
+        "result": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "result",
+          "required": false,
+          "schema": {
+            "default": null,
+            "title": "Result"
+          }
+        },
+        "run_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "run_id",
+          "required": true,
+          "schema": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "status": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "status",
+          "required": true,
+          "schema": {
+            "enum": [
+              "binding_required",
+              "unsupported",
+              "running",
+              "succeeded",
+              "refused",
+              "failed",
+              "budget_exhausted"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-procedure-run-state-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-procedure-run-state-v1",
+            "default": "playbill-procedure-run-state-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "evaluation_time": {
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "next_operation": {
+            "additionalProperties": true,
+            "title": "Next Operation",
+            "type": "object"
+          },
+          "outcomes": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Outcomes",
+            "type": "array"
+          },
+          "pending_inputs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Pending Inputs",
+            "type": "array"
+          },
+          "procedure_artifact_digest": {
+            "title": "Procedure Artifact Digest",
+            "type": "string"
+          },
+          "procedure_identity": {
+            "additionalProperties": true,
+            "title": "Procedure Identity",
+            "type": "object"
+          },
+          "receipt_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Receipt Digest"
+          },
+          "result": {
+            "default": null,
+            "title": "Result"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "binding_required",
+              "unsupported",
+              "running",
+              "succeeded",
+              "refused",
+              "failed",
+              "budget_exhausted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-procedure-run-state-v1",
+            "default": "playbill-procedure-run-state-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "procedure_identity",
+          "procedure_artifact_digest",
+          "coordinate",
+          "evaluation_time",
+          "status",
+          "pending_inputs",
+          "outcomes",
+          "next_operation"
+        ],
+        "title": "PlaybillProcedureRunState",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "evaluation_time",
+        "next_operation",
+        "outcomes",
+        "pending_inputs",
+        "procedure_artifact_digest",
+        "procedure_identity",
+        "run_id",
+        "status"
+      ]
+    },
     "PlaybillProposalInspection": {
       "fields": {
         "accepted_coordinate": {

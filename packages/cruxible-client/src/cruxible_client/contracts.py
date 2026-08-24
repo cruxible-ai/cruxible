@@ -699,6 +699,55 @@ class PlaybillQueryRun(BaseModel):
     journal_record_digest: str | None = None
 
 
+class PlaybillProcedureReadiness(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-procedure-readiness-result-v1"] = (
+        "playbill-procedure-readiness-result-v1"
+    )
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: str
+    procedure_identity: dict[str, Any]
+    procedure_artifact_digest: str
+    state: Literal["ready", "binding_required", "unsupported"]
+    required_slots: list[str]
+    unsupported_nodes: list[dict[str, Any]]
+    next_operation: dict[str, Any]
+
+
+class PlaybillProcedureBindResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-procedure-bind-result-v1"] = "playbill-procedure-bind-result-v1"
+    proposal: PlaybillProposalInspection
+    readiness: PlaybillProcedureReadiness
+
+
+class PlaybillProcedureRunState(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-procedure-run-state-v1"] = "playbill-procedure-run-state-v1"
+    run_id: str
+    procedure_identity: dict[str, Any]
+    procedure_artifact_digest: str
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: str
+    status: Literal[
+        "binding_required",
+        "unsupported",
+        "running",
+        "succeeded",
+        "refused",
+        "failed",
+        "budget_exhausted",
+    ]
+    pending_inputs: list[str]
+    outcomes: list[dict[str, Any]]
+    next_operation: dict[str, Any]
+    result: Any = None
+    receipt_digest: str | None = None
+
+
 class PlaybillDiscoveryResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

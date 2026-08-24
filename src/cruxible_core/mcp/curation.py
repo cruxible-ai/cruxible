@@ -132,6 +132,10 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_playbill_authoring_confirm_insertion",
             "cruxible_playbill_authoring_abandon_insertion",
             "cruxible_playbill_claim_type_migrate",
+            "cruxible_playbill_procedure_readiness",
+            "cruxible_playbill_procedure_bind",
+            "cruxible_playbill_procedure_run",
+            "cruxible_playbill_procedure_run_status",
             "cruxible_playbill_proposal_readmit",
             "cruxible_playbill_seed_apply",
         }

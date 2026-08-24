@@ -55,6 +55,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     # that reaches no instance, so the notice belongs before the submit.
     ("playbill", "seed", "apply"): "manual",
     ("playbill", "query", "propose"): "active",
+    ("playbill", "procedure", "bind"): "active",
     ("playbill", "proposal", "approve"): "active",
     ("playbill", "proposal", "activate"): "active",
     ("playbill", "proposal", "readmit"): "active",
@@ -534,6 +535,25 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="query_group",
+            ),
+            "procedure": _group(
+                "Inspect, bind, and run accepted query-only Procedures.",
+                {
+                    "readiness": _command(
+                        "playbill", "procedure_readiness", "Inspect Procedure readiness."
+                    ),
+                    "bind": _command(
+                        "playbill", "bind_procedure", "Bind accepted artifacts to slots."
+                    ),
+                    "run": _command(
+                        "playbill", "run_procedure", "Run an accepted query-only Procedure."
+                    ),
+                    "status": _command(
+                        "playbill", "procedure_run_status", "Read one Procedure run state."
+                    ),
+                },
+                module="playbill",
+                attr="procedure_group",
             ),
             "discover": _command(
                 "playbill", "discover", "Find accepted interfaces and Subjects by name."

@@ -122,6 +122,19 @@ from accepted law evidence, never carried forward from acceptance.
 The coordinator mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.
 
+## Procedures
+
+| Tool | Purpose | Permission |
+|---|---|---|
+| `cruxible_playbill_procedure_readiness` | Report exact binding requirements or query-only readiness | `READ_ONLY` |
+| `cruxible_playbill_procedure_bind` | Attach accepted input-plane bindings through a same-identity successor | `GOVERNED_WRITE` |
+| `cruxible_playbill_procedure_run` | Execute a ready query-only Procedure at an explicit coordinate and time | `READ_ONLY` |
+| `cruxible_playbill_procedure_run_status` | Read one finalized Procedure run and its receipt | `READ_ONLY` |
+
+Read-tier Procedure runs append receipted journal records, following the same
+precedent as QueryDefinition runs. They never alter accepted state or grant
+themselves a governed track record; promotion remains a separate governed act.
+
 ## Queries, discovery, and the floor
 
 | Tool | Purpose | Permission |

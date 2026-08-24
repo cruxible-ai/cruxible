@@ -125,6 +125,15 @@ from cruxible_core.service.playbill_coverage import (
 )
 from cruxible_core.service.playbill_discovery import service_discover_playbill_semantic
 from cruxible_core.service.playbill_floor import MANIFEST_PATH, service_export_playbill_floor
+from cruxible_core.service.playbill_procedure_runs import (
+    ProcedureBindRequestV1,
+    ProcedureReadinessRequestV1,
+    ProcedureRunRequestV1,
+    service_bind_playbill_procedure,
+    service_get_playbill_procedure_run,
+    service_playbill_procedure_readiness,
+    service_run_playbill_procedure,
+)
 from cruxible_core.service.playbill_proposals import (
     ProposalInventoryStatus,
     service_list_playbill_proposals,
@@ -998,6 +1007,69 @@ def playbill_run_query(
         budgets=budgets,
     )
     return contracts.PlaybillQueryRun.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_procedure_readiness(
+    instance_id: str,
+    name: str,
+    *,
+    request: ProcedureReadinessRequestV1,
+) -> contracts.PlaybillProcedureReadiness:
+    check_permission("cruxible_playbill_procedure_readiness", instance_id=instance_id)
+    result = service_playbill_procedure_readiness(
+        get_playbill_manager().get(instance_id),
+        name=name,
+        request=request,
+    )
+    return contracts.PlaybillProcedureReadiness.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_procedure_bind(
+    instance_id: str,
+    name: str,
+    *,
+    request: ProcedureBindRequestV1,
+) -> contracts.PlaybillProcedureBindResult:
+    check_permission("cruxible_playbill_procedure_bind", instance_id=instance_id)
+    result = service_bind_playbill_procedure(
+        get_playbill_manager().get(instance_id),
+        name=name,
+        request=request,
+        actor=AuthenticatedActor(actor_id=_actor_id()),
+        timestamp=canonical_candidate_timestamp(utc_now()),
+    )
+    return contracts.PlaybillProcedureBindResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_procedure_run(
+    instance_id: str,
+    name: str,
+    *,
+    request: ProcedureRunRequestV1,
+) -> contracts.PlaybillProcedureRunState:
+    check_permission("cruxible_playbill_procedure_run", instance_id=instance_id)
+    actor = _actor_context()
+    if actor is None:
+        raise AuthenticationError("Procedure run requires an authenticated actor identity")
+    result = service_run_playbill_procedure(
+        get_playbill_manager().get(instance_id),
+        name=name,
+        request=request,
+        actor_context=actor,
+    )
+    return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_procedure_run_status(
+    instance_id: str,
+    run_id: str,
+) -> contracts.PlaybillProcedureRunState:
+    check_permission("cruxible_playbill_procedure_run_status", instance_id=instance_id)
+    result = service_get_playbill_procedure_run(
+        get_playbill_manager().get(instance_id),
+        run_id=run_id,
+    )
+    return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_discover(

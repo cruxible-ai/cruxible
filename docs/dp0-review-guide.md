@@ -84,6 +84,10 @@ playbill proposal list
 playbill proposal readmit
 playbill proposal refusal
 playbill proposal review
+playbill procedure bind
+playbill procedure readiness
+playbill procedure run
+playbill procedure status
 playbill query get
 playbill query list
 playbill query propose
@@ -174,6 +178,10 @@ POST /api/v1/{instance_id}/playbill/queries/proposals
 GET  /api/v1/{instance_id}/playbill/queries
 GET  /api/v1/{instance_id}/playbill/queries/{name}
 POST /api/v1/{instance_id}/playbill/queries/{name}/run
+GET  /api/v1/{instance_id}/playbill/procedures/{name}/readiness
+POST /api/v1/{instance_id}/playbill/procedures/{name}/bind
+POST /api/v1/{instance_id}/playbill/procedures/{name}/runs
+GET  /api/v1/{instance_id}/playbill/procedure-runs/{run_id}
 POST /api/v1/{instance_id}/playbill/discover
 POST /api/v1/{instance_id}/playbill/expand
 POST /api/v1/{instance_id}/playbill/coverage/resolve
@@ -238,6 +246,10 @@ cruxible_playbill_propose_query_definition
 cruxible_playbill_list_query_definitions
 cruxible_playbill_get_query_definition
 cruxible_playbill_run_query
+cruxible_playbill_procedure_readiness
+cruxible_playbill_procedure_bind
+cruxible_playbill_procedure_run
+cruxible_playbill_procedure_run_status
 cruxible_playbill_discover
 cruxible_playbill_expand
 cruxible_playbill_export_floor

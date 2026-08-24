@@ -533,6 +533,55 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_procedure_readiness(
+        instance_id: str,
+        name: str,
+        evaluation_time: str,
+    ) -> contracts.PlaybillProcedureReadiness:
+        """Inspect one accepted Procedure's bindings and executable profile."""
+        return handlers.handle_playbill_procedure_readiness(
+            instance_id,
+            name,
+            evaluation_time=evaluation_time,
+        )
+
+    @_tool
+    def cruxible_playbill_procedure_bind(
+        instance_id: str,
+        name: str,
+        bindings: list[dict[str, Any]],
+    ) -> contracts.PlaybillProcedureBindResult:
+        """Propose exact accepted bindings for one Procedure's open slots."""
+        return handlers.handle_playbill_procedure_bind(
+            instance_id,
+            name,
+            bindings=bindings,
+        )
+
+    @_tool
+    def cruxible_playbill_procedure_run(
+        instance_id: str,
+        name: str,
+        evaluation_time: str,
+        input: Any,
+    ) -> contracts.PlaybillProcedureRunState:
+        """Run one accepted query-only Procedure deterministically."""
+        return handlers.handle_playbill_procedure_run(
+            instance_id,
+            name,
+            evaluation_time=evaluation_time,
+            input=input,
+        )
+
+    @_tool
+    def cruxible_playbill_procedure_run_status(
+        instance_id: str,
+        run_id: str,
+    ) -> contracts.PlaybillProcedureRunState:
+        """Read one durable Procedure run state and its exact next operation."""
+        return handlers.handle_playbill_procedure_run_status(instance_id, run_id)
+
+    @_tool
     def cruxible_playbill_discover(
         instance_id: str,
         query: str | None = None,

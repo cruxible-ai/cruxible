@@ -92,6 +92,7 @@ from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.playbill.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_core.playbill.types import PrincipalRecord
 from cruxible_core.primitives import canonical_json
+from cruxible_core.service.playbill_procedure_runs import ProcedureBindRequestV1
 
 ResultT = TypeVar("ResultT")
 
@@ -1538,6 +1539,96 @@ def run_query(
     click.echo(f"Receipt parameters: {receipt['parameter_digest']}")
     click.echo(f"Receipt result digest: {receipt['result_digest']}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
+@playbill_group.group("procedure")
+def procedure_group() -> None:
+    """Inspect, bind, and run accepted query-only Procedures."""
+
+
+@procedure_group.command("readiness")
+@click.argument("name")
+@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def procedure_readiness(name: str, evaluation_time: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.playbill_procedure_readiness(
+            instance_id,
+            name,
+            evaluation_time=evaluation_time,
+        ),
+        command_name="playbill procedure readiness",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"{name}: {result.state}")
+    click.echo(f"Next: {result.next_operation['kind']}")
+    for slot in result.required_slots:
+        click.echo(f"Required slot: {slot}")
+    for node in result.unsupported_nodes:
+        click.echo(f"Unsupported node: {node['node_id']} ({node['kind']})")
+
+
+@procedure_group.command("bind")
+@click.argument("name")
+@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@json_option
+@handle_errors
+def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
+    request = _read_model(request_file, ProcedureBindRequestV1)
+    result = _server_call(
+        lambda client, instance_id: client.bind_playbill_procedure(
+            instance_id,
+            name,
+            bindings=[item.model_dump(mode="json") for item in request.bindings],
+        ),
+        command_name="playbill procedure bind",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@procedure_group.command("run")
+@click.argument("name")
+@click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@json_option
+@handle_errors
+def run_procedure(
+    name: str,
+    input_file: str,
+    evaluation_time: str,
+    output_json: bool,
+) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.run_playbill_procedure(
+            instance_id,
+            name,
+            evaluation_time=evaluation_time,
+            input=_read_mapping(input_file),
+        ),
+        command_name="playbill procedure run",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"{result.run_id}: {result.status}")
+    click.echo(f"Next: {result.next_operation['kind']}")
+    if result.receipt_digest is not None:
+        click.echo(f"Receipt: {result.receipt_digest}")
+
+
+@procedure_group.command("status")
+@click.argument("run_id")
+@json_option
+@handle_errors
+def procedure_run_status(run_id: str, output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.get_playbill_procedure_run(instance_id, run_id),
+        command_name="playbill procedure status",
+    )
+    _emit_json(result.model_dump(mode="json"))
 
 
 @playbill_group.command("discover")

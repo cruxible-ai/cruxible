@@ -49,6 +49,11 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillStoreBodyRequest,
 )
 from cruxible_core.server.routes import resolve_server_instance_id
+from cruxible_core.service.playbill_procedure_runs import (
+    ProcedureBindRequestV1,
+    ProcedureReadinessRequestV1,
+    ProcedureRunRequestV1,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["playbill"])
 
@@ -857,6 +862,75 @@ async def run_query(
         evaluation_time=req.evaluation_time,
         parameters=req.parameters,
         budgets=req.budgets,
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/procedures/{name}/readiness",
+    response_model=contracts.PlaybillProcedureReadiness,
+)
+async def procedure_readiness(
+    instance_id: str,
+    name: str,
+    evaluation_time: datetime,
+    git_oid: str | None = None,
+    semantic_root: str | None = None,
+    generation_root: str | None = None,
+    compiler_digest: str | None = None,
+) -> contracts.PlaybillProcedureReadiness:
+    return playbill_api.playbill_procedure_readiness(
+        resolve_server_instance_id(instance_id),
+        name,
+        request=ProcedureReadinessRequestV1(
+            at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
+            evaluation_time=evaluation_time,
+        ),
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/procedures/{name}/bind",
+    response_model=contracts.PlaybillProcedureBindResult,
+)
+async def bind_procedure(
+    instance_id: str,
+    name: str,
+    req: ProcedureBindRequestV1,
+) -> contracts.PlaybillProcedureBindResult:
+    return playbill_api.playbill_procedure_bind(
+        resolve_server_instance_id(instance_id),
+        name,
+        request=req,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/procedures/{name}/runs",
+    response_model=contracts.PlaybillProcedureRunState,
+)
+async def run_procedure(
+    instance_id: str,
+    name: str,
+    req: ProcedureRunRequestV1,
+) -> contracts.PlaybillProcedureRunState:
+    return playbill_api.playbill_procedure_run(
+        resolve_server_instance_id(instance_id),
+        name,
+        request=req,
+    )
+
+
+@router.get(
+    "/{instance_id}/playbill/procedure-runs/{run_id}",
+    response_model=contracts.PlaybillProcedureRunState,
+)
+async def procedure_run_status(
+    instance_id: str,
+    run_id: str,
+) -> contracts.PlaybillProcedureRunState:
+    return playbill_api.playbill_procedure_run_status(
+        resolve_server_instance_id(instance_id),
+        run_id,
     )
 
 

@@ -8,12 +8,14 @@ from cruxible_core.playbill.artifacts import ArtifactAuthority
 from cruxible_core.playbill.authoring.inputs import (
     AuthoringInputV1,
     BriefInput,
+    CarriedContractInput,
     ClaimInput,
     LiteralObjectInput,
     ProcedureInput,
     SelfSourceInput,
     WorkingSelectionInput,
 )
+from cruxible_core.playbill.procedures.contract_schema import PropertySchema
 
 AuthoringExampleName = Literal[
     "claim-flow-a",
@@ -57,14 +59,86 @@ def procedure_example() -> ProcedureInput:
         definition={
             "graph_format": 3,
             "name": "replace-me",
-            "contract_in": {"kind": "slot", "slot_name": "input-contract"},
-            "contract_out": {"kind": "slot", "slot_name": "output-contract"},
-            "nodes": [],
-            "returns": "replace_me",
+            "description": "Read accepted state and return a bounded deterministic projection.",
+            "contract_in": {
+                "kind": "carried_contract",
+                "name": "empty-input",
+                "role": "contract-in",
+            },
+            "contract_out": {
+                "kind": "carried_contract",
+                "name": "query-result",
+                "role": "contract-out",
+            },
+            "nodes": [
+                {
+                    "kind": "state_tap",
+                    "node_id": "read",
+                    "query": {
+                        "kind": "accepted",
+                        "role": "query",
+                        "target": "QueryDefinition:replace-me",
+                    },
+                    "parameters": {},
+                    "as": "query_rows",
+                    "next": "normalize",
+                },
+                {
+                    "kind": "transform",
+                    "node_id": "normalize",
+                    "transform_kind": "adapter",
+                    "contract_in": {
+                        "kind": "carried_contract",
+                        "name": "query-result",
+                        "role": "contract-in",
+                    },
+                    "contract_out": {
+                        "kind": "carried_contract",
+                        "name": "query-result",
+                        "role": "contract-out",
+                    },
+                    "spec": "$steps.query_rows",
+                    "as": "normalized",
+                    "next": "project",
+                },
+                {
+                    "kind": "project",
+                    "node_id": "project",
+                    "fields": {"rows": "$steps.normalized.rows"},
+                    "contract_out": {
+                        "kind": "carried_contract",
+                        "name": "query-result",
+                        "role": "contract-out",
+                    },
+                    "as": "result",
+                },
+            ],
+            "returns": "result",
             "pin_slots": [],
+            "budget": {
+                "wall_clock": {"microseconds": 2_000_000},
+                "max_provider_calls": 0,
+                "max_capture_bytes": 0,
+                "max_items": 100,
+            },
+            "hard_caps": {
+                "max_wall_clock": {"microseconds": 4_000_000},
+                "max_provider_calls": 0,
+                "max_capture_bytes": 0,
+                "max_items": 200,
+                "max_repeat_attempts": 1,
+            },
+            "terminal_capability": 1,
         },
         authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         activation_policy="snapshot",
+        contracts=(
+            CarriedContractInput(name="empty-input", fields={}),
+            CarriedContractInput(
+                name="query-result",
+                fields={"rows": PropertySchema(type="json")},
+            ),
+        ),
     )
 
 

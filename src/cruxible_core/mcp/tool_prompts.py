@@ -179,6 +179,20 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_run_query": (
         "Use when you need accepted state answered by a named entrypoint with a replay receipt."
     ),
+    "cruxible_playbill_procedure_readiness": (
+        "Use when you need to know whether an accepted Procedure can run or which slots must "
+        "be bound first."
+    ),
+    "cruxible_playbill_procedure_bind": (
+        "Use when an accepted Procedure's open slots should be bound to exact accepted "
+        "artifacts through governance."
+    ),
+    "cruxible_playbill_procedure_run": (
+        "Use when you need to execute an accepted query-only Procedure with durable outcomes."
+    ),
+    "cruxible_playbill_procedure_run_status": (
+        "Use when you need one Procedure run's typed outcomes and exact next operation."
+    ),
     "cruxible_playbill_discover": (
         "Use when you do not yet know which interface or Subject names the state you want."
     ),

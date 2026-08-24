@@ -950,6 +950,64 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillQueryRun)
 
+    def playbill_procedure_readiness(
+        self,
+        instance_id: str,
+        name: str,
+        *,
+        evaluation_time: str,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillProcedureReadiness:
+        params = self._playbill_coordinate_params(at)
+        params["evaluation_time"] = evaluation_time
+        response = self._client.get(
+            f"/api/v1/{instance_id}/playbill/procedures/{name}/readiness",
+            params=params,
+        )
+        return self._parse_model(response, contracts.PlaybillProcedureReadiness)
+
+    def bind_playbill_procedure(
+        self,
+        instance_id: str,
+        name: str,
+        *,
+        bindings: Sequence[Mapping[str, Any]],
+    ) -> contracts.PlaybillProcedureBindResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/procedures/{name}/bind",
+            json={
+                "tag": "playbill-procedure-bind-request-v1",
+                "bindings": [dict(item) for item in bindings],
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillProcedureBindResult)
+
+    def run_playbill_procedure(
+        self,
+        instance_id: str,
+        name: str,
+        *,
+        evaluation_time: str,
+        input: Any,
+    ) -> contracts.PlaybillProcedureRunState:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/procedures/{name}/runs",
+            json={
+                "tag": "playbill-procedure-run-request-v1",
+                "evaluation_time": evaluation_time,
+                "input": input,
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillProcedureRunState)
+
+    def get_playbill_procedure_run(
+        self,
+        instance_id: str,
+        run_id: str,
+    ) -> contracts.PlaybillProcedureRunState:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/procedure-runs/{run_id}")
+        return self._parse_model(response, contracts.PlaybillProcedureRunState)
+
     def discover_playbill(
         self,
         instance_id: str,

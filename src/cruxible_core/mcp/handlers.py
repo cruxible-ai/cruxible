@@ -66,6 +66,11 @@ from cruxible_core.playbill.types import PrincipalRecord
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
 from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
+from cruxible_core.service.playbill_procedure_runs import (
+    ProcedureBindRequestV1,
+    ProcedureReadinessRequestV1,
+    ProcedureRunRequestV1,
+)
 from cruxible_core.temporal import parse_datetime
 
 _client_cache: CruxibleClient | None = None
@@ -1080,6 +1085,82 @@ def handle_playbill_run_query(
             budgets=limits,
         ),
         operation_name="cruxible_playbill_run_query",
+    )
+
+
+def handle_playbill_procedure_readiness(
+    instance_id: str,
+    name: str,
+    *,
+    evaluation_time: str,
+) -> contracts.PlaybillProcedureReadiness:
+    evaluated_at = parse_datetime(evaluation_time)
+    if evaluated_at is None:  # pragma: no cover - required public argument
+        raise DataValidationError("Procedure readiness requires evaluation_time")
+    return _dispatch_remote_or_local(
+        lambda client: client.playbill_procedure_readiness(
+            instance_id,
+            name,
+            evaluation_time=evaluated_at.isoformat(),
+        ),
+        lambda: playbill_api.playbill_procedure_readiness(
+            instance_id,
+            name,
+            request=ProcedureReadinessRequestV1(evaluation_time=evaluated_at),
+        ),
+        operation_name="cruxible_playbill_procedure_readiness",
+    )
+
+
+def handle_playbill_procedure_bind(
+    instance_id: str,
+    name: str,
+    *,
+    bindings: list[dict[str, Any]],
+) -> contracts.PlaybillProcedureBindResult:
+    request = ProcedureBindRequestV1.model_validate({"bindings": bindings})
+    return _dispatch_remote_or_local(
+        lambda client: client.bind_playbill_procedure(
+            instance_id,
+            name,
+            bindings=[item.model_dump(mode="json") for item in request.bindings],
+        ),
+        lambda: playbill_api.playbill_procedure_bind(instance_id, name, request=request),
+        operation_name="cruxible_playbill_procedure_bind",
+    )
+
+
+def handle_playbill_procedure_run(
+    instance_id: str,
+    name: str,
+    *,
+    evaluation_time: str,
+    input: Any,
+) -> contracts.PlaybillProcedureRunState:
+    evaluated_at = parse_datetime(evaluation_time)
+    if evaluated_at is None:  # pragma: no cover - required public argument
+        raise DataValidationError("Procedure run requires evaluation_time")
+    request = ProcedureRunRequestV1(evaluation_time=evaluated_at, input=input)
+    return _dispatch_remote_or_local(
+        lambda client: client.run_playbill_procedure(
+            instance_id,
+            name,
+            evaluation_time=request.evaluation_time.isoformat(),
+            input=request.input,
+        ),
+        lambda: playbill_api.playbill_procedure_run(instance_id, name, request=request),
+        operation_name="cruxible_playbill_procedure_run",
+    )
+
+
+def handle_playbill_procedure_run_status(
+    instance_id: str,
+    run_id: str,
+) -> contracts.PlaybillProcedureRunState:
+    return _dispatch_remote_or_local(
+        lambda client: client.get_playbill_procedure_run(instance_id, run_id),
+        lambda: playbill_api.playbill_procedure_run_status(instance_id, run_id),
+        operation_name="cruxible_playbill_procedure_run_status",
     )
 
 
