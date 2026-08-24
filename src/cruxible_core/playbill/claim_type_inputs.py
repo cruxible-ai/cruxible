@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict
 
 from cruxible_core.playbill.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactLifecycle
 from cruxible_core.playbill.canonical import canonical_bytes
 from cruxible_core.playbill.captures import (
     capture_contract_digest,
-    foreign_source_capture_contract,
     parse_capture_contract,
 )
 from cruxible_core.playbill.claim_types import (
@@ -46,16 +45,6 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     pins: tuple[dict[str, object], ...] = ()
     subject_scope: dict[str, object] | None = None
     slot_policy: dict[str, object] | None = None
-    anticipated_source_ids: tuple[str, ...] = ()
-
-    @field_validator("anticipated_source_ids")
-    @classmethod
-    def _sources(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("anticipated_source_ids must be sorted and unique")
-        for source_id in value:
-            foreign_source_capture_contract(source_id)
-        return value
 
 
 class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
@@ -93,7 +82,6 @@ def lower_claim_type_input(
     if path in tree:
         predecessor = parse_claim_type(tree[path], path=path)
     payload = value.model_dump(mode="json")
-    payload.pop("anticipated_source_ids")
     payload["artifact_format"] = (
         "playbill-claim-type-v2"
         if value.subject_scope is not None or value.slot_policy is not None
@@ -138,7 +126,6 @@ def claim_type_input_example() -> ClaimTypeInputV1:
             propose_roles=("owner",),
             approve_roles=("owner",),
         ),
-        anticipated_source_ids=("repo.replace-me",),
     )
 
 
@@ -182,23 +169,6 @@ def lint_claim_type_input(
                         },
                     )
                 )
-    for source_id in value.anticipated_source_ids:
-        contract = foreign_source_capture_contract(source_id)
-        digest = capture_contract_digest(contract).tagged
-        if digest in admitted:
-            continue
-        warnings.append(
-            ClaimTypeLintWarningV1(
-                code="playbill.claim_type.anticipated_source_contract_omitted",
-                field_path="$.anticipated_source_ids",
-                source_id=source_id,
-                contract_identity=contract.identity.qualified,
-                contract_digest=digest,
-                replacement_rule_fragment={
-                    "capture_contract_digests": [digest],
-                },
-            )
-        )
     warnings.sort(key=lambda item: canonical_bytes(item.model_dump(mode="json")))
     return ClaimTypeProposalLintV1(warnings=tuple(warnings))
 

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.inputs import (
@@ -18,8 +19,8 @@ from cruxible_core.playbill.authoring.inputs import (
     WorkingSelectionInput,
 )
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.captures import foreign_source_capture_contract
 from cruxible_core.playbill.claim_type_inputs import (
+    ClaimTypeInputV1,
     claim_type_input_example,
     lint_claim_type_input,
 )
@@ -196,14 +197,12 @@ def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: P
     assert "artifact_digest" not in encoded
 
 
-def test_claim_type_example_is_tagless_and_anticipated_sources_are_lint_only(
+def test_claim_type_example_is_tagless_and_rejects_dead_anticipated_sources_field(
     tmp_path: Path,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
-    example = claim_type_input_example().model_copy(
-        update={"anticipated_source_ids": ("repo.work-items",)}
-    )
+    example = claim_type_input_example()
 
     lint = lint_claim_type_input(
         instance,
@@ -214,11 +213,15 @@ def test_claim_type_example_is_tagless_and_anticipated_sources_are_lint_only(
     encoded = example.model_dump_json()
     assert '"tag"' not in encoded
     assert "identity" not in json.loads(encoded)
-    assert [item.code for item in lint.warnings] == [
-        "playbill.claim_type.anticipated_source_contract_omitted"
-    ]
-    warning = lint.warnings[0]
-    expected = foreign_source_capture_contract("repo.work-items")
-    assert warning.contract_identity == expected.identity.qualified
-    assert warning.contract_digest is not None
-    assert warning.contract_digest in warning.replacement_rule_fragment["capture_contract_digests"]
+    assert lint.warnings == ()
+
+    with pytest.raises(ValidationError) as raised:
+        ClaimTypeInputV1.model_validate(
+            {
+                **example.model_dump(mode="json"),
+                "anticipated_source_ids": ["repo.work-items"],
+            }
+        )
+
+    assert raised.value.errors()[0]["loc"] == ("anticipated_source_ids",)
+    assert raised.value.errors()[0]["type"] == "extra_forbidden"
