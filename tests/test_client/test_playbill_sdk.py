@@ -1,0 +1,249 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from cruxible_client import (
+    Cardinality,
+    ClaimObjectKind,
+    ClaimRole,
+    ClaimTypeRef,
+    Disposition,
+    Playbill,
+    ReferentSensitivity,
+    SubjectRef,
+)
+from cruxible_client import contracts as api
+from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactLifecycle
+from cruxible_client.contracts.authoring.models import ClaimAuthoringPayloadV2
+from cruxible_client.contracts.policies import (
+    ClaimAdmissionPolicyV1,
+    ClaimResolutionPolicyV1,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
+
+_DIGEST = "sha256:" + "1" * 64
+_COORDINATE = api.PlaybillAcceptedCoordinate(
+    git_oid="a" * 40,
+    semantic_root=_DIGEST,
+    generation_root="sha256:" + "2" * 64,
+    compiler_digest="sha256:" + "3" * 64,
+)
+
+
+class _Client:
+    def __init__(self) -> None:
+        self.compiled: dict[str, Any] | None = None
+
+    def search_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSearchResult:
+        return api.PlaybillSearchResult(
+            mode=values["mode"],
+            coordinate=_COORDINATE,
+            evaluation_time=str(values["evaluation_time"]),
+            rows=[],
+            orientation={"state": "empty"} if values["mode"] == "orient" else None,
+            selection_basis_digest="sha256:" + "4" * 64,
+            truncated=False,
+            result_digest="sha256:" + "5" * 64,
+        )
+
+    def compile_playbill_authoring(
+        self, _instance_id: str, **values: object
+    ) -> api.PlaybillAuthoringPreflightResult:
+        self.compiled = dict(values)
+        return api.PlaybillAuthoringPreflightResult(
+            verdict="passed",
+            certificate={"intent_id": "AIT-" + "1" * 32},
+            frontier={"diagnostics": []},
+        )
+
+    def get_playbill_authoring_intent(
+        self, _instance_id: str, _intent_id: str
+    ) -> api.PlaybillAuthoringIntentView:
+        assert self.compiled is not None
+        return api.PlaybillAuthoringIntentView(
+            intent={
+                "intent_id": "AIT-" + "1" * 32,
+                "intent_revision": 1,
+                "payload": self.compiled["payload"],
+                "insertion_expectation": None,
+            }
+        )
+
+    def close(self) -> None:
+        return None
+
+
+def _workspace(path: Path) -> None:
+    (path / ".playbill").mkdir()
+    (path / ".playbill" / "sources.yaml").write_text(
+        """\
+tag: playbill-source-catalog-v1
+catalog_kind: portable
+entries:
+  - name: corpus.runbook
+    locator: corpus/runbook.md
+    document_id: runbook
+    document_kind: runbook
+    title: Runbook
+    media_type: text/markdown
+    compiler_profile: document-v1
+    required_tier: governed_write
+    approval_roles: [owner]
+    governance_scope: [Document:runbook]
+""",
+        encoding="utf-8",
+    )
+    (path / "corpus").mkdir()
+    (path / "corpus" / "runbook.md").write_text(
+        "Patch KEV systems within 48 hours.\n", encoding="utf-8"
+    )
+
+
+def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+    authority = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
+    subject = pb.subject(
+        subject="secops.policy/patch-sla",
+        authority=authority,
+        pins=(),
+        lifecycle=ArtifactLifecycle(),
+    )
+    claim_type = pb.claim_type(
+        predicate="secops.policy.patch_sla",
+        subject_kinds=("secops.policy",),
+        object_kind=ClaimObjectKind.LITERAL,
+        value_schema={"type": "object"},
+        object_subject_kinds=(),
+        cardinality=Cardinality.ONE,
+        permitted_roles=(ClaimRole.NORMATIVE,),
+        referent_sensitivity=ReferentSensitivity.IDENTITY,
+        sources=("corpus.runbook",),
+        admission_policy=ClaimAdmissionPolicyV1(),
+        resolution_policy=ClaimResolutionPolicyV1(
+            cardinality="one",
+            eligible_verdicts=("supported",),
+            selector="only_contender",
+        ),
+        authority=authority,
+        pins=(),
+        slot_policy=None,
+        evidence_freshness=None,
+    )
+    draft = pb.claim(
+        subject=subject.address,
+        predicate=claim_type.predicate,
+        value={"kev_deadline_hours": 48},
+        role=ClaimRole.NORMATIVE,
+        rationale="The runbook fixes the KEV deadline.",
+        supported_by=pb.file("corpus/runbook.md").anchor("within 48 hours"),
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        publish_to=None,
+        subject_definition=subject,
+        claim_type_definition=claim_type,
+    )
+
+    intent = draft.prepare()
+
+    assert not intent.refused
+    assert client.compiled is not None
+    payload = ClaimAuthoringPayloadV2.model_validate(client.compiled["payload"])
+    assert payload.dependency_drafts.subject == subject.shell
+    assert payload.dependency_drafts.claim_type == claim_type.definition
+    assert client.compiled["reference_expectations"] == []
+    stamp = client.compiled["program_stamp"]
+    assert stamp["tag"] == "playbill-authoring-program-stamp-v1"
+
+
+def test_claim_requires_exactly_one_explicit_source_role(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        _Client(), instance_id="inst_test", workspace=tmp_path
+    )
+    try:
+        pb.claim(
+            subject="secops.policy/patch-sla",
+            predicate="secops.policy.patch_sla",
+            value=48,
+            role=ClaimRole.NORMATIVE,
+            rationale="rationale",
+            supported_by=None,
+            copied_from=None,
+            self_source=None,
+            qualifier=None,
+            effective_period=None,
+            revises=None,
+            dispositions={"CLM-" + "1" * 32: Disposition.NOT_TESTED},
+            publish_to=None,
+            subject_definition=None,
+            claim_type_definition=None,
+        )
+    except ValueError as exc:
+        assert "exactly one" in str(exc)
+    else:  # pragma: no cover - assertion form keeps the refusal readable
+        raise AssertionError("claim unexpectedly accepted an omitted source role")
+
+
+def test_typed_refs_emit_coordinate_assertions_without_entering_the_payload(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client, instance_id="inst_test", workspace=tmp_path
+    )
+    coordinate = AcceptedCoordinate.model_validate(_COORDINATE.model_dump(mode="json"))
+    draft = pb.claim(
+        subject=SubjectRef("secops.policy/patch-sla", coordinate),
+        predicate=ClaimTypeRef("secops.policy.patch_sla", coordinate),
+        value=48,
+        role=ClaimRole.NORMATIVE,
+        rationale="A self-authored test claim.",
+        supported_by=None,
+        copied_from=None,
+        self_source="Patch within 48 hours.",
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        publish_to=None,
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    draft.prepare()
+
+    assert client.compiled is not None
+    assert client.compiled["reference_expectations"] == [
+        {
+            "tag": "playbill-authoring-reference-expectation-v1",
+            "payload_path": "statement.predicate",
+            "artifact_kind": "ClaimType",
+            "address": "secops.policy.patch_sla",
+            "minted_coordinate": coordinate.model_dump(mode="json"),
+        },
+        {
+            "tag": "playbill-authoring-reference-expectation-v1",
+            "payload_path": "statement.subject",
+            "artifact_kind": "Subject",
+            "address": "secops.policy/patch-sla",
+            "minted_coordinate": coordinate.model_dump(mode="json"),
+        },
+    ]
+    payload = client.compiled["payload"]
+    assert "reference_expectations" not in payload
+    assert "program_stamp" not in payload

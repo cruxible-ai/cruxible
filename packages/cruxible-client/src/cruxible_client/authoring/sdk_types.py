@@ -28,9 +28,14 @@ class RefKind(str, Enum):
 
 @runtime_checkable
 class TypedRef(Protocol):
-    kind: RefKind
-    address: str
-    coordinate: AcceptedCoordinate
+    @property
+    def kind(self) -> RefKind: ...
+
+    @property
+    def address(self) -> str: ...
+
+    @property
+    def coordinate(self) -> AcceptedCoordinate: ...
 
 
 @dataclass(frozen=True)

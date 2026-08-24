@@ -5,6 +5,31 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from cruxible_client.authoring.sdk import Playbill
+    from cruxible_client.authoring.sdk_types import (
+        AccessProfile,
+        ActivationPolicy,
+        Audience,
+        BriefClaimExpectation,
+        BriefKind,
+        BriefQueryRender,
+        CapabilityNotServed,
+        Cardinality,
+        ClaimObjectKind,
+        ClaimRef,
+        ClaimRole,
+        ClaimTypeRef,
+        Disposition,
+        Duration,
+        EffectivePeriod,
+        ProcedureRef,
+        QueryRef,
+        ReferentSensitivity,
+        SlotRef,
+        SourceRef,
+        SubjectRef,
+        TypedRef,
+    )
     from cruxible_client.authoring.workspace import (
         PlaybillWorkspaceError,
         activate_with_workspace_refresh,
@@ -15,7 +40,23 @@ if TYPE_CHECKING:
     from cruxible_client.transport.http import CruxibleClient
 
 __all__ = [
+    "AccessProfile",
+    "ActivationPolicy",
+    "Audience",
+    "BriefClaimExpectation",
+    "BriefKind",
+    "BriefQueryRender",
+    "CapabilityNotServed",
+    "Cardinality",
+    "ClaimObjectKind",
+    "ClaimRef",
+    "ClaimRole",
+    "ClaimTypeRef",
     "CruxibleClient",
+    "Disposition",
+    "Duration",
+    "EffectivePeriod",
+    "Playbill",
     "PlaybillInsertionApplication",
     "PlaybillInsertionApplyError",
     "PlaybillWorkspaceError",
@@ -25,6 +66,13 @@ __all__ = [
     "observe_playbill_next_workspace",
     "materialize_playbill_floor",
     "prepare_playbill_brief",
+    "ProcedureRef",
+    "QueryRef",
+    "ReferentSensitivity",
+    "SlotRef",
+    "SourceRef",
+    "SubjectRef",
+    "TypedRef",
 ]
 
 __version__ = "0.4.0"
@@ -36,6 +84,37 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.transport.http import CruxibleClient
 
         return CruxibleClient
+    if name == "Playbill":
+        from cruxible_client.authoring.sdk import Playbill
+
+        return Playbill
+    if name in {
+        "AccessProfile",
+        "ActivationPolicy",
+        "Audience",
+        "BriefClaimExpectation",
+        "BriefKind",
+        "BriefQueryRender",
+        "CapabilityNotServed",
+        "Cardinality",
+        "ClaimObjectKind",
+        "ClaimRef",
+        "ClaimRole",
+        "ClaimTypeRef",
+        "Disposition",
+        "Duration",
+        "EffectivePeriod",
+        "ProcedureRef",
+        "QueryRef",
+        "ReferentSensitivity",
+        "SlotRef",
+        "SourceRef",
+        "SubjectRef",
+        "TypedRef",
+    }:
+        from cruxible_client.authoring import sdk_types
+
+        return getattr(sdk_types, name)
     if name in {
         "PlaybillInsertionApplication",
         "PlaybillInsertionApplyError",
