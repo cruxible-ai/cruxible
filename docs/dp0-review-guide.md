@@ -35,6 +35,7 @@ playbill authoring create
 playbill authoring get
 playbill authoring list
 playbill authoring preflight
+playbill authoring rebase
 playbill authoring resume
 playbill authoring status
 playbill authoring submit
@@ -132,6 +133,7 @@ GET  /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}
 GET  /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/resume
 GET  /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/status
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight
+POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/rebase
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon

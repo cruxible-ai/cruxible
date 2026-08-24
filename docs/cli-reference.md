@@ -149,6 +149,7 @@ cruxible playbill authoring compile PAYLOAD [--intent-id INTENT_ID]
 cruxible playbill authoring bind --file PATH --anchor TEXT [--window-lines N]
   --payload-file CLAIM_STUB
 cruxible playbill authoring preflight INTENT_ID
+cruxible playbill authoring rebase INTENT_ID
 cruxible playbill authoring submit INTENT_ID
 cruxible playbill authoring status INTENT_ID
 cruxible playbill authoring confirm-insertion INTENT_ID OBSERVATION
@@ -157,6 +158,7 @@ cruxible playbill authoring abandon-insertion INTENT_ID
 
 The authoring coordinator owns stable identities, timestamps, bases, and proposal
 references. `compile` creates or updates an intent and performs a binding preflight;
+`rebase` advances an unsubmitted refused intent to the current accepted coordinate;
 `submit` is idempotent and never supplies approvals. `status` reports the remaining
 approval or activation conditions without impersonating the actors who own them.
 Insertion confirmation verifies a client observation and opens an ordinary

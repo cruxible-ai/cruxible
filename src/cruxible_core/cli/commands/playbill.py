@@ -1263,6 +1263,20 @@ def preflight_authoring_intent(intent_id: str, output_json: bool) -> None:
     _emit_json(result.model_dump(mode="json"))
 
 
+@authoring_group.command("rebase")
+@click.argument("intent_id")
+@json_option
+@handle_errors
+def rebase_authoring_intent(intent_id: str, output_json: bool) -> None:
+    """Advance one refused, unsubmitted intent to the accepted head."""
+
+    result = _server_call(
+        lambda client, instance_id: client.rebase_playbill_authoring_intent(instance_id, intent_id),
+        command_name="playbill authoring rebase",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
 @authoring_group.command("submit")
 @click.argument("intent_id")
 @json_option

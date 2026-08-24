@@ -165,6 +165,26 @@ def test_client_get_resume_list_and_status_are_path_only_reads() -> None:
     assert all(not item.content for item in captured)
 
 
+def test_client_speaks_the_frozen_authoring_rebase_request() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "tag": "playbill-authoring-intent-view-v1",
+                "intent": {"intent_id": INTENT_ID},
+            },
+        )
+
+    result = _client(handler).rebase_playbill_authoring_intent("inst", INTENT_ID)
+
+    assert result.intent["intent_id"] == INTENT_ID
+    assert captured[0].url.path.endswith(f"/{INTENT_ID}/rebase")
+    assert json.loads(captured[0].content) == {"tag": "playbill-authoring-intent-rebase-request-v1"}
+
+
 def test_client_whoami_and_proposal_list_use_read_routes_and_status_query() -> None:
     captured: list[httpx.Request] = []
 

@@ -21,6 +21,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringInputCompileRequest,
     PlaybillAuthoringInputCreateRequest,
     PlaybillAuthoringPreflightRequest,
+    PlaybillAuthoringRebaseRequest,
     PlaybillAuthoringSubmitRequest,
     PlaybillClaimExplainRequest,
     PlaybillDiscoverRequest,
@@ -626,6 +627,20 @@ async def resume_authoring_intent(
     intent_id: str,
 ) -> contracts.PlaybillAuthoringIntentView:
     return playbill_api.playbill_authoring_resume(
+        resolve_server_instance_id(instance_id), intent_id
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/authoring/intents/{intent_id}/rebase",
+    response_model=contracts.PlaybillAuthoringIntentView,
+)
+async def rebase_authoring_intent(
+    instance_id: str,
+    intent_id: str,
+    _req: PlaybillAuthoringRebaseRequest,
+) -> contracts.PlaybillAuthoringIntentView:
+    return playbill_api.playbill_authoring_rebase(
         resolve_server_instance_id(instance_id), intent_id
     )
 

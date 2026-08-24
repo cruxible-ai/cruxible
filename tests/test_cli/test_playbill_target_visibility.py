@@ -26,6 +26,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "authoring", "bind"): "active",
     ("playbill", "authoring", "compile"): "active",
     ("playbill", "authoring", "preflight"): "active",
+    ("playbill", "authoring", "rebase"): "active",
     ("playbill", "authoring", "submit"): "active",
     ("playbill", "native", "compile"): "manual",
     ("playbill", "seed", "apply"): "manual",

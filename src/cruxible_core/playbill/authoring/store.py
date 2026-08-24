@@ -238,6 +238,22 @@ class AuthoringIntentStore:
                     pending.append(intent)
             return tuple(sorted(pending, key=lambda item: item.intent_id.encode("ascii")))
 
+    def latest_transition(
+        self,
+        intent_id: str,
+        *,
+        actor_id: str,
+    ) -> tuple[AuthoringIntentV1 | None, AuthoringIntentEventV1]:
+        """Return the exact predecessor and latest event for protocol retry checks."""
+
+        with self._locked():
+            events = self._load_events(self.root / intent_id)
+            latest = events[-1]
+            if latest.intent.actor_id != actor_id:
+                raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
+            predecessor = None if len(events) == 1 else events[-2].intent
+            return predecessor, latest
+
     def transition(
         self,
         intent_id: str,
@@ -245,6 +261,7 @@ class AuthoringIntentStore:
         actor_id: str,
         operation_key: str,
         transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
+        allow_rebase: bool = False,
     ) -> AuthoringIntentV1:
         """Append one idempotent state transition under the store-wide CAS lock."""
 
@@ -258,7 +275,7 @@ class AuthoringIntentStore:
             if current.actor_id != actor_id:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
             updated = transform(current)
-            self._validate_transition(current, updated)
+            self._validate_transition(current, updated, allow_rebase=allow_rebase)
             event = build_authoring_intent_event(
                 sequence=len(events),
                 previous_event_digest=events[-1].event_digest,
@@ -334,16 +351,38 @@ class AuthoringIntentStore:
         return canonical_bytes(event.model_dump(mode="json")) + b"\n"
 
     @staticmethod
-    def _validate_transition(current: AuthoringIntentV1, updated: AuthoringIntentV1) -> None:
+    def _validate_transition(
+        current: AuthoringIntentV1,
+        updated: AuthoringIntentV1,
+        *,
+        allow_rebase: bool = False,
+    ) -> None:
         immutable = (
             "intent_id",
             "instance_id",
             "actor_id",
             "canonical_timestamp",
-            "base_coordinate",
         )
         if any(getattr(current, name) != getattr(updated, name) for name in immutable):
             raise AuthoringIntentStoreError("AuthoringIntent transition changed immutable identity")
+        if current.base_coordinate != updated.base_coordinate:
+            if not allow_rebase:
+                raise AuthoringIntentStoreError(
+                    "AuthoringIntent transition changed immutable base coordinate"
+                )
+            if (
+                current.semantic_identity != updated.semantic_identity
+                or current.payload != updated.payload
+                or current.payload_digest != updated.payload_digest
+                or current.create_fingerprint != updated.create_fingerprint
+                or current.insertion_expectation != updated.insertion_expectation
+                or updated.intent_revision != current.intent_revision + 1
+                or updated.last_preflight is not None
+                or updated.candidate_status.state != "draft"
+            ):
+                raise AuthoringIntentStoreError(
+                    "AuthoringIntent rebase changed more than its checked protocol fields"
+                )
         if updated.intent_revision < current.intent_revision:
             raise AuthoringIntentStoreError("AuthoringIntent revision regressed")
 

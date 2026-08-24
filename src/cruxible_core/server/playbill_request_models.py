@@ -161,6 +161,12 @@ class PlaybillAuthoringPreflightRequest(_StrictPlaybillRequest):
     )
 
 
+class PlaybillAuthoringRebaseRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-authoring-intent-rebase-request-v1"] = (
+        "playbill-authoring-intent-rebase-request-v1"
+    )
+
+
 class PlaybillAuthoringSubmitRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-authoring-intent-submit-request-v1"] = (
         "playbill-authoring-intent-submit-request-v1"

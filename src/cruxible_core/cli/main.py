@@ -45,6 +45,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "authoring", "bind"): "active",
     ("playbill", "authoring", "compile"): "active",
     ("playbill", "authoring", "preflight"): "active",
+    ("playbill", "authoring", "rebase"): "active",
     ("playbill", "authoring", "submit"): "active",
     # Compile is two acts behind one command: --preview writes nothing at all,
     # so the notice belongs immediately before the submit rather than before
@@ -487,6 +488,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "playbill",
                         "preflight_authoring_intent",
                         "Recheck an authoring intent.",
+                    ),
+                    "rebase": _command(
+                        "playbill",
+                        "rebase_authoring_intent",
+                        "Advance a refused intent to accepted head.",
                     ),
                     "submit": _command(
                         "playbill", "submit_authoring_intent", "Submit a passing intent."

@@ -65,6 +65,7 @@ from cruxible_core.playbill.claims import (
     parse_claim,
     render_claim,
 )
+from cruxible_core.playbill.errors import PlaybillError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import (
@@ -73,6 +74,34 @@ from cruxible_core.playbill.proposals import (
 )
 from cruxible_core.playbill.semantic import ContentSpan, SourceMapping
 from cruxible_core.temporal import format_datetime, parse_datetime, utc_now
+
+AUTHORING_REBASE_DOMAIN = "playbill-authoring-rebase-v1"
+
+
+class AuthoringIntentRebaseError(PlaybillError):
+    code = "playbill.authoring.intent_rebase_not_allowed"
+
+
+class AuthoringIntentRebaseSubmitted(AuthoringIntentRebaseError):
+    code = "playbill.authoring.intent_rebase_submitted"
+
+
+def _rebase_operation_key(
+    intent: AuthoringIntentV1,
+    *,
+    actor_id: str,
+    next_coordinate: AcceptedCoordinate,
+) -> str:
+    return typed_digest(
+        Sha256Value,
+        AUTHORING_REBASE_DOMAIN,
+        {
+            "intent_id": intent.intent_id,
+            "actor_id": actor_id,
+            "prior_base_coordinate": intent.base_coordinate.model_dump(mode="json"),
+            "next_base_coordinate": next_coordinate.model_dump(mode="json"),
+        },
+    ).tagged
 
 
 @dataclass(frozen=True)
@@ -180,6 +209,78 @@ class AuthoringIntentCoordinator:
                 )
             )
         )
+
+    def rebase(self, intent_id: str, *, actor: AuthenticatedActor) -> AuthoringIntentViewV1:
+        """Advance one refused, unsubmitted intent to the current accepted coordinate."""
+
+        current = self.store.get(intent_id, actor_id=actor.actor_id)
+        status = current.candidate_status
+        next_coordinate = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
+        if status.state == "draft" and current.base_coordinate == next_coordinate:
+            predecessor, latest = self.store.latest_transition(
+                intent_id,
+                actor_id=actor.actor_id,
+            )
+            if (
+                predecessor is not None
+                and predecessor.candidate_status.state == "preflight_refused"
+                and latest.operation_key
+                == _rebase_operation_key(
+                    predecessor,
+                    actor_id=actor.actor_id,
+                    next_coordinate=next_coordinate,
+                )
+            ):
+                return AuthoringIntentViewV1(intent=latest.intent)
+        if status.proposal_id is not None or status.state in {
+            "awaiting_external_approval",
+            "approval_invalid",
+            "ready_to_activate",
+            "conflicted_after_rebase",
+            "superseded",
+            "accepted",
+            "terminal",
+        }:
+            raise AuthoringIntentRebaseSubmitted(
+                f"{AuthoringIntentRebaseSubmitted.code}: submitted intent cannot be rebased"
+            )
+        if status.state != "preflight_refused":
+            raise AuthoringIntentRebaseError(
+                f"{AuthoringIntentRebaseError.code}: only preflight_refused may advance"
+            )
+        if current.base_coordinate == next_coordinate:
+            return AuthoringIntentViewV1(intent=current)
+        operation_key = _rebase_operation_key(
+            current,
+            actor_id=actor.actor_id,
+            next_coordinate=next_coordinate,
+        )
+
+        def advance(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+            if intent != current:
+                raise AuthoringIntentRebaseError(
+                    f"{AuthoringIntentRebaseError.code}: intent changed during rebase"
+                )
+            return intent.model_copy(
+                update={
+                    "base_coordinate": next_coordinate,
+                    "intent_revision": intent.intent_revision + 1,
+                    "last_preflight": None,
+                    "candidate_status": CandidateStatusV1(
+                        state="draft",
+                        current_accepted_coordinate=next_coordinate,
+                    ),
+                }
+            )
+
+        updated = self.store.transition(
+            intent_id,
+            actor_id=actor.actor_id,
+            operation_key=operation_key,
+            transform=advance,
+            allow_rebase=True,
+        )
+        return AuthoringIntentViewV1(intent=updated)
 
     def preflight(
         self,
