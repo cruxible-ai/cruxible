@@ -735,29 +735,32 @@ class Playbill:
             else os.environ.get("CRUXIBLE_SERVER_BEARER_TOKEN")
         )
         client = CruxibleClient(base_url=resolved_target, socket_path=socket, token=raw_token)
-        daemon_version = client.version()
-        expected = SUPPORTED_DAEMON_CONTRACTS.get(daemon_version)
-        if expected != SDK_CONTRACT_SNAPSHOT_DIGEST:
-            client.close()
-            raise IncompatibleDaemonVersion(
-                client_version=__version__,
-                daemon_version=daemon_version,
-                expected_snapshot_digest=expected or "unsupported",
-                actual_snapshot_digest=SDK_CONTRACT_SNAPSHOT_DIGEST,
+        try:
+            daemon_version = client.version()
+            expected = SUPPORTED_DAEMON_CONTRACTS.get(daemon_version)
+            if expected != SDK_CONTRACT_SNAPSHOT_DIGEST:
+                raise IncompatibleDaemonVersion(
+                    client_version=__version__,
+                    daemon_version=daemon_version,
+                    expected_snapshot_digest=expected or "unsupported",
+                    actual_snapshot_digest=SDK_CONTRACT_SNAPSHOT_DIGEST,
+                )
+            result = cls(
+                client=client,
+                instance_id=resolved_instance,
+                workspace=workspace or Path.cwd(),
+                access_profile=access_profile
+                or AccessProfile(
+                    profile_id="sdk-default",
+                    permitted_access_classes=("instance", "public"),
+                    disclose_restricted_existence=True,
+                ),
+                clock=lambda: datetime.now(UTC),
             )
-        result = cls(
-            client=client,
-            instance_id=resolved_instance,
-            workspace=workspace or Path.cwd(),
-            access_profile=access_profile
-            or AccessProfile(
-                profile_id="sdk-default",
-                permitted_access_classes=("instance", "public"),
-                disclose_restricted_existence=True,
-            ),
-            clock=lambda: datetime.now(UTC),
-        )
-        result.refresh()
+            result.refresh()
+        except BaseException:
+            client.close()
+            raise
         return result
 
     @classmethod
