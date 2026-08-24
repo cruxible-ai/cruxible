@@ -16,6 +16,8 @@ from cruxible_client import (
     ClaimRef,
     ClaimRole,
     ClaimTypeRef,
+    Disposition,
+    Duration,
     Playbill,
     ReferentSensitivity,
     SubjectRef,
@@ -81,15 +83,26 @@ entries:
         encoding="utf-8",
     )
     (workspace / "corpus" / "escalation-policy.md").write_text(
-        "Emergency changes require one platform-lead approver.\n", encoding="utf-8"
+        "# Escalation and change policy\n\n"
+        "Emergency changes require one approver from the platform-leads group.\n",
+        encoding="utf-8",
     )
     (workspace / "corpus" / "infra-inventory.md").write_text(
-        "payments-edge runs lua-gateway in the request path and is internet-reachable.\n",
+        "# Service inventory — edge tier\n\n"
+        "## payments-edge\n"
+        "Runs nginx 1.24.0 with the lua-gateway module in the request path. "
+        "Reachable from the public internet.\n\n"
+        "## partner-api\n"
+        "Runs nginx 1.24.0. The lua-gateway module is installed but disabled. VPN-only.\n\n"
+        "## batch-ingest\n"
+        "Runs nginx 1.22.1 without lua-gateway. Internal subnet only.\n",
         encoding="utf-8",
     )
     (workspace / "corpus" / "vuln-response-runbook.md").write_text(
+        "# Vulnerability response runbook\n\n"
+        "Critical internet-facing systems must patch within seventy-two hours.\n"
         "The KEV patch deadline tightens to forty-eight hours.\n"
-        "Critical internet-facing systems must patch within seventy-two hours.\n",
+        "Similarity is not verification: confirm the exact deployed version.\n",
         encoding="utf-8",
     )
 
@@ -212,14 +225,14 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         pins=(),
         lifecycle=ArtifactLifecycle(),
     )
-    patch_sla = pb.claim_type(
-        predicate="secops.policy.patch_sla",
-        subject_kinds=("secops.policy",),
+    triage_type = pb.claim_type(
+        predicate="secops.vuln.triage_decision",
+        subject_kinds=("secops.policy", "secops.service"),
         object_kind=ClaimObjectKind.LITERAL,
         value_schema={"type": "object"},
         object_subject_kinds=(),
-        cardinality=Cardinality.ONE,
-        permitted_roles=(ClaimRole.NORMATIVE,),
+        cardinality=Cardinality.MANY,
+        permitted_roles=(ClaimRole.NORMATIVE, ClaimRole.OBSERVATION),
         referent_sensitivity=ReferentSensitivity.IDENTITY,
         sources=(
             "corpus.escalation-policy",
@@ -228,19 +241,19 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         ),
         admission_policy=ClaimAdmissionPolicyV1(),
         resolution_policy=ClaimResolutionPolicyV1(
-            cardinality="one",
+            cardinality="many",
             eligible_verdicts=("supported",),
-            selector="only_contender",
+            selector="all",
         ),
         authority=AUTHORITY,
         pins=(),
         slot_policy=None,
-        evidence_freshness=None,
+        evidence_freshness=Duration.days(count=90),
     )
     kev = pb.claim(
         subject=policy_subject.address,
-        predicate=patch_sla.predicate,
-        value={"deadline_hours": 48, "trigger": "kev_listed"},
+        predicate=triage_type.predicate,
+        value={"fact": "kev_listed_deadline", "hours": 48},
         role=ClaimRole.NORMATIVE,
         rationale="The runbook fixes the KEV deadline independently of severity.",
         supported_by=pb.file("corpus/vuln-response-runbook.md").anchor(
@@ -254,7 +267,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         dispositions={},
         publish_to=None,
         subject_definition=policy_subject,
-        claim_type_definition=patch_sla,
+        claim_type_definition=triage_type,
     ).prepare()
     assert not kev.refused
     kev.submit()
@@ -263,17 +276,16 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     _approve_and_activate(http, instance_id, private_key_path, kev_proposal)
     assert kev.status().state == "accepted"
     pb.refresh()
-
-    critical_subject = pb.subject(
-        subject="secops.policy/critical-patch-sla",
-        authority=AUTHORITY,
-        pins=(),
-        lifecycle=ArtifactLifecycle(),
+    kev_identity = next(
+        str(row["identity"]).removeprefix("Claim:")
+        for row in pb.list(kinds=("claim",), statuses=("accepted",)).rows
+        if row.get("predicate") == triage_type.predicate
     )
+
     critical = pb.claim(
-        subject=critical_subject.address,
-        predicate=ClaimTypeRef(patch_sla.predicate, pb.coordinate),
-        value={"deadline_hours": 72, "trigger": "internet_facing_critical"},
+        subject=SubjectRef(policy_subject.address, pb.coordinate),
+        predicate=ClaimTypeRef(triage_type.predicate, pb.coordinate),
+        value={"fact": "exposed_critical_deadline", "hours": 72},
         role=ClaimRole.NORMATIVE,
         rationale="The runbook fixes the exposed critical deadline.",
         supported_by=pb.file("corpus/vuln-response-runbook.md").anchor("within seventy-two hours"),
@@ -282,9 +294,9 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         qualifier=None,
         effective_period=None,
         revises=None,
-        dispositions={},
+        dispositions={ClaimRef(kev_identity, pb.coordinate): Disposition.SUPPORT},
         publish_to=None,
-        subject_definition=critical_subject,
+        subject_definition=None,
         claim_type_definition=None,
     ).prepare()
     assert not critical.refused, critical.diagnostics
@@ -294,13 +306,73 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     _approve_and_activate(http, instance_id, private_key_path, critical_proposal)
     pb.refresh()
 
+    remaining_facts = (
+        (
+            "secops.policy/exposure",
+            ClaimRole.NORMATIVE,
+            {"fact": "similar_version_is_verification", "value": False},
+            "corpus/vuln-response-runbook.md",
+            "Similarity is not verification",
+        ),
+        (
+            "secops.service/payments-edge",
+            ClaimRole.OBSERVATION,
+            {
+                "nginx": "1.24.0",
+                "lua_gateway": "request_path",
+                "reachable": "internet",
+            },
+            "corpus/infra-inventory.md",
+            "Runs nginx 1.24.0 with the lua-gateway module in the request path",
+        ),
+        (
+            "secops.service/partner-api",
+            ClaimRole.OBSERVATION,
+            {"nginx": "1.24.0", "lua_gateway": "disabled", "reachable": "vpn_only"},
+            "corpus/infra-inventory.md",
+            "The lua-gateway module is installed but disabled",
+        ),
+        (
+            "secops.service/batch-ingest",
+            ClaimRole.OBSERVATION,
+            {"nginx": "1.22.1", "lua_gateway": "absent", "reachable": "internal"},
+            "corpus/infra-inventory.md",
+            "Runs nginx 1.22.1 without lua-gateway",
+        ),
+    )
+    for subject_name, role, value, source_path, anchor in remaining_facts:
+        subject = pb.subject(
+            subject=subject_name,
+            authority=AUTHORITY,
+            pins=(),
+            lifecycle=ArtifactLifecycle(),
+        )
+        intent = pb.claim(
+            subject=subject.address,
+            predicate=ClaimTypeRef(triage_type.predicate, pb.coordinate),
+            value=value,
+            role=role,
+            rationale="Compile one explicit demo-world fact from its corpus sentence.",
+            supported_by=pb.file(source_path).anchor(anchor),
+            copied_from=None,
+            self_source=None,
+            qualifier=None,
+            effective_period=None,
+            revises=None,
+            dispositions={},
+            publish_to=None,
+            subject_definition=subject,
+            claim_type_definition=None,
+        ).prepare()
+        assert not intent.refused, intent.diagnostics
+        intent.submit()
+        proposal_id = intent.status().proposal_id
+        assert proposal_id is not None
+        _approve_and_activate(http, instance_id, private_key_path, proposal_id)
+        pb.refresh()
+
     claim_rows = pb.list(kinds=("claim",), statuses=("accepted",)).rows
-    kev_identity = next(
-        str(row["identity"])
-        for row in claim_rows
-        if row.get("predicate") == patch_sla.predicate
-        and row.get("subject", {}).get("artifact_path") == "subjects/secops.policy/patch-sla.yaml"
-    ).removeprefix("Claim:")
+    assert len([row for row in claim_rows if row.get("predicate") == triage_type.predicate]) == 6
     brief = pb.brief(
         subject=SubjectRef(policy_subject.address, pb.coordinate),
         purpose="Summarize the governed vulnerability response deadlines.",
@@ -311,7 +383,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         claims={
             ClaimRef(kev_identity, pb.coordinate): BriefClaimExpectation(
                 subject=SubjectRef(policy_subject.address, pb.coordinate),
-                claim_type=ClaimTypeRef(patch_sla.predicate, pb.coordinate),
+                claim_type=ClaimTypeRef(triage_type.predicate, pb.coordinate),
             )
         },
         queries={},
@@ -334,7 +406,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     published_text = "\nGoverned guidance: retain the seventy-two-hour boundary.\n"
     publication_intent = pb.claim(
         subject=publication_subject.address,
-        predicate=ClaimTypeRef(patch_sla.predicate, pb.coordinate),
+        predicate=ClaimTypeRef(triage_type.predicate, pb.coordinate),
         value={"deadline_hours": 72, "trigger": "published_guidance"},
         role=ClaimRole.NORMATIVE,
         rationale="Publish the accepted guidance back into its declared source.",
