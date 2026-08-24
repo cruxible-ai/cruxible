@@ -127,6 +127,64 @@ def test_materialization_refuses_dot_output_path(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "",
+        "../outside",
+        "/tmp/outside",
+        "playbill-floor/../outside",
+        "./playbill-floor",
+        ".playbill",
+        ".playbill/floor",
+    ],
+)
+def test_materialization_refuses_output_path_escape_forms(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    workspace = _workspace(tmp_path)
+
+    with pytest.raises(PlaybillWorkspaceError, match="normalized workspace-relative"):
+        materialize_playbill_floor(
+            workspace,
+            relative_path=relative_path,
+            export=_export(),
+        )
+
+
+@pytest.mark.parametrize(
+    "exported_path",
+    [
+        "../outside.json",
+        "/tmp/outside.json",
+        "cards/../outside.json",
+        "cards//outside.json",
+    ],
+)
+def test_materialization_refuses_export_file_escape_forms(
+    tmp_path: Path,
+    exported_path: str,
+) -> None:
+    workspace = _workspace(tmp_path)
+    export = _export()
+    malicious_export = export.model_copy(
+        update={
+            "files": [
+                export.files[0],
+                export.files[1].model_copy(update={"path": exported_path}),
+            ]
+        }
+    )
+
+    with pytest.raises(PlaybillWorkspaceError, match="escapes its root"):
+        materialize_playbill_floor(
+            workspace,
+            relative_path="playbill-floor",
+            export=malicious_export,
+        )
+
+
 def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
 

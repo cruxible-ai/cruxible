@@ -7,8 +7,12 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from cruxible_client import contracts
+from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
+from cruxible_core.mcp.workspace import resolve_workspace_path
 from cruxible_core.playbill.canonical import Sha256Value, typed_digest
 
 
@@ -135,3 +139,28 @@ def test_workspace_status_compares_the_installed_floor(
 
     assert status.status == "current"
     assert status.installed_coordinate == _coordinate()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["../outside", "/tmp/outside", "source/../outside", "./source"],
+)
+def test_workspace_path_refuses_lexical_escape_forms(
+    tmp_path: Path,
+    value: str,
+) -> None:
+    workspace = _workspace(tmp_path)
+
+    with pytest.raises(DataValidationError, match="normalized, relative"):
+        resolve_workspace_path(value, root=workspace)
+
+
+def test_workspace_path_refuses_symlink_escape(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "source.md").write_text("outside", encoding="utf-8")
+    (workspace / "escape").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(DataValidationError, match="escapes the configured root"):
+        resolve_workspace_path("escape/source.md", root=workspace, kind="file")
