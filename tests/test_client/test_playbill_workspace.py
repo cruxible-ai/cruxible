@@ -116,6 +116,17 @@ def test_materialization_refuses_symlink_escape(tmp_path: Path) -> None:
         )
 
 
+def test_materialization_refuses_dot_output_path(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+
+    with pytest.raises(PlaybillWorkspaceError, match="normalized workspace-relative"):
+        materialize_playbill_floor(
+            workspace,
+            relative_path=".",
+            export=_export(),
+        )
+
+
 def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
 

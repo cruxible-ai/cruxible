@@ -162,6 +162,7 @@ def _relative_destination(workspace: Path, relative_path: str) -> Path:
         or path.is_absolute()
         or path.as_posix() != relative_path
         or ".." in path.parts
+        or not path.parts
         or path.parts[0] == ".playbill"
     ):
         raise PlaybillWorkspaceError(
