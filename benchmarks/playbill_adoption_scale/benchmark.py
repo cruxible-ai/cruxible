@@ -46,6 +46,7 @@ from tests.test_playbill._adoption_fixture import (  # noqa: E402
     build_fixture,
 )
 
+from cruxible_client.contracts.types import PlaybillTrustRoot  # noqa: E402
 from cruxible_core.playbill.checkpoints import (  # noqa: E402
     CHECKPOINT_DIRECTORY,
     checkpoint_body,
@@ -55,7 +56,6 @@ from cruxible_core.playbill.checkpoints import (  # noqa: E402
 from cruxible_core.playbill.git import GitLedger  # noqa: E402
 from cruxible_core.playbill.instance import PlaybillInstance  # noqa: E402
 from cruxible_core.playbill.serving import SERVING_MANIFEST_FILE  # noqa: E402
-from cruxible_client.contracts.types import PlaybillTrustRoot  # noqa: E402
 
 FIXTURE_FILE = "fixture.json"
 

@@ -60,6 +60,11 @@ for _candidate in (REPOSITORY_ROOT, REPOSITORY_ROOT / "src"):
 
 from click.testing import CliRunner  # noqa: E402
 
+from cruxible_client.authoring.seed import (  # noqa: E402
+    SEED_BODY_DIRECTORY,
+    plan_seed_bundle,
+    seed_plan_digest,
+)
 from cruxible_core.cli.commands import _common  # noqa: E402
 from cruxible_core.cli.context import load_cli_context  # noqa: E402
 from cruxible_core.cli.main import cli  # noqa: E402
@@ -78,11 +83,6 @@ from cruxible_core.playbill.coverage.middleware import (  # noqa: E402
     grep_event,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate  # noqa: E402
-from cruxible_client.authoring.seed import (  # noqa: E402
-    SEED_BODY_DIRECTORY,
-    plan_seed_bundle,
-    seed_plan_digest,
-)
 
 BUNDLE_DIR = Path(__file__).resolve().parent / "seed-example"
 SIGNER_ID = "operator"
