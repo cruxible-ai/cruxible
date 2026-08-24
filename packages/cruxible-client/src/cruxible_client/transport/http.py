@@ -672,19 +672,26 @@ class CruxibleClient:
         *,
         payload: Mapping[str, Any],
         reference_expectations: Sequence[Mapping[str, Any]] | None = None,
+        program_stamp: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillAuthoringIntentView:
         request: dict[str, Any] = {
             "tag": (
                 "playbill-authoring-intent-create-request-v1"
                 if reference_expectations is None
-                else "playbill-authoring-intent-create-request-v2"
+                else (
+                    "playbill-authoring-intent-create-request-v2"
+                    if program_stamp is None
+                    else "playbill-authoring-intent-create-request-v3"
+                )
             ),
             "payload": dict(payload),
         }
         if reference_expectations is not None:
-            request["reference_expectations"] = [
-                dict(item) for item in reference_expectations
-            ]
+            request["reference_expectations"] = [dict(item) for item in reference_expectations]
+        if program_stamp is not None:
+            if reference_expectations is None:
+                raise ValueError("program_stamp requires reference_expectations")
+            request["program_stamp"] = dict(program_stamp)
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/intents",
             json=request,
@@ -738,20 +745,27 @@ class CruxibleClient:
         payload: Mapping[str, Any],
         intent_id: str | None = None,
         reference_expectations: Sequence[Mapping[str, Any]] | None = None,
+        program_stamp: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillAuthoringPreflightResult:
         request: dict[str, Any] = {
             "tag": (
                 "playbill-authoring-intent-compile-request-v1"
                 if reference_expectations is None
-                else "playbill-authoring-intent-compile-request-v2"
+                else (
+                    "playbill-authoring-intent-compile-request-v2"
+                    if program_stamp is None
+                    else "playbill-authoring-intent-compile-request-v3"
+                )
             ),
             "payload": dict(payload),
             "intent_id": intent_id,
         }
         if reference_expectations is not None:
-            request["reference_expectations"] = [
-                dict(item) for item in reference_expectations
-            ]
+            request["reference_expectations"] = [dict(item) for item in reference_expectations]
+        if program_stamp is not None:
+            if reference_expectations is None:
+                raise ValueError("program_stamp requires reference_expectations")
+            request["program_stamp"] = dict(program_stamp)
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/compile",
             json=request,

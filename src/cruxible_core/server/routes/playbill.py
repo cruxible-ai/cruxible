@@ -18,8 +18,10 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalRequest,
     PlaybillAuthoringCompileRequest,
     PlaybillAuthoringCompileRequestV2,
+    PlaybillAuthoringCompileRequestV3,
     PlaybillAuthoringCreateRequest,
     PlaybillAuthoringCreateRequestV2,
+    PlaybillAuthoringCreateRequestV3,
     PlaybillAuthoringInputCompileRequest,
     PlaybillAuthoringInputCreateRequest,
     PlaybillAuthoringPreflightRequest,
@@ -576,12 +578,20 @@ async def create_authoring_intent(
     req: (
         PlaybillAuthoringCreateRequest
         | PlaybillAuthoringCreateRequestV2
+        | PlaybillAuthoringCreateRequestV3
         | PlaybillAuthoringInputCreateRequest
     ),
 ) -> contracts.PlaybillAuthoringIntentView:
     if isinstance(req, PlaybillAuthoringInputCreateRequest):
         return playbill_api.playbill_authoring_create_input(
             resolve_server_instance_id(instance_id), input=req.input
+        )
+    if isinstance(req, PlaybillAuthoringCreateRequestV3):
+        return playbill_api.playbill_authoring_create(
+            resolve_server_instance_id(instance_id),
+            payload=req.payload,
+            reference_expectations=req.reference_expectations,
+            program_stamp=req.program_stamp,
         )
     if isinstance(req, PlaybillAuthoringCreateRequestV2):
         return playbill_api.playbill_authoring_create(
@@ -614,6 +624,7 @@ async def compile_authoring(
     req: (
         PlaybillAuthoringCompileRequest
         | PlaybillAuthoringCompileRequestV2
+        | PlaybillAuthoringCompileRequestV3
         | PlaybillAuthoringInputCompileRequest
     ),
 ) -> contracts.PlaybillAuthoringPreflightResult:
@@ -622,6 +633,14 @@ async def compile_authoring(
             resolve_server_instance_id(instance_id),
             input=req.input,
             intent_id=req.intent_id,
+        )
+    if isinstance(req, PlaybillAuthoringCompileRequestV3):
+        return playbill_api.playbill_authoring_compile(
+            resolve_server_instance_id(instance_id),
+            payload=req.payload,
+            intent_id=req.intent_id,
+            reference_expectations=req.reference_expectations,
+            program_stamp=req.program_stamp,
         )
     if isinstance(req, PlaybillAuthoringCompileRequestV2):
         return playbill_api.playbill_authoring_compile(

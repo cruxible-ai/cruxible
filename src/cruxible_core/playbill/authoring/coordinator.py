@@ -9,12 +9,15 @@ from typing import Callable, Literal
 from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1, lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
+    AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
+    AUTHORING_SDK_VERSION,
     AcceptanceConditionV1,
     AuthoringIntentListV1,
     AuthoringIntentV1,
     AuthoringIntentV2,
     AuthoringIntentViewV1,
     AuthoringPayloadV1,
+    AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
     AuthoringSubmitResultV1,
     CandidateStatusState,
@@ -89,6 +92,25 @@ class AuthoringIntentRebaseSubmitted(AuthoringIntentRebaseError):
     code = "playbill.authoring.intent_rebase_submitted"
 
 
+class AuthoringProgramStampError(PlaybillError):
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        super().__init__(f"{code}: {message}")
+
+
+def _validate_program_stamp(program_stamp: AuthoringProgramStampV1) -> None:
+    if program_stamp.sdk_contract_snapshot_digest != AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST:
+        raise AuthoringProgramStampError(
+            "playbill.authoring.program_stamp_contract_mismatch",
+            "the SDK contract snapshot is not the daemon's exact frozen snapshot",
+        )
+    if program_stamp.sdk_version != AUTHORING_SDK_VERSION:
+        raise AuthoringProgramStampError(
+            "playbill.authoring.program_stamp_version_incompatible",
+            "the SDK version is not compatible with this daemon",
+        )
+
+
 def _rebase_operation_key(
     intent: AuthoringIntentV1,
     *,
@@ -127,7 +149,15 @@ class AuthoringIntentCoordinator:
         canonical_timestamp: str,
         base_coordinate: AcceptedCoordinate | None = None,
         reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentViewV1:
+        if program_stamp is not None:
+            _validate_program_stamp(program_stamp)
+            if reference_expectations is None:
+                raise AuthoringProgramStampError(
+                    "playbill.authoring.program_stamp_contract_mismatch",
+                    "a v3 program stamp requires the v2 reference-assertion envelope",
+                )
         at = base_coordinate or AcceptedCoordinate.from_internal(
             self.instance.accepted_coordinate()
         )
@@ -181,6 +211,12 @@ class AuthoringIntentCoordinator:
                 stored,
                 actor=actor,
                 reference_expectations=reference_expectations,
+            )
+        if program_stamp is not None:
+            stored = self.store.record_program_stamp(
+                stored.intent_id,
+                actor_id=actor.actor_id,
+                program_stamp=program_stamp,
             )
         return AuthoringIntentViewV1(intent=stored)
 
@@ -352,6 +388,7 @@ class AuthoringIntentCoordinator:
         canonical_timestamp: str,
         intent_id: str | None = None,
         reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> PreflightResultV1:
         view = (
             self.create(
@@ -359,6 +396,7 @@ class AuthoringIntentCoordinator:
                 payload=payload,
                 canonical_timestamp=canonical_timestamp,
                 reference_expectations=reference_expectations,
+                program_stamp=program_stamp,
             )
             if intent_id is None
             else self.replace_payload(
@@ -366,6 +404,7 @@ class AuthoringIntentCoordinator:
                 actor=actor,
                 payload=payload,
                 reference_expectations=reference_expectations,
+                program_stamp=program_stamp,
             )
         )
         return self.preflight(view.intent.intent_id, actor=actor)
@@ -702,7 +741,15 @@ class AuthoringIntentCoordinator:
         actor: AuthenticatedActor,
         payload: AuthoringPayloadV1,
         reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
+        program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentViewV1:
+        if program_stamp is not None:
+            _validate_program_stamp(program_stamp)
+            if reference_expectations is None:
+                raise AuthoringProgramStampError(
+                    "playbill.authoring.program_stamp_contract_mismatch",
+                    "a v3 program stamp requires the v2 reference-assertion envelope",
+                )
         payload_digest = authoring_payload_digest(payload)
         expectations_digest = (
             None
@@ -756,21 +803,21 @@ class AuthoringIntentCoordinator:
                 raise ValueError("unsupported AuthoringIntent payload kind")
             at = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
             updates = {
-                    "payload": payload,
-                    "payload_digest": payload_digest,
-                    "create_fingerprint": authoring_create_fingerprint(
-                        instance_id=current.instance_id,
-                        actor_id=current.actor_id,
-                        payload=payload,
-                    ),
-                    "semantic_identity": semantic_identity,
-                    "intent_revision": current.intent_revision + 1,
-                    "last_preflight": None,
-                    "candidate_status": CandidateStatusV1(
-                        state="draft",
-                        current_accepted_coordinate=at,
-                    ),
-                }
+                "payload": payload,
+                "payload_digest": payload_digest,
+                "create_fingerprint": authoring_create_fingerprint(
+                    instance_id=current.instance_id,
+                    actor_id=current.actor_id,
+                    payload=payload,
+                ),
+                "semantic_identity": semantic_identity,
+                "intent_revision": current.intent_revision + 1,
+                "last_preflight": None,
+                "candidate_status": CandidateStatusV1(
+                    state="draft",
+                    current_accepted_coordinate=at,
+                ),
+            }
             if reference_expectations is None:
                 return current.model_copy(update=updates)
             return AuthoringIntentV2.model_validate(
@@ -790,6 +837,12 @@ class AuthoringIntentCoordinator:
             operation_key=operation_key,
             transform=replace,
         )
+        if program_stamp is not None:
+            updated = self.store.record_program_stamp(
+                updated.intent_id,
+                actor_id=actor.actor_id,
+                program_stamp=program_stamp,
+            )
         return AuthoringIntentViewV1(intent=updated)
 
     def _replace_reference_expectations(

@@ -13,12 +13,18 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from cruxible_client.contracts.authoring.models import AuthoringIntentV1, AuthoringIntentV2
+from cruxible_client.contracts.authoring.models import (
+    AuthoringIntentV1,
+    AuthoringIntentV2,
+    AuthoringProgramStampV1,
+    authoring_program_stamp_operation_key,
+)
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.errors import PlaybillError
 
 AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
 AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
+AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN = "playbill-authoring-intent-event-v3"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})
 _LIVE_INSERTION_STATES = frozenset({"awaiting_claim_acceptance", "pending", "confirming"})
 
@@ -82,7 +88,32 @@ class AuthoringIntentEventV2(_StrictStoreModel):
         return self
 
 
-AuthoringIntentEventAny: TypeAlias = AuthoringIntentEventV1 | AuthoringIntentEventV2
+class AuthoringIntentEventV3(_StrictStoreModel):
+    tag: Literal["playbill-authoring-intent-event-v3"] = "playbill-authoring-intent-event-v3"
+    sequence: int = Field(ge=0)
+    previous_event_digest: str | None
+    operation_key: str
+    intent: AuthoringIntentV2
+    program_stamp: AuthoringProgramStampV1
+    event_digest: str
+
+    @field_validator("previous_event_digest", "operation_key", "event_digest")
+    @classmethod
+    def _digests(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _reproduces(self) -> "AuthoringIntentEventV3":
+        if self.event_digest != authoring_intent_event_digest(self):
+            raise ValueError("AuthoringIntent event digest does not reproduce")
+        return self
+
+
+AuthoringIntentEventAny: TypeAlias = (
+    AuthoringIntentEventV1 | AuthoringIntentEventV2 | AuthoringIntentEventV3
+)
 
 
 def authoring_intent_event_digest(event: AuthoringIntentEventAny) -> str:
@@ -92,9 +123,13 @@ def authoring_intent_event_digest(event: AuthoringIntentEventAny) -> str:
     return typed_digest(
         Sha256Value,
         (
-            AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN
-            if isinstance(event, AuthoringIntentEventV2)
-            else AUTHORING_INTENT_EVENT_DIGEST_DOMAIN
+            AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN
+            if isinstance(event, AuthoringIntentEventV3)
+            else (
+                AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN
+                if isinstance(event, AuthoringIntentEventV2)
+                else AUTHORING_INTENT_EVENT_DIGEST_DOMAIN
+            )
         ),
         payload,
     ).tagged
@@ -106,8 +141,29 @@ def build_authoring_intent_event(
     previous_event_digest: str | None,
     operation_key: str,
     intent: AuthoringIntentV1,
+    program_stamp: AuthoringProgramStampV1 | None = None,
 ) -> AuthoringIntentEventAny:
     placeholder = "sha256:" + "0" * 64
+    if program_stamp is not None:
+        if not isinstance(intent, AuthoringIntentV2):
+            raise ValueError("program stamps require a v2 AuthoringIntent")
+        event_v3 = AuthoringIntentEventV3.model_construct(
+            tag="playbill-authoring-intent-event-v3",
+            sequence=sequence,
+            previous_event_digest=previous_event_digest,
+            operation_key=operation_key,
+            intent=intent,
+            program_stamp=program_stamp,
+            event_digest=placeholder,
+        )
+        return AuthoringIntentEventV3(
+            sequence=sequence,
+            previous_event_digest=previous_event_digest,
+            operation_key=operation_key,
+            intent=intent,
+            program_stamp=program_stamp,
+            event_digest=authoring_intent_event_digest(event_v3),
+        )
     if isinstance(intent, AuthoringIntentV2):
         event_v2 = AuthoringIntentEventV2.model_construct(
             tag="playbill-authoring-intent-event-v2",
@@ -147,6 +203,8 @@ def _parse_authoring_intent_event(raw: bytes) -> AuthoringIntentEventAny:
         raise ValueError("AuthoringIntent event must be an object")
     if payload.get("tag") == "playbill-authoring-intent-event-v2":
         return AuthoringIntentEventV2.model_validate(payload)
+    if payload.get("tag") == "playbill-authoring-intent-event-v3":
+        return AuthoringIntentEventV3.model_validate(payload)
     return AuthoringIntentEventV1.model_validate(payload)
 
 
@@ -318,6 +376,7 @@ class AuthoringIntentStore:
         operation_key: str,
         transform: Callable[[AuthoringIntentV1], AuthoringIntentV1],
         allow_rebase: bool = False,
+        program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentV1:
         """Append one idempotent state transition under the store-wide CAS lock."""
 
@@ -337,11 +396,33 @@ class AuthoringIntentStore:
                 previous_event_digest=events[-1].event_digest,
                 operation_key=operation_key,
                 intent=updated,
+                program_stamp=program_stamp,
             )
             path = directory / "events" / f"{event.sequence:020d}.json"
             _exclusive_write(path, self._render_event(event))
             self._crash("after_transition_event_sync")
             return updated
+
+    def record_program_stamp(
+        self,
+        intent_id: str,
+        *,
+        actor_id: str,
+        program_stamp: AuthoringProgramStampV1,
+    ) -> AuthoringIntentV1:
+        current = self.get(intent_id, actor_id=actor_id)
+        operation_key = authoring_program_stamp_operation_key(
+            intent_id=intent_id,
+            intent_revision=current.intent_revision,
+            program_stamp=program_stamp,
+        )
+        return self.transition(
+            intent_id,
+            actor_id=actor_id,
+            operation_key=operation_key,
+            transform=lambda intent: intent,
+            program_stamp=program_stamp,
+        )
 
     def _active_by_fingerprint(
         self,
@@ -446,9 +527,11 @@ class AuthoringIntentStore:
 __all__ = [
     "AUTHORING_INTENT_EVENT_DIGEST_DOMAIN",
     "AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN",
+    "AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN",
     "AuthoringIntentEventAny",
     "AuthoringIntentEventV1",
     "AuthoringIntentEventV2",
+    "AuthoringIntentEventV3",
     "AuthoringIntentStore",
     "AuthoringIntentStoreError",
     "authoring_intent_event_digest",

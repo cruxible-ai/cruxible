@@ -95,6 +95,41 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
     assert all(key not in captured[0].content.decode() for key in ("base", "claim_id"))
 
 
+def test_client_speaks_program_stamped_v3_request() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "tag": "playbill-authoring-intent-view-v1",
+                "intent": {"intent_id": INTENT_ID},
+            },
+        )
+
+    payload = {"tag": "playbill-claim-authoring-payload-v1", "example": "payload"}
+    stamp = {
+        "tag": "playbill-authoring-program-stamp-v1",
+        "program_digest": "sha256:" + "7" * 64,
+        "sdk_version": "0.4.0",
+        "sdk_contract_snapshot_digest": "sha256:" + "8" * 64,
+    }
+    _client(handler).create_playbill_authoring_intent(
+        "inst",
+        payload=payload,
+        reference_expectations=(),
+        program_stamp=stamp,
+    )
+
+    assert json.loads(captured[0].content) == {
+        "tag": "playbill-authoring-intent-create-request-v3",
+        "payload": payload,
+        "reference_expectations": [],
+        "program_stamp": stamp,
+    }
+
+
 def test_client_speaks_tagless_input_request_variants() -> None:
     captured: list[httpx.Request] = []
 

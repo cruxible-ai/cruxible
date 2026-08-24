@@ -11,6 +11,7 @@ from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
 from cruxible_client.contracts.authoring.models import (
     AuthoringPayloadV1,
+    AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
     InsertionConfirmationObservationV1,
 )
@@ -162,6 +163,25 @@ class PlaybillAuthoringCompileRequestV2(_StrictPlaybillRequest):
     )
     payload: AuthoringPayloadV1
     reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    intent_id: str | None = None
+
+
+class PlaybillAuthoringCreateRequestV3(_StrictPlaybillRequest):
+    tag: Literal["playbill-authoring-intent-create-request-v3"] = (
+        "playbill-authoring-intent-create-request-v3"
+    )
+    payload: AuthoringPayloadV1
+    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    program_stamp: AuthoringProgramStampV1
+
+
+class PlaybillAuthoringCompileRequestV3(_StrictPlaybillRequest):
+    tag: Literal["playbill-authoring-intent-compile-request-v3"] = (
+        "playbill-authoring-intent-compile-request-v3"
+    )
+    payload: AuthoringPayloadV1
+    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    program_stamp: AuthoringProgramStampV1
     intent_id: str | None = None
 
 

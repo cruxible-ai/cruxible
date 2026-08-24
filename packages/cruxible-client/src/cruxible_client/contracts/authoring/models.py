@@ -47,8 +47,12 @@ AUTHORING_CANDIDATE_TREE_DIGEST_DOMAIN = "playbill-authoring-candidate-tree-v1"
 AUTHORING_FRONTIER_DIGEST_DOMAIN = "playbill-authoring-frontier-v1"
 AUTHORING_INSTANCE_DESCRIPTOR_DIGEST_DOMAIN = "playbill-instance-descriptor-v1"
 AUTHORING_PREFLIGHT_CERTIFICATE_DIGEST_DOMAIN = "playbill-authoring-preflight-certificate-v1"
-AUTHORING_REFERENCE_EXPECTATIONS_DIGEST_DOMAIN = (
-    "playbill-authoring-reference-expectations-v1"
+AUTHORING_REFERENCE_EXPECTATIONS_DIGEST_DOMAIN = "playbill-authoring-reference-expectations-v1"
+AUTHORING_PROGRAM_DIGEST_DOMAIN = "playbill-sdk-authoring-program-v1"
+AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-operation-v1"
+AUTHORING_SDK_VERSION = "0.4.0"
+AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
+    "sha256:f802cd994cf904b94f4a8714b7b44c9d5db1e5b5b5ad33541ff5a609fb6d04c8"
 )
 INSERTION_TARGET_DIGEST_DOMAIN = "playbill-insertion-target-v1"
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
@@ -129,6 +133,78 @@ class AuthoringReferenceSuccessorV1(_StrictAuthoringModel):
     coordinate: AcceptedCoordinate
 
 
+class AuthoringProgramOperationV1(_StrictAuthoringModel):
+    operation: str
+    decisions: dict[str, object]
+
+    @field_validator("operation")
+    @classmethod
+    def _operation(cls, value: str) -> str:
+        if not _CANONICAL_NAME_RE.fullmatch(value):
+            raise ValueError("program operation must be a canonical name")
+        return value
+
+    @field_validator("decisions", mode="before")
+    @classmethod
+    def _decisions(cls, value: object) -> dict[str, object]:
+        normalized = normalize_canonical(value)
+        if not isinstance(normalized, dict):
+            raise ValueError("program operation decisions must be a canonical object")
+        return cast(dict[str, object], normalized)
+
+
+class AuthoringProgramStampV1(_StrictAuthoringModel):
+    tag: Literal["playbill-authoring-program-stamp-v1"] = "playbill-authoring-program-stamp-v1"
+    program_digest: str
+    sdk_version: str
+    sdk_contract_snapshot_digest: str
+
+    @field_validator("program_digest", "sdk_contract_snapshot_digest")
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        return _sha256(value, label="authoring program-stamp digest")
+
+    @field_validator("sdk_version")
+    @classmethod
+    def _version(cls, value: str) -> str:
+        if not value or value != value.strip() or any(char.isspace() for char in value):
+            raise ValueError("authoring program-stamp version must be canonical")
+        return value
+
+
+def authoring_program_digest(
+    *,
+    sdk_contract_snapshot_digest: str,
+    operations: tuple[AuthoringProgramOperationV1, ...],
+) -> str:
+    _sha256(sdk_contract_snapshot_digest, label="SDK contract-snapshot digest")
+    return typed_digest(
+        Sha256Value,
+        AUTHORING_PROGRAM_DIGEST_DOMAIN,
+        {
+            "sdk_contract_snapshot_digest": sdk_contract_snapshot_digest,
+            "operations": [item.model_dump(mode="json") for item in operations],
+        },
+    ).tagged
+
+
+def authoring_program_stamp_operation_key(
+    *,
+    intent_id: str,
+    intent_revision: int,
+    program_stamp: AuthoringProgramStampV1,
+) -> str:
+    return typed_digest(
+        Sha256Value,
+        AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN,
+        {
+            "intent_id": intent_id,
+            "intent_revision": intent_revision,
+            "program_stamp": program_stamp.model_dump(mode="json"),
+        },
+    ).tagged
+
+
 def canonical_reference_expectations(
     values: tuple[AuthoringReferenceExpectationV1, ...],
 ) -> tuple[AuthoringReferenceExpectationV1, ...]:
@@ -155,11 +231,7 @@ def reference_expectations_digest(
     return typed_digest(
         Sha256Value,
         AUTHORING_REFERENCE_EXPECTATIONS_DIGEST_DOMAIN,
-        {
-            "reference_expectations": [
-                item.model_dump(mode="json") for item in values
-            ]
-        },
+        {"reference_expectations": [item.model_dump(mode="json") for item in values]},
     ).tagged
 
 
@@ -1307,9 +1379,7 @@ class AuthoringIntentV1(_StrictAuthoringModel):
 class AuthoringIntentV2(AuthoringIntentV1):
     """V1 intent state plus coordinate assertions that never enter authoring identity."""
 
-    tag: Literal["playbill-authoring-intent-v2"] = (
-        "playbill-authoring-intent-v2"  # type: ignore[assignment]
-    )
+    tag: Literal["playbill-authoring-intent-v2"] = "playbill-authoring-intent-v2"  # type: ignore[assignment]
     reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
 
     @field_validator("reference_expectations")
@@ -1368,6 +1438,41 @@ class AuthoringIntentCompileRequestV2(_StrictAuthoringModel):
     )
     payload: AuthoringPayloadV1
     reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    intent_id: str | None = None
+
+    @field_validator("reference_expectations")
+    @classmethod
+    def _reference_expectations(
+        cls,
+        value: tuple[AuthoringReferenceExpectationV1, ...],
+    ) -> tuple[AuthoringReferenceExpectationV1, ...]:
+        return canonical_reference_expectations(value)
+
+
+class AuthoringIntentCreateRequestV3(_StrictAuthoringModel):
+    tag: Literal["playbill-authoring-intent-create-request-v3"] = (
+        "playbill-authoring-intent-create-request-v3"
+    )
+    payload: AuthoringPayloadV1
+    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    program_stamp: AuthoringProgramStampV1
+
+    @field_validator("reference_expectations")
+    @classmethod
+    def _reference_expectations(
+        cls,
+        value: tuple[AuthoringReferenceExpectationV1, ...],
+    ) -> tuple[AuthoringReferenceExpectationV1, ...]:
+        return canonical_reference_expectations(value)
+
+
+class AuthoringIntentCompileRequestV3(_StrictAuthoringModel):
+    tag: Literal["playbill-authoring-intent-compile-request-v3"] = (
+        "playbill-authoring-intent-compile-request-v3"
+    )
+    payload: AuthoringPayloadV1
+    reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
+    program_stamp: AuthoringProgramStampV1
     intent_id: str | None = None
 
     @field_validator("reference_expectations")
@@ -1438,7 +1543,11 @@ __all__ = [
     "AUTHORING_INTENT_ID_RE",
     "AUTHORING_PAYLOAD_DIGEST_DOMAIN",
     "AUTHORING_PREFLIGHT_CERTIFICATE_DIGEST_DOMAIN",
+    "AUTHORING_PROGRAM_DIGEST_DOMAIN",
+    "AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN",
     "AUTHORING_REFERENCE_EXPECTATIONS_DIGEST_DOMAIN",
+    "AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST",
+    "AUTHORING_SDK_VERSION",
     "AUTHORING_RESOLVED_DIGEST_DOMAIN",
     "INSERTION_CONFIRMATION_OBSERVATION_DIGEST_DOMAIN",
     "INSERTION_CONFIRM_OPERATION_DOMAIN",
@@ -1454,8 +1563,10 @@ __all__ = [
     "AuthoringDiagnosticV1",
     "AuthoringExactContentObjectV1",
     "AuthoringIntentCompileRequestV2",
+    "AuthoringIntentCompileRequestV3",
     "AuthoringIntentCompileRequestV1",
     "AuthoringIntentCreateRequestV2",
+    "AuthoringIntentCreateRequestV3",
     "AuthoringIntentCreateRequestV1",
     "AuthoringIntentListV1",
     "AuthoringIntentPreflightRequestV1",
@@ -1464,6 +1575,8 @@ __all__ = [
     "AuthoringIntentV2",
     "AuthoringIntentViewV1",
     "AuthoringPayloadV1",
+    "AuthoringProgramOperationV1",
+    "AuthoringProgramStampV1",
     "AuthoringReferenceExpectationV1",
     "AuthoringReferenceKind",
     "AuthoringReferenceSuccessorV1",
@@ -1499,6 +1612,8 @@ __all__ = [
     "WorkingSelectionObservationV1",
     "authoring_create_fingerprint",
     "authoring_payload_digest",
+    "authoring_program_digest",
+    "authoring_program_stamp_operation_key",
     "canonical_reference_expectations",
     "build_insertion_expectation",
     "build_insertion_patch_envelope",
