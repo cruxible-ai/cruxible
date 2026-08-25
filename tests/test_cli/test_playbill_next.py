@@ -25,10 +25,22 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
         (None, "2026-08-24T18:00:00.123456Z"),
     ],
 )
+@pytest.mark.parametrize(
+    ("duration", "expected_microseconds"),
+    [
+        (None, 604_800_000_000),
+        ("P7D", 604_800_000_000),
+        ("PT12H", 43_200_000_000),
+        ("P1DT2H30M", 95_400_000_000),
+        ("PT0.000001S", 1),
+    ],
+)
 def test_cli_next_observes_locally_then_calls_one_queue_route(
     monkeypatch: pytest.MonkeyPatch,
     provided_time: str | None,
     expected_time: str,
+    duration: str | None,
+    expected_microseconds: int,
 ) -> None:
     calls: list[dict[str, object]] = []
     observation = {
@@ -73,6 +85,8 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
     ]
     if provided_time is not None:
         arguments.extend(["--evaluation-time", provided_time])
+    if duration is not None:
+        arguments.extend(["--expiring-within", duration])
     result = CliRunner().invoke(
         cli,
         arguments,
@@ -83,6 +97,22 @@ def test_cli_next_observes_locally_then_calls_one_queue_route(
     assert "Unobserved: workspace_sources" in result.output
     assert calls[0]["workspace_observation"] == observation
     assert calls[0]["evaluation_time"] == expected_time
+    assert calls[0]["expiring_within"] == {"microseconds": expected_microseconds}
     profile = calls[0]["access_profile"]
     assert isinstance(profile, dict)
     assert profile["permitted_access_classes"] == ["instance", "public"]
+
+
+@pytest.mark.parametrize("duration", ["P", "PT", "P1M", "-P1D", "PT0.0000001S"])
+def test_cli_next_refuses_invalid_or_calendar_ambiguous_duration(duration: str) -> None:
+    result = CliRunner().invoke(cli, ["playbill", "next", "--expiring-within", duration])
+
+    assert result.exit_code != 0
+    assert "ISO-8601" in result.output
+
+
+def test_cli_next_no_longer_accepts_the_microsecond_flag() -> None:
+    result = CliRunner().invoke(cli, ["playbill", "next", "--expiring-within-us", "1"])
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output

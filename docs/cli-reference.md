@@ -200,12 +200,14 @@ journal records and `status` reconstructs the one-read run state from those reco
 
 ~~~text
 cruxible playbill next [--evaluation-time TS] [--access-profile FILE]
-  [--expiring-within-us N] [--workspace-root DIR]
+  [--expiring-within P7D] [--workspace-root DIR]
 ~~~
 
 Returns the deterministic repair queue at one accepted coordinate. The client
-stamps the current UTC evaluation time when `--evaluation-time` is omitted and
-observes its configured floor locally; the daemon reads no clock or workspace and reports
+stamps the current UTC evaluation time when `--evaluation-time` is omitted,
+parses `--expiring-within` ISO-8601 durations client-side without changing the
+integer-microsecond daemon wire, and observes its configured floor locally. The
+daemon reads no clock or workspace and reports
 source drift as unobserved unless exact citation observations were supplied. Empty
 output means only that no work exists in the explicitly observed domains.
 

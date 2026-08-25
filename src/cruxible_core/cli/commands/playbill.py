@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import secrets
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -100,6 +101,51 @@ from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.service.playbill_procedure_runs import ProcedureBindRequestV1
 
 ResultT = TypeVar("ResultT")
+_ISO8601_DURATION = re.compile(
+    r"P(?:(?P<weeks>[0-9]+)W|(?:(?P<days>[0-9]+)D)?"
+    r"(?:T(?:(?P<hours>[0-9]+)H)?(?:(?P<minutes>[0-9]+)M)?"
+    r"(?:(?P<seconds>[0-9]+)(?:\.(?P<fraction>[0-9]{1,6}))?S)?)?)"
+)
+
+
+def _parse_expiring_duration(
+    _context: click.Context,
+    _parameter: click.Parameter,
+    value: str,
+) -> int:
+    match = _ISO8601_DURATION.fullmatch(value)
+    if match is None or not any(
+        match.group(key) is not None
+        for key in (
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+        )
+    ):
+        raise click.BadParameter(
+            "use a nonnegative ISO-8601 duration with days, weeks, hours, minutes, or seconds "
+            "(for example P7D or PT12H)"
+        )
+    if "T" in value and not any(
+        match.group(key) is not None
+        for key in (
+            "hours",
+            "minutes",
+            "seconds",
+        )
+    ):
+        raise click.BadParameter("the ISO-8601 time section must contain a duration component")
+    fraction = match.group("fraction") or ""
+    return (
+        int(match.group("weeks") or 0) * 604_800_000_000
+        + int(match.group("days") or 0) * 86_400_000_000
+        + int(match.group("hours") or 0) * 3_600_000_000
+        + int(match.group("minutes") or 0) * 60_000_000
+        + int(match.group("seconds") or 0) * 1_000_000
+        + int(fraction.ljust(6, "0") or 0)
+    )
 
 
 def _server_call(
@@ -1699,11 +1745,11 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
     help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
 )
 @click.option(
-    "--expiring-within-us",
-    type=click.IntRange(min=0),
-    default=604_800_000_000,
+    "--expiring-within",
+    callback=_parse_expiring_duration,
+    default="P7D",
     show_default=True,
-    help="Lead window for evidence-expiration warnings, in microseconds.",
+    help="ISO-8601 lead window for evidence-expiration warnings (for example P7D or PT12H).",
 )
 @click.option(
     "--workspace-root",
@@ -1717,7 +1763,7 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
 def next_work(
     evaluation_time: str | None,
     access_profile_path: str | None,
-    expiring_within_us: int,
+    expiring_within: int,
     workspace_root: str,
     output_json: bool,
 ) -> None:
@@ -1740,7 +1786,7 @@ def next_work(
             instance_id,
             evaluation_time=stamped_evaluation_time,
             access_profile=profile,
-            expiring_within={"microseconds": expiring_within_us},
+            expiring_within={"microseconds": expiring_within},
             workspace_observation=workspace_observation,
         ),
         command_name="playbill next",
