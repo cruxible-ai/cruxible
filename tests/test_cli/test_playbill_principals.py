@@ -67,7 +67,7 @@ def test_cli_principal_add_keeps_private_key_client_side_and_proposes_public_rec
             "--key-dir",
             str(custody),
             "--name",
-            "add-reviewer",
+            "Add Reviewer",
             "--json",
         ],
     )

@@ -14,6 +14,7 @@ from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
 )
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -127,6 +128,40 @@ def test_http_models_refuse_private_key_and_local_path_inputs(
     )
     assert source.status_code == 422
     assert "local_path" in source.text
+
+
+def test_principal_display_name_is_sanitized_and_invalid_ref_is_a_typed_400(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key_path = playbill_http
+    principal = PrincipalRecord(
+        principal_id="reviewer",
+        public_key="1" * 64,
+        authority_roles=("reviewer",),
+    )
+    proposed = client.post(
+        f"/api/v1/{instance_id}/playbill/principals/proposals",
+        json={
+            "principal": principal.model_dump(mode="json"),
+            "proposal_name": "Add Reviewer",
+        },
+    )
+
+    assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["proposal"]["admission"]["target_ref"] == (
+        "refs/proposals/operator/add-reviewer"
+    )
+
+    refused = client.post(
+        f"/api/v1/{instance_id}/playbill/principals/proposals",
+        json={
+            "principal": principal.model_dump(mode="json"),
+            "proposal_name": " !!! ",
+        },
+    )
+    assert refused.status_code == 400
+    assert refused.json()["error_type"] == "DataValidationError"
+    assert "canonical ref characters" in refused.text
 
 
 def test_http_permission_modes_separate_read_store_propose_approval_and_activation(

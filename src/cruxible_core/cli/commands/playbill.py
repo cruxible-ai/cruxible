@@ -46,6 +46,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import CanonicalEncodingError
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalRecord, PrincipalRole
@@ -849,6 +850,10 @@ def add_principal(
             "principal authority roles must not be repeated", param_hint="--role"
         )
     authority_roles = cast(tuple[PrincipalRole, ...], tuple(sorted(roles)))
+    try:
+        ref_name = canonical_proposal_ref_name(proposal_name)
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--name") from exc
 
     def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
         existing = client.list_playbill_principals(instance_id)
@@ -863,7 +868,7 @@ def add_principal(
         return client.propose_playbill_principal_change(
             instance_id,
             principal=material.principal.model_dump(mode="json"),
-            proposal_name=proposal_name,
+            proposal_name=ref_name,
         )
 
     result = _server_call(call, command_name="playbill principal add")

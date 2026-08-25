@@ -274,14 +274,20 @@ def playbill_propose_principal_change(
     base: AcceptedCoordinate | None = None,
 ) -> contracts.PlaybillProposalInspection:
     check_permission("cruxible_playbill_principal_change", instance_id=instance_id)
-    result = service_propose_playbill_principal_change(
-        get_playbill_manager().get(instance_id),
-        principal=principal,
-        actor_id=_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-        base=base,
-    )
+    try:
+        result = service_propose_playbill_principal_change(
+            get_playbill_manager().get(instance_id),
+            principal=principal,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            base=base,
+        )
+    except ValidationError as exc:
+        raise DataValidationError(
+            "Playbill principal proposal reference is invalid",
+            errors=[str(exc)],
+        ) from exc
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
 

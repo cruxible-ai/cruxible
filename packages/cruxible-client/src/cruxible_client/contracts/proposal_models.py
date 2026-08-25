@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+import unicodedata
 from collections.abc import Mapping
 from typing import Literal, Protocol
 
@@ -26,6 +28,23 @@ from cruxible_client.contracts.types import GitObjectFormat
 _ACTOR_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def canonical_proposal_ref_name(display_name: str) -> str:
+    """Lower a human display label into the closed proposal-ref grammar."""
+
+    normalized = unicodedata.normalize("NFKD", display_name).encode("ascii", "ignore").decode()
+    slug = re.sub(r"[^a-z0-9_.-]+", "-", normalized.strip().lower()).strip("._-")
+    if not slug:
+        raise ValueError("proposal display name has no canonical ref characters")
+    if not slug[0].isalpha():
+        slug = "proposal-" + slug
+    if len(slug) > 128:
+        suffix = hashlib.sha256(display_name.encode("utf-8")).hexdigest()[:12]
+        slug = slug[: 128 - len(suffix) - 1].rstrip("._-") + "-" + suffix
+    if not re.fullmatch(r"[a-z][a-z0-9_.-]{0,127}", slug):
+        raise ValueError("proposal display name cannot be lowered into ref grammar")
+    return slug
 
 
 class _StrictProposalModel(BaseModel):
@@ -275,4 +294,5 @@ __all__ = [
     "ProposalReceiveLimits",
     "ProposalResult",
     "ProposalTransportProtocol",
+    "canonical_proposal_ref_name",
 ]
