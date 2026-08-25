@@ -287,6 +287,13 @@ def _successor_claim_type(
     successor = (
         value if isinstance(value, ClaimType) else lower_claim_type_input(value, tree=dict(tree))
     )
+    if any(
+        pin.role == "predecessor" and pin.target == successor.identity for pin in successor.pins
+    ):
+        raise ClaimTypeMigrationError(
+            f"{ClaimTypeMigrationError.code}: predecessor succession is machine-owned; "
+            "remove the hand-authored $.successor.pins predecessor entry"
+        )
     path = claim_type_path(successor.predicate)
     predecessor_content = tree.get(path)
     if predecessor_content is None:
@@ -626,19 +633,18 @@ def _service_migrate_claim_type_v2(
     tree = instance.tree_at(current.git_oid)
     type_path, _predecessor, successor = _successor_claim_type(tree, request.successor)
     inventory = _closure_inventory(tree, root=successor.identity)
-    if request.mode == "preflight":
-        return ClaimTypeMigrationPreflightV1(
-            coordinate=PlaybillAcceptedCoordinate.from_internal(current),
-            successor_artifact_digest=claim_type_digest(successor).tagged,
-            dependents=inventory,
+    dispositions = request.dependents
+    if request.mode == "preflight" and not dispositions:
+        dispositions = tuple(
+            ClaimTypeDependentDispositionV2(identity=item.identity, disposition="successor")
+            for item in inventory
         )
-
     candidate_tree, normalized = _build_v2_candidate(
         tree=tree,
         type_path=type_path,
         successor=successor,
         inventory=inventory,
-        dispositions=request.dependents,
+        dispositions=dispositions,
     )
     timestamp = _current_generation_timestamp(instance)
     validated = validate_proposal_tree(
@@ -662,6 +668,12 @@ def _service_migrate_claim_type_v2(
         raise ClaimTypeMigrationIncomplete(
             f"{ClaimTypeMigrationIncomplete.code}: candidate refused before admission; "
             f"diagnostics={diagnostics!r}"
+        )
+    if request.mode == "preflight":
+        return ClaimTypeMigrationPreflightV1(
+            coordinate=PlaybillAcceptedCoordinate.from_internal(current),
+            successor_artifact_digest=claim_type_digest(successor).tagged,
+            dependents=inventory,
         )
 
     operation_digest = _v2_operation_digest(
