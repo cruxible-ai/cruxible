@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
 
@@ -33,6 +34,23 @@ MAX_PROJECTION_CARDS_PER_SOURCE = 256
 
 class _StrictDeclaredBlockModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class PlaybillPresentationPolicyV1(_StrictDeclaredBlockModel):
+    """Local-only suppression policy for presentation diagnostics."""
+
+    tag: Literal["playbill-presentation-policy-v1"] = "playbill-presentation-policy-v1"
+    archival_source_ids: tuple[str, ...] = ()
+
+    @field_validator("archival_source_ids")
+    @classmethod
+    def _source_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        source_pattern = r"^[a-z][a-z0-9_.-]{0,127}$"
+        if any(re.fullmatch(source_pattern, item) is None for item in value):
+            raise ValueError("presentation policy contains an invalid source ID")
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("archival source IDs must be UTF-8-byte-sorted and unique")
+        return value
 
 
 class ProjectionClaimBackingV1(_StrictDeclaredBlockModel):
@@ -200,6 +218,7 @@ __all__ = [
     "PROJECTION_MARKER_GRAMMAR",
     "PROJECTION_QUERY_PARAMETER_DOMAIN",
     "PROJECTION_QUERY_SEMANTIC_RESULT_DOMAIN",
+    "PlaybillPresentationPolicyV1",
     "ProjectionBackingV1",
     "ProjectionBlockStampV1",
     "ProjectionClaimBackingV1",

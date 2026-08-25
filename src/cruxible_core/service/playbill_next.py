@@ -32,6 +32,7 @@ from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_BLOCKS_PER_SOURCE,
     MAX_PROJECTION_CARDS_PER_SOURCE,
     MAX_PROJECTION_SOURCE_BYTES,
+    PlaybillPresentationPolicyV1,
     ProjectionClaimBackingV1,
     ProjectionMarkerSummaryV1,
     ProjectionQueryBackingV1,
@@ -216,6 +217,7 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     source_observations: (
         tuple[PlaybillNextSourceObservationV1 | PlaybillNextSourceObservationV2, ...] | None
     ) = None
+    presentation_policy: PlaybillPresentationPolicyV1 | None = None
 
     @field_validator("drift_observations")
     @classmethod

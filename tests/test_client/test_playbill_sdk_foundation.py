@@ -98,6 +98,44 @@ def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> 
     assert changed["source_observations"] != observation["source_observations"]
 
 
+def test_next_workspace_observes_sorted_archival_presentation_policy(tmp_path: Path) -> None:
+    _catalog(tmp_path)
+    policy_path = tmp_path / ".playbill" / "presentation-policy.json"
+    policy_path.write_text(
+        '{"tag":"playbill-presentation-policy-v1",'
+        '"archival_source_ids":["corpus.runbook"]}',
+        encoding="utf-8",
+    )
+
+    observation = observe_playbill_next_workspace(tmp_path)
+
+    assert observation["presentation_policy"] == {
+        "tag": "playbill-presentation-policy-v1",
+        "archival_source_ids": ["corpus.runbook"],
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        '{"tag":"playbill-presentation-policy-v1","archival_source_ids":["unknown"]}',
+        '{"tag":"playbill-presentation-policy-v1","archival_source_ids":["corpus.runbook",'
+        '"corpus.runbook"]}',
+        "not-json",
+    ],
+)
+def test_next_workspace_refuses_invalid_presentation_policy(
+    tmp_path: Path, payload: str
+) -> None:
+    _catalog(tmp_path)
+    (tmp_path / ".playbill" / "presentation-policy.json").write_text(
+        payload, encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="presentation policy"):
+        observe_playbill_next_workspace(tmp_path)
+
+
 def test_next_workspace_without_a_catalog_does_not_claim_source_observation(
     tmp_path: Path,
 ) -> None:
