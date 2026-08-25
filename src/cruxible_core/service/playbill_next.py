@@ -32,9 +32,13 @@ from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_BLOCKS_PER_SOURCE,
     MAX_PROJECTION_CARDS_PER_SOURCE,
     MAX_PROJECTION_SOURCE_BYTES,
+    ProjectionClaimBackingV1,
     ProjectionMarkerSummaryV1,
+    ProjectionQueryBackingV1,
+    projection_query_semantic_result_digest,
 )
 from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.cas import BodyAccessContext
@@ -43,9 +47,13 @@ from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.playbill.query.backends import claim_row_visibility
+from cruxible_core.playbill.query.engine import evaluate_claim_query
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
+from cruxible_core.playbill.service.query_definitions import accepted_query_definition
 from cruxible_core.service.playbill_claims import _claim_from_view, service_list_playbill_claims
 from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
+from cruxible_core.service.playbill_query import build_accepted_query_facts
 
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
 NEXT_RESULT_DIGEST_DOMAIN = "playbill-next-result-v1"
@@ -79,6 +87,11 @@ _ALL_DOMAINS: tuple[NextDomain, ...] = (
     "accepted_state",
     "workspace_floor",
     "workspace_sources",
+)
+_PROJECTION_VISIBILITY_POLICY = QueryEvaluationPolicyV1(
+    visible_verdicts=("contradicted", "stale", "supported", "uncovered", "unresolved"),
+    visible_currency=("current", "not_applicable", "stale"),
+    conflict_behavior="surface_conflicts",
 )
 
 
@@ -845,6 +858,142 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
+def _projection_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
+    observation: PlaybillNextWorkspaceObservationV1 | None,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Evaluate locally declared blocks only after every backing is visible."""
+
+    if (
+        observation is None
+        or observation.source_observations is None
+        or not access_profile.permits("instance")
+    ):
+        return ()
+    sources = tuple(
+        source
+        for source in observation.source_observations
+        if isinstance(source, PlaybillNextSourceObservationV2)
+        and source.scan_complete
+        and not source.marker_notes
+        and source.marker_summaries
+    )
+    if not sources:
+        return ()
+
+    facts = build_accepted_query_facts(instance, coordinate=coordinate)
+    subjects = {subject.path: subject for subject in facts.subjects}
+    providers = {provider.identity.qualified: provider for provider in facts.providers}
+    claims = {row.accepted.claim.identity.qualified: row for row in facts.claims}
+    items: list[PlaybillNextItemV1] = []
+    for source in sources:
+        for marker in source.marker_summaries:
+            visible = True
+            stale: list[str] = []
+            for backing in marker.stamp.backing:
+                if isinstance(backing, ProjectionClaimBackingV1):
+                    claim = claims.get(backing.identity.qualified)
+                    if claim is None or (
+                        claim_row_visibility(
+                            claim,
+                            subject=subjects.get(claim.subject_path),
+                            providers=providers,
+                            policy=_PROJECTION_VISIBILITY_POLICY,
+                            evaluation_time=evaluation_time,
+                        )
+                        is None
+                    ):
+                        visible = False
+                        break
+                    if claim.accepted.statement_digest != backing.statement_digest:
+                        stale.append(backing.identity.qualified)
+                elif isinstance(backing, ProjectionQueryBackingV1):
+                    try:
+                        definition = accepted_query_definition(
+                            instance,
+                            name=backing.identity.name,
+                            coordinate=coordinate,
+                        )
+                        result = evaluate_claim_query(
+                            definition,
+                            facts=facts,
+                            coordinate=coordinate,
+                            evaluation_time=evaluation_time,
+                            parameters={
+                                item.name: item.value
+                                for item in backing.resolved_parameter_bindings
+                            },
+                        )
+                    except (PlaybillError, ValueError):
+                        visible = False
+                        break
+                    if result.verdict != "completed" or result.truncation.clipped_budgets:
+                        visible = False
+                        break
+                    if projection_query_semantic_result_digest(result) != (
+                        backing.semantic_result_digest
+                    ):
+                        stale.append(backing.identity.qualified)
+
+            if not visible:
+                continue
+            target = f"{source.source_id}#{marker.stamp.block_id}"
+            identities = tuple(
+                sorted(
+                    (backing.identity.qualified for backing in marker.stamp.backing),
+                    key=lambda value: value.encode("utf-8"),
+                )
+            )
+            arguments = {"source_id": source.source_id, "block_id": marker.stamp.block_id}
+            if marker.observed_body_digest != marker.stamp.body_digest:
+                items.append(
+                    _item(
+                        severity="repair",
+                        reason="projection_dirty",
+                        subject_identity=target,
+                        related_identities=identities,
+                        detail={
+                            "source_id": source.source_id,
+                            "block_id": marker.stamp.block_id,
+                            "expected_body_digest": marker.stamp.body_digest,
+                            "observed_body_digest": marker.observed_body_digest,
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.block.repin",
+                            target=target,
+                            required_change="verify_alignment_then_repin_or_edit",
+                            arguments=arguments,
+                        ),
+                    )
+                )
+            if stale:
+                related = tuple(sorted(stale, key=lambda value: value.encode("utf-8")))
+                items.append(
+                    _item(
+                        severity="repair",
+                        reason="projection_backing_stale",
+                        subject_identity=target,
+                        related_identities=related,
+                        detail={
+                            "source_id": source.source_id,
+                            "block_id": marker.stamp.block_id,
+                            "stale_backings": list(related),
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.block.repin",
+                            target=target,
+                            required_change="review_block_supersede_prose_then_repin",
+                            arguments=arguments,
+                        ),
+                    )
+                )
+    return tuple(items)
+
+
 def service_playbill_next(
     instance: PlaybillInstance,
     *,
@@ -875,6 +1024,13 @@ def service_playbill_next(
                     expiring_within=request.expiring_within,
                 ),
                 *workspace_items,
+                *_projection_items(
+                    instance,
+                    coordinate=coordinate,
+                    evaluation_time=request.evaluation_time,
+                    access_profile=request.access_profile,
+                    observation=request.workspace_observation,
+                ),
             ),
             key=_item_sort_key,
         )
