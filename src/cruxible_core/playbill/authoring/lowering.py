@@ -440,13 +440,28 @@ def _lower_claim(
     expected = {item.identity.name for item in existing}
     supplied = {item.claim_id for item in payload.existing_claim_dispositions}
     if expected != supplied:
+        required = tuple(sorted(existing, key=lambda item: item.identity.name.encode("ascii")))
         _refuse(
             "playbill.authoring.existing_claim_dispositions_incomplete",
             "existing_claim_dispositions",
             "Every live same-subject/predicate Claim must receive an explicit disposition.",
             repair_kind="replace_dispositions",
             repair_description="Disposition exactly the listed existing Claim IDs.",
-            replacement=sorted(expected, key=lambda item: item.encode("ascii")),
+            replacement={
+                "required_claims": [
+                    {"claim_id": claim.identity.name, "status": claim.lifecycle.state}
+                    for claim in required
+                ],
+                "missing_claims": [
+                    {"claim_id": claim.identity.name, "status": claim.lifecycle.state}
+                    for claim in required
+                    if claim.identity.name not in supplied
+                ],
+                "unexpected_claim_ids": sorted(
+                    supplied - expected,
+                    key=lambda identity: identity.encode("ascii"),
+                ),
+            },
         )
 
     claim_id = intent.semantic_identity

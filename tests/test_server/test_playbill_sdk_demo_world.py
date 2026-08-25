@@ -344,6 +344,46 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     )
     predecessor = transport.get_playbill_claim(instance_id, claim_id)
 
+    incomplete = pb.claim(
+        subject="secops.policy/patch-sla.yaml",
+        predicate=claim_type.predicate,
+        value=72,
+        role=ClaimRole.NORMATIVE,
+        rationale="A revised Claim must disposition its accepted predecessor.",
+        supported_by=pb.file("corpus/vuln-response-runbook.md").anchor("seventy-two hours"),
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
+        revises=claim_id,
+        dispositions={},
+        publish_to=None,
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    response = http.post(
+        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        json={
+            "tag": "playbill-authoring-intent-compile-request-v3",
+            "payload": incomplete.payload.model_dump(mode="json"),
+            "reference_expectations": [
+                item.model_dump(mode="json") for item in incomplete.reference_expectations
+            ],
+            "program_stamp": incomplete.program_stamp.model_dump(mode="json"),
+            "intent_id": None,
+        },
+    )
+    assert response.status_code == 200, response.text
+    diagnostic = next(
+        item
+        for item in response.json()["frontier"]["diagnostics"]
+        if item["code"] == "playbill.authoring.existing_claim_dispositions_incomplete"
+    )
+    replacement = diagnostic["repairs"][0]["replacement"]
+    assert replacement["required_claims"] == [{"claim_id": claim_id, "status": "live"}]
+    assert replacement["missing_claims"] == [{"claim_id": claim_id, "status": "live"}]
+    assert replacement["unexpected_claim_ids"] == []
+
     revision = pb.claim(
         subject="secops.policy/patch-sla.yaml",
         predicate=claim_type.predicate,
