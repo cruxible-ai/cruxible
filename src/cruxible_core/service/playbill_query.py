@@ -210,10 +210,7 @@ def build_accepted_query_facts(
         )
         for path in sorted(tree, key=lambda item: item.encode("utf-8"))
         if path.startswith(CLAIM_PATH_PREFIX)
-        and (
-            include_retired
-            or parse_claim(tree[path], path=path).lifecycle.state == "live"
-        )
+        and (include_retired or parse_claim(tree[path], path=path).lifecycle.state == "live")
     )
     providers = _providers(tree)
     return ClaimQueryFactsV1(

@@ -102,8 +102,7 @@ def test_next_workspace_observes_sorted_archival_presentation_policy(tmp_path: P
     _catalog(tmp_path)
     policy_path = tmp_path / ".playbill" / "presentation-policy.json"
     policy_path.write_text(
-        '{"tag":"playbill-presentation-policy-v1",'
-        '"archival_source_ids":["corpus.runbook"]}',
+        '{"tag":"playbill-presentation-policy-v1","archival_source_ids":["corpus.runbook"]}',
         encoding="utf-8",
     )
 
@@ -124,13 +123,9 @@ def test_next_workspace_observes_sorted_archival_presentation_policy(tmp_path: P
         "not-json",
     ],
 )
-def test_next_workspace_refuses_invalid_presentation_policy(
-    tmp_path: Path, payload: str
-) -> None:
+def test_next_workspace_refuses_invalid_presentation_policy(tmp_path: Path, payload: str) -> None:
     _catalog(tmp_path)
-    (tmp_path / ".playbill" / "presentation-policy.json").write_text(
-        payload, encoding="utf-8"
-    )
+    (tmp_path / ".playbill" / "presentation-policy.json").write_text(payload, encoding="utf-8")
 
     with pytest.raises(ValueError, match="presentation policy"):
         observe_playbill_next_workspace(tmp_path)

@@ -383,10 +383,7 @@ def _claim_dependents(
     searched = set(source.searched_artifact_digests)
     dependents: list[DependentImpactV1] = []
     for row in rows:
-        if (
-            row.accepted.path == source.claim_path
-            or row.accepted.claim.lifecycle.state != "live"
-        ):
+        if row.accepted.path == source.claim_path or row.accepted.claim.lifecycle.state != "live":
             continue
         claim = row.accepted.claim
         used_inputs = byte_sorted(tuple(searched.intersection(claim.backing.input_claim_digests)))
