@@ -485,12 +485,19 @@ exits nonzero; the daemon never receives the workspace path.
 
 ~~~text
 cruxible playbill principal list
+cruxible playbill principal add PRINCIPAL_ID --role reviewer --key-dir DIR --name NAME
 cruxible playbill principal rotate ...
 cruxible playbill principal revoke ...
 cruxible playbill principal recover ...
 ~~~
 
-Rotation, revocation, and recovery are governed principal-change proposals.
+Registration, rotation, revocation, and recovery are governed principal-change
+proposals. `principal add` generates the Ed25519 private key exclusively in the
+client-held `--key-dir` outside the current workspace and sends only its public
+principal record. An existing owner must approve the resulting proposal with
+`playbill proposal approve`, then activate it with `playbill proposal activate`;
+registration neither grants authority immediately nor sends a private key to the
+daemon. `--role` is explicit and may be `owner`, `reviewer`, or `recovery`.
 Recovery cannot approve ordinary Document candidates.
 
 ## playbill sources

@@ -44,7 +44,7 @@ from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
-from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.types import PrincipalRecord, PrincipalRole
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
@@ -771,6 +771,55 @@ def list_principals(output_json: bool) -> None:
         lambda client, instance_id: client.list_playbill_principals(instance_id),
         command_name="playbill principal list",
     )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@principal_group.command("add")
+@click.argument("principal_id")
+@click.option(
+    "--role",
+    "roles",
+    type=click.Choice(("owner", "reviewer", "recovery")),
+    multiple=True,
+    required=True,
+    help="Explicit authority role; repeat only for a legal owner/reviewer combination.",
+)
+@click.option("--key-dir", required=True)
+@click.option("--name", "proposal_name", required=True)
+@json_option
+@handle_errors
+def add_principal(
+    principal_id: str,
+    roles: tuple[str, ...],
+    key_dir: str,
+    proposal_name: str,
+    output_json: bool,
+) -> None:
+    """Generate a client-held key and propose owner-approved principal registration."""
+
+    if len(set(roles)) != len(roles):
+        raise click.BadParameter(
+            "principal authority roles must not be repeated", param_hint="--role"
+        )
+    authority_roles = cast(tuple[PrincipalRole, ...], tuple(sorted(roles)))
+
+    def call(client: CruxibleClient, instance_id: str) -> contracts.PlaybillProposalInspection:
+        existing = client.list_playbill_principals(instance_id)
+        if any(item.get("principal_id") == principal_id for item in existing.principals):
+            raise click.ClickException(f"Playbill principal already exists: {principal_id}")
+        material = generate_client_principal_key(
+            Path(key_dir).expanduser(),
+            principal_id=principal_id,
+            authority_roles=authority_roles,
+            forbidden_roots=(Path.cwd(),),
+        )
+        return client.propose_playbill_principal_change(
+            instance_id,
+            principal=material.principal.model_dump(mode="json"),
+            proposal_name=proposal_name,
+        )
+
+    result = _server_call(call, command_name="playbill principal add")
     _emit_json(result.model_dump(mode="json"))
 
 

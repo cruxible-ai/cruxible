@@ -60,6 +60,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "proposal", "activate"): "active",
     ("playbill", "proposal", "readmit"): "active",
     ("playbill", "sources", "propose"): "active",
+    ("playbill", "principal", "add"): "active",
     ("playbill", "principal", "rotate"): "active",
     ("playbill", "principal", "recover"): "active",
     ("playbill", "principal", "revoke"): "active",
@@ -681,6 +682,9 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "principal": _group(
                 "Govern owner, reviewer, and recovery public keys.",
                 {
+                    "add": _command(
+                        "playbill", "add_principal", "Propose an owner-approved principal."
+                    ),
                     "list": _command(
                         "playbill", "list_principals", "List accepted principal keys."
                     ),

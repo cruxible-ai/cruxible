@@ -73,7 +73,11 @@ cannot satisfy human/agent approval roles.
 
 ## Rotation and revocation
 
-Principal changes are governed proposals. Rotation introduces a new public key
+Principal changes are governed proposals. Add a second principal with
+`cruxible playbill principal add ID --role reviewer --key-dir DIR --name NAME`;
+the key is generated in client custody, and an existing owner must approve and
+activate the public-key registration before the new reviewer has authority.
+Rotation introduces a new public key
 while retaining history needed to verify old approvals. Revocation prevents new
 authority from the revoked principal without making historical signatures
 unverifiable.
