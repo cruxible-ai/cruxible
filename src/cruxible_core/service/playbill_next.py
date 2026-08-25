@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
@@ -597,15 +598,43 @@ def _qualifier_discriminator(claims: list[ClaimArtifactAny]) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class _CitationCommitment:
+    commitment_digest: str
+    claim_identity: str
+    source_id: str | None
+    source_digest: str | None
+    whole_source: bool = False
+
+
+def _whole_source_selection(envelope: object) -> bool:
+    source = getattr(envelope, "source", None)
+    if not isinstance(source, ExternalSourceReferenceV1):
+        return False
+    coordinate = source.coordinate
+    selector = source.selector
+    if not isinstance(coordinate, Mapping) or not isinstance(selector, Mapping):
+        return False
+    length = coordinate.get("source_byte_length")
+    window = selector.get("working_selection", selector)
+    if not isinstance(window, Mapping) or not isinstance(length, int) or isinstance(length, bool):
+        return False
+    return (
+        window.get("start_byte") == 0
+        and window.get("end_byte") == length
+        and getattr(getattr(envelope, "commitment", None), "byte_length", None) == length
+    )
+
+
 def _citation_commitments(
     instance: PlaybillInstance,
     *,
     coordinate: PlaybillAcceptedCoordinate,
-) -> dict[str, tuple[str, str, str | None, str | None]]:
+) -> dict[str, _CitationCommitment]:
     listed = service_list_playbill_claims(instance, at=coordinate)
     store = instance.body_store()
     access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
-    result: dict[str, tuple[str, str, str | None, str | None]] = {}
+    result: dict[str, _CitationCommitment] = {}
     try:
         for view in listed.claims:
             claim = _claim_from_view(view)
@@ -631,17 +660,90 @@ def _citation_commitments(
                         else:
                             source_id = envelope.source.source_identity
                             source_digest = observed_digest
-                result[citation.citation_id] = (
-                    envelope.commitment.digest,
-                    claim.identity.qualified,
-                    source_id,
-                    source_digest,
+                result[citation.citation_id] = _CitationCommitment(
+                    commitment_digest=envelope.commitment.digest,
+                    claim_identity=claim.identity.qualified,
+                    source_id=source_id,
+                    source_digest=source_digest,
+                    whole_source=_whole_source_selection(envelope),
                 )
     except Exception as exc:
         raise PlaybillNextAcceptedStateInvalid(
             f"{PlaybillNextAcceptedStateInvalid.code}: citation inventory is invalid"
         ) from exc
     return result
+
+
+def _source_citation_item(
+    *,
+    citation_id: str,
+    commitment: _CitationCommitment,
+    observed: PlaybillNextSourceObservationV1 | PlaybillNextSourceObservationV2 | None,
+) -> PlaybillNextItemV1 | None:
+    source_id = commitment.source_id
+    captured_source_digest = commitment.source_digest
+    assert source_id is not None and captured_source_digest is not None
+    claim_identity = commitment.claim_identity
+    unobserved = observed is None or (
+        isinstance(observed, PlaybillNextSourceObservationV2) and not observed.scan_complete
+    )
+    if isinstance(observed, PlaybillNextSourceObservationV2) and observed.scan_complete:
+        matched = any(
+            item.observed_commitment_digest == commitment.commitment_digest
+            for item in observed.occurrences
+        )
+        if commitment.whole_source:
+            if observed.observed_source_digest == captured_source_digest:
+                return None
+        elif matched:
+            return None
+        elif commitment.commitment_digest not in observed.scanned_commitment_digests:
+            unobserved = True
+    elif observed is not None and observed.observed_source_digest == captured_source_digest:
+        return None
+
+    arguments = {
+        "claim_id": claim_identity.removeprefix("Claim:"),
+        "citation_id": citation_id,
+        "source_id": source_id,
+    }
+    if unobserved:
+        return _item(
+            severity="warning",
+            reason="citation_source_unobserved",
+            subject_identity=claim_identity,
+            related_identities=(citation_id,),
+            detail={
+                "citation_id": citation_id,
+                "source_id": source_id,
+                "expected_source_digest": captured_source_digest,
+            },
+            repair=PlaybillNextRepairV1(
+                operation="playbill.authoring.bind",
+                target=claim_identity,
+                required_change="observe_cited_source",
+                arguments=arguments,
+            ),
+        )
+    assert observed is not None
+    return _item(
+        severity="repair",
+        reason="citation_drifted",
+        subject_identity=claim_identity,
+        related_identities=(citation_id,),
+        detail={
+            "citation_id": citation_id,
+            "source_id": source_id,
+            "expected_source_digest": captured_source_digest,
+            "observed_source_digest": observed.observed_source_digest,
+        },
+        repair=PlaybillNextRepairV1(
+            operation="playbill.authoring.bind",
+            target=claim_identity,
+            required_change="recapture_or_revise_citation",
+            arguments=arguments,
+        ),
+    )
 
 
 def _workspace_items(
@@ -698,14 +800,14 @@ def _workspace_items(
         commitments = _citation_commitments(instance, coordinate=coordinate)
         for drift in observation.drift_observations:
             expected = commitments.get(drift.citation_id)
-            if expected is None or expected[0] != drift.expected_commitment_digest:
+            if expected is None or expected.commitment_digest != drift.expected_commitment_digest:
                 raise PlaybillNextWorkspaceObservationInvalid(
                     f"{PlaybillNextWorkspaceObservationInvalid.code}: "
                     f"citation {drift.citation_id} does not match accepted state"
                 )
             if drift.observed_commitment_digest == drift.expected_commitment_digest:
                 continue
-            claim_identity = expected[1]
+            claim_identity = expected.claim_identity
             items.append(
                 _item(
                     severity="repair",
@@ -727,67 +829,19 @@ def _workspace_items(
             )
     elif observation.source_observations is not None:
         domains.append("workspace_sources")
-        observed = {
-            source.source_id: source.observed_source_digest
-            for source in observation.source_observations
-        }
+        observed = {source.source_id: source for source in observation.source_observations}
         commitments = _citation_commitments(instance, coordinate=coordinate)
         for citation_id in sorted(commitments, key=lambda item: item.encode("ascii")):
-            _commitment, claim_identity, source_id, captured_source_digest = commitments[
-                citation_id
-            ]
-            if source_id is None or captured_source_digest is None:
+            commitment = commitments[citation_id]
+            if commitment.source_id is None or commitment.source_digest is None:
                 continue
-            observed_source_digest = observed.get(source_id)
-            if observed_source_digest is None:
-                items.append(
-                    _item(
-                        severity="warning",
-                        reason="citation_source_unobserved",
-                        subject_identity=claim_identity,
-                        related_identities=(citation_id,),
-                        detail={
-                            "citation_id": citation_id,
-                            "source_id": source_id,
-                            "expected_source_digest": captured_source_digest,
-                        },
-                        repair=PlaybillNextRepairV1(
-                            operation="playbill.authoring.bind",
-                            target=claim_identity,
-                            required_change="observe_cited_source",
-                            arguments={
-                                "claim_id": claim_identity.removeprefix("Claim:"),
-                                "citation_id": citation_id,
-                                "source_id": source_id,
-                            },
-                        ),
-                    )
-                )
-            elif observed_source_digest != captured_source_digest:
-                items.append(
-                    _item(
-                        severity="repair",
-                        reason="citation_drifted",
-                        subject_identity=claim_identity,
-                        related_identities=(citation_id,),
-                        detail={
-                            "citation_id": citation_id,
-                            "source_id": source_id,
-                            "expected_source_digest": captured_source_digest,
-                            "observed_source_digest": observed_source_digest,
-                        },
-                        repair=PlaybillNextRepairV1(
-                            operation="playbill.authoring.bind",
-                            target=claim_identity,
-                            required_change="recapture_or_revise_citation",
-                            arguments={
-                                "claim_id": claim_identity.removeprefix("Claim:"),
-                                "citation_id": citation_id,
-                                "source_id": source_id,
-                            },
-                        ),
-                    )
-                )
+            item = _source_citation_item(
+                citation_id=citation_id,
+                commitment=commitment,
+                observed=observed.get(commitment.source_id),
+            )
+            if item is not None:
+                items.append(item)
     return tuple(domains), tuple(items)
 
 
