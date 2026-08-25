@@ -20,6 +20,7 @@ from typing import Any, Literal, Protocol
 
 from cruxible_client import contracts
 from cruxible_client.authoring.selectors import WorkspaceSources
+from cruxible_client.contracts.errors import PlaybillError
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
 _FLOOR_DOMAIN = "playbill-floor-export-v2"
@@ -356,7 +357,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
         if overlay_path.is_file() and not overlay_path.resolve().is_relative_to(root):
             return observation
         sources = WorkspaceSources(root)
-    except (OSError, ValueError):
+    except (OSError, ValueError, PlaybillError):
         return observation
     source_observations: list[dict[str, str]] = []
     for entry in sources.catalog.entries:

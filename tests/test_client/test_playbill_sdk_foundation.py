@@ -137,6 +137,23 @@ def test_next_workspace_degrades_when_catalog_overlay_escapes_the_workspace(
     assert "source_observations" not in observation
 
 
+def test_next_workspace_degrades_when_local_overlay_ambiguously_retargets_source(
+    tmp_path: Path,
+) -> None:
+    _catalog(tmp_path)
+    portable = (tmp_path / ".playbill" / "sources.yaml").read_text(encoding="utf-8")
+    (tmp_path / ".playbill" / "sources.local.yaml").write_text(
+        portable.replace("catalog_kind: portable", "catalog_kind: local").replace(
+            "document_id: runbook", "document_id: different-runbook"
+        ),
+        encoding="utf-8",
+    )
+
+    observation = observe_playbill_next_workspace(tmp_path)
+
+    assert "source_observations" not in observation
+
+
 def test_next_workspace_observes_absolute_source_from_explicit_local_overlay(
     tmp_path: Path,
 ) -> None:
