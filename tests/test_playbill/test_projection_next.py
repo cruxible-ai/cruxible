@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.claims import claim_artifact_digest
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBackingV1,
     ProjectionBlockStampV1,
@@ -33,6 +34,8 @@ from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
 )
 from cruxible_core.service.playbill_claims import (
+    DirectClaimAuthoringV1,
+    ExistingStatementHandoffV1,
     _claim_from_view,
     service_list_playbill_claims,
     service_propose_playbill_claim,
@@ -167,15 +170,42 @@ def _projection_rows(instance: PlaybillInstance, request: PlaybillNextRequestV1)
 
 
 def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone(
-    accepted_world: PlaybillInstance,
+    tmp_path: Path,
 ) -> None:
+    instance, owner = _instance_with_query(tmp_path)
     request = _request(
-        accepted_world,
-        backing=(_claim_backing(accepted_world), _query_backing(accepted_world)),
-        evaluation_time=NOW + timedelta(hours=1),
+        instance,
+        backing=(_claim_backing(instance), _query_backing(instance)),
     )
+    original_coordinate = instance.accepted_coordinate()
+    original_rows = _projection_rows(instance, request)
 
-    assert _projection_rows(accepted_world, request) == ()
+    unrelated = service_propose_playbill_query_definition(
+        instance,
+        query=work_item_query("project.unrelated_items"),
+        actor_id="owner",
+        proposal_name="unrelated-projection-generation",
+        timestamp=TIMESTAMP,
+    )
+    accept_proposal(instance, owner, unrelated, sequence=4)
+    advanced_coordinate = instance.accepted_coordinate()
+    assert advanced_coordinate.git_oid != original_coordinate.git_oid
+    assert advanced_coordinate.generation_root != original_coordinate.generation_root
+
+    advanced = request.model_copy(
+        update={
+            "at": AcceptedCoordinate.from_internal(advanced_coordinate),
+            "evaluation_time": NOW + timedelta(hours=1),
+        }
+    )
+    assert advanced.workspace_observation is not None
+    assert advanced.workspace_observation.source_observations is not None
+    source = advanced.workspace_observation.source_observations[0]
+    assert isinstance(source, PlaybillNextSourceObservationV2)
+    assert source.marker_summaries[0].stamp.declared_coordinate.git_oid == (
+        original_coordinate.git_oid
+    )
+    assert original_rows == _projection_rows(instance, advanced) == ()
 
 
 def test_dirty_and_stale_rows_have_exact_frozen_repairs_and_deterministic_ids(
@@ -323,11 +353,50 @@ def test_query_backing_reacts_to_real_time_dependent_visibility(tmp_path: Path) 
 
 
 def test_claim_backing_statement_digest_ignores_artifact_only_revision(
-    accepted_world: PlaybillInstance,
+    tmp_path: Path,
 ) -> None:
-    claim = _claim_from_view(service_list_playbill_claims(accepted_world).claims[0])
-    backing = _claim_backing(accepted_world)
+    instance, owner = _instance_with_query(tmp_path)
+    claim = _claim_from_view(service_list_playbill_claims(instance).claims[0])
+    backing = _claim_backing(instance)
     assert backing.identity == claim.identity
-    assert backing.statement_digest != "sha256:" + "0" * 64
+    original_artifact_digest = claim_artifact_digest(claim).tagged
+    original_request = _request(instance, backing=(backing,))
+    assert _projection_rows(instance, original_request) == ()
 
-    assert _projection_rows(accepted_world, _request(accepted_world, backing=(backing,))) == ()
+    successor = service_propose_playbill_claim(
+        instance,
+        authoring=DirectClaimAuthoringV1(
+            statement=claim.statement,
+            rationale="Add independent backing without revising the accepted statement.",
+            claim_id=claim.identity.name,
+            predecessor_artifact_digest=original_artifact_digest,
+            existing_statement_handoffs=(
+                ExistingStatementHandoffV1(
+                    statement_digest=backing.statement_digest,
+                    disposition="support",
+                ),
+            ),
+        ),
+        actor_id="owner",
+        proposal_name="projection-backing-only-successor",
+        timestamp="2026-08-16T20:02:00.000000Z",
+    )
+    assert successor.statement_digest == backing.statement_digest
+    assert successor.artifact_digest != original_artifact_digest
+    activate(instance, owner, successor, sequence=4)
+
+    accepted_successor = next(
+        item
+        for item in (
+            _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
+        )
+        if item.identity == claim.identity
+    )
+    assert accepted_successor.lifecycle.predecessor_digest == original_artifact_digest
+    assert claim_artifact_digest(accepted_successor).tagged == successor.artifact_digest
+    assert _claim_backing(instance).statement_digest == backing.statement_digest
+
+    at_successor = original_request.model_copy(
+        update={"at": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
+    )
+    assert _projection_rows(instance, at_successor) == ()
