@@ -980,6 +980,23 @@ class Playbill:
             raise ValueError("publish_to is legal only for self_source claims")
         subject_name = _address(subject, RefKind.SUBJECT)
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
+        if revises is not None and subject_definition is None and isinstance(subject, str):
+            previous = _claim_from_public_view(
+                self._client.get_playbill_claim(
+                    self._instance_id,
+                    _address(revises, RefKind.CLAIM),
+                    at=_api_coordinate(
+                        revises.coordinate if isinstance(revises, ClaimRef) else self.coordinate
+                    ),
+                    evaluation_time=self._evaluation_time(),
+                )
+            )
+            if (
+                subject_name.endswith(".yaml")
+                and _subject_address(subject_name.removesuffix(".yaml"))
+                == previous.statement.subject
+            ):
+                subject_name = subject_name.removesuffix(".yaml")
         source: Any
         if supported_by is not None:
             source = supported_by.observation()
@@ -1031,21 +1048,43 @@ class Playbill:
                 ),
             ),
         )
+        subject_reference: str | SubjectRef = (
+            SubjectRef(subject_name, self.coordinate)
+            if subject_definition is None and isinstance(subject, str)
+            else subject
+        )
+        predicate_reference: str | ClaimTypeRef = (
+            ClaimTypeRef(predicate_name, self.coordinate)
+            if claim_type_definition is None and isinstance(predicate, str)
+            else predicate
+        )
         expectations: list[AuthoringReferenceExpectationV1 | None] = [
-            _expectation(subject, expected=RefKind.SUBJECT, payload_path="statement.subject"),
             _expectation(
-                predicate, expected=RefKind.CLAIM_TYPE, payload_path="statement.predicate"
+                subject_reference,
+                expected=RefKind.SUBJECT,
+                payload_path="statement.subject",
+            ),
+            _expectation(
+                predicate_reference,
+                expected=RefKind.CLAIM_TYPE,
+                payload_path="statement.predicate",
             ),
         ]
         if revises is not None:
+            revision_reference = (
+                ClaimRef(revises, self.coordinate) if isinstance(revises, str) else revises
+            )
             expectations.append(
-                _expectation(revises, expected=RefKind.CLAIM, payload_path="claim_ref")
+                _expectation(revision_reference, expected=RefKind.CLAIM, payload_path="claim_ref")
             )
         for index, (raw_key, _value) in enumerate(sorted_dispositions):
             original = next(key for key in dispositions if _address(key, RefKind.CLAIM) == raw_key)
+            disposition_reference = (
+                ClaimRef(original, self.coordinate) if isinstance(original, str) else original
+            )
             expectations.append(
                 _expectation(
-                    original,
+                    disposition_reference,
                     expected=RefKind.CLAIM,
                     payload_path=f"existing_claim_dispositions[{index}].claim_id",
                 )

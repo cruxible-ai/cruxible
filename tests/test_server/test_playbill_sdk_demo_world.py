@@ -276,6 +276,112 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     assert PreflightResultV1.model_validate(response).verdict == "passed"
 
 
+def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+) -> None:
+    http, instance_id, private_key_path = playbill_http
+    workspace = tmp_path / "supersession-world"
+    workspace.mkdir()
+    _catalog(workspace)
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    subject = pb.subject(
+        subject="secops.policy/patch-sla",
+        authority=AUTHORITY,
+        pins=(),
+        lifecycle=ArtifactLifecycle(),
+    )
+    claim_type = pb.claim_type(
+        predicate="secops.policy.patch_sla",
+        subject_kinds=("secops.policy",),
+        object_kind=ClaimObjectKind.LITERAL,
+        value_schema={"type": "integer"},
+        object_subject_kinds=(),
+        cardinality=Cardinality.ONE,
+        permitted_roles=(ClaimRole.NORMATIVE,),
+        referent_sensitivity=ReferentSensitivity.IDENTITY,
+        sources=("corpus.vuln-response-runbook",),
+        admission_policy=ClaimAdmissionPolicyV1(),
+        resolution_policy=ClaimResolutionPolicyV1(
+            cardinality="one",
+            eligible_verdicts=("supported",),
+            selector="only_contender",
+        ),
+        authority=AUTHORITY,
+        pins=(),
+        slot_policy=None,
+        evidence_freshness=None,
+    )
+    initial = pb.claim(
+        subject=subject.address,
+        predicate=claim_type.predicate,
+        value=48,
+        role=ClaimRole.NORMATIVE,
+        rationale="The original runbook records a forty-eight-hour deadline.",
+        supported_by=pb.file("corpus/vuln-response-runbook.md").anchor("forty-eight hours"),
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        publish_to=None,
+        subject_definition=subject,
+        claim_type_definition=claim_type,
+    ).prepare()
+    assert not initial.refused, initial.diagnostics
+    initial.submit()
+    first_proposal = initial.status().proposal_id
+    assert first_proposal is not None
+    _approve_and_activate(http, instance_id, private_key_path, first_proposal)
+    pb.refresh()
+    claim_id = next(
+        str(row["identity"]).removeprefix("Claim:")
+        for row in pb.list(kinds=("claim",), statuses=("accepted",)).rows
+        if row.get("predicate") == claim_type.predicate
+    )
+    predecessor = transport.get_playbill_claim(instance_id, claim_id)
+
+    revision = pb.claim(
+        subject="secops.policy/patch-sla.yaml",
+        predicate=claim_type.predicate,
+        value=72,
+        role=ClaimRole.NORMATIVE,
+        rationale="The existing governed policy now uses its seventy-two-hour boundary.",
+        supported_by=pb.file("corpus/vuln-response-runbook.md").anchor("seventy-two hours"),
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
+        revises=claim_id,
+        dispositions={claim_id: Disposition.CONTRADICT},
+        publish_to=None,
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+    assert revision.payload.dependency_drafts.subject is None
+    assert revision.payload.dependency_drafts.claim_type is None
+    assert {item.artifact_kind for item in revision.reference_expectations} == {
+        "Subject",
+        "ClaimType",
+        "Claim",
+    }
+    intent = revision.prepare()
+    assert not intent.refused, intent.diagnostics
+    intent.submit()
+    proposal_id = intent.status().proposal_id
+    assert proposal_id is not None
+    _approve_and_activate(http, instance_id, private_key_path, proposal_id)
+
+    successor = transport.get_playbill_claim(instance_id, claim_id)
+    facts = {fact["schema_id"]: fact["value"] for fact in successor.facts}
+    assert facts["playbill.claim.statement"]["object"]["value"] == 72
+    assert successor.envelope["predecessor_digest"] is not None
+    assert successor.envelope["identity"] == predecessor.envelope["identity"]
+
+
 def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,
