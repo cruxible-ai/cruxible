@@ -14,6 +14,7 @@ from cruxible_core.playbill.checkpoints import CHECKPOINT_DIRECTORY, checkpoint_
 from cruxible_core.playbill.instance import PlaybillInstance
 from tests.test_playbill._support import FIXED_TIMESTAMP, initialize_local
 from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
+from tests.test_playbill.test_evidence_freshness import _fresh_world
 
 
 @pytest.mark.parametrize(
@@ -84,3 +85,24 @@ def test_invalid_generation_signature_precedes_prerelease_incompatibility(
 
     with pytest.raises(SettlementIntegrityError, match="daemon signature does not verify"):
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+
+
+@pytest.mark.parametrize("warm_checkpoint", [False, True])
+def test_precut_v3_freshness_world_reopens_byte_identically(
+    tmp_path: Path,
+    warm_checkpoint: bool,
+) -> None:
+    instance, _claim_id = _fresh_world(tmp_path)
+    expected_coordinate = instance.accepted_coordinate()
+    expected_tree = instance.tree_at(expected_coordinate.git_oid)
+    path = checkpoint_path(instance.root / CHECKPOINT_DIRECTORY)
+    if warm_checkpoint:
+        PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+        assert path.exists()
+    elif path.exists():
+        path.unlink()
+
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+
+    assert reopened.accepted_coordinate() == expected_coordinate
+    assert reopened.tree_at(expected_coordinate.git_oid) == expected_tree

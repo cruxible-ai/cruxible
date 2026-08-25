@@ -10,9 +10,6 @@ if TYPE_CHECKING:
         AccessProfile,
         ActivationPolicy,
         Audience,
-        BriefClaimExpectation,
-        BriefKind,
-        BriefQueryRender,
         CapabilityNotServed,
         Cardinality,
         ClaimObjectKind,
@@ -44,7 +41,6 @@ if TYPE_CHECKING:
         ArtifactPin,
     )
     from cruxible_client.contracts.captures import CanonicalDurationV1
-    from cruxible_client.contracts.claim_types import ClaimSlotPolicyV1
     from cruxible_client.contracts.policies import (
         ClaimAdmissionPolicyV1,
         ClaimResolutionPolicyV1,
@@ -74,9 +70,6 @@ __all__ = [
     "ArtifactIdentity",
     "ArtifactLifecycle",
     "ArtifactPin",
-    "BriefClaimExpectation",
-    "BriefKind",
-    "BriefQueryRender",
     "CapabilityNotServed",
     "Cardinality",
     "ClaimObjectKind",
@@ -85,7 +78,6 @@ __all__ = [
     "ClaimRole",
     "ClaimTypeRef",
     "ClaimResolutionPolicyV1",
-    "ClaimSlotPolicyV1",
     "CruxibleClient",
     "Disposition",
     "Duration",
@@ -101,7 +93,6 @@ __all__ = [
     "inspect_workspace_floor",
     "observe_playbill_next_workspace",
     "materialize_playbill_floor",
-    "prepare_playbill_brief",
     "ProcedureRef",
     "ProcedureBudgetV3",
     "ProcedureDefinitionV3",
@@ -138,9 +129,6 @@ def __getattr__(name: str) -> Any:
         "AccessProfile",
         "ActivationPolicy",
         "Audience",
-        "BriefClaimExpectation",
-        "BriefKind",
-        "BriefQueryRender",
         "CapabilityNotServed",
         "Cardinality",
         "ClaimObjectKind",
@@ -169,10 +157,6 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.contracts import captures
 
         return captures.CanonicalDurationV1
-    if name == "ClaimSlotPolicyV1":
-        from cruxible_client.contracts import claim_types
-
-        return claim_types.ClaimSlotPolicyV1
     if name in {"ClaimAdmissionPolicyV1", "ClaimResolutionPolicyV1"}:
         from cruxible_client.contracts import policies
 
@@ -206,10 +190,6 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import insertions
 
         return getattr(insertions, name)
-    if name == "prepare_playbill_brief":
-        from cruxible_client.authoring.briefs import prepare_playbill_brief
-
-        return prepare_playbill_brief
     if name in {
         "PlaybillWorkspaceError",
         "activate_with_workspace_refresh",

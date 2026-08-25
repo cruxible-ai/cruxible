@@ -1,4 +1,4 @@
-"""One structural Claim-slot classifier shared by projections and Brief health."""
+"""One structural Claim-slot classifier shared by accepted-state projections."""
 
 from __future__ import annotations
 

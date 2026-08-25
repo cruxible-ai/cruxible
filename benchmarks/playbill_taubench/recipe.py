@@ -131,7 +131,7 @@ def _floor_generation_resolver(client: Any, instance_id: str) -> ResolveFloorGen
         answer = client.search_playbill(
             instance_id,
             mode="orient",
-            kinds=("brief", "claim", "demand", "procedure"),
+            kinds=("claim", "demand", "procedure"),
             at=None if at is None else at.model_dump(mode="json"),
         )
         if answer.orientation is None:

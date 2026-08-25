@@ -32,7 +32,7 @@ def test_mcp_search_sorts_filters_and_keeps_access_server_owned(monkeypatch) -> 
         "inst",
         mode="list",
         query=None,
-        kinds=["procedure", "brief", "brief"],
+        kinds=["procedure", "claim", "claim"],
         subject=None,
         statuses=["retired", "accepted"],
         cursor=None,
@@ -41,5 +41,5 @@ def test_mcp_search_sorts_filters_and_keeps_access_server_owned(monkeypatch) -> 
     )
 
     assert result.mode == "list"
-    assert seen["kinds"] == ("brief", "procedure")
+    assert seen["kinds"] == ("claim", "procedure")
     assert seen["statuses"] == ("accepted", "retired")

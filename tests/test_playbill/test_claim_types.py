@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -162,6 +163,58 @@ def test_claim_type_v3_adds_only_a_positive_freshness_horizon() -> None:
     assert claim_type_digest(successor).tagged != claim_type_digest(original).tagged
     assert successor.structure == original.structure
     assert render_claim_type(original) == render_claim_type(literal_claim_type())
+
+
+def test_claim_type_v1_and_v3_preserve_the_exact_precut_wire_and_digest() -> None:
+    original = literal_claim_type()
+    successor = ClaimType.model_validate(
+        {
+            **original.model_dump(mode="json"),
+            "artifact_format": "playbill-claim-type-v3",
+            "evidence_freshness": ClaimEvidenceFreshnessV1(
+                stale_after=ClaimFreshnessDurationV1(microseconds=30_000_000)
+            ).model_dump(mode="json"),
+        }
+    )
+
+    assert hashlib.sha256(render_claim_type(original)).hexdigest() == (
+        "e0fa400a6ad96e7deb5d8b64c98984d0b392af24de4dfd42dfef784240b6832b"
+    )
+    assert claim_type_digest(original).tagged == (
+        "sha256:f1ed3e5b2833246ec71275ca212677a6585c0a4cad514b3436d9b29db91f2d23"
+    )
+    assert hashlib.sha256(render_claim_type(successor)).hexdigest() == (
+        "2c1de8eee8e43a1e18e4e1977228ea1be45ae499b33bbe219c38e31901b472cf"
+    )
+    assert claim_type_digest(successor).tagged == (
+        "sha256:08790f07585b846742d2ed3148a83b0380cda241b3fe49c6cf1ccbadb4961f67"
+    )
+    assert b'"subject_scope":null' in render_claim_type(successor)
+    assert b'"slot_policy":null' in render_claim_type(successor)
+    assert b'"subject_scope"' not in render_claim_type(original)
+    assert b'"slot_policy"' not in render_claim_type(original)
+
+
+@pytest.mark.parametrize("field", ["subject_scope", "slot_policy"])
+def test_claim_type_rejects_removed_non_null_profile_fields(field: str) -> None:
+    payload = literal_claim_type().model_dump(mode="json")
+    payload[field] = {}
+
+    with pytest.raises(ValidationError, match=field):
+        ClaimType.model_validate(payload)
+
+
+def test_claim_type_rejects_the_removed_v2_envelope() -> None:
+    payload = literal_claim_type().model_dump(mode="json")
+    payload["artifact_format"] = "playbill-claim-type-v2"
+
+    with pytest.raises(ValidationError, match="artifact_format"):
+        ClaimType.model_validate(payload)
+    with pytest.raises(ClaimTypeFormatError, match="unsupported ClaimType artifact format"):
+        parse_claim_type(
+            canonical_bytes(payload) + b"\n",
+            path=claim_type_path(literal_claim_type().predicate),
+        )
 
 
 def test_claim_type_v3_refuses_missing_or_zero_freshness_horizon() -> None:

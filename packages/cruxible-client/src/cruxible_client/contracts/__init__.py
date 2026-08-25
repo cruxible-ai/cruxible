@@ -18,7 +18,6 @@ PlaybillAuthoringExampleName = Literal[
     "claim-flow-a",
     "claim-self-source",
     "procedure",
-    "brief",
 ]
 
 

@@ -6,7 +6,6 @@ from typing import Callable, Final, Literal
 
 from cruxible_client.authoring.inputs import (
     AuthoringInputV1,
-    BriefInput,
     CarriedContractInput,
     ClaimInput,
     LiteralObjectInput,
@@ -21,7 +20,6 @@ AuthoringExampleName = Literal[
     "claim-flow-a",
     "claim-self-source",
     "procedure",
-    "brief",
 ]
 
 
@@ -142,22 +140,10 @@ def procedure_example() -> ProcedureInput:
     )
 
 
-def brief_example() -> BriefInput:
-    return BriefInput(
-        kind="brief",
-        subject="project.work_item/replace-me",
-        purpose="Replace with the question this Brief answers.",
-        brief_kind="brief",
-        prose="Replace with concise guidance and add governed references.",
-        rationale="Replace with why this Brief should be governed.",
-    )
-
-
 AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], AuthoringInputV1]]] = {
     "claim-flow-a": claim_flow_a_example,
     "claim-self-source": claim_self_source_example,
     "procedure": procedure_example,
-    "brief": brief_example,
 }
 
 
@@ -169,7 +155,6 @@ __all__ = [
     "AUTHORING_EXAMPLE_FACTORIES",
     "AuthoringExampleName",
     "authoring_example",
-    "brief_example",
     "claim_flow_a_example",
     "claim_self_source_example",
     "procedure_example",

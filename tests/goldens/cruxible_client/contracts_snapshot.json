@@ -5,8 +5,7 @@
         "claim-type",
         "claim-flow-a",
         "claim-self-source",
-        "procedure",
-        "brief"
+        "procedure"
       ]
     },
     "PlaybillHostStatus": {
@@ -899,8 +898,7 @@
               "claim-type",
               "claim-flow-a",
               "claim-self-source",
-              "procedure",
-              "brief"
+              "procedure"
             ],
             "title": "Name",
             "type": "string"
@@ -941,8 +939,7 @@
               "claim-type",
               "claim-flow-a",
               "claim-self-source",
-              "procedure",
-              "brief"
+              "procedure"
             ],
             "title": "Name",
             "type": "string"

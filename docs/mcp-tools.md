@@ -107,7 +107,7 @@ from accepted law evidence, never carried forward from acceptance.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_authoring_create` | Create or recover a durable authoring intent | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_example` | Return a model-generated ClaimType/Claim/Brief/Procedure input | `READ_ONLY` |
+| `cruxible_playbill_authoring_example` | Return a model-generated ClaimType/Claim/Procedure input | `READ_ONLY` |
 | `cruxible_playbill_authoring_get` | Read one authoring intent | `READ_ONLY` |
 | `cruxible_playbill_authoring_resume` | Return an intent's durable continuation | `READ_ONLY` |
 | `cruxible_playbill_authoring_list_pending` | List the caller's pending intents | `READ_ONLY` |

@@ -22,10 +22,6 @@ from cruxible_client.authoring.insertions import apply_playbill_insertion
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
     ActivationPolicy,
-    Audience,
-    BriefClaimExpectation,
-    BriefKind,
-    BriefQueryRender,
     CapabilityNotServed,
     Cardinality,
     ClaimObjectKind,
@@ -80,7 +76,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     authoring_program_digest,
 )
-from cruxible_client.contracts.canonical import CanonicalValue, canonical_bytes, normalize_canonical
+from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     foreign_source_capture_contract,
@@ -88,8 +84,6 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import (
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
-    ClaimSlotPolicyV1,
-    ClaimSubjectScopeV1,
     ClaimType,
 )
 from cruxible_client.contracts.claims import (
@@ -97,14 +91,6 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV2,
     LiteralClaimObject,
-    claim_statement_digest,
-)
-from cruxible_client.contracts.knowledge_briefs import (
-    KNOWLEDGE_BRIEF_PREDICATE,
-    KnowledgeBriefClaimExpectationV1,
-    KnowledgeBriefClaimRefV1,
-    KnowledgeBriefQueryRefV1,
-    KnowledgeBriefValueV1,
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
@@ -114,10 +100,6 @@ from cruxible_client.contracts.policies import (
 )
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
-from cruxible_client.contracts.query.definitions import (
-    QueryDefinitionV1,
-    query_definition_digest,
-)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
@@ -398,11 +380,6 @@ class ClaimDraft(_IntentDraft):
 
 
 @dataclass(frozen=True)
-class BriefDraft(_IntentDraft):
-    pass
-
-
-@dataclass(frozen=True)
 class ProcedureDraft(_IntentDraft):
     pass
 
@@ -519,7 +496,7 @@ class Intent:
         ).intent
         return self
 
-    def reprepare(self, *, draft: ClaimDraft | BriefDraft | ProcedureDraft) -> Intent:
+    def reprepare(self, *, draft: ClaimDraft | ProcedureDraft) -> Intent:
         if draft._playbill is not self._playbill:
             raise ValueError("replacement draft belongs to another Playbill connection")
         result = self._playbill._client.compile_playbill_authoring(
@@ -830,7 +807,7 @@ class Playbill:
         page = self._search(
             mode="orient",
             query=None,
-            kinds=("brief", "claim", "demand", "procedure"),
+            kinds=("claim", "demand", "procedure"),
             statuses=(),
             at_active_coordinate=False,
         )
@@ -880,7 +857,6 @@ class Playbill:
         resolution_policy: ClaimResolutionPolicyV1,
         authority: ArtifactAuthority,
         pins: Sequence[ArtifactPin],
-        slot_policy: ClaimSlotPolicyV1 | None,
         evidence_freshness: Duration | None,
     ) -> ClaimTypeDraft:
         name = _address(predicate, RefKind.CLAIM_TYPE)
@@ -903,19 +879,10 @@ class Playbill:
             )
             for source_id in source_ids
         )
-        if slot_policy is not None and evidence_freshness is not None:
-            raise ValueError("slot policy and evidence freshness require distinct frozen formats")
         artifact_format: Literal[
             "playbill-claim-type-v1",
-            "playbill-claim-type-v2",
             "playbill-claim-type-v3",
-        ] = (
-            "playbill-claim-type-v2"
-            if slot_policy is not None
-            else "playbill-claim-type-v3"
-            if evidence_freshness is not None
-            else "playbill-claim-type-v1"
-        )
+        ] = "playbill-claim-type-v3" if evidence_freshness is not None else "playbill-claim-type-v1"
         lifecycle = ArtifactLifecycle()
         if isinstance(predicate, ClaimTypeRef):
             predecessor = self._client.get_playbill_claim_type(
@@ -928,7 +895,7 @@ class Playbill:
             artifact_format=artifact_format,
             identity=ArtifactIdentity(kind="ClaimType", name=name),
             predicate=name,
-            allowed_subject_kinds=() if slot_policy is not None else tuple(subject_kinds),
+            allowed_subject_kinds=tuple(subject_kinds),
             object_kind=object_kind.value,
             literal_schema=value_schema,
             allowed_object_subject_kinds=tuple(object_subject_kinds),
@@ -941,8 +908,6 @@ class Playbill:
             authority=authority,
             pins=tuple(pins),
             lifecycle=lifecycle,
-            subject_scope=(ClaimSubjectScopeV1() if slot_policy is not None else None),
-            slot_policy=slot_policy,
             evidence_freshness=(
                 None
                 if evidence_freshness is None
@@ -1130,214 +1095,6 @@ class Playbill:
             ),
         )
 
-    def brief(
-        self,
-        *,
-        subject: str | SubjectRef,
-        purpose: str,
-        kind: BriefKind,
-        prose: str,
-        rationale: str,
-        audience: Audience | None,
-        claims: Mapping[str | ClaimRef, BriefClaimExpectation],
-        queries: Mapping[str | QueryRef, BriefQueryRender],
-        revises: str | ClaimRef | None,
-        dispositions: Mapping[str | ClaimRef, Disposition],
-    ) -> BriefDraft:
-        sites = capture_keyword_sites("brief", stacklevel=1)
-        subject_name = _address(subject, RefKind.SUBJECT)
-        claim_rows: list[tuple[str | ClaimRef, KnowledgeBriefClaimRefV1]] = []
-        for claim_key, expectation in claims.items():
-            identity = _address(claim_key, RefKind.CLAIM)
-            claim_view = self._client.get_playbill_claim(
-                self._instance_id,
-                identity,
-                at=_api_coordinate(
-                    claim_key.coordinate if isinstance(claim_key, ClaimRef) else self.coordinate
-                ),
-                evaluation_time=self._evaluation_time(),
-            )
-            artifact = _claim_from_public_view(claim_view)
-            expected_subject = (
-                None
-                if expectation.subject is None
-                else _subject_address(_address(expectation.subject, RefKind.SUBJECT))
-            )
-            expected_type = (
-                None
-                if expectation.claim_type is None
-                else _address(expectation.claim_type, RefKind.CLAIM_TYPE)
-            )
-            claim_rows.append(
-                (
-                    claim_key,
-                    KnowledgeBriefClaimRefV1(
-                        claim_id=identity,
-                        statement_digest=claim_statement_digest(artifact.statement).tagged,
-                        expect=KnowledgeBriefClaimExpectationV1(
-                            subject=expected_subject,
-                            claim_type=expected_type,
-                        ),
-                    ),
-                )
-            )
-        query_rows: list[tuple[str | QueryRef, KnowledgeBriefQueryRefV1]] = []
-        for query_key, render in queries.items():
-            identity = _address(query_key, RefKind.QUERY)
-            query_view = self._client.get_playbill_query_definition(
-                self._instance_id,
-                identity,
-                at=_api_coordinate(
-                    query_key.coordinate if isinstance(query_key, QueryRef) else self.coordinate
-                ),
-            )
-            definition = QueryDefinitionV1.model_validate(query_view.envelope)
-            query_rows.append(
-                (
-                    query_key,
-                    KnowledgeBriefQueryRefV1(
-                        query_id=identity,
-                        definition_digest=query_definition_digest(definition).tagged,
-                        parameters=cast(dict[str, object], normalize_canonical(render.parameters)),
-                        render_field=render.render_field,
-                    ),
-                )
-            )
-        sorted_claim_rows = sorted(
-            claim_rows,
-            key=lambda item: canonical_bytes(item[1].model_dump(mode="json")),
-        )
-        sorted_query_rows = sorted(
-            query_rows,
-            key=lambda item: canonical_bytes(item[1].model_dump(mode="json")),
-        )
-        brief_values: dict[str, object] = {
-            "purpose": purpose,
-            "kind": kind.value,
-            "claim_refs": tuple(item for _key, item in sorted_claim_rows),
-            "query_refs": tuple(item for _key, item in sorted_query_rows),
-            "prose": prose,
-        }
-        if audience is not None:
-            brief_values["audience"] = audience.value
-        value = KnowledgeBriefValueV1.model_validate(brief_values)
-        sorted_dispositions = tuple(
-            sorted(
-                (
-                    (_address(key, RefKind.CLAIM), decision)
-                    for key, decision in dispositions.items()
-                ),
-                key=lambda item: item[0].encode("ascii"),
-            )
-        )
-        payload = ClaimAuthoringPayloadV1(
-            statement=AuthoringClaimStatementV1(
-                subject=_subject_address(subject_name),
-                predicate=KNOWLEDGE_BRIEF_PREDICATE,
-                object=LiteralClaimObject(value=value.model_dump(mode="json")),
-                role="normative",
-            ),
-            rationale=rationale,
-            source=SelfSourceBodyV1(
-                content_base64=base64.b64encode(prose.encode("utf-8")).decode("ascii")
-            ),
-            claim_ref=None if revises is None else _address(revises, RefKind.CLAIM),
-            existing_claim_dispositions=tuple(
-                AuthoringExistingClaimDispositionV1(claim_id=identity, disposition=decision.value)
-                for identity, decision in sorted_dispositions
-            ),
-        )
-        expectations: list[AuthoringReferenceExpectationV1 | None] = [
-            _expectation(subject, expected=RefKind.SUBJECT, payload_path="statement.subject")
-        ]
-        for index, (key, item) in enumerate(sorted_claim_rows):
-            expectations.append(
-                _expectation(
-                    key,
-                    expected=RefKind.CLAIM,
-                    payload_path=f"statement.object.value.claim_refs[{index}].claim_id",
-                )
-            )
-            source_expectation = claims[key].subject
-            type_expectation = claims[key].claim_type
-            if source_expectation is not None:
-                expectations.append(
-                    _expectation(
-                        source_expectation,
-                        expected=RefKind.SUBJECT,
-                        payload_path=(f"statement.object.value.claim_refs[{index}].expect.subject"),
-                    )
-                )
-            if type_expectation is not None:
-                expectations.append(
-                    _expectation(
-                        type_expectation,
-                        expected=RefKind.CLAIM_TYPE,
-                        payload_path=(
-                            f"statement.object.value.claim_refs[{index}].expect.claim_type"
-                        ),
-                    )
-                )
-            del item
-        for index, (query_ref, _item) in enumerate(sorted_query_rows):
-            expectations.append(
-                _expectation(
-                    query_ref,
-                    expected=RefKind.QUERY,
-                    payload_path=f"statement.object.value.query_refs[{index}].query_id",
-                )
-            )
-        if revises is not None:
-            expectations.append(
-                _expectation(revises, expected=RefKind.CLAIM, payload_path="claim_ref")
-            )
-        for index, (identity, _decision) in enumerate(sorted_dispositions):
-            original = next(key for key in dispositions if _address(key, RefKind.CLAIM) == identity)
-            expectations.append(
-                _expectation(
-                    original,
-                    expected=RefKind.CLAIM,
-                    payload_path=f"existing_claim_dispositions[{index}].claim_id",
-                )
-            )
-        emitted = {
-            "subject": ("statement.subject",),
-            "purpose": ("statement.object.value.purpose",),
-            "kind": ("statement.object.value.kind",),
-            "prose": ("statement.object.value.prose", "source"),
-            "rationale": ("rationale",),
-            "audience": ("statement.object.value.audience",),
-            "claims": ("statement.object.value.claim_refs",),
-            "queries": ("statement.object.value.query_refs",),
-            "revises": ("claim_ref",),
-            "dispositions": ("existing_claim_dispositions",),
-        }
-        return BriefDraft(
-            self,
-            payload,
-            _sorted_expectations(expectations),
-            _program_stamp(
-                "brief",
-                {
-                    "subject": subject_name,
-                    "purpose": purpose,
-                    "kind": kind.value,
-                    "prose": prose,
-                    "audience": None if audience is None else audience.value,
-                    "claims": value.model_dump(mode="json")["claim_refs"],
-                    "queries": value.model_dump(mode="json")["query_refs"],
-                    "rationale": rationale,
-                    "revises": None if revises is None else _address(revises, RefKind.CLAIM),
-                    "dispositions": {
-                        identity: decision.value for identity, decision in sorted_dispositions
-                    },
-                },
-            ),
-            DiagnosticSourceMap(
-                entries_for_keywords(builder="brief", emitted=emitted, sites=sites)
-            ),
-        )
-
     def procedure(
         self,
         *,
@@ -1467,7 +1224,7 @@ class Playbill:
             raise ReferenceKindError("unsupported typed reference")
         page = self.search(
             query=ref,
-            kinds=("brief", "claim", "procedure"),
+            kinds=("claim", "procedure"),
             statuses=(),
         )
         exact = [
@@ -1512,7 +1269,7 @@ class Playbill:
         return self._search(
             mode="orient",
             query=None,
-            kinds=("brief", "claim", "demand", "procedure"),
+            kinds=("claim", "demand", "procedure"),
             statuses=(),
         )
 
@@ -1701,7 +1458,6 @@ class ProcedureRun:
 
 
 __all__ = [
-    "BriefDraft",
     "ClaimDraft",
     "ClaimTypeDraft",
     "Intent",

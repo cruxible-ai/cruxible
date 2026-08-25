@@ -376,13 +376,13 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     runner = CliRunner()
     help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
     assert help_result.exit_code == 0
-    assert "Input kind family: claim | brief | procedure" in help_result.output
+    assert "Input kind family: claim | procedure" in help_result.output
 
-    for name in ("claim-flow-a", "claim-self-source", "procedure", "brief"):
+    for name in ("claim-flow-a", "claim-self-source", "procedure"):
         result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
-        assert payload["kind"] in {"claim", "procedure", "brief"}
+        assert payload["kind"] in {"claim", "procedure"}
         assert "tag" not in result.output
         assert result.stderr == ""
 

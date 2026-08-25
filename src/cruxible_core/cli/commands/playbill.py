@@ -195,8 +195,6 @@ def _authoring_examples_for(payload: Mapping[str, Any]) -> tuple[str, ...]:
     kind = payload.get("kind")
     if kind == "procedure":
         return ("procedure",)
-    if kind == "brief":
-        return ("brief",)
     if kind != "claim":
         return tuple(AUTHORING_EXAMPLE_FACTORIES)
     source = payload.get("source")
@@ -1222,9 +1220,9 @@ def create_authoring_intent(
     """Create a durable authoring intent or print a schema-derived example.
 
     \b
-    Input kind family: claim | brief | procedure (tagless).
+    Input kind family: claim | procedure (tagless).
 
-    Use --example claim-flow-a|claim-self-source|procedure|brief for a
+    Use --example claim-flow-a|claim-self-source|procedure for a
     model-generated starting point.
     """
 
@@ -1865,7 +1863,7 @@ def _headless_search(
     evaluation_time: str | None,
     output_json: bool,
 ) -> None:
-    selected_kinds = tuple(sorted(set(kinds or ("brief", "claim", "demand", "procedure"))))
+    selected_kinds = tuple(sorted(set(kinds or ("claim", "demand", "procedure"))))
     selected_statuses = tuple(sorted(set(statuses)))
     subject = (
         None
@@ -1901,9 +1899,7 @@ def _headless_search(
         _emit_json(result.model_dump(mode="json"))
         return
     orientation = (
-        result
-        if mode == "orient"
-        else search_request("orient", ("brief", "claim", "demand", "procedure"))
+        result if mode == "orient" else search_request("orient", ("claim", "demand", "procedure"))
     )
     if orientation.orientation is None:
         raise click.ClickException("Playbill orient returned no orientation summary")
@@ -1911,8 +1907,7 @@ def _headless_search(
     if mode == "orient":
         return
     for row in result.rows:
-        health = "" if row.get("healthy") is None else f" health={row['healthy']}"
-        click.echo(f"{row['kind']}  {row['status']}  {row['identity']}  {row['title']}{health}")
+        click.echo(f"{row['kind']}  {row['status']}  {row['identity']}  {row['title']}")
     if result.next_cursor is not None:
         click.echo("Next cursor: " + canonical_json(result.next_cursor))
 
@@ -1928,15 +1923,13 @@ def _render_orientation_header(orientation: Mapping[str, Any]) -> str:
     return (
         f"Playbill generation={orientation['generation']} "
         f"claim={counts.get('claim', 0)} "
-        f"brief={counts.get('brief', 0)} "
         f"procedure={counts.get('procedure', 0)} "
         f"demand={demand} "
-        f"unhealthy={orientation['unhealthy_brief_count']} "
         f"conflicted={orientation['conflicted_count']}"
     )
 
 
-_SEARCH_KIND = click.Choice(["claim", "brief", "procedure", "demand"])
+_SEARCH_KIND = click.Choice(["claim", "procedure", "demand"])
 _SEARCH_STATUS = click.Choice(["accepted", "conflicted", "overturned", "refused", "retired"])
 
 
@@ -1958,7 +1951,7 @@ def search(
     evaluation_time: str | None,
     output_json: bool,
 ) -> None:
-    """Find accepted Claims, Briefs, Procedures, or installed demands."""
+    """Find accepted Claims, Procedures, or installed demands."""
 
     _headless_search(
         mode="search",
@@ -3208,7 +3201,7 @@ def _hook_floor_generation_resolver() -> ResolveFloorGenerations:
             lambda client, instance_id: client.search_playbill(
                 instance_id,
                 mode="orient",
-                kinds=("brief", "claim", "demand", "procedure"),
+                kinds=("claim", "demand", "procedure"),
                 at=None if at is None else at.model_dump(mode="json"),
             ),
             command_name="playbill hook floor freshness",

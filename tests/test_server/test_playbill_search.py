@@ -40,7 +40,7 @@ def test_http_search_keeps_access_profile_and_digests_server_owned(
         json={
             "mode": "search",
             "query": "release",
-            "kinds": ["brief", "procedure"],
+            "kinds": ["claim", "procedure"],
             "statuses": ["accepted"],
             "evaluation_time": "2026-08-21T14:00:00Z",
         },
@@ -48,7 +48,7 @@ def test_http_search_keeps_access_profile_and_digests_server_owned(
 
     assert response.status_code == 200, response.text
     assert seen["mode"] == "search"
-    assert seen["kinds"] == ("brief", "procedure")
+    assert seen["kinds"] == ("claim", "procedure")
     assert seen["statuses"] == ("accepted",)
 
 
@@ -66,5 +66,21 @@ def test_http_refuses_caller_owned_search_access_profile(
                 "permitted_access_classes": ["restricted"],
             },
         },
+    )
+    assert response.status_code == 422
+
+
+def test_http_search_openapi_and_runtime_reject_removed_brief_kind(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    schemas = client.app.openapi()["components"]["schemas"]
+    request = schemas["PlaybillSearchRequest"]
+    item_schema = request["properties"]["kinds"]["items"]
+    assert item_schema["enum"] == ["claim", "procedure", "demand"]
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/search",
+        json={"mode": "list", "kinds": ["brief"]},
     )
     assert response.status_code == 422

@@ -137,6 +137,33 @@ def test_http_input_variants_delegate_without_exposing_a_base(
     assert "base" not in response.request.content.decode()
 
 
+def test_http_authoring_openapi_and_runtime_reject_removed_brief_input(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    schemas = client.app.openapi()["components"]["schemas"]
+
+    for name in ("PlaybillAuthoringInputCreateRequest", "PlaybillAuthoringInputCompileRequest"):
+        mapping = schemas[name]["properties"]["input"]["discriminator"]["mapping"]
+        assert set(mapping) == {"claim", "procedure"}
+    assert "BriefInput" not in schemas
+    assert "ClaimSlotPolicyV1" not in schemas
+    assert schemas["ClaimType"]["properties"]["artifact_format"]["enum"] == [
+        "playbill-claim-type-v1",
+        "playbill-claim-type-v3",
+    ]
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        json={
+            "tag": "playbill-authoring-input-create-request-v1",
+            "input": {"kind": "brief"},
+        },
+    )
+
+    assert response.status_code == 422
+
+
 def test_http_migration_route_delegates_the_typed_request(
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch,

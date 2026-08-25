@@ -834,9 +834,7 @@ def parse_projection_tree(
                     (
                         ProjectionFact(
                             schema_id="playbill.claim_type.identity",
-                            schema_version=(
-                                2 if claim_type.artifact_format == "playbill-claim-type-v2" else 1
-                            ),
+                            schema_version=1,
                             subject_identity=identity,
                             fact_key="predicate_contract",
                             value={

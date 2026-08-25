@@ -145,7 +145,7 @@ together with the law evidence and source handles it was computed from.
 
 ~~~text
 cruxible playbill authoring create PAYLOAD
-cruxible playbill authoring create --example claim-flow-a|claim-self-source|procedure|brief
+cruxible playbill authoring create --example claim-flow-a|claim-self-source|procedure
 cruxible playbill authoring get INTENT_ID
 cruxible playbill authoring resume INTENT_ID
 cruxible playbill authoring list
@@ -240,8 +240,8 @@ cruxible playbill orient [--kind KIND]... [--status STATUS]...
   [--subject-path PATH] [--evaluation-time TS]
 ~~~
 
-These are the generic headless discovery surface for Claims, Briefs, Procedures,
-and installed demand policies. `orient` returns counts and exact follow-up filters,
+These are the generic headless discovery surface for Claims, Procedures, and
+installed demand policies. `orient` returns counts and exact follow-up filters,
 never arbitrary top rows. Until demand policy is installed it explicitly reports
 `demand: not_installed`.
 

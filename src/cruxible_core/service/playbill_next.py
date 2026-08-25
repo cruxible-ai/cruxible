@@ -28,17 +28,14 @@ from cruxible_client.contracts.claims import (
     claim_citation_references,
 )
 from cruxible_client.contracts.errors import PlaybillError
-from cruxible_client.contracts.knowledge_briefs import KNOWLEDGE_BRIEF_PREDICATE
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
-from cruxible_core.playbill.brief_health import KnowledgeBriefHealthResultV1
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_slots import classify_claim_slot
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
-from cruxible_core.service.playbill_briefs import service_list_playbill_brief_reauthor_queue
 from cruxible_core.service.playbill_claims import _claim_from_view, service_list_playbill_claims
 from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
 
@@ -49,7 +46,6 @@ DEFAULT_EXPIRING_WITHIN_MICROSECONDS = 604_800_000_000
 NextDomain = Literal["accepted_state", "workspace_floor", "workspace_sources"]
 NextSeverity = Literal["blocking", "repair", "warning"]
 NextReason = Literal[
-    "brief_unhealthy",
     "claim_conflicted",
     "claim_uncovered",
     "claim_stale_evidence",
@@ -352,68 +348,6 @@ def _resolve_coordinate(
         ) from exc
 
 
-def _brief_items(
-    instance: PlaybillInstance,
-    *,
-    coordinate: PlaybillAcceptedCoordinate,
-    request: PlaybillNextRequestV1,
-) -> tuple[PlaybillNextItemV1, ...]:
-    queue = service_list_playbill_brief_reauthor_queue(
-        instance,
-        evaluation_time=request.evaluation_time,
-        access_profile=request.access_profile,
-        at=coordinate,
-    )
-    return tuple(
-        _item(
-            severity="repair",
-            reason="brief_unhealthy",
-            subject_identity=f"Claim:{entry.identity}",
-            related_identities=tuple(
-                sorted(
-                    {
-                        state.ref.claim_id
-                        for state in entry.health.result.ref_states
-                        if state.state != "accepted_current"
-                    }
-                    | {
-                        state.ref.query_id
-                        for state in entry.health.result.query_states
-                        if state.state != "current"
-                    },
-                    key=lambda item: item.encode("utf-8"),
-                )
-            ),
-            detail=_brief_health_detail(entry.health.result),
-            repair=PlaybillNextRepairV1(
-                operation="playbill.authoring.create",
-                target=f"Claim:{entry.identity}",
-                required_change="reauthor_brief_references",
-                arguments={"kind": "brief", "claim_id": entry.identity},
-            ),
-        )
-        for entry in queue.entries
-    )
-
-
-def _brief_health_detail(result: KnowledgeBriefHealthResultV1) -> object:
-    return {
-        "health_result_digest": result.result_digest,
-        "ref_states": [
-            {"claim_id": item.ref.claim_id, "state": item.state}
-            for item in result.ref_states
-            if item.state != "accepted_current"
-        ],
-        "query_states": [
-            {"query_id": item.ref.query_id, "state": item.state}
-            for item in result.query_states
-            if item.state != "current"
-        ],
-        "truncated": result.truncated,
-        "verdict": result.verdict,
-    }
-
-
 def _claim_items(
     instance: PlaybillInstance,
     *,
@@ -426,7 +360,6 @@ def _claim_items(
         claim
         for claim in (_claim_from_view(view) for view in listed.claims)
         if claim.lifecycle.state == "live"
-        and claim.statement.predicate != KNOWLEDGE_BRIEF_PREDICATE
     )
     groups: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
     for claim in claims:
@@ -805,7 +738,6 @@ def service_playbill_next(
     items = tuple(
         sorted(
             (
-                *_brief_items(instance, coordinate=public_coordinate, request=request),
                 *_claim_items(
                     instance,
                     coordinate=public_coordinate,

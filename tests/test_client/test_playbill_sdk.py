@@ -138,7 +138,6 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
         ),
         authority=authority,
         pins=(),
-        slot_policy=None,
         evidence_freshness=None,
     )
     draft = pb.claim(

@@ -27,24 +27,9 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
-    claim_path,
-    claim_statement_digest,
-    parse_claim,
-)
-from cruxible_client.contracts.knowledge_briefs import (
-    KNOWLEDGE_BRIEF_PREDICATE,
-    KnowledgeBriefClaimExpectationV1,
-    KnowledgeBriefClaimRefV1,
-    KnowledgeBriefQueryRefV1,
-    KnowledgeBriefValueV1,
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.query.definitions import (
-    parse_query_definition,
-    query_definition_digest,
-    query_definition_path,
-)
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
 
@@ -140,39 +125,6 @@ class ClaimInput(_StrictInputModel):
     dispositions: tuple[ClaimDispositionInput, ...] = ()
 
 
-class BriefExpectationInput(_StrictInputModel):
-    resolution: Literal["accepted"] = "accepted"
-    subject: str | None = None
-    claim_type: str | None = None
-
-
-class BriefClaimRefInput(_StrictInputModel):
-    claim_id: str
-    expect: BriefExpectationInput | None = None
-    statement_digest: str | None = None
-
-
-class BriefQueryRefInput(_StrictInputModel):
-    query_id: str
-    parameters: dict[str, object]
-    render_field: str
-    definition_digest: str | None = None
-
-
-class BriefInput(_StrictInputModel):
-    kind: Literal["brief"]
-    subject: str
-    purpose: str
-    brief_kind: Literal["brief", "guidance", "faq"]
-    prose: str
-    audience: Literal["agent", "human", "both"] | None = None
-    claim_refs: tuple[BriefClaimRefInput, ...] = ()
-    query_refs: tuple[BriefQueryRefInput, ...] = ()
-    rationale: str
-    claim_id: str | None = None
-    dispositions: tuple[ClaimDispositionInput, ...] = ()
-
-
 class ProcedureInput(_StrictInputModel):
     kind: Literal["procedure"]
     definition: dict[str, object]
@@ -190,7 +142,7 @@ class ProcedureInput(_StrictInputModel):
 
 
 AuthoringInputV1: TypeAlias = Annotated[
-    ClaimInput | BriefInput | ProcedureInput,
+    ClaimInput | ProcedureInput,
     Field(discriminator="kind"),
 ]
 
@@ -324,106 +276,6 @@ def lower_bound_claim_input(
     )
 
 
-def _brief_expectation(value: BriefExpectationInput | None) -> KnowledgeBriefClaimExpectationV1:
-    if value is None:
-        return KnowledgeBriefClaimExpectationV1()
-    return KnowledgeBriefClaimExpectationV1(
-        resolution=value.resolution,
-        subject=(
-            None
-            if value.subject is None
-            else _subject_address(value.subject, field_path="input.claim_refs[].expect.subject")
-        ),
-        claim_type=value.claim_type,
-    )
-
-
-def _brief_payload(value: BriefInput, *, tree: dict[str, bytes]) -> ClaimAuthoringPayloadV1:
-    claim_refs: list[KnowledgeBriefClaimRefV1] = []
-    for index, reference in enumerate(value.claim_refs):
-        path = claim_path(reference.claim_id)
-        content = tree.get(path)
-        if content is None:
-            raise AuthoringInputError(
-                "playbill.authoring.brief_claim_ref_unresolved",
-                f"input.claim_refs[{index}].claim_id",
-                "The referenced Claim is not accepted at the intent base.",
-                "Choose a Claim returned at this coordinate.",
-            )
-        claim = parse_claim(content, path=path)
-        resolved_digest = claim_statement_digest(claim.statement).tagged
-        if reference.statement_digest not in {None, resolved_digest}:
-            raise AuthoringInputError(
-                "playbill.authoring.brief_statement_digest_mismatch",
-                f"input.claim_refs[{index}].statement_digest",
-                "The expert statement digest does not match the intent base.",
-                "Remove the digest or replace it with the current Claim statement digest.",
-            )
-        claim_refs.append(
-            KnowledgeBriefClaimRefV1(
-                claim_id=reference.claim_id,
-                statement_digest=resolved_digest,
-                expect=_brief_expectation(reference.expect),
-            )
-        )
-    query_refs: list[KnowledgeBriefQueryRefV1] = []
-    for index, query_reference in enumerate(value.query_refs):
-        path = query_definition_path(query_reference.query_id)
-        content = tree.get(path)
-        if content is None:
-            raise AuthoringInputError(
-                "playbill.authoring.brief_query_ref_unresolved",
-                f"input.query_refs[{index}].query_id",
-                "The referenced QueryDefinition is not accepted at the intent base.",
-                "Choose a query returned at this coordinate.",
-            )
-        query = parse_query_definition(content, path=path)
-        resolved_digest = query_definition_digest(query).tagged
-        if query_reference.definition_digest not in {None, resolved_digest}:
-            raise AuthoringInputError(
-                "playbill.authoring.brief_definition_digest_mismatch",
-                f"input.query_refs[{index}].definition_digest",
-                "The expert definition digest does not match the intent base.",
-                "Remove the digest or replace it with the current QueryDefinition digest.",
-            )
-        query_refs.append(
-            KnowledgeBriefQueryRefV1(
-                query_id=query_reference.query_id,
-                definition_digest=resolved_digest,
-                parameters=query_reference.parameters,
-                render_field=query_reference.render_field,
-            )
-        )
-    brief_fields: dict[str, object] = {
-        "purpose": value.purpose,
-        "kind": value.brief_kind,
-        "prose": value.prose,
-        "claim_refs": tuple(
-            sorted(claim_refs, key=lambda item: item.model_dump_json().encode("utf-8"))
-        ),
-        "query_refs": tuple(
-            sorted(query_refs, key=lambda item: item.model_dump_json().encode("utf-8"))
-        ),
-    }
-    if value.audience is not None:
-        brief_fields["audience"] = value.audience
-    brief = KnowledgeBriefValueV1.model_validate(brief_fields)
-    return ClaimAuthoringPayloadV1(
-        statement=AuthoringClaimStatementV1(
-            subject=_subject_address(value.subject, field_path="input.subject"),
-            predicate=KNOWLEDGE_BRIEF_PREDICATE,
-            object=LiteralClaimObject(value=brief.model_dump(mode="json")),
-            role="normative",
-        ),
-        rationale=value.rationale,
-        source=SelfSourceBodyV1(
-            content_base64=base64.b64encode(value.prose.encode("utf-8")).decode("ascii")
-        ),
-        claim_ref=value.claim_id,
-        existing_claim_dispositions=_dispositions(value.dispositions),
-    )
-
-
 def _artifact_identity(value: str, *, field_path: str) -> ArtifactIdentity:
     kind, separator, name = value.partition(":")
     if not separator:
@@ -505,8 +357,7 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
 
     if isinstance(value, ClaimInput):
         return _claim_payload(value)
-    if isinstance(value, BriefInput):
-        return _brief_payload(value, tree=tree)
+    del tree
     contracts = tuple(
         sorted(
             (
@@ -557,10 +408,6 @@ __all__ = [
     "AuthoringInputV1",
     "AuthoringObjectInput",
     "AuthoringSourceInput",
-    "BriefClaimRefInput",
-    "BriefExpectationInput",
-    "BriefInput",
-    "BriefQueryRefInput",
     "CarriedContractInput",
     "CarriedContractReferenceInput",
     "ClaimDispositionInput",

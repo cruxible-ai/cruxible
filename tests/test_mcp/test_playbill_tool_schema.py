@@ -73,7 +73,6 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-flow-a",
         "claim-self-source",
         "procedure",
-        "brief",
     ]
     bind_schema = schemas["cruxible_playbill_authoring_bind"].inputSchema
     assert set(bind_schema["properties"]) == {
@@ -89,5 +88,9 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
 def test_search_schema_exposes_modes_but_not_access_or_digest_plumbing() -> None:
     schema = _schemas()["cruxible_playbill_search"].inputSchema
     assert schema["properties"]["mode"]["enum"] == ["search", "list", "orient"]
+    kind_schema = next(
+        member for member in schema["properties"]["kinds"]["anyOf"] if member.get("type") == "array"
+    )
+    assert kind_schema["items"]["enum"] == ["claim", "procedure", "demand"]
     assert "access_profile" not in schema["properties"]
     assert "selection_basis_digest" not in schema["properties"]

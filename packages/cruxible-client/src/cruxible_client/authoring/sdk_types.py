@@ -131,12 +131,6 @@ class Disposition(str, Enum):
     UNSURE = "unsure"
 
 
-class BriefKind(str, Enum):
-    BRIEF = "brief"
-    GUIDANCE = "guidance"
-    FAQ = "faq"
-
-
 class Audience(str, Enum):
     AGENT = "agent"
     HUMAN = "human"
@@ -210,18 +204,6 @@ class AccessProfile:
             "permitted_access_classes": list(self.permitted_access_classes),
             "disclose_restricted_existence": self.disclose_restricted_existence,
         }
-
-
-@dataclass(frozen=True)
-class BriefClaimExpectation:
-    subject: str | SubjectRef | None
-    claim_type: str | ClaimTypeRef | None
-
-
-@dataclass(frozen=True)
-class BriefQueryRender:
-    parameters: dict[str, CanonicalValue]
-    render_field: str
 
 
 @dataclass(frozen=True)
@@ -305,9 +287,6 @@ __all__ = [
     "AccessProfile",
     "ActivationPolicy",
     "Audience",
-    "BriefClaimExpectation",
-    "BriefKind",
-    "BriefQueryRender",
     "CallSite",
     "CanonicalValue",
     "CapabilityNotServed",

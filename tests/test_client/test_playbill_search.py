@@ -47,7 +47,7 @@ def test_client_sends_only_search_inputs_and_parses_the_frozen_result() -> None:
         "inst",
         mode="search",
         query="release",
-        kinds=("procedure", "brief", "brief"),
+        kinds=("procedure", "claim", "claim"),
         evaluation_time="2026-08-21T14:00:00Z",
     )
 
@@ -55,6 +55,6 @@ def test_client_sends_only_search_inputs_and_parses_the_frozen_result() -> None:
     assert captured[0].url.path == "/api/v1/inst/playbill/search"
     payload: dict[str, Any] = json.loads(captured[0].content)
     assert payload["query"] == "release"
-    assert payload["kinds"] == ["brief", "procedure"]
+    assert payload["kinds"] == ["claim", "procedure"]
     assert "access_profile" not in payload
     assert "selection_basis_digest" not in payload

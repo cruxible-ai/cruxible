@@ -70,9 +70,8 @@ from recipe import bootstrap, seed, export_arm_surface, build_arm, run_turn, run
 `subjects/`, `claims/`, `query-definitions/`, and `procedures/`, plus a `bodies/`
 subtree that is stored in CAS before anything cites it. It seeds three work-item
 Subjects, one ClaimType, three status Claims — two of them citing spans of the
-committed foreign corpus through PC-G-H1 foreign-source selections — one
-ordinary `knowledge.brief` Claim, one named query, and one owner-carried
-query-only Procedure.
+committed foreign corpus through PC-G-H1 foreign-source selections — one named
+query, and one owner-carried query-only Procedure.
 
 `bodies/` mirrors the working tree the Claims were authored against, so
 `bodies/corpus/handbook.md` becomes `corpus/handbook.md` in every arm's
@@ -82,14 +81,13 @@ path through the named non-lossy `playbill-coverage-path-identity-v1`
 normalizer. Nothing on either side infers it; the two declarations agree because
 they were written to.
 
-The bundle plans as **four** proposals:
+The bundle plans as **three** proposals:
 
 ```text
 1. claims  [playbill_propose_claims]  3 Claim(s) and every dependency they carry
      settle as one generation through the batch operation
-2. claim_input:...knowledge.brief...  [playbill_authoring_submit]
-3. query_definition:project.work_items  [playbill_propose_query_definition]
-4. procedure:project.work_item.digest  [playbill_authoring_submit]
+2. query_definition:project.work_items  [playbill_propose_query_definition]
+3. procedure:project.work_item.digest  [playbill_authoring_submit]
 carried  claim-types/project.work_item.status.json  admitted by claims/wi-101-status.json
 carried  subjects/wi-101.json  admitted by claims/wi-101-status.json
 carried  subjects/wi-102.json  admitted by claims/wi-102-status.json
@@ -98,8 +96,8 @@ carried  subjects/wi-103.json  admitted by claims/wi-103-status.json
 
 The ClaimType and all three Subjects cost no proposal at all, because the Claim
 authorings declare them as dependency closures and the batch admits them in the
-same generation. The Brief and Procedure use one existing coordinator intent
-each; the QueryDefinition uses its singular propose operation. Run
+same generation. The Procedure uses one existing coordinator intent; the
+QueryDefinition uses its singular propose operation. Run
 `cruxible playbill seed apply seed-example --name NAME --plan` to see it; the
 plan is offline and reaches no daemon. `NAME` is a human run label. Applying a
 direct-propose group uses a machine-owned `seed-<digest>` proposal ref derived

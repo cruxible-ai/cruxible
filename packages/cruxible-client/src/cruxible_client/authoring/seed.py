@@ -74,7 +74,7 @@ from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cruxible_client.authoring.inputs import BriefInput, ClaimInput, ProcedureInput
+from cruxible_client.authoring.inputs import ClaimInput, ProcedureInput
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimStatement
@@ -331,9 +331,6 @@ def _identity_of(path: str, kind: SeedEntryKind, payload: Mapping[str, Any]) -> 
         if kind == "procedure":
             procedure = ProcedureInput.model_validate(payload)
             return str(procedure.definition["name"])
-        if payload.get("kind") == "brief":
-            brief = BriefInput.model_validate(payload)
-            return f"{brief.subject}#knowledge.brief:{brief.purpose}"
         if payload.get("kind") == "claim":
             claim = ClaimInput.model_validate(payload)
             return f"{claim.subject}#{claim.predicate}"
@@ -476,7 +473,7 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
             )
             continue
         if entry.kind == "claim":
-            if entry.payload.get("kind") in {"brief", "claim"}:
+            if entry.payload.get("kind") == "claim":
                 input_claims.append(entry)
             continue
         grouped[entry.kind].append(
@@ -506,7 +503,7 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
             tuple(
                 item.path
                 for item in entries
-                if item.kind == "claim" and item.payload.get("kind") not in {"brief", "claim"}
+                if item.kind == "claim" and item.payload.get("kind") != "claim"
             )
         )
     else:

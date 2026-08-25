@@ -30,11 +30,11 @@ SEARCH_RESULT_DOMAIN = "playbill-search-result-v1"
 SEARCH_CURSOR_DOMAIN = "playbill-search-cursor-v1"
 
 SearchMode = Literal["search", "list", "orient"]
-SearchKind = Literal["claim", "brief", "procedure", "demand"]
+SearchKind = Literal["claim", "procedure", "demand"]
 SearchStatus = Literal["accepted", "conflicted", "overturned", "refused", "retired"]
 SearchKindAvailability = Literal["installed", "not_installed"]
 
-SEARCH_KINDS: tuple[SearchKind, ...] = ("brief", "claim", "demand", "procedure")
+SEARCH_KINDS: tuple[SearchKind, ...] = ("claim", "demand", "procedure")
 SEARCH_STATUSES: tuple[SearchStatus, ...] = (
     "accepted",
     "conflicted",
@@ -144,25 +144,7 @@ class PlaybillSearchRowV1(_StrictSearchModel):
     predicate: str | None = None
     title: str
     summary: str | None = None
-    healthy: bool | None = None
     match_basis: tuple[DiscoveryMatchBasisV1, ...] = ()
-    brief_health_receipt_digest: str | None = None
-
-    @field_validator("brief_health_receipt_digest")
-    @classmethod
-    def _health_digest(cls, value: str | None) -> str | None:
-        if value is not None:
-            Sha256Value.from_tagged(value)
-        return value
-
-    @model_validator(mode="after")
-    def _brief_shape(self) -> "PlaybillSearchRowV1":
-        is_brief = self.kind == "brief"
-        if is_brief != (self.healthy is not None):
-            raise ValueError("exactly Brief rows carry health")
-        if is_brief != (self.brief_health_receipt_digest is not None):
-            raise ValueError("exactly Brief rows carry a health receipt digest")
-        return self
 
 
 class PlaybillSearchCountV1(_StrictSearchModel):
@@ -188,7 +170,6 @@ class PlaybillSearchOrientationV1(_StrictSearchModel):
     generation: int = Field(ge=0)
     counts_by_kind: tuple[PlaybillSearchCountV1, ...]
     counts_by_status: tuple[PlaybillSearchCountV1, ...]
-    unhealthy_brief_count: int = Field(ge=0)
     conflicted_count: int = Field(ge=0)
     available_kinds: tuple[SearchKind, ...]
     kind_availability: tuple[PlaybillSearchKindAvailabilityV1, ...]

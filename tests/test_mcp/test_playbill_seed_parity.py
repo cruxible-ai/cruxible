@@ -31,7 +31,7 @@ def test_seed_plan_is_offline_and_matches_the_core_planner(
         proposal_name="mcp-example",
     )
 
-    assert len(result.plan.groups) == 4
+    assert len(result.plan.groups) == 3
     assert result.plan_digest in result.rendered[0]
     assert result.plan.group_ids[0] == "claims"
 

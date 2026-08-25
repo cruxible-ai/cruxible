@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from cruxible_client import (
     ActivationPolicy,
-    Audience,
-    BriefClaimExpectation,
-    BriefKind,
     Cardinality,
     ClaimObjectKind,
     ClaimRef,
@@ -22,11 +20,17 @@ from cruxible_client import (
     ReferentSensitivity,
     SubjectRef,
 )
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactLifecycle
+from cruxible_client.contracts.artifacts import (
+    ArtifactAuthority,
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactPin,
+)
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import PreflightResultV1
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
@@ -40,6 +44,15 @@ from cruxible_client.contracts.procedures.models import (
     ProjectNodeV3,
     StateTapNodeV3,
     TransformNodeV3,
+)
+from cruxible_client.contracts.query.definitions import QueryDefinitionV1, QueryEvaluationPolicyV1
+from cruxible_client.contracts.query.grammar import (
+    QueryBudgetsV1,
+    QueryClaimPresenceFilterV1,
+    QueryEntryV1,
+    QueryProjectionFieldV1,
+    QueryProjectionV1,
+    QuerySubjectFieldRefV1,
 )
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
@@ -243,7 +256,6 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
         ),
         authority=AUTHORITY,
         pins=(),
-        slot_policy=None,
         evidence_freshness=None,
     )
 
@@ -311,7 +323,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         ),
         authority=AUTHORITY,
         pins=(),
-        slot_policy=None,
         evidence_freshness=None,
     )
     initial = pb.claim(
@@ -542,7 +553,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         ),
         authority=AUTHORITY,
         pins=(),
-        slot_policy=None,
         evidence_freshness=Duration.days(count=90),
     )
     kev = pb.claim(
@@ -668,29 +678,90 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
 
     claim_rows = pb.list(kinds=("claim",), statuses=("accepted",)).rows
     assert len([row for row in claim_rows if row.get("predicate") == triage_type.predicate]) == 6
-    brief = pb.brief(
-        subject=SubjectRef(policy_subject.address, pb.coordinate),
-        purpose="Summarize the governed vulnerability response deadlines.",
-        kind=BriefKind.GUIDANCE,
-        prose="KEV findings use the governed emergency deadline.",
-        rationale="Give agents a concise governed entry point to the policy.",
-        audience=Audience.AGENT,
-        claims={
-            ClaimRef(kev_identity, pb.coordinate): BriefClaimExpectation(
-                subject=SubjectRef(policy_subject.address, pb.coordinate),
-                claim_type=ClaimTypeRef(triage_type.predicate, pb.coordinate),
-            )
-        },
-        queries={},
+    guidance_subject = pb.subject(
+        subject="secops.policy/response-guidance",
+        authority=AUTHORITY,
+        pins=(),
+        lifecycle=ArtifactLifecycle(),
+    )
+    guidance = pb.claim(
+        subject=guidance_subject.address,
+        predicate=ClaimTypeRef(triage_type.predicate, pb.coordinate),
+        value={"deadline_hours": 48, "fact": "governed_emergency_deadline"},
+        role=ClaimRole.NORMATIVE,
+        rationale="Expose the governed emergency deadline as an ordinary sourced Claim.",
+        supported_by=pb.file("corpus/vuln-response-runbook.md").anchor("forty-eight hours"),
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
         revises=None,
         dispositions={},
+        publish_to=None,
+        subject_definition=guidance_subject,
+        claim_type_definition=None,
     ).prepare()
-    assert not brief.refused, brief.diagnostics
-    brief.submit()
-    brief_proposal = brief.status().proposal_id
-    assert brief_proposal is not None
-    _approve_and_activate(http, instance_id, private_key_path, brief_proposal)
+    assert not guidance.refused, guidance.diagnostics
+    guidance.submit()
+    guidance_proposal = guidance.status().proposal_id
+    assert guidance_proposal is not None
+    _approve_and_activate(http, instance_id, private_key_path, guidance_proposal)
     pb.refresh()
+
+    query = QueryDefinitionV1(
+        identity=ArtifactIdentity(kind="QueryDefinition", name="secops.policy.guidance"),
+        description="List policy subjects that carry governed response decisions.",
+        entry=QueryEntryV1(binding="policy", subject_kinds=("secops.policy",)),
+        where=QueryClaimPresenceFilterV1(binding="policy", predicate=triage_type.predicate),
+        result_binding="policy",
+        result_shape="subject",
+        result_cardinality="many",
+        dedupe="subject",
+        projection=QueryProjectionV1(
+            fields=(
+                QueryProjectionFieldV1(
+                    name="policy_id",
+                    value=QuerySubjectFieldRefV1(binding="policy", field="subject_id"),
+                ),
+            )
+        ),
+        evaluation_policy=QueryEvaluationPolicyV1(
+            visible_verdicts=("supported",),
+            visible_currency=("current",),
+            conflict_behavior="surface_conflicts",
+        ),
+        default_budgets=QueryBudgetsV1(max_results=10, max_traversal_depth=0),
+        maximum_budgets=QueryBudgetsV1(max_results=50, max_traversal_depth=0),
+        authority=AUTHORITY,
+        pins=(
+            ArtifactPin(
+                role="claim-type",
+                target=triage_type.definition.identity,
+                artifact_digest=claim_type_digest(triage_type.definition).tagged,
+            ),
+        ),
+    )
+    proposed_query = transport.propose_playbill_query_definition(
+        instance_id,
+        query=query.model_dump(mode="json"),
+        proposal_name="sdk-demo-response-guidance",
+    )
+    query_proposal_id = proposed_query.proposal["admission"]["proposal_id"]
+    assert isinstance(query_proposal_id, str)
+    _approve_and_activate(http, instance_id, private_key_path, query_proposal_id)
+    pb.refresh()
+    queried = transport.run_playbill_query(
+        instance_id,
+        query.identity.name,
+        evaluation_time=datetime.now(UTC).isoformat(),
+    )
+    assert queried.result["verdict"] == "completed"
+    assert "response-guidance" in {
+        field["value"]
+        for row in queried.result["rows"]
+        for field in row["fields"]
+        if field["name"] == "policy_id"
+    }
 
     publication_subject = pb.subject(
         subject="secops.policy/published-guidance",

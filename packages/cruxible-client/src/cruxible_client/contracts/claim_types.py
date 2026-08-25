@@ -50,21 +50,6 @@ class _StrictClaimTypeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-class ClaimSubjectScopeV1(_StrictClaimTypeModel):
-    tag: Literal["playbill-claim-subject-scope-v1"] = "playbill-claim-subject-scope-v1"
-    kind: Literal["any_existing_subject"] = "any_existing_subject"
-
-
-class ClaimSlotPolicyV1(_StrictClaimTypeModel):
-    tag: Literal["playbill-claim-slot-policy-v1"] = "playbill-claim-slot-policy-v1"
-    kind: Literal["literal_field_digest"] = "literal_field_digest"
-    json_pointer: Literal["/purpose"] = "/purpose"
-    digest_domain: Literal["playbill-knowledge-brief-purpose-v1"] = (
-        "playbill-knowledge-brief-purpose-v1"
-    )
-    per_slot_cardinality: Literal[1] = 1
-
-
 class ClaimFreshnessDurationV1(_StrictClaimTypeModel):
     tag: Literal["playbill-duration-v1"] = "playbill-duration-v1"
     microseconds: int = Field(ge=0)
@@ -84,7 +69,6 @@ class ClaimEvidenceFreshnessV1(_StrictClaimTypeModel):
 class ClaimType(_StrictClaimTypeModel):
     artifact_format: Literal[
         "playbill-claim-type-v1",
-        "playbill-claim-type-v2",
         "playbill-claim-type-v3",
     ] = "playbill-claim-type-v1"
     identity: ArtifactIdentity
@@ -104,8 +88,10 @@ class ClaimType(_StrictClaimTypeModel):
     authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
-    subject_scope: ClaimSubjectScopeV1 | None = None
-    slot_policy: ClaimSlotPolicyV1 | None = None
+    # Existing v3 envelopes committed these null placeholders. They remain
+    # null-only compatibility bytes, never supported authoring capabilities.
+    subject_scope: None = None
+    slot_policy: None = None
     evidence_freshness: ClaimEvidenceFreshnessV1 | None = None
 
     @model_serializer(mode="wrap")
@@ -114,8 +100,6 @@ class ClaimType(_StrictClaimTypeModel):
         if self.artifact_format == "playbill-claim-type-v1":
             payload.pop("subject_scope", None)
             payload.pop("slot_policy", None)
-            payload.pop("evidence_freshness", None)
-        elif self.artifact_format == "playbill-claim-type-v2":
             payload.pop("evidence_freshness", None)
         return payload
 
@@ -147,32 +131,14 @@ class ClaimType(_StrictClaimTypeModel):
         # Reuse the deliberately policy-free PC-A1 validator so the final wire
         # cannot drift from the reviewed structural surface.
         if self.artifact_format == "playbill-claim-type-v1":
-            if (
-                self.subject_scope is not None
-                or self.slot_policy is not None
-                or self.evidence_freshness is not None
-            ):
-                raise ValueError("ClaimType v1 cannot carry v2 subject or slot policy")
-            structural_subject_kinds = self.allowed_subject_kinds
-        elif self.artifact_format == "playbill-claim-type-v2":
-            if self.subject_scope is None or self.slot_policy is None:
-                raise ValueError("ClaimType v2 requires subject-scope and slot-policy contracts")
             if self.evidence_freshness is not None:
-                raise ValueError("ClaimType v2 cannot carry v3 evidence freshness")
-            if self.allowed_subject_kinds:
-                raise ValueError("a v2 any-subject scope replaces finite allowed_subject_kinds")
-            if self.cardinality != "many":
-                raise ValueError("a slotted ClaimType v2 has many slots")
-            structural_subject_kinds = ("semantic.subject",)
+                raise ValueError("ClaimType v1 cannot carry v3 evidence freshness")
         else:
-            if self.subject_scope is not None or self.slot_policy is not None:
-                raise ValueError("ClaimType v3 retains v1 finite subject structure")
             if self.evidence_freshness is None:
                 raise ValueError("ClaimType v3 requires evidence freshness")
-            structural_subject_kinds = self.allowed_subject_kinds
         ClaimTypeStructure(
             predicate=self.predicate,
-            allowed_subject_kinds=structural_subject_kinds,
+            allowed_subject_kinds=self.allowed_subject_kinds,
             object_kind=self.object_kind,
             literal_schema=self.literal_schema,
             allowed_object_subject_kinds=self.allowed_object_subject_kinds,
@@ -186,14 +152,9 @@ class ClaimType(_StrictClaimTypeModel):
 
     @property
     def structure(self) -> ClaimTypeStructure:
-        subject_kinds = (
-            ("semantic.subject",)
-            if self.artifact_format == "playbill-claim-type-v2"
-            else self.allowed_subject_kinds
-        )
         return ClaimTypeStructure(
             predicate=self.predicate,
-            allowed_subject_kinds=subject_kinds,
+            allowed_subject_kinds=self.allowed_subject_kinds,
             object_kind=self.object_kind,
             literal_schema=self.literal_schema,
             allowed_object_subject_kinds=self.allowed_object_subject_kinds,
@@ -226,8 +187,6 @@ def render_claim_type(claim_type: ClaimType) -> bytes:
         payload.pop("subject_scope", None)
         payload.pop("slot_policy", None)
         payload.pop("evidence_freshness", None)
-    elif claim_type.artifact_format == "playbill-claim-type-v2":
-        payload.pop("evidence_freshness", None)
     return canonical_bytes(payload) + b"\n"
 
 
@@ -238,7 +197,6 @@ def parse_claim_type(content: bytes, *, path: str) -> ClaimType:
         raise ClaimTypeFormatError("ClaimType is not strict JSON") from exc
     if not isinstance(payload, dict) or payload.get("artifact_format") not in {
         "playbill-claim-type-v1",
-        "playbill-claim-type-v2",
         "playbill-claim-type-v3",
     }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
@@ -270,14 +228,6 @@ def _claim_type_digest_v1(claim_type: ClaimType) -> ArtifactDigest:
     )
 
 
-def _claim_type_digest_v2(claim_type: ClaimType) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        claim_type.model_dump(mode="json"),
-    )
-
-
 def _claim_type_digest_v3(claim_type: ClaimType) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
@@ -288,7 +238,6 @@ def _claim_type_digest_v3(claim_type: ClaimType) -> ArtifactDigest:
 
 CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
     "playbill-claim-type-v1": _claim_type_digest_v1,
-    "playbill-claim-type-v2": _claim_type_digest_v2,
     "playbill-claim-type-v3": _claim_type_digest_v3,
 }
 
@@ -298,30 +247,13 @@ def claim_type_digest(claim_type: ClaimType) -> ArtifactDigest:
 
 
 def claim_type_accepts_subject(claim_type: ClaimType, subject_kind: str) -> bool:
-    if claim_type.artifact_format == "playbill-claim-type-v2":
-        return (
-            claim_type.subject_scope is not None
-            and claim_type.subject_scope.kind == "any_existing_subject"
-        )
     return subject_kind in claim_type.allowed_subject_kinds
 
 
 def claim_type_projection_structure(claim_type: ClaimType) -> dict[str, object]:
-    """Project v2 structure without treating JSON-Schema `$` keys as fact wrappers."""
+    """Project the policy-free finite-subject structure shared by v1 and v3."""
 
-    structure = claim_type.structure.model_dump(mode="json")
-    if claim_type.artifact_format != "playbill-claim-type-v2":
-        return structure
-    structure["literal_schema"] = canonical_bytes(claim_type.literal_schema or {}).decode("utf-8")
-    structure["subject_scope"] = (
-        None
-        if claim_type.subject_scope is None
-        else claim_type.subject_scope.model_dump(mode="json")
-    )
-    structure["slot_policy"] = (
-        None if claim_type.slot_policy is None else claim_type.slot_policy.model_dump(mode="json")
-    )
-    return structure
+    return claim_type.structure.model_dump(mode="json")
 
 
 class AcceptedClaimType(_StrictClaimTypeModel):
@@ -390,21 +322,6 @@ def evaluate_claim_type_law(
     accepted_artifacts: Mapping[str, tuple[ArtifactIdentity, str]] | None = None,
 ) -> ClaimTypeLawResult:
     """Evaluate exact path, lifecycle, authority, and digest-pinned dependencies."""
-
-    if claim_type.artifact_format == "playbill-claim-type-v2":
-        from cruxible_client.contracts.knowledge_briefs import KNOWLEDGE_BRIEF_CLAIM_TYPE
-
-        if claim_type != KNOWLEDGE_BRIEF_CLAIM_TYPE:
-            return ClaimTypeLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.claim_type.v2_profile_unregistered",
-                        "ClaimType v2 is reserved for the exact built-in knowledge.brief profile.",
-                        path=path,
-                    ),
-                ),
-            )
 
     try:
         validate_claim_type_path(claim_type, path)
@@ -549,8 +466,6 @@ __all__ = [
     "ClaimEvidenceFreshnessV1",
     "ClaimFreshnessDurationV1",
     "ClaimTypeFreshnessHorizonInvalid",
-    "ClaimSlotPolicyV1",
-    "ClaimSubjectScopeV1",
     "ClaimTypeFormatError",
     "ClaimTypeLawResult",
     "claim_type_digest",

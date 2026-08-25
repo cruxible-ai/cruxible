@@ -1124,7 +1124,7 @@ class CruxibleClient:
         *,
         mode: Literal["search", "list", "orient"],
         query: str | None = None,
-        kinds: Sequence[str] = ("brief", "claim", "demand", "procedure"),
+        kinds: Sequence[str] = ("claim", "demand", "procedure"),
         subject: Mapping[str, Any] | None = None,
         statuses: Sequence[str] = (),
         cursor: Mapping[str, Any] | None = None,

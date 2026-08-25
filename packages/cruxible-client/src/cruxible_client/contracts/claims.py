@@ -1178,27 +1178,6 @@ def evaluate_claim_law(
                 "The Claim literal fails its exact ClaimType schema.",
                 path=path,
             )
-        if statement.predicate == "knowledge.brief":
-            from cruxible_client.contracts.knowledge_briefs import (
-                KnowledgeBriefFormatError,
-                knowledge_brief_purpose_digest,
-                parse_knowledge_brief_value,
-            )
-
-            try:
-                brief = parse_knowledge_brief_value(statement.object.value)
-            except KnowledgeBriefFormatError:
-                return _diagnostic(
-                    "playbill.claim.knowledge_brief_value_invalid",
-                    "The Brief literal fails its frozen profile law.",
-                    path=path,
-                )
-            if statement.qualifier != knowledge_brief_purpose_digest(brief.purpose):
-                return _diagnostic(
-                    "playbill.claim.knowledge_brief_slot_mismatch",
-                    "The Brief statement qualifier differs from its purpose slot digest.",
-                    path=path,
-                )
         if claim.backing.referent_context.object_content_digest is not None:
             return _diagnostic(
                 "playbill.claim.object_context_unexpected",

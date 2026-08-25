@@ -65,8 +65,6 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     resolution_policy: dict[str, object]
     authority: ArtifactAuthority
     pins: tuple[dict[str, object], ...] = ()
-    subject_scope: dict[str, object] | None = None
-    slot_policy: dict[str, object] | None = None
     evidence_freshness: ClaimEvidenceFreshnessV1 | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -120,9 +118,7 @@ def lower_claim_type_input(
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
     payload["artifact_format"] = (
-        "playbill-claim-type-v2"
-        if value.subject_scope is not None or value.slot_policy is not None
-        else "playbill-claim-type-v3"
+        "playbill-claim-type-v3"
         if value.evidence_freshness is not None
         else "playbill-claim-type-v1"
     )

@@ -39,13 +39,11 @@ def test_cli_search_and_orient_call_the_same_wire(monkeypatch) -> None:  # type:
                     else {
                         "generation": 1,
                         "counts_by_kind": [
-                            {"key": "brief", "count": 2},
                             {"key": "claim", "count": 3},
                             {"key": "demand", "count": 0},
                             {"key": "procedure", "count": 1},
                         ],
                         "kind_availability": [{"kind": "demand", "availability": "not_installed"}],
-                        "unhealthy_brief_count": 1,
                         "conflicted_count": 2,
                     }
                 ),
@@ -63,7 +61,7 @@ def test_cli_search_and_orient_call_the_same_wire(monkeypatch) -> None:  # type:
         "playbill",
     ]
     runner = CliRunner()
-    searched = runner.invoke(cli, [*base, "search", "release", "--kind", "brief", "--json"])
+    searched = runner.invoke(cli, [*base, "search", "release", "--kind", "claim", "--json"])
     oriented = runner.invoke(cli, [*base, "orient"])
     listed = runner.invoke(cli, [*base, "list"])
 
@@ -76,9 +74,6 @@ def test_cli_search_and_orient_call_the_same_wire(monkeypatch) -> None:  # type:
         ("list", None),
         ("orient", None),
     ]
-    header = (
-        "Playbill generation=1 claim=3 brief=2 procedure=1 "
-        "demand=not_installed unhealthy=1 conflicted=2"
-    )
+    header = "Playbill generation=1 claim=3 procedure=1 demand=not_installed conflicted=2"
     assert oriented.output.strip() == header
     assert listed.output.strip() == header

@@ -118,8 +118,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a durable machine-owned intent before iterating on a governed write."
     ),
     "cruxible_playbill_authoring_example": (
-        "Use when you need a model-constructed ClaimType, Claim, Brief, or Procedure input "
-        "template."
+        "Use when you need a model-constructed ClaimType, Claim, or Procedure input template."
     ),
     "cruxible_playbill_authoring_get": (
         "Use when you need the current durable content and state of one authoring intent."
@@ -197,7 +196,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you do not yet know which interface or Subject names the state you want."
     ),
     "cruxible_playbill_search": (
-        "Use search mode to find accepted Claims, Briefs, Procedures, or installed demands; "
+        "Use search mode to find accepted Claims, Procedures, or installed demands; "
         "list mode for deterministic pagination; orient mode for counts and exact follow-ups."
     ),
     "cruxible_playbill_expand": (

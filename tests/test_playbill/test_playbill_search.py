@@ -7,13 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.authoring.models import AuthoringExistingClaimDispositionV1
 from cruxible_client.contracts.claims import claim_statement_digest
-from cruxible_client.contracts.knowledge_briefs import KnowledgeBriefValueV1
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
-from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.search import PlaybillSearchBudgetsV1, PlaybillSearchRequestV1
 from cruxible_core.service.playbill_claims import (
     ExistingStatementHandoffV1,
@@ -34,7 +30,6 @@ from tests.test_playbill._knowledge_loop_support import (
 )
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
-from tests.test_playbill.test_knowledge_briefs import _activate, _brief_payload
 
 EVALUATION_TIME = datetime(2026, 8, 21, 14, tzinfo=UTC)
 ACCESS = CoverageAccessProfileV1(profile_id="search-test")
@@ -50,70 +45,34 @@ def _request(instance, *, mode: str, **values: object) -> PlaybillSearchRequestV
     )
 
 
-def _accept_brief(
-    instance,
-    owner,
-    coordinator: AuthoringIntentCoordinator,
-    actor: AuthenticatedActor,
-    *,
-    purpose: str,
-    timestamp: str,
-) -> str:  # type: ignore[no-untyped-def]
-    intent = coordinator.create(
-        actor=actor,
-        payload=_brief_payload(
-            KnowledgeBriefValueV1(
-                purpose=purpose,
-                kind="guidance",
-                prose=f"Guidance for {purpose}",
-            )
-        ),
-        canonical_timestamp=timestamp,
-    ).intent
-    _activate(instance, owner, coordinator.submit(intent.intent_id, actor=actor))
-    return intent.semantic_identity
-
-
 def test_search_and_list_are_deterministic_cursor_bound_pages(tmp_path: Path) -> None:
-    instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
-    coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-    first_id = _accept_brief(
-        instance,
-        owner,
-        coordinator,
-        actor,
-        purpose="How should a release be prepared?",
-        timestamp="2026-08-21T12:00:00.000000Z",
+    instance, _owner = seed_claims(tmp_path)
+    seeded = tuple(_claim_from_view(view) for view in service_list_playbill_claims(instance).claims)
+    first_id = next(
+        claim.identity.name
+        for claim in seeded
+        if claim.statement.subject.artifact_path.endswith("/wi-42.yaml")
     )
-    second_id = _accept_brief(
-        instance,
-        owner,
-        coordinator,
-        actor,
-        purpose="Who approves the release?",
-        timestamp="2026-08-21T12:00:01.000000Z",
-    )
+    second_id = next(claim.identity.name for claim in seeded if claim.identity.name != first_id)
 
     search = service_search_playbill(
         instance,
         request=_request(
             instance,
             mode="search",
-            query="PREPARED",
-            kinds=("brief",),
+            query="WI-42",
+            kinds=("claim",),
         ),
     )
     assert [row.identity for row in search.rows] == [first_id]
     assert [basis.basis for basis in search.rows[0].match_basis] == ["lexical"]
-    assert search.rows[0].healthy is True
-    assert search.rows[0].brief_health_receipt_digest is not None
+    assert "healthy" not in search.rows[0].model_dump(mode="json")
+    assert "brief_health_receipt_digest" not in search.rows[0].model_dump(mode="json")
 
     first_request = _request(
         instance,
         mode="list",
-        kinds=("brief",),
+        kinds=("claim",),
         budgets=PlaybillSearchBudgetsV1(max_rows=1),
     )
     first = service_search_playbill(instance, request=first_request)
@@ -134,8 +93,8 @@ def test_search_and_list_are_deterministic_cursor_bound_pages(tmp_path: Path) ->
         request=_request(instance, mode="list"),
     )
     assert [row.kind for row in all_kinds.rows if row.identity in {first_id, second_id}] == [
-        "brief",
-        "brief",
+        "claim",
+        "claim",
     ]
 
 
@@ -151,7 +110,6 @@ def test_orient_has_no_arbitrary_rows_and_names_demand_as_not_installed(
     assert result.orientation is not None
     availability = {item.kind: item.availability for item in result.orientation.kind_availability}
     assert availability == {
-        "brief": "installed",
         "claim": "installed",
         "demand": "not_installed",
         "procedure": "installed",
@@ -228,105 +186,3 @@ def test_orient_list_and_next_share_the_same_structural_claim_slot_classifier(
     )
     conflicts = tuple(item for item in next_result.items if item.reason == "claim_conflicted")
     assert len(conflicts) == int(bool(expected_conflicted_count))
-
-
-def test_duplicate_brief_statements_remain_visible_without_a_phantom_conflict(
-    tmp_path: Path,
-) -> None:
-    instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
-    coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-    value = KnowledgeBriefValueV1(
-        purpose="What release rule applies?",
-        kind="guidance",
-        prose="Use checklist A.",
-    )
-    first = coordinator.create(
-        actor=actor,
-        payload=_brief_payload(value),
-        canonical_timestamp="2026-08-21T12:00:00.000000Z",
-    ).intent
-    _activate(instance, owner, coordinator.submit(first.intent_id, actor=actor))
-    second = coordinator.create(
-        actor=actor,
-        payload=_brief_payload(
-            value,
-            dispositions=(
-                AuthoringExistingClaimDispositionV1(
-                    claim_id=first.semantic_identity,
-                    disposition="support",
-                ),
-            ),
-        ).model_copy(update={"rationale": "Independently confirm the same governed guidance."}),
-        canonical_timestamp="2026-08-21T12:00:01.000000Z",
-    ).intent
-    _activate(instance, owner, coordinator.submit(second.intent_id, actor=actor))
-
-    listed = service_search_playbill(
-        instance,
-        request=_request(instance, mode="list", kinds=("brief",)),
-    )
-
-    assert {row.identity for row in listed.rows} == {
-        first.semantic_identity,
-        second.semantic_identity,
-    }
-    assert {row.status for row in listed.rows} == {"accepted"}
-    orientation = service_search_playbill(
-        instance,
-        request=_request(instance, mode="orient", kinds=("brief",)),
-    ).orientation
-    assert orientation is not None
-    assert orientation.conflicted_count == 0
-
-
-def test_different_same_purpose_briefs_remain_conflicted_under_many_cardinality(
-    tmp_path: Path,
-) -> None:
-    instance, owner = initialize_local(tmp_path)
-    _seed_claim_surface(instance, owner)
-    coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-    first_value = KnowledgeBriefValueV1(
-        purpose="What release rule applies?",
-        kind="guidance",
-        prose="Use checklist A.",
-    )
-    first = coordinator.create(
-        actor=actor,
-        payload=_brief_payload(first_value),
-        canonical_timestamp="2026-08-21T12:00:00.000000Z",
-    ).intent
-    _activate(instance, owner, coordinator.submit(first.intent_id, actor=actor))
-    second = coordinator.create(
-        actor=actor,
-        payload=_brief_payload(
-            first_value.model_copy(update={"prose": "Use checklist B instead."}),
-            dispositions=(
-                AuthoringExistingClaimDispositionV1(
-                    claim_id=first.semantic_identity,
-                    disposition="contradict",
-                ),
-            ),
-        ),
-        canonical_timestamp="2026-08-21T12:00:01.000000Z",
-    ).intent
-    _activate(instance, owner, coordinator.submit(second.intent_id, actor=actor))
-
-    listed = service_search_playbill(
-        instance,
-        request=_request(instance, mode="list", kinds=("brief",)),
-    )
-
-    assert {row.identity for row in listed.rows} == {
-        first.semantic_identity,
-        second.semantic_identity,
-    }
-    assert {row.status for row in listed.rows} == {"conflicted"}
-    orientation = service_search_playbill(
-        instance,
-        request=_request(instance, mode="orient", kinds=("brief",)),
-    ).orientation
-    assert orientation is not None
-    assert orientation.conflicted_count == 2

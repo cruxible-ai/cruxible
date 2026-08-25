@@ -1,4 +1,4 @@
-"""Deterministic search/list/orient over accepted Claims, Briefs, and Procedures."""
+"""Deterministic search/list/orient over accepted Claims and Procedures."""
 
 from __future__ import annotations
 
@@ -9,23 +9,12 @@ from typing import Protocol
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
-    ClaimArtifactV2,
-    LiteralClaimObject,
     claim_path,
-    claim_statement_digest,
 )
 from cruxible_client.contracts.discovery import DiscoveryMatchBasisV1
 from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
-from cruxible_client.contracts.knowledge_briefs import (
-    KNOWLEDGE_BRIEF_PREDICATE,
-    parse_knowledge_brief_value,
-)
 from cruxible_client.contracts.procedures.artifacts import parse_procedure
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_core.playbill.brief_health import (
-    KnowledgeBriefHealthEvaluator,
-    KnowledgeBriefHealthRequestV1,
-)
 from cruxible_core.playbill.claim_slots import ClaimSlotClassification, classify_claim_slot
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.query.semantic_discovery import (
@@ -120,11 +109,6 @@ def _claim_resolution_statuses(
             for claim in members
         }
         _apply_resolution_statuses(result, statuses, slots=slots)
-        if first.statement.predicate == KNOWLEDGE_BRIEF_PREDICATE:
-            for members in groups_by_qualifier.values():
-                if classify_claim_slot(members).resolution == "unresolved":
-                    for claim in members:
-                        statuses[claim.identity.name] = "conflicted"
     return statuses
 
 
@@ -164,33 +148,11 @@ def _claim_rows(
     )
     claims = tuple(_claim_from_view(view) for view in listed.claims)
     statuses = _claim_resolution_statuses(instance, claims=claims, request=request)
-    health_evaluator = KnowledgeBriefHealthEvaluator(instance)
     rows: list[PlaybillSearchRowV1] = []
     for claim in claims:
-        is_brief = (
-            claim.statement.predicate == KNOWLEDGE_BRIEF_PREDICATE
-            and isinstance(claim, ClaimArtifactV2)
-            and isinstance(claim.statement.object, LiteralClaimObject)
-        )
-        kind: SearchKind = "brief" if is_brief else "claim"
+        kind: SearchKind = "claim"
         if kind not in request.kinds:
             continue
-        health = None
-        title = claim.statement.predicate
-        health_receipt_digest = None
-        if is_brief:
-            assert isinstance(claim.statement.object, LiteralClaimObject)
-            value = parse_knowledge_brief_value(claim.statement.object.value)
-            title = value.purpose
-            health = health_evaluator.evaluate(
-                KnowledgeBriefHealthRequestV1(
-                    brief_statement_digest=claim_statement_digest(claim.statement).tagged,
-                    accepted_coordinate=request.accepted_coordinate,
-                    evaluation_time=request.evaluation_time,
-                    access_profile=request.access_profile,
-                )
-            )
-            health_receipt_digest = health.receipt.receipt_digest
         rows.append(
             PlaybillSearchRowV1(
                 kind=kind,
@@ -199,9 +161,7 @@ def _claim_rows(
                 status=statuses[claim.identity.name],
                 subject=claim.statement.subject,
                 predicate=claim.statement.predicate,
-                title=title,
-                healthy=None if health is None else health.result.healthy,
-                brief_health_receipt_digest=health_receipt_digest,
+                title=claim.statement.predicate,
             )
         )
     return tuple(rows)
@@ -343,7 +303,6 @@ def _orientation(
             PlaybillSearchCountV1(key=status, count=statuses[status])
             for status in sorted(statuses, key=lambda item: item.encode("utf-8"))
         ),
-        unhealthy_brief_count=sum(row.kind == "brief" and row.healthy is False for row in rows),
         conflicted_count=sum(row.status == "conflicted" for row in rows),
         available_kinds=tuple(
             item.kind for item in availability if item.availability == "installed"

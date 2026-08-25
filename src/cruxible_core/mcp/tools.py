@@ -605,7 +605,7 @@ def register_tools(
         instance_id: str,
         mode: Literal["search", "list", "orient"],
         query: str | None = None,
-        kinds: list[Literal["claim", "brief", "procedure", "demand"]] | None = None,
+        kinds: list[Literal["claim", "procedure", "demand"]] | None = None,
         subject: dict[str, Any] | None = None,
         statuses: list[Literal["accepted", "conflicted", "overturned", "refused", "retired"]]
         | None = None,
@@ -613,7 +613,7 @@ def register_tools(
         evaluation_time: str | None = None,
         budgets: dict[str, Any] | None = None,
     ) -> contracts.PlaybillSearchResult:
-        """Search, list, or orient over accepted Claims, Briefs, and Procedures."""
+        """Search, list, or orient over accepted Claims and Procedures."""
         return handlers.handle_playbill_search(
             instance_id,
             mode=mode,
