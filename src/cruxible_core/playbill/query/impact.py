@@ -259,6 +259,7 @@ def _sources(
     rows: Sequence[ClaimFactRowV1],
     *,
     providers: Mapping[str, ProviderV1],
+    source_lineages: Mapping[str, Sequence[str]],
 ) -> tuple[DependencyImpactSourceV1, ...]:
     if request.address is not None:
         path = request.address.artifact_path
@@ -284,9 +285,16 @@ def _sources(
             providers=providers,
         )
         predecessor = lifecycle.predecessor_digest
-        searched = byte_sorted(
-            (row.accepted.artifact_digest, *((predecessor,) if predecessor else ()))
+        supplied_lineage = tuple(source_lineages.get(row.accepted.path, ()))
+        searched = (
+            byte_sorted(supplied_lineage)
+            if supplied_lineage
+            else byte_sorted(
+                (row.accepted.artifact_digest, *((predecessor,) if predecessor else ()))
+            )
         )
+        if row.accepted.artifact_digest not in searched:
+            raise DependencyImpactError("source lineage omits the current accepted artifact")
         sources.append(
             DependencyImpactSourceV1(
                 address=SemanticAddress.claim_statement(row.accepted.path),
@@ -375,7 +383,10 @@ def _claim_dependents(
     searched = set(source.searched_artifact_digests)
     dependents: list[DependentImpactV1] = []
     for row in rows:
-        if row.accepted.path == source.claim_path:
+        if (
+            row.accepted.path == source.claim_path
+            or row.accepted.claim.lifecycle.state != "live"
+        ):
             continue
         claim = row.accepted.claim
         used_inputs = byte_sorted(tuple(searched.intersection(claim.backing.input_claim_digests)))
@@ -495,6 +506,8 @@ def build_dependency_impact(
     definitions: Iterable[AcceptedQueryDefinitionV1] = (),
     procedures: Iterable[AcceptedProcedureV1] = (),
     line_specs: Iterable[AcceptedLineSpecV1] = (),
+    source_lineages: Mapping[str, Sequence[str]] | None = None,
+    include_retired_sources: bool = False,
 ) -> DependencyImpactV1:
     """Render the downstream impact of one Claim without writing or relabelling.
 
@@ -506,8 +519,13 @@ def build_dependency_impact(
     if request.at != AcceptedCoordinate.from_internal(facts.coordinate):
         raise DependencyImpactError("dependency impact requires one accepted coordinate")
     providers = {item.identity.qualified: item for item in facts.providers}
-    rows = _live_claims(facts)
-    sources = _sources(request, rows, providers=providers)
+    rows = facts.claims if include_retired_sources else _live_claims(facts)
+    sources = _sources(
+        request,
+        rows,
+        providers=providers,
+        source_lineages=source_lineages or {},
+    )
     definitions = tuple(definitions)
     procedures = tuple(procedures)
     line_specs = tuple(line_specs)

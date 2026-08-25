@@ -188,12 +188,14 @@ def build_accepted_query_facts(
     *,
     coordinate: AcceptedProjectionCoordinate,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+    include_retired: bool = False,
 ) -> ClaimQueryFactsV1:
     """Project accepted ledger state into the facts one evaluation may read.
 
-    Only live Claims are admitted: a retired Claim is not accepted current
-    state, and the shared visibility path deliberately judges verdicts rather
-    than lifecycle.
+    Normal query evaluation admits only live Claims. Read-side lineage folds may
+    opt into retired heads explicitly; the shared visibility path still judges
+    verdicts rather than lifecycle, and callers remain responsible for limiting
+    dependents to live rows.
     """
 
     tree = instance.tree_at(coordinate.git_oid)
@@ -208,7 +210,10 @@ def build_accepted_query_facts(
         )
         for path in sorted(tree, key=lambda item: item.encode("utf-8"))
         if path.startswith(CLAIM_PATH_PREFIX)
-        and parse_claim(tree[path], path=path).lifecycle.state == "live"
+        and (
+            include_retired
+            or parse_claim(tree[path], path=path).lifecycle.state == "live"
+        )
     )
     providers = _providers(tree)
     return ClaimQueryFactsV1(

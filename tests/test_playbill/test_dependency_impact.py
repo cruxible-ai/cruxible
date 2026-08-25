@@ -384,6 +384,76 @@ def test_the_successor_lineage_the_walk_searched_is_stated_not_implied() -> None
     )
 
 
+def test_explicit_bounded_lineage_reaches_a_two_successor_old_backing_input() -> None:
+    v1 = _source_v1()
+    v2 = _source_v2()
+    v3 = _claim(
+        SOURCE_INDEX,
+        item="wi-1",
+        value="done",
+        lifecycle=ArtifactLifecycle(predecessor_digest=v2.accepted.artifact_digest),
+        supported=False,
+    )
+    facts = _facts((v3, _derived()), generation="44")
+
+    result = build_dependency_impact(
+        _request(facts),
+        facts=facts,
+        source_lineages={
+            SOURCE_PATH: (
+                v1.accepted.artifact_digest,
+                v2.accepted.artifact_digest,
+                v3.accepted.artifact_digest,
+            )
+        },
+    )
+
+    (dependent,) = result.dependents
+    assert dependent.identity == _derived().accepted.claim.identity.qualified
+    assert dependent.used_artifact_digest == v1.accepted.artifact_digest
+    assert dependent.current_artifact_digest == v3.accepted.artifact_digest
+    assert dependent.stale is True
+
+
+def test_explicit_retired_source_scope_keeps_only_live_claim_dependents() -> None:
+    v1 = _source_v1()
+    retired = _claim(
+        SOURCE_INDEX,
+        item="wi-1",
+        value="ready",
+        lifecycle=ArtifactLifecycle(
+            state="retired",
+            predecessor_digest=v1.accepted.artifact_digest,
+        ),
+        supported=False,
+    )
+    retired_dependent = _claim(
+        UNRELATED_INDEX,
+        item="wi-3",
+        value="old derivative",
+        lifecycle=ArtifactLifecycle(state="retired"),
+        input_digests=(v1.accepted.artifact_digest,),
+    )
+    facts = _facts((retired, _derived(), retired_dependent), generation="55")
+
+    result = build_dependency_impact(
+        _request(facts),
+        facts=facts,
+        source_lineages={
+            SOURCE_PATH: (
+                v1.accepted.artifact_digest,
+                retired.accepted.artifact_digest,
+            )
+        },
+        include_retired_sources=True,
+    )
+
+    assert result.sources[0].lifecycle_state == "retired"
+    assert [item.identity for item in result.dependents] == [
+        _derived().accepted.claim.identity.qualified
+    ]
+
+
 def test_a_verdict_change_alone_makes_dependents_repair_candidates() -> None:
     unsupported = _claim(SOURCE_INDEX, item="wi-1", value="ready", supported=False)
     result = _impact(_facts((unsupported, _derived())), unsupported)
