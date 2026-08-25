@@ -48,6 +48,7 @@ from cruxible_client.contracts.query.definitions import (
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import subject_path
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.playbill.query.impact import (
@@ -59,6 +60,7 @@ from cruxible_core.playbill.query.impact import (
     DependencyImpactV1,
     build_dependency_impact,
 )
+from cruxible_core.service.playbill_next import _claim_dependency_items
 from tests.test_playbill._line_runtime_support import (
     accepted_line,
     accepted_procedure,
@@ -452,6 +454,80 @@ def test_explicit_retired_source_scope_keeps_only_live_claim_dependents() -> Non
     assert [item.identity for item in result.dependents] == [
         _derived().accepted.claim.identity.qualified
     ]
+
+
+def test_next_coalesces_multiple_stale_inputs_into_one_derived_claim_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_old = _source_v1()
+    first_current = _source_v2()
+    second_old = _claim(4, item="wi-3", value="queued")
+    second_current = _claim(
+        4,
+        item="wi-3",
+        value="done",
+        lifecycle=ArtifactLifecycle(predecessor_digest=second_old.accepted.artifact_digest),
+        supported=False,
+    )
+    dependent = _claim(
+        DERIVED_INDEX,
+        item="wi-2",
+        value="derived from both",
+        input_digests=tuple(
+            sorted(
+                (
+                    first_old.accepted.artifact_digest,
+                    second_old.accepted.artifact_digest,
+                )
+            )
+        ),
+    )
+    facts = _facts((first_current, dependent, second_current), generation="66")
+    lineages = {
+        first_current.accepted.path: (
+            first_old.accepted.artifact_digest,
+            first_current.accepted.artifact_digest,
+        ),
+        second_current.accepted.path: (
+            second_old.accepted.artifact_digest,
+            second_current.accepted.artifact_digest,
+        ),
+        dependent.accepted.path: (dependent.accepted.artifact_digest,),
+    }
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next.build_accepted_query_facts",
+        lambda *_args, **_kwargs: facts,
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next._bounded_claim_lineages",
+        lambda *_args, **_kwargs: (lineages, frozenset()),
+    )
+
+    rows = _claim_dependency_items(
+        object(),  # type: ignore[arg-type]
+        coordinate=facts.coordinate,
+        evaluation_time=NOW,
+        access_profile=CoverageAccessProfileV1(
+            profile_id="dependency-next-test",
+            permitted_access_classes=("instance", "public"),
+        ),
+    )
+
+    assert len(rows) == 1
+    (row,) = rows
+    assert row.reason == "claim_dependency_stale"
+    assert row.severity == "repair"
+    assert row.subject_identity == dependent.accepted.claim.identity.qualified
+    assert row.related_identities == tuple(
+        sorted(
+            (
+                first_current.accepted.claim.identity.qualified,
+                second_current.accepted.claim.identity.qualified,
+            )
+        )
+    )
+    assert row.repair.operation == "playbill.authoring.create"
+    assert row.repair.required_change == "reauthor_claim_from_current_inputs"
 
 
 def test_a_verdict_change_alone_makes_dependents_repair_candidates() -> None:

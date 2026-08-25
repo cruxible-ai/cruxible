@@ -27,7 +27,9 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimCitationV1,
     LiteralClaimObject,
+    claim_artifact_digest,
     claim_citation_references,
+    parse_claim,
 )
 from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_BLOCKS_PER_SOURCE,
@@ -41,6 +43,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.cas import BodyAccessContext
@@ -51,6 +54,12 @@ from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import claim_row_visibility
 from cruxible_core.playbill.query.engine import evaluate_claim_query
+from cruxible_core.playbill.query.impact import (
+    SOURCE_CONTRADICTED,
+    SOURCE_SUPERSEDED,
+    DependencyImpactRequestV1,
+    build_dependency_impact,
+)
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.service.query_definitions import accepted_query_definition
 from cruxible_core.service.playbill_claims import _claim_from_view, service_list_playbill_claims
@@ -60,6 +69,7 @@ from cruxible_core.service.playbill_query import build_accepted_query_facts
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
 NEXT_RESULT_DIGEST_DOMAIN = "playbill-next-result-v1"
 DEFAULT_EXPIRING_WITHIN_MICROSECONDS = 604_800_000_000
+MAX_DEPENDENCY_LINEAGE_GENERATIONS = 256
 
 NextDomain = Literal["accepted_state", "workspace_floor", "workspace_sources"]
 NextSeverity = Literal["blocking", "repair", "warning"]
@@ -76,6 +86,7 @@ NextReason = Literal[
     "projection_dirty",
     "projection_backing_stale",
     "self_published_source_stale",
+    "claim_dependency_stale",
 ]
 NextRepairOperation = Literal[
     "playbill.authoring.create",
@@ -866,6 +877,156 @@ def _self_published_source_items(
     return tuple(items)
 
 
+def _bounded_claim_lineages(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    current_claims: Mapping[str, ClaimArtifactAny],
+) -> tuple[dict[str, tuple[str, ...]], frozenset[str]]:
+    """Resolve only authenticated accepted history, capped at 256 generations."""
+
+    history = instance.accepted_history()
+    target_index = next(
+        index for index, item in enumerate(history) if item.oid == coordinate.git_oid
+    )
+    lineages: dict[str, list[str]] = {
+        path: [claim_artifact_digest(claim).tagged] for path, claim in current_claims.items()
+    }
+    expected: dict[str, str] = {
+        path: claim.lifecycle.predecessor_digest
+        for path, claim in current_claims.items()
+        if claim.lifecycle.predecessor_digest is not None
+    }
+    scanned = history[max(0, target_index - MAX_DEPENDENCY_LINEAGE_GENERATIONS) : target_index]
+    for generation in reversed(scanned):
+        if not expected:
+            break
+        tree = instance.tree_at(generation.oid)
+        for path in tuple(sorted(expected, key=lambda item: item.encode("utf-8"))):
+            raw = tree.get(path)
+            if raw is None:
+                continue
+            claim = parse_claim(raw, path=path)
+            digest = claim_artifact_digest(claim).tagged
+            if digest != expected[path]:
+                continue
+            lineages[path].append(digest)
+            predecessor = claim.lifecycle.predecessor_digest
+            if predecessor is None:
+                expected.pop(path)
+            else:
+                expected[path] = predecessor
+    return (
+        {
+            path: tuple(sorted(set(digests), key=lambda item: item.encode("ascii")))
+            for path, digests in lineages.items()
+        },
+        frozenset(expected),
+    )
+
+
+def _claim_dependency_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Coalesce stale recorded backing-input edges through the existing impact walker."""
+
+    if not access_profile.permits("instance"):
+        return ()
+    facts = build_accepted_query_facts(
+        instance,
+        coordinate=coordinate,
+        include_retired=True,
+    )
+    subjects = {subject.path: subject for subject in facts.subjects}
+    providers = {provider.identity.qualified: provider for provider in facts.providers}
+    visible_rows = tuple(
+        row
+        for row in facts.claims
+        if claim_row_visibility(
+            row,
+            subject=subjects.get(row.subject_path),
+            providers=providers,
+            policy=_PROJECTION_VISIBILITY_POLICY,
+            evaluation_time=evaluation_time,
+        )
+        is not None
+    )
+    visible_facts = facts.model_copy(update={"claims": visible_rows})
+    current_claims = {row.accepted.path: row.accepted.claim for row in visible_rows}
+    lineages, incomplete = _bounded_claim_lineages(
+        instance,
+        coordinate=coordinate,
+        current_claims=current_claims,
+    )
+
+    by_dependent: dict[str, list[dict[str, object]]] = defaultdict(list)
+    public_coordinate = AcceptedCoordinate.from_internal(coordinate)
+    for source in visible_rows:
+        impact = build_dependency_impact(
+            DependencyImpactRequestV1(
+                at=public_coordinate,
+                address=SemanticAddress.claim_statement(source.accepted.path),
+                evaluation_time=evaluation_time,
+            ),
+            facts=visible_facts,
+            source_lineages=lineages,
+            include_retired_sources=True,
+        )
+        for dependent in impact.dependents:
+            if (
+                dependent.kind != "Claim"
+                or dependent.dependency_kind != "backing_input"
+                or not dependent.repair_candidate
+                or not ({SOURCE_SUPERSEDED, SOURCE_CONTRADICTED} & set(dependent.impact_reasons))
+            ):
+                continue
+            by_dependent[dependent.identity].append(
+                {
+                    "source_claim_identity": source.accepted.claim.identity.qualified,
+                    "used_artifact_digest": dependent.used_artifact_digest,
+                    "current_artifact_digest": dependent.current_artifact_digest,
+                    "impact_reasons": list(dependent.impact_reasons),
+                    "lineage_complete": source.accepted.path not in incomplete,
+                }
+            )
+
+    items: list[PlaybillNextItemV1] = []
+    for identity in sorted(by_dependent, key=lambda item: item.encode("utf-8")):
+        stale_inputs = sorted(
+            by_dependent[identity],
+            key=lambda item: (
+                str(item["source_claim_identity"]).encode("utf-8"),
+                str(item["used_artifact_digest"]).encode("ascii"),
+            ),
+        )
+        related = tuple(
+            sorted(
+                {str(item["source_claim_identity"]) for item in stale_inputs},
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+        items.append(
+            _item(
+                severity="repair",
+                reason="claim_dependency_stale",
+                subject_identity=identity,
+                related_identities=related,
+                detail={"stale_inputs": stale_inputs},
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.authoring.create",
+                    target=identity,
+                    required_change="reauthor_claim_from_current_inputs",
+                    arguments={"claim_id": identity.removeprefix("Claim:")},
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _source_citation_item(
     *,
     citation_id: str,
@@ -1216,6 +1377,12 @@ def service_playbill_next(
                     evaluation_time=request.evaluation_time,
                     access_profile=request.access_profile,
                     observation=request.workspace_observation,
+                ),
+                *_claim_dependency_items(
+                    instance,
+                    coordinate=coordinate,
+                    evaluation_time=request.evaluation_time,
+                    access_profile=request.access_profile,
                 ),
             ),
             key=_item_sort_key,
