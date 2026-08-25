@@ -18,6 +18,7 @@ from pydantic import SecretStr, TypeAdapter
 
 from cruxible_client import __version__
 from cruxible_client import contracts as api
+from cruxible_client.authoring.blocks import assert_independent_projection_evidence
 from cruxible_client.authoring.insertions import apply_playbill_insertion
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
@@ -949,6 +950,12 @@ class Playbill:
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
         source: Any
         if supported_by is not None:
+            assert_independent_projection_evidence(
+                source_id=supported_by.source_id,
+                content=supported_by.content,
+                start_byte=supported_by.start_byte,
+                end_byte=supported_by.end_byte,
+            )
             source = supported_by.observation()
             citation_role: Literal["evidence", "copy"] | None = "evidence"
         elif copied_from is not None:

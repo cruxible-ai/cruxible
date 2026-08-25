@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 
+from cruxible_client.authoring.blocks import assert_independent_projection_evidence
 from cruxible_client.authoring.inputs import ClaimInput, lower_bound_claim_input
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
@@ -108,6 +109,13 @@ def bind_working_selection_input(
             start=start,
             end=end,
             surrounding_lines=window_lines,
+        )
+    if input.citation_role == "evidence":
+        assert_independent_projection_evidence(
+            source_id=source.source_id,
+            content=content,
+            start_byte=start,
+            end_byte=end,
         )
     selected = content[start:end]
     observation = WorkingSelectionObservationV1(

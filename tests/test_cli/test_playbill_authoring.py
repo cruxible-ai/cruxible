@@ -7,15 +7,23 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
 from cruxible_client import contracts
+from cruxible_client.authoring.blocks import render_projection_opening
 from cruxible_client.authoring.examples import claim_self_source_example
 from cruxible_client.authoring.seed import (
     plan_seed_bundle,
     seed_group_operation_digest,
     seed_group_proposal_name,
 )
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBlockStampV1,
+    ProjectionClaimBackingV1,
+)
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
 from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
 
@@ -515,6 +523,82 @@ def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
     assert result.exit_code == 1
     assert "playbill.authoring.anchor_ambiguous" in result.output
     assert '"candidate_byte_offsets":[0,1]' in result.output
+
+
+@pytest.mark.parametrize("citation_role", ["evidence", "copy"])
+def test_cli_bind_declared_block_is_role_aware(
+    monkeypatch,
+    tmp_path: Path,
+    citation_role: str,
+) -> None:  # type: ignore[no-untyped-def]
+    source = tmp_path / "work-items.md"
+    body = b"status: ready\n"
+    stamp = ProjectionBlockStampV1(
+        source_id="repo.work-items",
+        block_id="status",
+        declared_generation=1,
+        declared_coordinate=AcceptedCoordinate.model_validate(COORDINATE.model_dump(mode="json")),
+        backing=(
+            ProjectionClaimBackingV1(
+                identity=ArtifactIdentity(kind="Claim", name="CLM-existing"),
+                statement_digest="sha256:" + "8" * 64,
+            ),
+        ),
+        body_digest="sha256:" + hashlib.sha256(body).hexdigest(),
+    )
+    source.write_bytes(
+        render_projection_opening(stamp) + body + b"<!-- /playbill:block:status -->\n"
+    )
+    stub = claim_self_source_example().model_dump(mode="json")
+    stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
+    stub["citation_role"] = citation_role
+    payload_file = tmp_path / "stub.json"
+    payload_file.write_text(json.dumps(stub))
+    calls: list[dict[str, object]] = []
+
+    class StubClient:
+        def compile_playbill_authoring(
+            self,
+            instance_id: str,
+            *,
+            payload: dict[str, object],
+            intent_id: str | None,
+        ) -> contracts.PlaybillAuthoringPreflightResult:
+            calls.append(payload)
+            return contracts.PlaybillAuthoringPreflightResult(
+                verdict="passed",
+                certificate={"certificate_digest": "sha256:" + "6" * 64},
+                frontier={"diagnostics": []},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "authoring",
+            "bind",
+            "--file",
+            str(source),
+            "--anchor",
+            "status: ready",
+            "--payload-file",
+            str(payload_file),
+            "--json",
+        ],
+    )
+
+    if citation_role == "evidence":
+        assert result.exit_code == 1
+        assert "playbill.projection.independent_evidence_forbidden" in result.output
+        assert calls == []
+    else:
+        assert result.exit_code == 0, result.output
+        assert calls[0]["citation_role"] == "copy"
 
 
 def test_direct_claim_propose_help_and_invocation_route_to_the_coordinator(

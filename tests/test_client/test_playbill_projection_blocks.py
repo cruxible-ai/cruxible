@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.blocks import (
     ProjectionIndependentEvidenceForbidden,
     ProjectionMarkerError,
@@ -16,6 +17,8 @@ from cruxible_client.authoring.blocks import (
     parse_projection_blocks,
     render_projection_opening,
 )
+from cruxible_client.authoring.examples import claim_self_source_example
+from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.declared_blocks import (
@@ -218,3 +221,30 @@ def test_query_backing_commits_existing_resolved_parameter_digest_and_semantics_
         ProjectionQueryBackingV1.model_validate(
             {**backing.model_dump(mode="json"), "canonical_param_digest": "sha256:" + "7" * 64}
         )
+
+
+@pytest.mark.parametrize("window_lines", [None, 1])
+def test_flow_a_bind_refuses_independent_evidence_but_permits_the_same_explicit_copy(
+    window_lines: int | None,
+) -> None:
+    content = b"before\n" + _block() + b"after\n"
+    template = claim_self_source_example().model_dump(mode="json")
+    template["source"] = {"kind": "working_selection", "source_id": "corpus.runbook"}
+    evidence = ClaimInput.model_validate({**template, "citation_role": "evidence"})
+    copy = ClaimInput.model_validate({**template, "citation_role": "copy"})
+
+    with pytest.raises(ProjectionIndependentEvidenceForbidden):
+        bind_working_selection_input(
+            evidence,
+            content=content,
+            anchor="Visible prose",
+            window_lines=window_lines,
+        )
+
+    allowed = bind_working_selection_input(
+        copy,
+        content=content,
+        anchor="Visible prose",
+        window_lines=window_lines,
+    )
+    assert allowed.citation_role == "copy"

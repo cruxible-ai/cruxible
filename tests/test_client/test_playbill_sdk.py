@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from cruxible_client import (
     Cardinality,
@@ -15,9 +18,21 @@ from cruxible_client import (
     SubjectRef,
 )
 from cruxible_client import contracts as api
+from cruxible_client.authoring.blocks import (
+    ProjectionIndependentEvidenceForbidden,
+    render_projection_opening,
+)
 from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactLifecycle
+from cruxible_client.contracts.artifacts import (
+    ArtifactAuthority,
+    ArtifactIdentity,
+    ArtifactLifecycle,
+)
 from cruxible_client.contracts.authoring.models import ClaimAuthoringPayloadV2
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBlockStampV1,
+    ProjectionClaimBackingV1,
+)
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
@@ -100,6 +115,67 @@ entries:
     (path / "corpus" / "runbook.md").write_text(
         "Patch KEV systems within 48 hours.\n", encoding="utf-8"
     )
+
+
+@pytest.mark.parametrize("window", [False, True])
+def test_sdk_declared_block_forbids_evidence_but_allows_explicit_copy(
+    tmp_path: Path,
+    window: bool,
+) -> None:
+    _workspace(tmp_path)
+    source = tmp_path / "corpus" / "runbook.md"
+    body = b"Patch KEV systems within 48 hours.\n"
+    stamp = ProjectionBlockStampV1(
+        source_id="corpus.runbook",
+        block_id="policy",
+        declared_generation=1,
+        declared_coordinate=AcceptedCoordinate.model_validate(_COORDINATE.model_dump(mode="json")),
+        backing=(
+            ProjectionClaimBackingV1(
+                identity=ArtifactIdentity(kind="Claim", name="CLM-source"),
+                statement_digest="sha256:" + "9" * 64,
+            ),
+        ),
+        body_digest="sha256:" + hashlib.sha256(body).hexdigest(),
+    )
+    source.write_bytes(
+        render_projection_opening(stamp) + body + b"<!-- /playbill:block:policy -->\n"
+    )
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        _Client(),
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+    selector = pb.file("corpus/runbook.md")
+    selection = (
+        selector.anchor_window(text="within 48 hours", surrounding_lines=1)
+        if window
+        else selector.anchor("within 48 hours")
+    )
+    common: dict[str, Any] = {
+        "subject": "secops.policy/patch-sla",
+        "predicate": "secops.policy.patch_sla",
+        "value": 48,
+        "role": ClaimRole.NORMATIVE,
+        "rationale": "Declared policy.",
+        "self_source": None,
+        "qualifier": None,
+        "effective_period": None,
+        "revises": None,
+        "dispositions": {},
+        "publish_to": None,
+        "subject_definition": None,
+        "claim_type_definition": None,
+    }
+
+    with pytest.raises(ProjectionIndependentEvidenceForbidden):
+        pb.claim(supported_by=selection, copied_from=None, **common)
+
+    copy = pb.claim(supported_by=None, copied_from=selection, **common)
+    assert copy.payload.citation_role == "copy"
+    # Raw-wire callers remain the explicitly accepted, documented residual.
+    assert selection.observation().selected_content
 
 
 def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
