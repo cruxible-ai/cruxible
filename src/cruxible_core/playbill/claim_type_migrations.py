@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -31,7 +31,12 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lower_claim_type_input
+from cruxible_core.playbill.claim_type_inputs import (
+    ClaimTypeInputV1,
+    ClaimTypeProposalLintV1,
+    lint_claim_type_input,
+    lower_claim_type_input,
+)
 from cruxible_core.playbill.closure import (
     ArtifactDependencyStateV1,
     build_dependency_index,
@@ -126,6 +131,10 @@ class ClaimTypeMigrationResultV1(_StrictMigrationModel):
     operation_digest: str
     dependents: tuple[ClaimTypeMigrationDispositionV1, ...]
     proposal: PlaybillProposalInspection
+    lint: ClaimTypeProposalLintV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class ClaimTypeMigrationInventoryItemV1(_StrictMigrationModel):
@@ -146,6 +155,10 @@ class ClaimTypeMigrationPreflightV1(_StrictMigrationModel):
     coordinate: PlaybillAcceptedCoordinate
     successor_artifact_digest: str
     dependents: tuple[ClaimTypeMigrationInventoryItemV1, ...]
+    lint: ClaimTypeProposalLintV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class ClaimTypeMigrationDispositionV2(_StrictMigrationModel):
@@ -160,6 +173,10 @@ class ClaimTypeMigrationResultV2(_StrictMigrationModel):
     operation_digest: str
     dependents: tuple[ClaimTypeMigrationDispositionV2, ...]
     proposal: PlaybillProposalInspection
+    lint: ClaimTypeProposalLintV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 ClaimTypeMigrationResponse: TypeAlias = (
@@ -558,6 +575,7 @@ def _service_migrate_claim_type_v1(
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.tree_at(current.git_oid)
     type_path, _predecessor, successor = _successor_claim_type(tree, request.successor)
+    lint = lint_claim_type_input(instance, request.successor, coordinate=current)
 
     inventory = _closure_inventory(tree, root=successor.identity)
     if any(item.artifact_kind != "claim" for item in inventory):
@@ -619,6 +637,7 @@ def _service_migrate_claim_type_v1(
                 instance.accepted_coordinate()
             ),
         ),
+        lint=lint if lint.warnings else None,
     )
 
 
@@ -632,6 +651,7 @@ def _service_migrate_claim_type_v2(
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.tree_at(current.git_oid)
     type_path, _predecessor, successor = _successor_claim_type(tree, request.successor)
+    lint = lint_claim_type_input(instance, request.successor, coordinate=current)
     inventory = _closure_inventory(tree, root=successor.identity)
     dispositions = request.dependents
     if request.mode == "preflight" and not dispositions:
@@ -674,6 +694,7 @@ def _service_migrate_claim_type_v2(
             coordinate=PlaybillAcceptedCoordinate.from_internal(current),
             successor_artifact_digest=claim_type_digest(successor).tagged,
             dependents=inventory,
+            lint=lint if lint.warnings else None,
         )
 
     operation_digest = _v2_operation_digest(
@@ -704,6 +725,7 @@ def _service_migrate_claim_type_v2(
                 instance.accepted_coordinate()
             ),
         ),
+        lint=lint if lint.warnings else None,
     )
 
 

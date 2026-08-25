@@ -126,6 +126,37 @@ def test_client_speaks_frozen_compile_and_submit_requests() -> None:
     assert "claim_id" not in compiled_request["payload"]
 
 
+def test_client_preserves_advisory_lint_outside_the_preflight_certificate() -> None:
+    warning = {
+        "code": "playbill.claim_type.anticipated_source_contract_omitted",
+        "field_path": "$.evidence_admission_policy.rules",
+        "source_id": "corpus.runbook",
+        "contract_identity": "CaptureContract:playbill.foreign-source.corpus.runbook",
+        "contract_digest": "sha256:" + "7" * 64,
+        "replacement_rule_fragment": {"capture_contract_digests": ["sha256:" + "7" * 64]},
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "tag": "playbill-authoring-preflight-result-v1",
+                "verdict": "passed",
+                "certificate": {"certificate_digest": "sha256:" + "6" * 64},
+                "frontier": {"diagnostics": []},
+                "lint": {"tag": "playbill-claim-type-proposal-lint-v1", "warnings": [warning]},
+            },
+        )
+
+    result = _client(handler).compile_playbill_authoring("inst", payload=_claim_payload())
+
+    assert result.verdict == "passed"
+    assert result.lint is not None
+    assert result.lint.warnings == [warning]
+    assert "lint" not in result.certificate
+    assert "lint" not in result.frontier
+
+
 def test_client_speaks_program_stamped_v3_request() -> None:
     captured: list[httpx.Request] = []
 

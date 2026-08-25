@@ -99,6 +99,14 @@ def test_program_stamp_is_event_committed_and_identity_excluded(tmp_path: Path) 
             {"sdk_contract_snapshot_digest": "sha256:" + "0" * 64},
             "playbill.authoring.program_stamp_contract_mismatch",
         ),
+        (
+            {
+                "sdk_contract_snapshot_digest": (
+                    "sha256:f802cd994cf904b94f4a8714b7b44c9d5db1e5b5b5ad33541ff5a609fb6d04c8"
+                )
+            },
+            "playbill.authoring.program_stamp_contract_mismatch",
+        ),
     ],
 )
 def test_program_stamp_requires_exact_daemon_contract(

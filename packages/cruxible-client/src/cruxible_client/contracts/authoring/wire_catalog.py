@@ -1,9 +1,11 @@
 """Frozen catalog of every public Pydantic authoring wire model.
 
 This is deliberately separate from ``AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST``.
-That older digest continues to identify the top-level read/response surface and
-its preimage is unchanged.  This catalog independently freezes the deeper
-authoring request, payload, intent, diagnostic, and insertion model closure.
+That digest identifies the audited top-level read/response surface; before the
+lineage's first public release it can be re-pinned only atomically with the SDK
+handshake, program stamp, snapshot, and guardrail. After first public release,
+every change requires a coordinated version succession. This independent
+catalog freezes the deeper request, payload, intent, and insertion closure.
 """
 
 from __future__ import annotations

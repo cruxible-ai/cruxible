@@ -24,6 +24,7 @@ from cruxible_client import (
 )
 from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactLifecycle
 from cruxible_client.contracts.attestations import ApprovalStatement
+from cruxible_client.contracts.authoring.models import PreflightResultV1
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.policies import (
@@ -205,6 +206,74 @@ def _abstract_assess_procedure() -> ProcedureDefinitionV3:
         ),
         terminal_capability=1,
     )
+
+
+def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+) -> None:
+    http, instance_id, _private_key_path = playbill_http
+    workspace = tmp_path / "lint-world"
+    workspace.mkdir()
+    _catalog(workspace)
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    subject = pb.subject(
+        subject="secops.policy/patch-sla",
+        authority=AUTHORITY,
+        pins=(),
+        lifecycle=ArtifactLifecycle(),
+    )
+    claim_type = pb.claim_type(
+        predicate="secops.policy.patch_sla",
+        subject_kinds=("secops.policy",),
+        object_kind=ClaimObjectKind.LITERAL,
+        value_schema={"type": "integer"},
+        object_subject_kinds=(),
+        cardinality=Cardinality.ONE,
+        permitted_roles=(ClaimRole.NORMATIVE,),
+        referent_sensitivity=ReferentSensitivity.IDENTITY,
+        sources=(),
+        admission_policy=ClaimAdmissionPolicyV1(),
+        resolution_policy=ClaimResolutionPolicyV1(
+            cardinality="one",
+            eligible_verdicts=("supported",),
+            selector="only_contender",
+        ),
+        authority=AUTHORITY,
+        pins=(),
+        slot_policy=None,
+        evidence_freshness=None,
+    )
+
+    intent = pb.claim(
+        subject=subject.address,
+        predicate=claim_type.predicate,
+        value=48,
+        role=ClaimRole.NORMATIVE,
+        rationale="The runbook fixes the KEV deadline.",
+        supported_by=pb.file("corpus/vuln-response-runbook.md").anchor("forty-eight hours"),
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        publish_to=None,
+        subject_definition=subject,
+        claim_type_definition=claim_type,
+    ).prepare()
+
+    assert not intent.refused
+    assert intent.lint is not None
+    assert intent.warnings == tuple(intent.lint.warnings)
+    assert intent.warnings[0]["code"] == ("playbill.claim_type.anticipated_source_contract_omitted")
+    assert intent.warnings[0]["source_id"] == "corpus.vuln-response-runbook"
+    assert intent._preflight is not None
+    response = intent._preflight.model_dump(mode="json")
+    response.pop("lint")
+    assert PreflightResultV1.model_validate(response).verdict == "passed"
 
 
 def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(

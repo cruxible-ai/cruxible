@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
@@ -14,6 +14,7 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
+    foreign_source_capture_contract,
     parse_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
@@ -65,6 +66,16 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     pins: tuple[dict[str, object], ...] = ()
     subject_scope: dict[str, object] | None = None
     slot_policy: dict[str, object] | None = None
+    anticipated_source_ids: tuple[str, ...] = ()
+
+    @field_validator("anticipated_source_ids")
+    @classmethod
+    def _anticipated_source_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("anticipated source IDs must be UTF-8 byte-sorted and unique")
+        for source_id in value:
+            foreign_source_capture_contract(source_id)
+        return value
 
 
 class ClaimTypeLintWarningV1(_StrictClaimTypeInputModel):
@@ -102,6 +113,7 @@ def lower_claim_type_input(
     if path in tree:
         predecessor = parse_claim_type(tree[path], path=path)
     payload = value.model_dump(mode="json")
+    payload.pop("anticipated_source_ids", None)
     payload["artifact_format"] = (
         "playbill-claim-type-v2"
         if value.subject_scope is not None or value.slot_policy is not None
@@ -154,9 +166,10 @@ def claim_type_input_example() -> ClaimTypeInputV1:
 
 def lint_claim_type_input(
     instance: PlaybillInstance,
-    value: ClaimTypeInputV1,
+    value: ClaimTypeInputV1 | ClaimType,
     *,
     coordinate: AcceptedProjectionCoordinate,
+    anticipated_source_ids: tuple[str, ...] = (),
 ) -> ClaimTypeProposalLintV1:
     tree = instance.tree_at(coordinate.git_oid)
     accepted_contracts: dict[str, str] = {}
@@ -166,7 +179,11 @@ def lint_claim_type_input(
         contract = parse_capture_contract(tree[path], path=path)
         accepted_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
 
-    policy = value.evidence_admission_policy
+    policy = (
+        value.evidence_admission_policy
+        if isinstance(value, ClaimTypeInputV1)
+        else value.evidence_admission_policy.model_dump(mode="json")
+    )
     raw_rules = policy.get("rules", [])
     rules = raw_rules if isinstance(raw_rules, list | tuple) else []
     warnings: list[ClaimTypeLintWarningV1] = []
@@ -192,6 +209,35 @@ def lint_claim_type_input(
                         },
                     )
                 )
+    if not admitted.intersection(accepted_contracts) and accepted_contracts and not warnings:
+        contract_digest = sorted(accepted_contracts)[0]
+        warnings.append(
+            ClaimTypeLintWarningV1(
+                code="playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+                field_path="$.evidence_admission_policy.rules",
+                contract_identity=accepted_contracts[contract_digest],
+                contract_digest=contract_digest,
+                replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
+            )
+        )
+    source_ids = set(anticipated_source_ids)
+    if isinstance(value, ClaimTypeInputV1):
+        source_ids.update(value.anticipated_source_ids)
+    for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
+        contract = foreign_source_capture_contract(source_id)
+        contract_digest = capture_contract_digest(contract).tagged
+        if contract_digest in admitted:
+            continue
+        warnings.append(
+            ClaimTypeLintWarningV1(
+                code="playbill.claim_type.anticipated_source_contract_omitted",
+                field_path="$.evidence_admission_policy.rules",
+                source_id=source_id,
+                contract_identity=contract.identity.qualified,
+                contract_digest=contract_digest,
+                replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
+            )
+        )
     warnings.sort(key=lambda item: canonical_bytes(item.model_dump(mode="json")))
     return ClaimTypeProposalLintV1(warnings=tuple(warnings))
 

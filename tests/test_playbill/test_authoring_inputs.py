@@ -24,6 +24,7 @@ from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
     claim_type_input_example,
     lint_claim_type_input,
+    lower_claim_type_input,
 )
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from tests.test_playbill._support import initialize_local
@@ -197,7 +198,7 @@ def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: P
     assert "artifact_digest" not in encoded
 
 
-def test_claim_type_example_is_tagless_and_rejects_dead_anticipated_sources_field(
+def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
     tmp_path: Path,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
@@ -213,15 +214,77 @@ def test_claim_type_example_is_tagless_and_rejects_dead_anticipated_sources_fiel
     encoded = example.model_dump_json()
     assert '"tag"' not in encoded
     assert "identity" not in json.loads(encoded)
-    assert lint.warnings == ()
+    assert lint.warnings[0].code == (
+        "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+    )
 
-    with pytest.raises(ValidationError) as raised:
+    source_intent = ClaimTypeInputV1.model_validate(
+        {
+            **example.model_dump(mode="json"),
+            "anticipated_source_ids": ["repo.work-items"],
+        }
+    )
+    lowered = lower_claim_type_input(
+        source_intent,
+        tree=instance.tree_at(instance.accepted_coordinate().git_oid),
+    )
+    assert "anticipated_source_ids" not in lowered.model_dump(mode="json")
+
+    with pytest.raises(ValidationError, match="byte-sorted and unique"):
         ClaimTypeInputV1.model_validate(
             {
                 **example.model_dump(mode="json"),
-                "anticipated_source_ids": ["repo.work-items"],
+                "anticipated_source_ids": ["repo.z", "repo.a"],
             }
         )
 
-    assert raised.value.errors()[0]["loc"] == ("anticipated_source_ids",)
-    assert raised.value.errors()[0]["type"] == "extra_forbidden"
+
+def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+
+    lint = lint_claim_type_input(
+        instance,
+        claim_type_input_example(),
+        coordinate=instance.accepted_coordinate(),
+    )
+
+    assert len(lint.warnings) == 1
+    warning = lint.warnings[0]
+    assert warning.code == "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+    assert warning.field_path == "$.evidence_admission_policy.rules"
+    assert warning.replacement_rule_fragment["capture_contract_digests"] == [
+        warning.contract_digest
+    ]
+
+
+def test_claim_type_source_intent_produces_an_actionable_per_source_warning(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    input_value = ClaimTypeInputV1.model_validate(
+        {
+            **claim_type_input_example().model_dump(mode="json"),
+            "anticipated_source_ids": ["corpus.runbook"],
+        }
+    )
+
+    lint = lint_claim_type_input(
+        instance,
+        input_value,
+        coordinate=instance.accepted_coordinate(),
+    )
+
+    source_warning = next(
+        item
+        for item in lint.warnings
+        if item.code == "playbill.claim_type.anticipated_source_contract_omitted"
+    )
+    assert source_warning.source_id == "corpus.runbook"
+    assert source_warning.contract_identity.endswith("corpus.runbook")
+    assert source_warning.replacement_rule_fragment["capture_contract_digests"] == [
+        source_warning.contract_digest
+    ]

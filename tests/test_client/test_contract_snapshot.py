@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any, get_args
 
 import pytest
 
 from cruxible_client import contracts
+from cruxible_client.authoring.sdk import SDK_CONTRACT_SNAPSHOT_DIGEST, SUPPORTED_DAEMON_CONTRACTS
+from cruxible_client.contracts.authoring.models import (
+    AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
+    AUTHORING_SDK_VERSION,
+)
+from cruxible_client.contracts.primitives import canonical_json
 from tests.support.client_contracts import (
     compare_contract_manifests,
     generate_contract_manifest,
@@ -34,6 +41,15 @@ def test_client_contract_snapshot_is_current() -> None:
         "`tests/goldens/cruxible_client/contracts_snapshot.json`."
         + (f"\n\nDetected changes:\n{detail_text}" if detail_text else "")
     )
+
+
+def test_authoring_program_stamp_commits_the_exact_public_contract_snapshot() -> None:
+    manifest = generate_contract_manifest()
+    digest = "sha256:" + hashlib.sha256(canonical_json(manifest).encode("utf-8")).hexdigest()
+
+    assert digest == AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
+    assert SDK_CONTRACT_SNAPSHOT_DIGEST == digest
+    assert SUPPORTED_DAEMON_CONTRACTS[AUTHORING_SDK_VERSION] == digest
 
 
 def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:

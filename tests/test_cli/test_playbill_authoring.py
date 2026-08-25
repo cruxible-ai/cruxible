@@ -17,6 +17,7 @@ from cruxible_client.authoring.seed import (
     seed_group_proposal_name,
 )
 from cruxible_core.cli.main import cli
+from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -109,6 +110,125 @@ def test_cli_compile_reads_payload_and_submit_uses_only_opaque_intent(
     ]
     assert "target: inst_authoring @ https://authoring.example.test (explicit)" in compiled.stderr
     assert INTENT_ID in submitted.output
+
+
+def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    payload = tmp_path / "claim-type.json"
+    values = {
+        **claim_type_input_example().model_dump(mode="json"),
+        "anticipated_source_ids": ["corpus.runbook"],
+    }
+    payload.write_text(json.dumps(values))
+    warning = {
+        "code": "playbill.claim_type.anticipated_source_contract_omitted",
+        "field_path": "$.evidence_admission_policy.rules",
+        "source_id": "corpus.runbook",
+        "contract_identity": "CaptureContract:playbill.foreign-source.corpus.runbook",
+        "contract_digest": "sha256:" + "7" * 64,
+        "replacement_rule_fragment": {"capture_contract_digests": ["sha256:" + "7" * 64]},
+    }
+
+    class StubClient:
+        def propose_playbill_claim_type_input(
+            self,
+            instance_id: str,
+            *,
+            input: dict[str, object],
+            proposal_name: str,
+        ) -> contracts.PlaybillClaimTypeInputProposalResult:
+            assert (instance_id, proposal_name) == ("inst_authoring", "warn")
+            assert input["anticipated_source_ids"] == ["corpus.runbook"]
+            return contracts.PlaybillClaimTypeInputProposalResult(
+                proposal=contracts.PlaybillProposalInspection(
+                    proposal={"proposal_id": "sha256:" + "8" * 64},
+                    accepted_coordinate=COORDINATE,
+                ),
+                lint=contracts.PlaybillClaimTypeProposalLint(warnings=[warning]),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "claim-type",
+            "propose",
+            "--input",
+            str(payload),
+            "--name",
+            "warn",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["lint"]["warnings"] == [warning]
+
+
+def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    payload = tmp_path / "migration.json"
+    payload.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-claim-type-migration-request-v2",
+                "mode": "preflight",
+                "successor": claim_type_input_example().model_dump(mode="json"),
+            }
+        )
+    )
+    warning = {
+        "code": "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+        "field_path": "$.evidence_admission_policy.rules",
+        "source_id": None,
+        "contract_identity": "CaptureContract:available",
+        "contract_digest": "sha256:" + "7" * 64,
+        "replacement_rule_fragment": {"capture_contract_digests": ["sha256:" + "7" * 64]},
+    }
+
+    class StubClient:
+        def migrate_playbill_claim_type(
+            self,
+            instance_id: str,
+            *,
+            request: dict[str, object],
+        ) -> contracts.PlaybillClaimTypeMigrationPreflight:
+            assert instance_id == "inst_authoring"
+            assert request["mode"] == "preflight"
+            return contracts.PlaybillClaimTypeMigrationPreflight(
+                coordinate=COORDINATE,
+                successor_artifact_digest="sha256:" + "8" * 64,
+                dependents=[],
+                lint=contracts.PlaybillClaimTypeProposalLint(warnings=[warning]),
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "claim-type",
+            "migrate",
+            str(payload),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["lint"]["warnings"] == [warning]
 
 
 def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  # type: ignore[no-untyped-def]

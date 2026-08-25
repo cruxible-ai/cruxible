@@ -366,3 +366,30 @@ def test_decision_only_claim_type_completes_two_successions_without_predecessor_
         )
         assert accepted.lifecycle.predecessor_digest == claim_type_digest(predecessor).tagged
         assert preflight.successor_artifact_digest == claim_type_digest(accepted).tagged  # type: ignore[union-attr]
+
+
+@pytest.mark.parametrize("mode", ["preflight", "submit"])
+def test_migration_surfaces_nonblocking_policy_and_source_lint(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={
+            "evidence_admission_policy": {"rules": []},
+            "anticipated_source_ids": ("corpus.runbook",),
+        }
+    )
+
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV2(mode=mode, successor=successor),  # type: ignore[arg-type]
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+
+    assert result.lint is not None
+    assert {warning.code for warning in result.lint.warnings} == {
+        "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+        "playbill.claim_type.anticipated_source_contract_omitted",
+    }

@@ -116,9 +116,13 @@ cruxible playbill claim-type get PREDICATE
 
 A ClaimType is the governed interface a predicate must satisfy before any Claim
 may state it. `propose --input` lowers the tagless model-generated form and
-returns lint beside the proposal. `migrate` atomically succeeds the ClaimType
-and disposes every dependent the request names; it never authors retirement
-decisions from diagnostics.
+returns nonblocking policy/source lint beside the proposal. The optional,
+sorted `anticipated_source_ids` input supplies source-specific repair suggestions
+without entering the governed ClaimType. Expert proposals, migration preflight
+and submission, and SDK cold-dependency preflight deliver the same typed lint;
+advisories never enter candidate identity, the approval frontier, or its
+certificate. `migrate` atomically succeeds the ClaimType and disposes every
+dependent the request names; it never authors retirement decisions from diagnostics.
 
 ## playbill claim
 

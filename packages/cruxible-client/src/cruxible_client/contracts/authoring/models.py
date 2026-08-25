@@ -52,9 +52,12 @@ AUTHORING_PREFLIGHT_CERTIFICATE_DIGEST_DOMAIN = "playbill-authoring-preflight-ce
 AUTHORING_REFERENCE_EXPECTATIONS_DIGEST_DOMAIN = "playbill-authoring-reference-expectations-v1"
 AUTHORING_PROGRAM_DIGEST_DOMAIN = "playbill-sdk-authoring-program-v1"
 AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-operation-v1"
+# Before this lineage's first public release, a version's digest may be re-pinned
+# only with its audited snapshot, SDK handshake, and digest guardrail in the same
+# commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.4.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:f802cd994cf904b94f4a8714b7b44c9d5db1e5b5b5ad33541ff5a609fb6d04c8"
+    "sha256:22f67d1cec3ca4347ef0566e38f48af441fdcce8f6daf600e9a7b9378313afba"
 )
 INSERTION_TARGET_DIGEST_DOMAIN = "playbill-insertion-target-v1"
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"

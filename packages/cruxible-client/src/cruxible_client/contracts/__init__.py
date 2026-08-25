@@ -105,6 +105,10 @@ class PlaybillProposalInspection(BaseModel):
     tag: Literal["playbill-proposal-inspection-v1"] = "playbill-proposal-inspection-v1"
     proposal: dict[str, Any]
     accepted_coordinate: PlaybillAcceptedCoordinate
+    lint: PlaybillClaimTypeProposalLint | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillProposalListEntry(BaseModel):
@@ -398,6 +402,10 @@ class PlaybillClaimTypeMigrationResult(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    lint: PlaybillClaimTypeProposalLint | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillClaimTypeMigrationPreflight(BaseModel):
@@ -409,6 +417,10 @@ class PlaybillClaimTypeMigrationPreflight(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     successor_artifact_digest: str
     dependents: list[dict[str, Any]]
+    lint: PlaybillClaimTypeProposalLint | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillClaimTypeMigrationResultV2(BaseModel):
@@ -420,6 +432,10 @@ class PlaybillClaimTypeMigrationResultV2(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    lint: PlaybillClaimTypeProposalLint | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 PlaybillClaimTypeMigrationResponse: TypeAlias = (
@@ -640,6 +656,10 @@ class PlaybillAuthoringPreflightResult(BaseModel):
     verdict: Literal["passed", "refused"]
     certificate: dict[str, Any]
     frontier: dict[str, Any]
+    lint: PlaybillClaimTypeProposalLint | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
 
 class PlaybillAuthoringSubmitResult(BaseModel):

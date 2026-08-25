@@ -124,6 +124,9 @@ from cruxible_client.contracts.temporal import format_datetime
 from cruxible_client.transport.http import CruxibleClient
 
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
+# An unreleased lineage may re-pin this entry only atomically with the audited
+# snapshot, program stamp, and digest guardrail. Once publicly released, changes
+# require a coordinated daemon/client version succession instead.
 SUPPORTED_DAEMON_CONTRACTS: Mapping[str, str] = {
     AUTHORING_SDK_VERSION: SDK_CONTRACT_SNAPSHOT_DIGEST,
 }
@@ -454,6 +457,15 @@ class Intent:
         return self._preflight is not None and self._preflight.verdict == "refused"
 
     @property
+    def lint(self) -> api.PlaybillClaimTypeProposalLint | None:
+        return None if self._preflight is None else self._preflight.lint
+
+    @property
+    def warnings(self) -> tuple[dict[str, Any], ...]:
+        lint = self.lint
+        return () if lint is None else tuple(lint.warnings)
+
+    @property
     def diagnostics(self) -> tuple[Diagnostic, ...]:
         if self._preflight is None:
             return ()
@@ -562,9 +574,16 @@ class Intent:
 
 
 class Proposal:
-    def __init__(self, playbill: Playbill, proposal_id: str) -> None:
+    def __init__(
+        self,
+        playbill: Playbill,
+        proposal_id: str,
+        *,
+        lint: api.PlaybillClaimTypeProposalLint | None = None,
+    ) -> None:
         self._playbill = playbill
         self.proposal_id = proposal_id
+        self.lint = lint
 
     @classmethod
     def from_inspection(
@@ -575,7 +594,11 @@ class Proposal:
             proposal_id = inspection.proposal.get("proposal_id")
         if not isinstance(proposal_id, str):
             raise ValueError("proposal inspection omitted proposal_id")
-        return cls(playbill, proposal_id)
+        return cls(playbill, proposal_id, lint=inspection.lint)
+
+    @property
+    def warnings(self) -> tuple[dict[str, Any], ...]:
+        return () if self.lint is None else tuple(self.lint.warnings)
 
     def status(self) -> api.PlaybillProposalListEntry:
         for entry in self._playbill._client.list_playbill_proposals(

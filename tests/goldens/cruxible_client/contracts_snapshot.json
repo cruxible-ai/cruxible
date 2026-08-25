@@ -1102,6 +1102,25 @@
             "type": "object"
           }
         },
+        "lint": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lint",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "tag": {
           "default": "playbill-authoring-preflight-result-v1",
           "default_json_serializable": true,
@@ -1132,6 +1151,32 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "certificate": {
@@ -1143,6 +1188,17 @@
             "additionalProperties": true,
             "title": "Frontier",
             "type": "object"
+          },
+          "lint": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "tag": {
             "const": "playbill-authoring-preflight-result-v1",
@@ -2498,11 +2554,46 @@
             "title": "PlaybillAuthoredClaim",
             "type": "object"
           },
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
+            "type": "object"
+          },
           "PlaybillProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "lint": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "proposal": {
                 "additionalProperties": true,
@@ -4204,11 +4295,46 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
+            "type": "object"
+          },
           "PlaybillProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "lint": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "proposal": {
                 "additionalProperties": true,
@@ -4422,6 +4548,17 @@
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "lint": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "proposal": {
                 "additionalProperties": true,
@@ -4652,6 +4789,25 @@
             "type": "array"
           }
         },
+        "lint": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lint",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "successor_artifact_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -4717,6 +4873,30 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -4731,6 +4911,17 @@
             },
             "title": "Dependents",
             "type": "array"
+          },
+          "lint": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "successor_artifact_digest": {
             "title": "Successor Artifact Digest",
@@ -4771,6 +4962,25 @@
             },
             "title": "Dependents",
             "type": "array"
+          }
+        },
+        "lint": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lint",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "operation_digest": {
@@ -4848,11 +5058,46 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
+            "type": "object"
+          },
           "PlaybillProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "lint": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "proposal": {
                 "additionalProperties": true,
@@ -4883,6 +5128,17 @@
             },
             "title": "Dependents",
             "type": "array"
+          },
+          "lint": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "operation_digest": {
             "title": "Operation Digest",
@@ -4926,6 +5182,25 @@
             },
             "title": "Dependents",
             "type": "array"
+          }
+        },
+        "lint": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lint",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "operation_digest": {
@@ -5003,11 +5278,46 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
+            "type": "object"
+          },
           "PlaybillProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "lint": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "proposal": {
                 "additionalProperties": true,
@@ -5038,6 +5348,17 @@
             },
             "title": "Dependents",
             "type": "array"
+          },
+          "lint": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "operation_digest": {
             "title": "Operation Digest",
@@ -8745,6 +9066,30 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
+            "type": "object"
+          },
           "PlaybillProcedureReadiness": {
             "additionalProperties": false,
             "properties": {
@@ -8818,6 +9163,17 @@
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "lint": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "proposal": {
                 "additionalProperties": true,
@@ -9409,6 +9765,25 @@
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           }
         },
+        "lint": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "lint",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "proposal": {
           "has_default": false,
           "has_default_factory": false,
@@ -9475,12 +9850,47 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
+            "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
           "accepted_coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "lint": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           },
           "proposal": {
             "additionalProperties": true,
@@ -10045,11 +10455,46 @@
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
           },
+          "PlaybillClaimTypeProposalLint": {
+            "additionalProperties": false,
+            "properties": {
+              "tag": {
+                "const": "playbill-claim-type-proposal-lint-v1",
+                "default": "playbill-claim-type-proposal-lint-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "warnings": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Warnings",
+                "type": "array"
+              }
+            },
+            "required": [
+              "warnings"
+            ],
+            "title": "PlaybillClaimTypeProposalLint",
+            "type": "object"
+          },
           "PlaybillProposalInspection": {
             "additionalProperties": false,
             "properties": {
               "accepted_coordinate": {
                 "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "lint": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
               },
               "proposal": {
                 "additionalProperties": true,

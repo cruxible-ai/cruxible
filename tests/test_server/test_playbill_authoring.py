@@ -8,7 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
-from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
+from cruxible_core.playbill.claim_type_inputs import (
+    claim_type_input_example,
+    lower_claim_type_input,
+)
 from tests.test_client.test_playbill_authoring import OBSERVATION
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
@@ -252,6 +255,86 @@ def test_http_migration_domain_refusal_is_a_bad_request(
     assert response.status_code == 400, response.text
     assert response.json()["error_type"] == "ClaimTypeMigrationError"
     assert "migration requires an accepted predecessor" in response.json()["message"]
+
+
+def test_http_claim_type_input_proposal_delivers_actionable_source_lint(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    claim_type_input = {
+        **claim_type_input_example().model_dump(mode="json"),
+        "anticipated_source_ids": ["corpus.runbook"],
+    }
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/claim-types/proposals",
+        json={
+            "tag": "playbill-claim-type-input-propose-request-v1",
+            "input": claim_type_input,
+            "proposal_name": "lint-delivery",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    warnings = response.json()["lint"]["warnings"]
+    assert len(warnings) == 1
+    assert warnings[0]["code"] == "playbill.claim_type.anticipated_source_contract_omitted"
+    assert warnings[0]["source_id"] == "corpus.runbook"
+
+
+@pytest.mark.parametrize("operation", ["expert_propose", "migrate"])
+def test_http_claim_type_routes_preserve_optional_lint_payload(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+    operation: str,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    warning = {
+        "code": "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
+        "field_path": "$.evidence_admission_policy.rules",
+        "source_id": None,
+        "contract_identity": "CaptureContract:available",
+        "contract_digest": "sha256:" + "7" * 64,
+        "replacement_rule_fragment": {"capture_contract_digests": ["sha256:" + "7" * 64]},
+    }
+    lint = contracts.PlaybillClaimTypeProposalLint(warnings=[warning])
+    if operation == "expert_propose":
+        monkeypatch.setattr(
+            "cruxible_core.runtime.playbill_api.playbill_propose_claim_type",
+            lambda _selected, **_values: contracts.PlaybillProposalInspection(
+                proposal={"proposal_id": "sha256:" + "8" * 64},
+                accepted_coordinate=COORDINATE,
+                lint=lint,
+            ),
+        )
+        path = f"/api/v1/{instance_id}/playbill/claim-types/proposals"
+        request = {
+            "claim_type": lower_claim_type_input(claim_type_input_example(), tree={}).model_dump(
+                mode="json"
+            ),
+            "proposal_name": "warn",
+        }
+    else:
+        monkeypatch.setattr(
+            "cruxible_core.runtime.playbill_api.playbill_migrate_claim_type",
+            lambda _selected, **_values: contracts.PlaybillClaimTypeMigrationPreflight(
+                coordinate=COORDINATE,
+                successor_artifact_digest="sha256:" + "9" * 64,
+                dependents=[],
+                lint=lint,
+            ),
+        )
+        path = f"/api/v1/{instance_id}/playbill/claim-types/migrations"
+        request = {
+            "tag": "playbill-claim-type-migration-request-v2",
+            "mode": "preflight",
+            "successor": claim_type_input_example().model_dump(mode="json"),
+        }
+
+    response = client.post(path, json=request)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["lint"]["warnings"] == [warning]
 
 
 def test_http_refuses_digest_and_base_smuggling_in_request_models(
