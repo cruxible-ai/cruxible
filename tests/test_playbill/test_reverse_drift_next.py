@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
@@ -227,8 +229,18 @@ def test_retired_sole_self_published_copy_yields_one_deterministic_judgment(
     ]
 
 
+@pytest.mark.parametrize(
+    "policy_note",
+    (
+        "presentation_policy_malformed",
+        "presentation_policy_path_escape",
+        "presentation_policy_unknown_source_id",
+        "presentation_policy_unreadable",
+    ),
+)
 def test_invalid_presentation_policy_fails_closed_only_for_reverse_drift(
     tmp_path: Path,
+    policy_note: str,
 ) -> None:
     instance, owner, claim_id = _published_world(tmp_path)
     _retire(instance, owner, claim_id)
@@ -240,11 +252,13 @@ def test_invalid_presentation_policy_fails_closed_only_for_reverse_drift(
                 update={
                     "floor_status": "missing",
                     "presentation_policy": None,
-                    "presentation_policy_notes": ("presentation_policy_malformed",),
+                    "presentation_policy_notes": (policy_note,),
                 }
             )
         }
     )
+    assert request.workspace_observation is not None
+    assert request.workspace_observation.presentation_policy_notes == (policy_note,)
 
     rows = service_playbill_next(instance, request=request).items
 
