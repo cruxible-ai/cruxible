@@ -614,11 +614,14 @@ def _citation_commitments(
                     and isinstance(envelope.source.coordinate, Mapping)
                 ):
                     observed_digest = envelope.source.coordinate.get("source_content_digest")
-                    if not isinstance(observed_digest, str):
-                        raise ValueError("foreign source snapshot lacks its whole-source digest")
-                    Sha256Value.from_tagged(observed_digest)
-                    source_id = envelope.source.source_identity
-                    source_digest = observed_digest
+                    if isinstance(observed_digest, str):
+                        try:
+                            Sha256Value.from_tagged(observed_digest)
+                        except ValueError:
+                            pass
+                        else:
+                            source_id = envelope.source.source_identity
+                            source_digest = observed_digest
                 result[citation.citation_id] = (
                     envelope.commitment.digest,
                     claim.identity.qualified,

@@ -9,9 +9,15 @@ import pytest
 
 from cruxible_client.contracts.authoring.models import AuthoringExistingClaimDispositionV1
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.captures import parse_capture_envelope
+from cruxible_client.contracts.captures import (
+    FOREIGN_SOURCE_COORDINATE_TYPE,
+    FOREIGN_SOURCE_SELECTOR_TYPE,
+    CaptureEnvelopeV1,
+    parse_capture_envelope,
+)
 from cruxible_client.contracts.claims import claim_citation_references, claim_statement_digest
 from cruxible_client.contracts.knowledge_briefs import KnowledgeBriefValueV1
+from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
@@ -27,6 +33,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextAccessProfileInvalid,
     PlaybillNextDriftObservationV1,
     PlaybillNextRequestV1,
+    PlaybillNextSourceObservationV1,
     PlaybillNextWorkspaceObservationInvalid,
     PlaybillNextWorkspaceObservationV1,
     _qualifier_discriminator,
@@ -216,6 +223,66 @@ def test_unknown_access_profile_value_has_the_frozen_refusal() -> None:
         )
 
     assert raised.value.code == "playbill.next.access_profile_invalid"
+
+
+@pytest.mark.parametrize(
+    "malformed_coordinate",
+    [
+        {},
+        {"source_content_digest": 12},
+        {"source_content_digest": "not-a-digest"},
+    ],
+)
+def test_malformed_capture_snapshot_never_hides_another_citations_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    malformed_coordinate: dict[str, object],
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    captured_digest = typed_digest(Sha256Value, "playbill-next-captured-source-v1", {}).tagged
+    observed_digest = typed_digest(Sha256Value, "playbill-next-observed-source-v1", {}).tagged
+    calls = 0
+
+    def synthetic_capture(content: bytes) -> CaptureEnvelopeV1:
+        nonlocal calls
+        envelope = parse_capture_envelope(content)
+        calls += 1
+        source = ExternalSourceReferenceV1(
+            source_identity="corpus.malformed" if calls == 1 else "corpus.healthy",
+            producer_binding_digest=envelope.commitment.digest,
+            coordinate_type=FOREIGN_SOURCE_COORDINATE_TYPE,
+            coordinate=(
+                malformed_coordinate if calls == 1 else {"source_content_digest": captured_digest}
+            ),
+            selector_type=FOREIGN_SOURCE_SELECTOR_TYPE,
+            selector={},
+            replayability="attested_only",
+        )
+        return envelope.model_copy(update={"source": source})
+
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next.parse_capture_envelope", synthetic_capture
+    )
+
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            evaluation_time=EVALUATION_TIME,
+            access_profile=_access(),
+            workspace_observation=PlaybillNextWorkspaceObservationV1(
+                source_observations=(
+                    PlaybillNextSourceObservationV1(
+                        source_id="corpus.healthy",
+                        observed_source_digest=observed_digest,
+                    ),
+                )
+            ),
+        ),
+    )
+
+    assert "workspace_sources" in result.observed_domains
+    drift = next(item for item in result.items if item.reason == "citation_drifted")
+    assert drift.detail["source_id"] == "corpus.healthy"
 
 
 def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: Path) -> None:
