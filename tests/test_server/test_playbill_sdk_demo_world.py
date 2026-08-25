@@ -408,6 +408,12 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     runbook = workspace / "corpus" / "vuln-response-runbook.md"
     original_runbook = runbook.read_text(encoding="utf-8")
     runbook.write_text(original_runbook + "\nAn ungoverned source edit.\n", encoding="utf-8")
+    unrelated = pb.next(expiring_within=Duration.days(count=7))
+    assert not any(item["reason"] == "citation_drifted" for item in unrelated.items)
+    runbook.write_text(
+        original_runbook.replace("forty-eight hours", "forty-nine hours"),
+        encoding="utf-8",
+    )
     drifted = pb.next(expiring_within=Duration.days(count=7))
     drift = next(item for item in drifted.items if item["reason"] == "citation_drifted")
     assert drift["subject_identity"] == f"Claim:{claim_id}"
