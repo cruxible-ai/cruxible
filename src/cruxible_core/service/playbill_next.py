@@ -578,7 +578,7 @@ def _qualifier_discriminator(claims: list[ClaimArtifactAny]) -> str | None:
             canonical_bytes(claim.statement.object.model_dump(mode="json")), value
         )
     common = set.intersection(*(set(value) for value in contender_values.values()))
-    ordered_fields = sorted(common, key=lambda item: (item != "topic", item.encode("utf-8")))
+    ordered_fields = sorted(common, key=lambda item: item.encode("utf-8"))
     for field in ordered_fields:
         values = tuple(value[field] for value in contender_values.values())
         if not all(item is None or isinstance(item, (bool, int, str)) for item in values):

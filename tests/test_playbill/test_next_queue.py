@@ -324,10 +324,10 @@ def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: P
     assert conflict.repair.arguments == {"claim_ids": list(conflict.related_identities)}
 
 
-def test_conflict_repair_names_a_common_disjoint_value_discriminator() -> None:
+def test_conflict_repair_names_the_first_byte_ordered_disjoint_value_discriminator() -> None:
     claims = [
         status_claim(1, "wi-1", {"topic": "paging", "rule": "page"}).accepted.claim,
         status_claim(2, "wi-1", {"topic": "change_lanes", "rule": "approve"}).accepted.claim,
     ]
 
-    assert _qualifier_discriminator(claims) == "topic"
+    assert _qualifier_discriminator(claims) == "rule"
