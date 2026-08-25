@@ -250,6 +250,46 @@ def test_typed_refs_emit_coordinate_assertions_without_entering_the_payload(
     assert "program_stamp" not in payload
 
 
+def test_plain_strings_never_forge_coordinate_assertions_or_change_yaml_shorthand(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client, instance_id="inst_test", workspace=tmp_path
+    )
+    claim_id = "CLM-" + "1" * 32
+    common = {
+        "subject": "secops.policy/patch-sla.yaml",
+        "predicate": "secops.policy.patch_sla",
+        "value": 48,
+        "role": ClaimRole.NORMATIVE,
+        "rationale": "String references resolve at the daemon's accepted coordinate.",
+        "supported_by": None,
+        "copied_from": None,
+        "self_source": "Patch within 48 hours.",
+        "qualifier": None,
+        "effective_period": None,
+        "publish_to": None,
+        "subject_definition": None,
+        "claim_type_definition": None,
+    }
+
+    fresh = pb.claim(**common, revises=None, dispositions={})  # type: ignore[arg-type]
+    revision = pb.claim(  # type: ignore[arg-type]
+        **common,
+        revises=claim_id,
+        dispositions={claim_id: Disposition.SUPPORT},
+    )
+
+    assert fresh.payload.statement.subject == revision.payload.statement.subject
+    assert fresh.payload.statement.subject.artifact_path == (
+        "subjects/secops.policy/patch-sla.yaml"
+    )
+    assert fresh.reference_expectations == ()
+    assert revision.reference_expectations == ()
+
+
 def test_connect_refuses_an_unknown_daemon_before_instance_io(
     monkeypatch,
     tmp_path: Path,

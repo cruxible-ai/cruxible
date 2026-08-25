@@ -335,13 +335,60 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     initial.submit()
     first_proposal = initial.status().proposal_id
     assert first_proposal is not None
+    original_coordinate = pb.coordinate
     _approve_and_activate(http, instance_id, private_key_path, first_proposal)
-    pb.refresh()
-    claim_id = next(
-        str(row["identity"]).removeprefix("Claim:")
-        for row in pb.list(kinds=("claim",), statuses=("accepted",)).rows
-        if row.get("predicate") == claim_type.predicate
+    claim_id = str(initial._raw["semantic_identity"])
+    assert pb.coordinate == original_coordinate
+
+    unrefreshed = pb.claim(
+        subject="secops.policy/patch-sla.yaml",
+        predicate=claim_type.predicate,
+        value=72,
+        role=ClaimRole.NORMATIVE,
+        rationale="Resolve accepted dependencies at the daemon's current coordinate.",
+        supported_by=pb.file("corpus/vuln-response-runbook.md").anchor("seventy-two hours"),
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
+        revises=claim_id,
+        dispositions={claim_id: Disposition.CONTRADICT},
+        publish_to=None,
+        subject_definition=None,
+        claim_type_definition=None,
     )
+    assert unrefreshed.reference_expectations == ()
+    assert not unrefreshed.prepare().refused
+    assert pb.coordinate == original_coordinate
+
+    missing_revision_id = "CLM-" + "f" * 32
+    missing_revision = pb.claim(
+        subject="secops.policy/patch-sla.yaml",
+        predicate=claim_type.predicate,
+        value=72,
+        role=ClaimRole.NORMATIVE,
+        rationale="A missing revision remains a located authoring refusal.",
+        supported_by=pb.file("corpus/vuln-response-runbook.md").anchor("seventy-two hours"),
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
+        revises=missing_revision_id,
+        dispositions={claim_id: Disposition.CONTRADICT},
+        publish_to=None,
+        subject_definition=None,
+        claim_type_definition=None,
+    ).prepare()
+    diagnostic = next(
+        item
+        for item in missing_revision.diagnostics
+        if item.code == "playbill.authoring.claim_predecessor_not_found"
+    )
+    assert diagnostic.offending_element == "claim_ref"
+    assert diagnostic.call_site is not None
+    assert diagnostic.call_site.expression == "missing_revision_id"
+
+    pb.refresh()
     predecessor = transport.get_playbill_claim(instance_id, claim_id)
 
     current = pb.next(expiring_within=Duration.days(count=7))
@@ -440,11 +487,7 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     )
     assert revision.payload.dependency_drafts.subject is None
     assert revision.payload.dependency_drafts.claim_type is None
-    assert {item.artifact_kind for item in revision.reference_expectations} == {
-        "Subject",
-        "ClaimType",
-        "Claim",
-    }
+    assert revision.reference_expectations == ()
     intent = revision.prepare()
     assert not intent.refused, intent.diagnostics
     intent.submit()
