@@ -1686,7 +1686,11 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
 
 
 @playbill_group.command("next")
-@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--evaluation-time",
+    default=None,
+    help="Explicit ISO-8601 evaluation time; otherwise the client stamps the current UTC time.",
+)
 @click.option(
     "--access-profile",
     "access_profile_path",
@@ -1711,12 +1715,17 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
 @json_option
 @handle_errors
 def next_work(
-    evaluation_time: str,
+    evaluation_time: str | None,
     access_profile_path: str | None,
     expiring_within_us: int,
     workspace_root: str,
     output_json: bool,
 ) -> None:
+    stamped_evaluation_time = (
+        datetime.now(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
+        if evaluation_time is None
+        else evaluation_time
+    )
     profile = (
         CoverageAccessProfileV1(
             profile_id="cli-next",
@@ -1729,7 +1738,7 @@ def next_work(
     result = _server_call(
         lambda client, instance_id: client.next_playbill(
             instance_id,
-            evaluation_time=evaluation_time,
+            evaluation_time=stamped_evaluation_time,
             access_profile=profile,
             expiring_within={"microseconds": expiring_within_us},
             workspace_observation=workspace_observation,

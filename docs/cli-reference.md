@@ -195,12 +195,13 @@ journal records and `status` reconstructs the one-read run state from those reco
 ## playbill next
 
 ~~~text
-cruxible playbill next --evaluation-time TS [--access-profile FILE]
+cruxible playbill next [--evaluation-time TS] [--access-profile FILE]
   [--expiring-within-us N] [--workspace-root DIR]
 ~~~
 
 Returns the deterministic repair queue at one accepted coordinate. The client
-observes its configured floor locally; the daemon reads no workspace and reports
+stamps the current UTC evaluation time when `--evaluation-time` is omitted and
+observes its configured floor locally; the daemon reads no clock or workspace and reports
 source drift as unobserved unless exact citation observations were supplied. Empty
 output means only that no work exists in the explicitly observed domains.
 

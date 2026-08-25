@@ -6,7 +6,7 @@ import base64
 import hashlib
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client.authoring.bind import (
     AuthoringBindAmbiguityError,
@@ -16,7 +16,9 @@ from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     claim_flow_a_example,
 )
-from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
+from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimDispositionInput, ClaimInput
+from cruxible_client.authoring.sdk_types import Disposition
+from cruxible_client.contracts.authoring.models import AuthoringExistingClaimDispositionV1
 
 
 def _input() -> ClaimInput:
@@ -69,3 +71,31 @@ def test_every_example_is_constructed_as_a_valid_authoring_union_member() -> Non
     for factory in AUTHORING_EXAMPLE_FACTORIES.values():
         model = factory()
         assert adapter.validate_python(model.model_dump(mode="json")) == model
+
+
+@pytest.mark.parametrize("disposition", ["not_tested", "support", "contradict", "unsure"])
+def test_bind_preserves_the_exact_frozen_claim_disposition_vocabulary(disposition: str) -> None:
+    item = ClaimDispositionInput(
+        claim_id="CLM-" + "a" * 32,
+        disposition=disposition,  # type: ignore[arg-type]
+    )
+    value = _input().model_copy(update={"dispositions": (item,)})
+
+    payload = bind_working_selection_input(
+        value,
+        content=b"status: ready",
+        anchor="status: ready",
+    )
+
+    assert payload.existing_claim_dispositions[0].disposition == disposition
+    assert disposition in {member.value for member in Disposition}
+
+
+def test_supersede_is_not_a_claim_input_or_governed_disposition() -> None:
+    values = {"claim_id": "CLM-" + "a" * 32, "disposition": "supersede"}
+
+    with pytest.raises(ValidationError, match="not_tested.*support.*contradict.*unsure"):
+        ClaimDispositionInput.model_validate(values)
+    with pytest.raises(ValidationError, match="not_tested.*support.*contradict.*unsure"):
+        AuthoringExistingClaimDispositionV1.model_validate(values)
+    assert "supersede" not in {member.value for member in Disposition}
