@@ -14,6 +14,7 @@ instant, deterministic order, stated truncation, and a read that writes nothing.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,6 +35,7 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
+    render_claim,
 )
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.line_specs import (
@@ -60,7 +62,10 @@ from cruxible_core.playbill.query.impact import (
     DependencyImpactV1,
     build_dependency_impact,
 )
-from cruxible_core.service.playbill_next import _claim_dependency_items
+from cruxible_core.service.playbill_next import (
+    _bounded_claim_lineages,
+    _claim_dependency_items,
+)
 from tests.test_playbill._line_runtime_support import (
     accepted_line,
     accepted_procedure,
@@ -482,7 +487,8 @@ def test_next_coalesces_multiple_stale_inputs_into_one_derived_claim_row(
             )
         ),
     )
-    facts = _facts((first_current, dependent, second_current), generation="66")
+    unrelated = _claim(5, item="wi-3", value="unrelated")
+    facts = _facts((first_current, dependent, second_current, unrelated), generation="66")
     lineages = {
         first_current.accepted.path: (
             first_old.accepted.artifact_digest,
@@ -493,6 +499,7 @@ def test_next_coalesces_multiple_stale_inputs_into_one_derived_claim_row(
             second_current.accepted.artifact_digest,
         ),
         dependent.accepted.path: (dependent.accepted.artifact_digest,),
+        unrelated.accepted.path: (unrelated.accepted.artifact_digest,),
     }
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next.build_accepted_query_facts",
@@ -501,6 +508,18 @@ def test_next_coalesces_multiple_stale_inputs_into_one_derived_claim_row(
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next._bounded_claim_lineages",
         lambda *_args, **_kwargs: (lineages, frozenset()),
+    )
+    walked_sources: list[str] = []
+    original_impact = build_dependency_impact
+
+    def observed_impact(request, **kwargs):  # type: ignore[no-untyped-def]
+        assert request.address is not None
+        walked_sources.append(request.address.artifact_path)
+        return original_impact(request, **kwargs)
+
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next.build_dependency_impact",
+        observed_impact,
     )
 
     rows = _claim_dependency_items(
@@ -528,6 +547,45 @@ def test_next_coalesces_multiple_stale_inputs_into_one_derived_claim_row(
     )
     assert row.repair.operation == "playbill.authoring.create"
     assert row.repair.required_change == "reauthor_claim_from_current_inputs"
+    assert walked_sources == [first_current.accepted.path, second_current.accepted.path]
+
+
+def test_bounded_claim_lineages_marks_an_unresolved_257th_predecessor_incomplete() -> None:
+    rows: list[ClaimFactRowV1] = []
+    predecessor: str | None = None
+    for generation in range(258):
+        row = _claim(
+            SOURCE_INDEX,
+            item="wi-1",
+            value=f"generation-{generation}",
+            lifecycle=ArtifactLifecycle(predecessor_digest=predecessor),
+        )
+        rows.append(row)
+        predecessor = row.accepted.artifact_digest
+
+    oids = tuple(f"{generation + 1:064x}" for generation in range(len(rows)))
+    trees = {
+        oid: {SOURCE_PATH: render_claim(row.accepted.claim)}
+        for oid, row in zip(oids, rows, strict=True)
+    }
+    instance = SimpleNamespace(
+        accepted_history=lambda: tuple(SimpleNamespace(oid=oid) for oid in oids),
+        tree_at=lambda oid: trees[oid],
+    )
+    current = rows[-1]
+    accepted = _facts((current,), generation="77").coordinate.model_copy(
+        update={"git_oid": oids[-1]}
+    )
+
+    lineages, incomplete = _bounded_claim_lineages(
+        instance,  # type: ignore[arg-type]
+        coordinate=accepted,
+        current_claims={SOURCE_PATH: current.accepted.claim},
+    )
+
+    assert len(lineages[SOURCE_PATH]) == 257
+    assert rows[0].accepted.artifact_digest not in lineages[SOURCE_PATH]
+    assert incomplete == frozenset({SOURCE_PATH})
 
 
 def test_a_verdict_change_alone_makes_dependents_repair_candidates() -> None:

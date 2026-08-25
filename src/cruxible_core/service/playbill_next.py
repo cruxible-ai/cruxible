@@ -966,10 +966,18 @@ def _claim_dependency_items(
         coordinate=coordinate,
         current_claims=current_claims,
     )
+    recorded_input_digests = frozenset(
+        digest for row in visible_rows for digest in row.accepted.claim.backing.input_claim_digests
+    )
+    dependency_sources = tuple(
+        row
+        for row in visible_rows
+        if recorded_input_digests.intersection(lineages[row.accepted.path])
+    )
 
     by_dependent: dict[str, list[dict[str, object]]] = defaultdict(list)
     public_coordinate = AcceptedCoordinate.from_internal(coordinate)
-    for source in visible_rows:
+    for source in dependency_sources:
         impact = build_dependency_impact(
             DependencyImpactRequestV1(
                 at=public_coordinate,
