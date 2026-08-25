@@ -210,7 +210,7 @@ def test_partial_ambiguous_denied_or_unverified_coverage_is_explicitly_unobserve
         assert coordinate is None
 
 
-def test_unstamped_or_malformed_marker_is_a_note_never_an_invented_declaration(
+def test_unstamped_bootstrap_has_its_own_note_and_is_never_an_invented_declaration(
     tmp_path: Path,
 ) -> None:
     _workspace(tmp_path)
@@ -220,7 +220,24 @@ def test_unstamped_or_malformed_marker_is_a_note_never_an_invented_declaration(
     (source,) = observation["source_observations"]
     assert source["scan_complete"] is True
     assert source["marker_summaries"] == []
-    assert source["marker_notes"] == ["projection_marker_invalid"]
+    assert source["marker_notes"] == ["projection_block_unstamped"]
+
+
+def test_malformed_marker_keeps_its_invalid_grammar_note(tmp_path: Path) -> None:
+    source = _workspace(tmp_path)
+    source.write_bytes(
+        source.read_bytes().replace(
+            b"<!-- /playbill:block:summary -->\n",
+            b"<!-- /playbill:block:different -->\n",
+        )
+    )
+
+    observation, _ = _observe(_CoverageClient(), tmp_path)
+
+    (source_observation,) = observation["source_observations"]
+    assert source_observation["scan_complete"] is True
+    assert source_observation["marker_summaries"] == []
+    assert source_observation["marker_notes"] == ["projection_marker_invalid"]
 
 
 def test_missing_catalog_never_calls_coverage(tmp_path: Path) -> None:

@@ -421,9 +421,11 @@ def _projection_marker_observation(
     source_id: str, content: bytes
 ) -> tuple[list[dict[str, object]], tuple[str, ...]]:
     try:
-        blocks = parse_projection_blocks(content, source_id=source_id)
+        blocks = parse_projection_blocks(content, source_id=source_id, allow_bootstrap=True)
     except (ProjectionMarkerError, ValueError):
         return [], ("projection_marker_invalid",)
+    if any(block.stamp is None for block in blocks):
+        return [], ("projection_block_unstamped",)
     return (
         [
             block.summary().model_dump(mode="json")
