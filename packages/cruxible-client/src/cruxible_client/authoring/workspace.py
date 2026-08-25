@@ -323,11 +323,13 @@ def inspect_workspace_floor(
 
 
 def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
-    """Observe the configured floor and, when installed, confined catalog sources.
+    """Observe the configured floor and every resolvable installed catalog source.
 
     The daemon compares ``installed_coordinate`` with its resolved coordinate.  Therefore
     the local ``stale`` spelling produced without a daemon coordinate is only a transport
-    hint; it cannot manufacture a stale or current queue item.
+    hint; it cannot manufacture a stale or current queue item. Invalid catalogs leave
+    sources unobserved; individual unavailable sources are omitted from an otherwise
+    valid observation so the daemon can explain each accepted citation separately.
     """
 
     root = _workspace_root(workspace)
@@ -342,24 +344,27 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
         ),
         "drift_observations": None,
     }
-    catalog_path = root / ".playbill" / "sources.yaml"
-    if not catalog_path.is_file():
+    try:
+        candidates = (
+            root / ".playbill" / "sources.yaml",
+            root / "sources.yaml",
+        )
+        existing = tuple(path for path in candidates if path.is_file())
+        if not existing or any(not path.resolve().is_relative_to(root) for path in existing):
+            return observation
+        overlay_path = root / ".playbill" / "sources.local.yaml"
+        if overlay_path.is_file() and not overlay_path.resolve().is_relative_to(root):
+            return observation
+        sources = WorkspaceSources(root)
+    except (OSError, ValueError):
         return observation
-    if not catalog_path.resolve().is_relative_to(root):
-        raise PlaybillWorkspaceError("source catalog escapes the workspace root")
-    overlay_path = root / ".playbill" / "sources.local.yaml"
-    if overlay_path.is_file() and not overlay_path.resolve().is_relative_to(root):
-        raise PlaybillWorkspaceError("local source catalog escapes the workspace root")
-    sources = WorkspaceSources(root)
     source_observations: list[dict[str, str]] = []
     for entry in sources.catalog.entries:
-        path = sources.path_for_source(entry.name)
-        if not path.is_relative_to(root):
-            raise PlaybillWorkspaceError(f"source {entry.name!r} escapes the workspace root")
         try:
+            path = sources.path_for_source(entry.name)
             content = path.read_bytes()
-        except OSError as exc:
-            raise PlaybillWorkspaceError(f"could not observe source {entry.name!r}: {exc}") from exc
+        except (OSError, ValueError):
+            continue
         source_observations.append(
             {
                 "source_id": entry.name,

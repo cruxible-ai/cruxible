@@ -207,10 +207,12 @@ Returns the deterministic repair queue at one accepted coordinate. The client
 stamps the current UTC evaluation time when `--evaluation-time` is omitted,
 parses `--expiring-within` ISO-8601 durations client-side without changing the
 integer-microsecond daemon wire, and observes its configured floor locally. If
-`.playbill/sources.yaml` exists, the client also observes confined source-file
-digests; the daemon compares them with accepted whole-source snapshots and names
+`.playbill/sources.yaml` or root-level `sources.yaml` exists, the client also
+observes readable source-file digests, including paths explicitly authorized by
+a local overlay. Unreadable or unresolved sources are omitted individually; the
+daemon compares observed sources with accepted whole-source snapshots and names
 drifted or unobserved cited sources. The daemon reads no clock or workspace.
-Without a source catalog, `workspace_sources` remains explicitly unobserved.
+Without a valid source catalog, `workspace_sources` remains explicitly unobserved.
 Empty output means only that no work exists in the explicitly observed domains.
 Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,

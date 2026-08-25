@@ -373,6 +373,14 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     assert note["repair"]["required_change"] == "observe_cited_source"
     catalog.write_text(original_catalog, encoding="utf-8")
 
+    runbook.rename(workspace / "temporarily-unavailable-runbook.md")
+    unavailable = pb.next(expiring_within=Duration.days(count=7))
+    unavailable_note = next(
+        item for item in unavailable.items if item["reason"] == "citation_source_unobserved"
+    )
+    assert unavailable_note["detail"]["source_id"] == "corpus.vuln-response-runbook"
+    (workspace / "temporarily-unavailable-runbook.md").rename(runbook)
+
     incomplete = pb.claim(
         subject="secops.policy/patch-sla.yaml",
         predicate=claim_type.predicate,
