@@ -25,6 +25,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV2
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
+    ClaimCitationV1,
     LiteralClaimObject,
     claim_citation_references,
 )
@@ -74,6 +75,7 @@ NextReason = Literal[
     "floor_invalid",
     "projection_dirty",
     "projection_backing_stale",
+    "self_published_source_stale",
 ]
 NextRepairOperation = Literal[
     "playbill.authoring.create",
@@ -622,6 +624,16 @@ class _CitationCommitment:
     whole_source: bool = False
 
 
+@dataclass(frozen=True)
+class _SourceAssociation:
+    citation_id: str
+    claim_identity: str
+    commitment_digest: str
+    source_id: str
+    qualifying_publication: bool
+    stale_publication: bool
+
+
 def _whole_source_selection(envelope: object) -> bool:
     source = getattr(envelope, "source", None)
     if not isinstance(source, ExternalSourceReferenceV1):
@@ -687,6 +699,171 @@ def _citation_commitments(
             f"{PlaybillNextAcceptedStateInvalid.code}: citation inventory is invalid"
         ) from exc
     return result
+
+
+def _source_associations(
+    instance: PlaybillInstance,
+    *,
+    coordinate: PlaybillAcceptedCoordinate,
+    evaluation_time: datetime,
+) -> tuple[_SourceAssociation, ...]:
+    """Fold historical citation pins without relying on the live-only coverage index."""
+
+    listed = service_list_playbill_claims(instance, at=coordinate, include_retired=True)
+    store = instance.body_store()
+    access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
+    associations: list[_SourceAssociation] = []
+    verdicts: dict[str, str] = {}
+    try:
+        for view in listed.claims:
+            claim = _claim_from_view(view)
+            for reference in claim_citation_references(claim):
+                envelope = parse_capture_envelope(
+                    store.read(reference.capture_digest, access=access)
+                )
+                source = envelope.source
+                if (
+                    not isinstance(source, ExternalSourceReferenceV1)
+                    or source.coordinate_type != FOREIGN_SOURCE_COORDINATE_TYPE
+                ):
+                    continue
+                qualifying = (
+                    isinstance(reference, ClaimCitationV1)
+                    and reference.role == "copy"
+                    and reference.origin == "self_published"
+                )
+                stale = False
+                if qualifying:
+                    if claim.lifecycle.state == "retired":
+                        stale = True
+                    else:
+                        verdict = verdicts.get(claim.identity.qualified)
+                        if verdict is None:
+                            verdict = service_evaluate_playbill_claim_verdict(
+                                instance,
+                                claim_identity=claim.identity.qualified,
+                                evaluation_time=evaluation_time,
+                                at=coordinate,
+                            ).verdict.verdict
+                            verdicts[claim.identity.qualified] = verdict
+                        stale = verdict == "contradicted"
+                associations.append(
+                    _SourceAssociation(
+                        citation_id=reference.citation_id,
+                        claim_identity=claim.identity.qualified,
+                        commitment_digest=envelope.commitment.digest,
+                        source_id=source.source_identity,
+                        qualifying_publication=qualifying,
+                        stale_publication=stale,
+                    )
+                )
+    except Exception as exc:
+        raise PlaybillNextAcceptedStateInvalid(
+            f"{PlaybillNextAcceptedStateInvalid.code}: publication association fold is invalid"
+        ) from exc
+    return tuple(
+        sorted(
+            associations,
+            key=lambda item: (
+                item.source_id.encode("utf-8"),
+                item.commitment_digest.encode("ascii"),
+                item.claim_identity.encode("utf-8"),
+                item.citation_id.encode("ascii"),
+            ),
+        )
+    )
+
+
+def _self_published_source_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: PlaybillAcceptedCoordinate,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
+    observation: PlaybillNextWorkspaceObservationV1 | None,
+) -> tuple[PlaybillNextItemV1, ...]:
+    if (
+        observation is None
+        or observation.source_observations is None
+        or not access_profile.permits("instance")
+    ):
+        return ()
+    policy = observation.presentation_policy or PlaybillPresentationPolicyV1()
+    archival = set(policy.archival_source_ids)
+    observed = {
+        item.source_id: item
+        for item in observation.source_observations
+        if isinstance(item, PlaybillNextSourceObservationV2)
+        and item.scan_complete
+        and not item.scan_notes
+        and not item.marker_notes
+    }
+    associations = _source_associations(
+        instance,
+        coordinate=coordinate,
+        evaluation_time=evaluation_time,
+    )
+    grouped: dict[tuple[str, str], list[_SourceAssociation]] = defaultdict(list)
+    for association in associations:
+        grouped[(association.source_id, association.commitment_digest)].append(association)
+
+    items: list[PlaybillNextItemV1] = []
+    for (source_id, commitment_digest), group in sorted(
+        grouped.items(), key=lambda item: (item[0][0].encode("utf-8"), item[0][1].encode("ascii"))
+    ):
+        source = observed.get(source_id)
+        if source is None or source_id in archival:
+            continue
+        occurrences = tuple(
+            item
+            for item in source.occurrences
+            if item.observed_commitment_digest == commitment_digest
+        )
+        if len(occurrences) != 1:
+            continue
+        occurrence = occurrences[0]
+        if any(
+            occurrence.line_overlay.start_byte < marker.end_byte
+            and occurrence.line_overlay.end_byte > marker.start_byte
+            for marker in source.marker_summaries
+        ):
+            continue
+        if any(not item.qualifying_publication for item in group):
+            continue
+        if any(item.qualifying_publication and not item.stale_publication for item in group):
+            continue
+        stale = tuple(
+            sorted(
+                {item.claim_identity for item in group if item.stale_publication},
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+        if not stale:
+            continue
+        items.append(
+            _item(
+                severity="warning",
+                reason="self_published_source_stale",
+                subject_identity=source_id,
+                related_identities=stale,
+                detail={
+                    "source_id": source_id,
+                    "commitment_digest": commitment_digest,
+                    "occurrence_identity_digest": occurrence.identity_digest,
+                    "stale_claim_identities": list(stale),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.authoring.create",
+                    target=source_id,
+                    required_change="review_self_published_passage",
+                    arguments={
+                        "source_id": source_id,
+                        "occurrence_identity_digest": occurrence.identity_digest,
+                    },
+                ),
+            )
+        )
+    return tuple(items)
 
 
 def _source_citation_item(
@@ -1029,6 +1206,13 @@ def service_playbill_next(
                 *_projection_items(
                     instance,
                     coordinate=coordinate,
+                    evaluation_time=request.evaluation_time,
+                    access_profile=request.access_profile,
+                    observation=request.workspace_observation,
+                ),
+                *_self_published_source_items(
+                    instance,
+                    coordinate=public_coordinate,
                     evaluation_time=request.evaluation_time,
                     access_profile=request.access_profile,
                     observation=request.workspace_observation,
