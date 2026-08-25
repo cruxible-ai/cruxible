@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
@@ -18,6 +18,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
+    ClaimEvidenceFreshnessV1,
     ClaimType,
     claim_type_digest,
     claim_type_path,
@@ -66,6 +67,10 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     pins: tuple[dict[str, object], ...] = ()
     subject_scope: dict[str, object] | None = None
     slot_policy: dict[str, object] | None = None
+    evidence_freshness: ClaimEvidenceFreshnessV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     anticipated_source_ids: tuple[str, ...] = ()
 
     @field_validator("anticipated_source_ids")
@@ -117,6 +122,8 @@ def lower_claim_type_input(
     payload["artifact_format"] = (
         "playbill-claim-type-v2"
         if value.subject_scope is not None or value.slot_policy is not None
+        else "playbill-claim-type-v3"
+        if value.evidence_freshness is not None
         else "playbill-claim-type-v1"
     )
     payload["identity"] = ArtifactIdentity(kind="ClaimType", name=value.predicate).model_dump(

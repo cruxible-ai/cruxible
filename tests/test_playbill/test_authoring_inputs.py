@@ -17,6 +17,10 @@ from cruxible_client.authoring.inputs import (
     SelfSourceInput,
     WorkingSelectionInput,
 )
+from cruxible_client.contracts.claim_types import (
+    ClaimEvidenceFreshnessV1,
+    ClaimFreshnessDurationV1,
+)
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
@@ -214,6 +218,7 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
     encoded = example.model_dump_json()
     assert '"tag"' not in encoded
     assert "identity" not in json.loads(encoded)
+    assert "evidence_freshness" not in json.loads(encoded)
     assert lint.warnings[0].code == (
         "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
     )
@@ -237,6 +242,27 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
                 "anticipated_source_ids": ["repo.z", "repo.a"],
             }
         )
+
+
+def test_claim_type_input_lowers_freshness_into_the_existing_v3_artifact() -> None:
+    original = claim_type_input_example()
+    freshness = ClaimEvidenceFreshnessV1(
+        stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
+    )
+    fresh = ClaimTypeInputV1.model_validate(
+        {
+            **original.model_dump(mode="json"),
+            "evidence_freshness": freshness.model_dump(mode="json"),
+        }
+    )
+
+    legacy = lower_claim_type_input(original, tree={})
+    governed = lower_claim_type_input(fresh, tree={})
+
+    assert legacy.artifact_format == "playbill-claim-type-v1"
+    assert "evidence_freshness" not in original.model_dump(mode="json")
+    assert governed.artifact_format == "playbill-claim-type-v3"
+    assert governed.evidence_freshness == freshness
 
 
 def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(

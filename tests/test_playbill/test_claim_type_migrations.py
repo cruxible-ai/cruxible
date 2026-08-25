@@ -11,8 +11,10 @@ from cruxible_client.authoring.inputs import (
     LiteralObjectInput,
     SelfSourceInput,
 )
-from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.claim_types import (
+    ClaimEvidenceFreshnessV1,
+    ClaimFreshnessDurationV1,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
@@ -366,6 +368,51 @@ def test_decision_only_claim_type_completes_two_successions_without_predecessor_
         )
         assert accepted.lifecycle.predecessor_digest == claim_type_digest(predecessor).tagged
         assert preflight.successor_artifact_digest == claim_type_digest(accepted).tagged  # type: ignore[union-attr]
+
+
+def test_decision_only_successor_migrates_freshness_and_its_live_claim(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id = _accepted_claim_world(tmp_path)
+    freshness = ClaimEvidenceFreshnessV1(
+        stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
+    )
+    successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={"evidence_freshness": freshness}
+    )
+    dependent = ClaimTypeDependentDispositionV2(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="successor",
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+
+    preflight = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV2(
+            mode="preflight",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=actor,
+    )
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV2(
+            mode="submit",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=actor,
+    )
+
+    assert isinstance(result, ClaimTypeMigrationResultV2)
+    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    path = claim_type_path(_claim_type().predicate)
+    governed = parse_claim_type(instance.proposal_tree(tree_oid)[path], path=path)
+    assert governed.artifact_format == "playbill-claim-type-v3"
+    assert governed.evidence_freshness == freshness
+    assert preflight.successor_artifact_digest == claim_type_digest(governed).tagged  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize("mode", ["preflight", "submit"])
