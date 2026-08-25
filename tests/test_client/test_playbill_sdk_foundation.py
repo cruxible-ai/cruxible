@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import pytest
@@ -112,23 +113,70 @@ def test_next_workspace_observes_sorted_archival_presentation_policy(tmp_path: P
         "tag": "playbill-presentation-policy-v1",
         "archival_source_ids": ["corpus.runbook"],
     }
+    assert observation["presentation_policy_notes"] == []
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("payload", "expected_note"),
     [
-        '{"tag":"playbill-presentation-policy-v1","archival_source_ids":["unknown"]}',
-        '{"tag":"playbill-presentation-policy-v1","archival_source_ids":["corpus.runbook",'
-        '"corpus.runbook"]}',
-        "not-json",
+        (
+            '{"tag":"playbill-presentation-policy-v1","archival_source_ids":["unknown"]}',
+            "presentation_policy_unknown_source_id",
+        ),
+        (
+            "not-json",
+            "presentation_policy_malformed",
+        ),
     ],
 )
-def test_next_workspace_refuses_invalid_presentation_policy(tmp_path: Path, payload: str) -> None:
+def test_next_workspace_degrades_invalid_presentation_policy(
+    tmp_path: Path,
+    payload: str,
+    expected_note: str,
+) -> None:
     _catalog(tmp_path)
     (tmp_path / ".playbill" / "presentation-policy.json").write_text(payload, encoding="utf-8")
 
-    with pytest.raises(ValueError, match="presentation policy"):
-        observe_playbill_next_workspace(tmp_path)
+    observation = observe_playbill_next_workspace(tmp_path)
+
+    assert observation["presentation_policy"] is None
+    assert observation["presentation_policy_notes"] == [expected_note]
+
+
+def test_next_workspace_degrades_unreadable_presentation_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _catalog(tmp_path)
+    policy_path = tmp_path / ".playbill" / "presentation-policy.json"
+    policy_path.write_text('{"tag":"playbill-presentation-policy-v1"}', encoding="utf-8")
+    original = Path.read_text
+
+    def unreadable(path: Path, *args: object, **kwargs: object) -> str:
+        if path == policy_path:
+            raise PermissionError("policy denied")
+        return original(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", unreadable)
+
+    observation = observe_playbill_next_workspace(tmp_path)
+
+    assert observation["presentation_policy"] is None
+    assert observation["presentation_policy_notes"] == ["presentation_policy_unreadable"]
+
+
+def test_next_workspace_degrades_escaping_presentation_policy(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _catalog(workspace)
+    outside = tmp_path / "outside-policy.json"
+    outside.write_text('{"tag":"playbill-presentation-policy-v1"}', encoding="utf-8")
+    os.symlink(outside, workspace / ".playbill" / "presentation-policy.json")
+
+    observation = observe_playbill_next_workspace(workspace)
+
+    assert observation["presentation_policy"] is None
+    assert observation["presentation_policy_notes"] == ["presentation_policy_path_escape"]
 
 
 def test_next_workspace_without_a_catalog_does_not_claim_source_observation(

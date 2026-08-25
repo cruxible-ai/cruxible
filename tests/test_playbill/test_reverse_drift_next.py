@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.claims import (
@@ -31,6 +32,8 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV2,
     PlaybillNextWorkspaceObservationV1,
+    _self_published_source_items,
+    _SourceAssociation,
     service_playbill_next,
 )
 from tests.test_playbill.test_authoring_insertions import (
@@ -149,6 +152,43 @@ def _request(instance, *, archival: bool = False) -> PlaybillNextRequestV1:  # t
     )
 
 
+def _reverse_items(
+    monkeypatch,  # type: ignore[no-untyped-def]
+    request: PlaybillNextRequestV1,
+    associations: tuple[_SourceAssociation, ...],
+):  # type: ignore[no-untyped-def]
+    assert request.at is not None
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next._source_associations",
+        lambda *_args, **_kwargs: associations,
+    )
+    return _self_published_source_items(
+        object(),  # type: ignore[arg-type]
+        coordinate=request.at,
+        evaluation_time=request.evaluation_time,
+        access_profile=request.access_profile,
+        observation=request.workspace_observation,
+    )
+
+
+def _association(
+    *,
+    citation_id: str = "sha256:" + "1" * 64,
+    claim_identity: str = "Claim:CLM-11111111111111111111111111111111",
+    source_id: str = "repo.work-items",
+    qualifying: bool = True,
+    stale: bool = True,
+) -> _SourceAssociation:
+    return _SourceAssociation(
+        citation_id=citation_id,
+        claim_identity=claim_identity,
+        commitment_digest=_digest(b"ready"),
+        source_id=source_id,
+        qualifying_publication=qualifying,
+        stale_publication=stale,
+    )
+
+
 def test_retired_sole_self_published_copy_yields_one_deterministic_judgment(
     tmp_path: Path,
 ) -> None:
@@ -185,3 +225,182 @@ def test_retired_sole_self_published_copy_yields_one_deterministic_judgment(
         for item in service_playbill_next(instance, request=_request(instance, archival=True)).items
         if item.reason == "self_published_source_stale"
     ]
+
+
+def test_invalid_presentation_policy_fails_closed_only_for_reverse_drift(
+    tmp_path: Path,
+) -> None:
+    instance, owner, claim_id = _published_world(tmp_path)
+    _retire(instance, owner, claim_id)
+    request = _request(instance)
+    assert request.workspace_observation is not None
+    request = request.model_copy(
+        update={
+            "workspace_observation": request.workspace_observation.model_copy(
+                update={
+                    "floor_status": "missing",
+                    "presentation_policy": None,
+                    "presentation_policy_notes": ("presentation_policy_malformed",),
+                }
+            )
+        }
+    )
+
+    rows = service_playbill_next(instance, request=request).items
+
+    assert not [item for item in rows if item.reason == "self_published_source_stale"]
+    assert [item for item in rows if item.reason == "floor_missing"]
+
+
+def test_contradicted_sole_copy_is_stale_at_the_explicit_evaluation_instant(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    instance, _owner, _claim_id = _published_world(tmp_path)
+    observed_times: list[datetime] = []
+
+    def contradicted(*_args, evaluation_time: datetime, **_kwargs):  # type: ignore[no-untyped-def]
+        observed_times.append(evaluation_time)
+        return SimpleNamespace(verdict=SimpleNamespace(verdict="contradicted"))
+
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next.service_evaluate_playbill_claim_verdict",
+        contradicted,
+    )
+
+    rows = service_playbill_next(instance, request=_request(instance)).items
+
+    assert observed_times
+    assert set(observed_times) == {NOW}
+    assert len([item for item in rows if item.reason == "self_published_source_stale"]) == 1
+
+
+def test_independent_or_legacy_association_suppresses_a_stale_copy(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    instance, _owner, _claim_id = _published_world(tmp_path)
+    request = _request(instance)
+
+    rows = _reverse_items(
+        monkeypatch,
+        request,
+        (
+            _association(),
+            _association(
+                citation_id="sha256:" + "2" * 64,
+                claim_identity="Claim:CLM-22222222222222222222222222222222",
+                qualifying=False,
+                stale=False,
+            ),
+        ),
+    )
+
+    assert rows == ()
+
+
+def test_one_current_publisher_suppresses_a_retired_publisher(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    instance, _owner, _claim_id = _published_world(tmp_path)
+    request = _request(instance)
+
+    rows = _reverse_items(
+        monkeypatch,
+        request,
+        (
+            _association(),
+            _association(
+                citation_id="sha256:" + "2" * 64,
+                claim_identity="Claim:CLM-22222222222222222222222222222222",
+                stale=False,
+            ),
+        ),
+    )
+
+    assert rows == ()
+
+
+def test_ambiguous_duplicate_occurrence_suppresses_reverse_drift(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    instance, _owner, _claim_id = _published_world(tmp_path)
+    request = _request(instance)
+    assert request.workspace_observation is not None
+    (source,) = request.workspace_observation.source_observations or ()
+    assert isinstance(source, PlaybillNextSourceObservationV2)
+    first = source.occurrences[0]
+    duplicate = first.model_copy(
+        update={
+            "ordinal": 1,
+            "identity_digest": occurrence_identity_digest(
+                source=first.source,
+                observed_commitment_digest=first.observed_commitment_digest,
+                ordinal=1,
+            ),
+        }
+    )
+    observation = request.workspace_observation.model_copy(
+        update={
+            "source_observations": (source.model_copy(update={"occurrences": (first, duplicate)}),)
+        }
+    )
+
+    rows = _reverse_items(
+        monkeypatch,
+        request.model_copy(update={"workspace_observation": observation}),
+        (_association(),),
+    )
+
+    assert rows == ()
+
+
+def test_declared_block_overlap_suppresses_reverse_drift(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    instance, _owner, _claim_id = _published_world(tmp_path)
+    request = _request(instance)
+    assert request.workspace_observation is not None
+    (source,) = request.workspace_observation.source_observations or ()
+    assert isinstance(source, PlaybillNextSourceObservationV2)
+    marker = SimpleNamespace(start_byte=7, end_byte=10)
+    observation = request.workspace_observation.model_copy(
+        update={"source_observations": (source.model_copy(update={"marker_summaries": (marker,)}),)}
+    )
+
+    rows = _reverse_items(
+        monkeypatch,
+        request.model_copy(update={"workspace_observation": observation}),
+        (_association(),),
+    )
+
+    assert rows == ()
+
+
+def test_identical_bytes_in_another_source_do_not_poison_the_publication_group(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    instance, _owner, _claim_id = _published_world(tmp_path)
+    request = _request(instance)
+
+    rows = _reverse_items(
+        monkeypatch,
+        request,
+        (
+            _association(),
+            _association(
+                citation_id="sha256:" + "2" * 64,
+                claim_identity="Claim:CLM-22222222222222222222222222222222",
+                source_id="repo.other",
+                qualifying=False,
+                stale=False,
+            ),
+        ),
+    )
+
+    assert len(rows) == 1
+    assert rows[0].subject_identity == "repo.work-items"

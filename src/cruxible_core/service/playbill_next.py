@@ -35,6 +35,7 @@ from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_BLOCKS_PER_SOURCE,
     MAX_PROJECTION_CARDS_PER_SOURCE,
     MAX_PROJECTION_SOURCE_BYTES,
+    PlaybillPresentationPolicyNoteV1,
     PlaybillPresentationPolicyV1,
     ProjectionClaimBackingV1,
     ProjectionMarkerSummaryV1,
@@ -231,6 +232,7 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
         tuple[PlaybillNextSourceObservationV1 | PlaybillNextSourceObservationV2, ...] | None
     ) = None
     presentation_policy: PlaybillPresentationPolicyV1 | None = None
+    presentation_policy_notes: tuple[PlaybillPresentationPolicyNoteV1, ...] = ()
 
     @field_validator("drift_observations")
     @classmethod
@@ -798,6 +800,8 @@ def _self_published_source_items(
         or observation.source_observations is None
         or not access_profile.permits("instance")
     ):
+        return ()
+    if observation.presentation_policy_notes:
         return ()
     policy = observation.presentation_policy or PlaybillPresentationPolicyV1()
     archival = set(policy.archival_source_ids)

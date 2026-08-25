@@ -26,6 +26,7 @@ from cruxible_client.contracts.declared_blocks import (
     MAX_PROJECTION_CARDS_PER_SOURCE,
     MAX_PROJECTION_SCAN_BYTES,
     MAX_PROJECTION_SOURCE_BYTES,
+    PlaybillPresentationPolicyNoteV1,
     PlaybillPresentationPolicyV1,
 )
 from cruxible_client.contracts.errors import PlaybillError
@@ -42,30 +43,42 @@ def _presentation_policy(
     root: Path,
     *,
     known_source_ids: Sequence[str],
-) -> PlaybillPresentationPolicyV1:
+) -> tuple[PlaybillPresentationPolicyV1 | None, tuple[PlaybillPresentationPolicyNoteV1, ...]]:
     path = root / ".playbill" / "presentation-policy.json"
-    if not path.exists():
-        return PlaybillPresentationPolicyV1()
     try:
+        if not path.exists():
+            return PlaybillPresentationPolicyV1(), ()
         resolved = path.resolve(strict=True)
-        if not resolved.is_relative_to(root):
-            raise PlaybillWorkspaceError("presentation policy escapes the workspace")
+    except OSError:
+        return None, ("presentation_policy_unreadable",)
+    if not resolved.is_relative_to(root):
+        return None, ("presentation_policy_path_escape",)
+    try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         policy = PlaybillPresentationPolicyV1.model_validate(raw)
-    except PlaybillWorkspaceError:
-        raise
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
-        raise PlaybillWorkspaceError(f"presentation policy is invalid: {exc}") from exc
+    except OSError:
+        return None, ("presentation_policy_unreadable",)
+    except (ValueError, json.JSONDecodeError):
+        return None, ("presentation_policy_malformed",)
     unknown = tuple(
         source_id
         for source_id in policy.archival_source_ids
         if source_id not in set(known_source_ids)
     )
     if unknown:
-        raise PlaybillWorkspaceError(
-            "presentation policy names unknown source IDs: " + ", ".join(unknown)
-        )
-    return policy
+        return None, ("presentation_policy_unknown_source_id",)
+    return policy, ()
+
+
+def _observe_presentation_policy(
+    observation: dict[str, object],
+    root: Path,
+    *,
+    known_source_ids: Sequence[str],
+) -> None:
+    policy, notes = _presentation_policy(root, known_source_ids=known_source_ids)
+    observation["presentation_policy"] = None if policy is None else policy.model_dump(mode="json")
+    observation["presentation_policy_notes"] = list(notes)
 
 
 class _FloorClient(Protocol):
@@ -395,6 +408,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
         ),
         "drift_observations": None,
         "presentation_policy": PlaybillPresentationPolicyV1().model_dump(mode="json"),
+        "presentation_policy_notes": [],
     }
     try:
         candidates = (
@@ -403,23 +417,20 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
         )
         existing = tuple(path for path in candidates if path.is_file())
         if not existing or any(not path.resolve().is_relative_to(root) for path in existing):
-            observation["presentation_policy"] = _presentation_policy(
-                root, known_source_ids=()
-            ).model_dump(mode="json")
+            _observe_presentation_policy(observation, root, known_source_ids=())
             return observation
         overlay_path = root / ".playbill" / "sources.local.yaml"
         if overlay_path.is_file() and not overlay_path.resolve().is_relative_to(root):
             return observation
         sources = WorkspaceSources(root)
     except (OSError, ValueError, PlaybillError):
-        observation["presentation_policy"] = _presentation_policy(
-            root, known_source_ids=()
-        ).model_dump(mode="json")
+        _observe_presentation_policy(observation, root, known_source_ids=())
         return observation
-    observation["presentation_policy"] = _presentation_policy(
+    _observe_presentation_policy(
+        observation,
         root,
         known_source_ids=tuple(entry.name for entry in sources.catalog.entries),
-    ).model_dump(mode="json")
+    )
     source_observations: list[dict[str, str]] = []
     for entry in sources.catalog.entries:
         try:

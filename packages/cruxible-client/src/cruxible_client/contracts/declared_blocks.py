@@ -53,6 +53,14 @@ class PlaybillPresentationPolicyV1(_StrictDeclaredBlockModel):
         return value
 
 
+PlaybillPresentationPolicyNoteV1: TypeAlias = Literal[
+    "presentation_policy_malformed",
+    "presentation_policy_path_escape",
+    "presentation_policy_unknown_source_id",
+    "presentation_policy_unreadable",
+]
+
+
 class ProjectionClaimBackingV1(_StrictDeclaredBlockModel):
     tag: Literal["playbill-projection-claim-backing-v1"] = "playbill-projection-claim-backing-v1"
     identity: ArtifactIdentity
