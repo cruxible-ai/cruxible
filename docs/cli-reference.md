@@ -206,10 +206,12 @@ cruxible playbill next [--evaluation-time TS] [--access-profile FILE]
 Returns the deterministic repair queue at one accepted coordinate. The client
 stamps the current UTC evaluation time when `--evaluation-time` is omitted,
 parses `--expiring-within` ISO-8601 durations client-side without changing the
-integer-microsecond daemon wire, and observes its configured floor locally. The
-daemon reads no clock or workspace and reports
-source drift as unobserved unless exact citation observations were supplied. Empty
-output means only that no work exists in the explicitly observed domains.
+integer-microsecond daemon wire, and observes its configured floor locally. If
+`.playbill/sources.yaml` exists, the client also observes confined source-file
+digests; the daemon compares them with accepted whole-source snapshots and names
+drifted or unobserved cited sources. The daemon reads no clock or workspace.
+Without a source catalog, `workspace_sources` remains explicitly unobserved.
+Empty output means only that no work exists in the explicitly observed domains.
 
 ## playbill discover
 

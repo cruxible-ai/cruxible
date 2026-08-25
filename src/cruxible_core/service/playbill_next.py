@@ -16,7 +16,11 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1, parse_capture_envelope
+from cruxible_client.contracts.captures import (
+    FOREIGN_SOURCE_COORDINATE_TYPE,
+    CanonicalDurationV1,
+    parse_capture_envelope,
+)
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV2
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
@@ -24,6 +28,7 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.knowledge_briefs import KNOWLEDGE_BRIEF_PREDICATE
+from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.brief_health import KnowledgeBriefHealthResultV1
 from cruxible_core.playbill.cas import BodyAccessContext
@@ -48,6 +53,7 @@ NextReason = Literal[
     "claim_uncovered",
     "claim_stale_evidence",
     "citation_drifted",
+    "citation_source_unobserved",
     "evidence_expiring",
     "floor_missing",
     "floor_stale",
@@ -104,6 +110,17 @@ class PlaybillNextDriftObservationV1(_StrictNextModel):
         return value
 
 
+class PlaybillNextSourceObservationV1(_StrictNextModel):
+    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    observed_source_digest: str
+
+    @field_validator("observed_source_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
 class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     tag: Literal["playbill-next-workspace-observation-v1"] = (
         "playbill-next-workspace-observation-v1"
@@ -111,6 +128,7 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     floor_status: Literal["not_configured", "missing", "current", "stale", "invalid"] | None = None
     installed_coordinate: AcceptedCoordinate | None = None
     drift_observations: tuple[PlaybillNextDriftObservationV1, ...] | None = None
+    source_observations: tuple[PlaybillNextSourceObservationV1, ...] | None = None
 
     @field_validator("drift_observations")
     @classmethod
@@ -123,6 +141,19 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
         ids = tuple(item.citation_id for item in value)
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("ascii"))):
             raise ValueError("next drift observations must be sorted and unique by citation_id")
+        return value
+
+    @field_validator("source_observations")
+    @classmethod
+    def _sources(
+        cls,
+        value: tuple[PlaybillNextSourceObservationV1, ...] | None,
+    ) -> tuple[PlaybillNextSourceObservationV1, ...] | None:
+        if value is None:
+            return None
+        ids = tuple(item.source_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("next source observations must be sorted and unique by source_id")
         return value
 
     @model_validator(mode="after")
@@ -530,11 +561,11 @@ def _citation_commitments(
     instance: PlaybillInstance,
     *,
     coordinate: PlaybillAcceptedCoordinate,
-) -> dict[str, tuple[str, str]]:
+) -> dict[str, tuple[str, str, str | None, str | None]]:
     listed = service_list_playbill_claims(instance, at=coordinate)
     store = instance.body_store()
     access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
-    result: dict[str, tuple[str, str]] = {}
+    result: dict[str, tuple[str, str, str | None, str | None]] = {}
     try:
         for view in listed.claims:
             claim = _claim_from_view(view)
@@ -544,9 +575,24 @@ def _citation_commitments(
                 envelope = parse_capture_envelope(
                     store.read(citation.capture_digest, access=access)
                 )
+                source_id: str | None = None
+                source_digest: str | None = None
+                if (
+                    isinstance(envelope.source, ExternalSourceReferenceV1)
+                    and envelope.source.coordinate_type == FOREIGN_SOURCE_COORDINATE_TYPE
+                    and isinstance(envelope.source.coordinate, Mapping)
+                ):
+                    observed_digest = envelope.source.coordinate.get("source_content_digest")
+                    if not isinstance(observed_digest, str):
+                        raise ValueError("foreign source snapshot lacks its whole-source digest")
+                    Sha256Value.from_tagged(observed_digest)
+                    source_id = envelope.source.source_identity
+                    source_digest = observed_digest
                 result[citation.citation_id] = (
                     envelope.commitment.digest,
                     claim.identity.qualified,
+                    source_id,
+                    source_digest,
                 )
     except Exception as exc:
         raise PlaybillNextAcceptedStateInvalid(
@@ -636,6 +682,69 @@ def _workspace_items(
                     ),
                 )
             )
+    elif observation.source_observations is not None:
+        domains.append("workspace_sources")
+        observed = {
+            source.source_id: source.observed_source_digest
+            for source in observation.source_observations
+        }
+        commitments = _citation_commitments(instance, coordinate=coordinate)
+        for citation_id in sorted(commitments, key=lambda item: item.encode("ascii")):
+            _commitment, claim_identity, source_id, captured_source_digest = commitments[
+                citation_id
+            ]
+            if source_id is None or captured_source_digest is None:
+                continue
+            observed_source_digest = observed.get(source_id)
+            if observed_source_digest is None:
+                items.append(
+                    _item(
+                        severity="warning",
+                        reason="citation_source_unobserved",
+                        subject_identity=claim_identity,
+                        related_identities=(citation_id,),
+                        detail={
+                            "citation_id": citation_id,
+                            "source_id": source_id,
+                            "expected_source_digest": captured_source_digest,
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.authoring.bind",
+                            target=claim_identity,
+                            required_change="observe_cited_source",
+                            arguments={
+                                "claim_id": claim_identity.removeprefix("Claim:"),
+                                "citation_id": citation_id,
+                                "source_id": source_id,
+                            },
+                        ),
+                    )
+                )
+            elif observed_source_digest != captured_source_digest:
+                items.append(
+                    _item(
+                        severity="repair",
+                        reason="citation_drifted",
+                        subject_identity=claim_identity,
+                        related_identities=(citation_id,),
+                        detail={
+                            "citation_id": citation_id,
+                            "source_id": source_id,
+                            "expected_source_digest": captured_source_digest,
+                            "observed_source_digest": observed_source_digest,
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.authoring.bind",
+                            target=claim_identity,
+                            required_change="recapture_or_revise_citation",
+                            arguments={
+                                "claim_id": claim_identity.removeprefix("Claim:"),
+                                "citation_id": citation_id,
+                                "source_id": source_id,
+                            },
+                        ),
+                    )
+                )
     return tuple(domains), tuple(items)
 
 
@@ -706,6 +815,7 @@ __all__ = [
     "PlaybillNextItemV1",
     "PlaybillNextRequestV1",
     "PlaybillNextResultV1",
+    "PlaybillNextSourceObservationV1",
     "PlaybillNextWorkspaceObservationInvalid",
     "PlaybillNextWorkspaceObservationV1",
     "playbill_next_item_id",

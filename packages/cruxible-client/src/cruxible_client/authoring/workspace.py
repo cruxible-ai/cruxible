@@ -19,6 +19,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 
 from cruxible_client import contracts
+from cruxible_client.authoring.selectors import WorkspaceSources
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
 _FLOOR_DOMAIN = "playbill-floor-export-v2"
@@ -322,15 +323,16 @@ def inspect_workspace_floor(
 
 
 def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
-    """Observe the configured floor once without claiming source coverage was scanned.
+    """Observe the configured floor and, when installed, confined catalog sources.
 
     The daemon compares ``installed_coordinate`` with its resolved coordinate.  Therefore
     the local ``stale`` spelling produced without a daemon coordinate is only a transport
     hint; it cannot manufacture a stale or current queue item.
     """
 
+    root = _workspace_root(workspace)
     floor = inspect_workspace_floor(workspace, current_coordinate=None)
-    return {
+    observation: dict[str, object] = {
         "tag": "playbill-next-workspace-observation-v1",
         "floor_status": floor.status,
         "installed_coordinate": (
@@ -340,6 +342,32 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
         ),
         "drift_observations": None,
     }
+    catalog_path = root / ".playbill" / "sources.yaml"
+    if not catalog_path.is_file():
+        return observation
+    if not catalog_path.resolve().is_relative_to(root):
+        raise PlaybillWorkspaceError("source catalog escapes the workspace root")
+    overlay_path = root / ".playbill" / "sources.local.yaml"
+    if overlay_path.is_file() and not overlay_path.resolve().is_relative_to(root):
+        raise PlaybillWorkspaceError("local source catalog escapes the workspace root")
+    sources = WorkspaceSources(root)
+    source_observations: list[dict[str, str]] = []
+    for entry in sources.catalog.entries:
+        path = sources.path_for_source(entry.name)
+        if not path.is_relative_to(root):
+            raise PlaybillWorkspaceError(f"source {entry.name!r} escapes the workspace root")
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise PlaybillWorkspaceError(f"could not observe source {entry.name!r}: {exc}") from exc
+        source_observations.append(
+            {
+                "source_id": entry.name,
+                "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            }
+        )
+    observation["source_observations"] = source_observations
+    return observation
 
 
 def activate_with_workspace_refresh(

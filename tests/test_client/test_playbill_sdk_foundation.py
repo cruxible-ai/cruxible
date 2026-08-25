@@ -7,6 +7,10 @@ import pytest
 
 from cruxible_client.authoring.sdk_types import Duration, InsertionOperation
 from cruxible_client.authoring.selectors import WorkspaceSources
+from cruxible_client.authoring.workspace import (
+    PlaybillWorkspaceError,
+    observe_playbill_next_workspace,
+)
 
 
 def _catalog(path: Path) -> None:
@@ -76,3 +80,59 @@ def test_selector_refuses_ambiguous_and_unmapped_paths(tmp_path: Path) -> None:
         workspace.select(source).anchor("same")
     with pytest.raises(ValueError, match="maps to 0 logical sources"):
         workspace.select("corpus/other.md")
+
+
+def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> None:
+    _catalog(tmp_path)
+    source = tmp_path / "corpus" / "runbook.md"
+    source.parent.mkdir()
+    source.write_bytes(b"# Runbook\nOriginal source.\n")
+
+    observation = observe_playbill_next_workspace(tmp_path)
+
+    assert observation["source_observations"] == [
+        {
+            "source_id": "corpus.runbook",
+            "observed_source_digest": "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest(),
+        }
+    ]
+    source.write_bytes(b"# Runbook\nChanged source.\n")
+    changed = observe_playbill_next_workspace(tmp_path)
+    assert changed["source_observations"] != observation["source_observations"]
+
+
+def test_next_workspace_without_a_catalog_does_not_claim_source_observation(
+    tmp_path: Path,
+) -> None:
+    observation = observe_playbill_next_workspace(tmp_path)
+
+    assert "source_observations" not in observation
+
+
+def test_next_workspace_refuses_catalog_source_that_escapes_the_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _catalog(workspace)
+    outside = tmp_path / "outside.md"
+    outside.write_text("secret", encoding="utf-8")
+    (workspace / "corpus").mkdir()
+    (workspace / "corpus" / "runbook.md").symlink_to(outside)
+
+    with pytest.raises((PlaybillWorkspaceError, ValueError), match="escapes the workspace"):
+        observe_playbill_next_workspace(workspace)
+
+
+def test_next_workspace_refuses_catalog_overlay_that_escapes_the_workspace(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _catalog(workspace)
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("secret: true\n", encoding="utf-8")
+    (workspace / ".playbill" / "sources.local.yaml").symlink_to(outside)
+
+    with pytest.raises(PlaybillWorkspaceError, match="local source catalog escapes"):
+        observe_playbill_next_workspace(workspace)
