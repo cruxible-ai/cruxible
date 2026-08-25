@@ -74,6 +74,7 @@ playbill native stash show
 playbill native status
 playbill next
 playbill orient
+playbill principal add
 playbill principal list
 playbill principal recover
 playbill principal revoke
