@@ -185,6 +185,29 @@ def test_evidence_intersection_is_typed_but_ordinary_prose_is_allowed() -> None:
     )
 
 
+def test_unstamped_block_preserves_independent_evidence_and_stamped_block_refusal() -> None:
+    bootstrap_body = b"Unstamped draft evidence.\n"
+    content = (
+        b"Independent source evidence.\n"
+        + b"<!-- playbill:block:draft -->\n"
+        + bootstrap_body
+        + b"<!-- /playbill:block:draft -->\n"
+        + _block()
+    )
+    template = claim_self_source_example().model_dump(mode="json")
+    template["source"] = {"kind": "working_selection", "source_id": "corpus.runbook"}
+    evidence = ClaimInput.model_validate({**template, "citation_role": "evidence"})
+
+    for anchor in ("Independent source evidence.", "Unstamped draft evidence."):
+        allowed = bind_working_selection_input(evidence, content=content, anchor=anchor)
+        assert allowed.citation_role == "evidence"
+
+    with pytest.raises(ProjectionIndependentEvidenceForbidden) as refusal:
+        bind_working_selection_input(evidence, content=content, anchor="Visible prose")
+    assert refusal.value.block_id == "summary"
+    assert refusal.value.code == "playbill.projection.independent_evidence_forbidden"
+
+
 def test_query_backing_commits_existing_resolved_parameter_digest_and_semantics_only() -> None:
     binding = ProjectionResolvedParameterBindingV1(
         name="status",

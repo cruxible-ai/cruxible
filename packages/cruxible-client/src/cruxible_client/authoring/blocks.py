@@ -254,7 +254,9 @@ def assert_independent_projection_evidence(
     start_byte: int,
     end_byte: int,
 ) -> None:
-    for block in parse_projection_blocks(content, source_id=source_id):
+    for block in parse_projection_blocks(content, source_id=source_id, allow_bootstrap=True):
+        if block.stamp is None:
+            continue
         if start_byte < block.closing_end and end_byte > block.opening_start:
             raise ProjectionIndependentEvidenceForbidden(
                 source_id=source_id,
