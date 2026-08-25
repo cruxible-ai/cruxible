@@ -32,6 +32,7 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS, AcceptanceLawRegistry
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
+    parse_principal_record,
     principal_registry_from_tree,
 )
 from cruxible_client.contracts.types import (
@@ -162,13 +163,29 @@ def _refuse_removed_prerelease_content(
     daemon = next(
         principal for principal in genesis.principals if principal.principal_id == "daemon"
     )
+    previous_oid = history_oids[0]
     for oid in history_oids[1:]:
+        if ledger.parent_of(oid) != previous_oid:
+            raise SettlementIntegrityError("generation parent differs from accepted predecessor")
         if not ledger.verify_commit_with_public_key(
             oid,
             principal_id="daemon",
             public_key_hex=daemon.public_key,
         ):
             raise SettlementIntegrityError("generation daemon signature does not verify")
+        principal_entry = next(
+            (entry for entry in ledger.list_tree(oid) if entry.path == "principals/daemon.yaml"),
+            None,
+        )
+        if principal_entry is None:
+            raise SettlementIntegrityError("generation has no daemon principal registry entry")
+        daemon = parse_principal_record(
+            ledger.read_blob(principal_entry.oid),
+            path=principal_entry.path,
+        )
+        if daemon.status != "active" or daemon.authority_roles != ("daemon",):
+            raise SettlementIntegrityError("generation daemon principal is not active")
+        previous_oid = oid
 
     if "claim-types/knowledge/brief.yaml" in paths:
         raise PlaybillInstanceIncompatiblePrereleaseContent(artifact_class="knowledge.brief")

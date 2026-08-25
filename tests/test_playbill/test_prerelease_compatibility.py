@@ -10,8 +10,10 @@ from cruxible_client.contracts.errors import (
     PlaybillInstanceIncompatiblePrereleaseContent,
     SettlementIntegrityError,
 )
+from cruxible_core.playbill.bootstrap import render_principal
 from cruxible_core.playbill.checkpoints import CHECKPOINT_DIRECTORY, checkpoint_path
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.keys import ALLOWED_SIGNERS_FILE, generate_daemon_key
 from tests.test_playbill._support import FIXED_TIMESTAMP, initialize_local
 from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
 from tests.test_playbill.test_evidence_freshness import _fresh_world
@@ -85,6 +87,44 @@ def test_invalid_generation_signature_precedes_prerelease_incompatibility(
 
     with pytest.raises(SettlementIntegrityError, match="daemon signature does not verify"):
         PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+
+
+def test_removed_brief_after_daemon_key_rotation_is_incompatible_not_corrupt(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    ledger = instance._ledger
+    base = instance.accepted_coordinate().git_oid
+    rotated = generate_daemon_key(tmp_path / "rotated-daemon-custody")
+    tree = instance.tree_at(base)
+    tree["principals/daemon.yaml"] = render_principal(rotated.principal)
+
+    rotation = ledger.create_signed_generation(
+        tree,
+        parent_oid=base,
+        sequence=1,
+        timestamp=FIXED_TIMESTAMP,
+    )
+    assert ledger.compare_and_set_main(rotation, expected_oid=base)
+
+    ledger._signing_key_path = rotated.private_key_path
+    ledger._allowed_signers_path = rotated.private_key_path.parent / ALLOWED_SIGNERS_FILE
+    ledger.configure_signing()
+    tree["claim-types/knowledge/brief.yaml"] = (
+        b'{"artifact_format":"playbill-claim-type-v2","predicate":"knowledge.brief"}\n'
+    )
+    incompatible = ledger.create_signed_generation(
+        tree,
+        parent_oid=rotation,
+        sequence=2,
+        timestamp=FIXED_TIMESTAMP,
+    )
+    assert ledger.compare_and_set_main(incompatible, expected_oid=rotation)
+
+    with pytest.raises(PlaybillInstanceIncompatiblePrereleaseContent) as refusal:
+        PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+
+    assert refusal.value.artifact_class == "knowledge.brief"
 
 
 @pytest.mark.parametrize("warm_checkpoint", [False, True])
