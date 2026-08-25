@@ -633,6 +633,52 @@ class GitLedger:
 
         return self._list_tree(oid, with_sizes=False)
 
+    def tree_paths_containing_literal(
+        self,
+        oid: str,
+        *,
+        literal: str,
+        paths: Sequence[str],
+    ) -> tuple[str, ...]:
+        """Find exact committed blob text without materializing the accepted tree."""
+
+        self._validate_oid(oid)
+        if not literal or not paths:
+            raise PlaybillGitError("ledger literal search requires text and scoped paths")
+        result = _command(
+            [
+                "git",
+                f"--git-dir={self.path}",
+                "grep",
+                "--fixed-strings",
+                "--files-with-matches",
+                "-z",
+                literal,
+                oid,
+                "--",
+                *paths,
+            ],
+            check=False,
+        )
+        if result.returncode == 1:
+            return ()
+        if result.returncode != 0:
+            raise PlaybillGitError(
+                f"system Git operation 'grep' failed with exit code {result.returncode}"
+            )
+        prefix = f"{oid}:".encode("ascii")
+        found: list[str] = []
+        for raw_path in result.stdout.split(b"\x00"):
+            if not raw_path:
+                continue
+            if not raw_path.startswith(prefix):
+                raise PlaybillGitError("ledger literal search returned an unexpected coordinate")
+            try:
+                found.append(raw_path[len(prefix) :].decode("utf-8"))
+            except UnicodeDecodeError as exc:
+                raise PlaybillGitError("ledger literal search returned a malformed path") from exc
+        return tuple(found)
+
     def list_tree_with_sizes(self, oid: str) -> tuple[GitTreeEntry, ...]:
         """List an exact commit recursively, with the size Git reports per entry.
 

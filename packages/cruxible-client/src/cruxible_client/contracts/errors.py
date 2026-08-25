@@ -21,6 +21,19 @@ class PlaybillFormatError(PlaybillError):
     """A descriptor or stored artifact declares an unsupported format."""
 
 
+class PlaybillInstanceIncompatiblePrereleaseContent(PlaybillFormatError):
+    """An accepted prerelease artifact was intentionally removed before release."""
+
+    error_code = "playbill.instance.incompatible_prerelease_content"
+
+    def __init__(self, *, artifact_class: str) -> None:
+        self.artifact_class = artifact_class
+        super().__init__(
+            f"{self.error_code}: accepted artifact class {artifact_class!r} is no longer "
+            "supported; create a fresh prerelease instance"
+        )
+
+
 class PlaybillBootstrapError(PlaybillError):
     """Genesis does not reproduce from the supplied out-of-band trust root."""
 
@@ -121,6 +134,7 @@ __all__ = [
     "PlaybillFormatError",
     "PlaybillGitError",
     "PlaybillExecutionError",
+    "PlaybillInstanceIncompatiblePrereleaseContent",
     "PlaybillJournalError",
     "PlaybillKeyError",
     "PrincipalIntegrityError",

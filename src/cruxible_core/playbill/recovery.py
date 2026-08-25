@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import shutil
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import (
     PlaybillError,
     PlaybillGitError,
+    PlaybillInstanceIncompatiblePrereleaseContent,
     ProjectionIntegrityError,
     SettlementIntegrityError,
 )
@@ -132,6 +134,62 @@ class _GenerationWindow:
     generation: RecoveredGeneration
     tree: dict[str, bytes]
     state: EvaluatedTreeState
+
+
+def _refuse_removed_prerelease_content(
+    ledger: GitLedger,
+    *,
+    history_oids: tuple[str, ...],
+    genesis: VerifiedGenesis,
+) -> None:
+    """Reject authenticated retired prerelease content before any replay cache.
+
+    The fixed-string search runs inside Git against exact content-addressed head
+    blobs. Normal compatible instances never hydrate another complete tree or
+    reverify a checkpointed prefix. Only a possible match pays for complete
+    signature-chain authentication and exact JSON predicate confirmation.
+    """
+
+    head = history_oids[-1]
+    paths = ledger.tree_paths_containing_literal(
+        head,
+        literal='"predicate":"knowledge.brief"',
+        paths=("claim-types/knowledge/brief.yaml", "claims/"),
+    )
+    if not paths:
+        return
+
+    daemon = next(
+        principal for principal in genesis.principals if principal.principal_id == "daemon"
+    )
+    for oid in history_oids[1:]:
+        if not ledger.verify_commit_with_public_key(
+            oid,
+            principal_id="daemon",
+            public_key_hex=daemon.public_key,
+        ):
+            raise SettlementIntegrityError("generation daemon signature does not verify")
+
+    if "claim-types/knowledge/brief.yaml" in paths:
+        raise PlaybillInstanceIncompatiblePrereleaseContent(artifact_class="knowledge.brief")
+
+    candidates = {
+        entry.path: entry.oid
+        for entry in ledger.list_tree(head)
+        if entry.path in paths and entry.path.startswith("claims/")
+    }
+    blobs = ledger.read_blobs(tuple(candidates.values()))
+    for oid in candidates.values():
+        try:
+            payload = json.loads(blobs[oid])
+        except (UnicodeDecodeError, ValueError):
+            continue
+        if (
+            isinstance(payload, dict)
+            and isinstance(payload.get("statement"), dict)
+            and payload["statement"].get("predicate") == "knowledge.brief"
+        ):
+            raise PlaybillInstanceIncompatiblePrereleaseContent(artifact_class="knowledge.brief")
 
 
 def _materialize_successor_tree(
@@ -655,6 +713,7 @@ def recover_instance(
     history_oids = ledger.main_history()
     if not history_oids or history_oids[0] != genesis.oid:
         raise SettlementIntegrityError("main history is not rooted at verified genesis")
+    _refuse_removed_prerelease_content(ledger, history_oids=history_oids, genesis=genesis)
     genesis_coordinate = GenesisCoordinate(
         git_oid=genesis.oid,
         bootstrap_root=genesis.bootstrap_root.tagged,
