@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeVar, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -154,6 +154,24 @@ from cruxible_core.service.playbill_proposals import (
 from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.service.playbill_search import service_search_playbill
 
+_ProposalResultT = TypeVar("_ProposalResultT")
+
+
+def _proposal_validation_boundary(
+    family: str,
+    operation: Callable[[], _ProposalResultT],
+) -> _ProposalResultT:
+    """Map any residual Pydantic proposal-ref failure to the typed HTTP 400 family."""
+
+    try:
+        return operation()
+    except ValidationError as exc:
+        raise DataValidationError(
+            f"Playbill {family} proposal reference is invalid",
+            errors=[str(exc)],
+        ) from exc
+
+
 _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.PlaybillClaimTypeMigrationResponse] = (
     TypeAdapter(contracts.PlaybillClaimTypeMigrationResponse)
 )
@@ -254,14 +272,17 @@ def playbill_propose_document(
     base: AcceptedCoordinate | None = None,
 ) -> contracts.PlaybillProposalInspection:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_propose_playbill_document(
-        get_playbill_manager().get(instance_id),
-        shell=shell,
-        actor_id=_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-        source_compilation_digest=source_compilation_digest,
-        base=base,
+    result = _proposal_validation_boundary(
+        "document",
+        lambda: service_propose_playbill_document(
+            get_playbill_manager().get(instance_id),
+            shell=shell,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            source_compilation_digest=source_compilation_digest,
+            base=base,
+        ),
     )
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
@@ -274,20 +295,17 @@ def playbill_propose_principal_change(
     base: AcceptedCoordinate | None = None,
 ) -> contracts.PlaybillProposalInspection:
     check_permission("cruxible_playbill_principal_change", instance_id=instance_id)
-    try:
-        result = service_propose_playbill_principal_change(
+    result = _proposal_validation_boundary(
+        "principal",
+        lambda: service_propose_playbill_principal_change(
             get_playbill_manager().get(instance_id),
             principal=principal,
             actor_id=_actor_id(),
             proposal_name=proposal_name,
             timestamp=canonical_candidate_timestamp(utc_now()),
             base=base,
-        )
-    except ValidationError as exc:
-        raise DataValidationError(
-            "Playbill principal proposal reference is invalid",
-            errors=[str(exc)],
-        ) from exc
+        ),
+    )
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
 
@@ -534,13 +552,16 @@ def playbill_propose_source_bundle(
     proposal_name: str,
 ) -> contracts.PlaybillProposalInspection:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_propose_playbill_source_bundle(
-        get_playbill_manager().get(instance_id),
-        bundle=bundle,
-        source_name=source_name,
-        actor_id=_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
+    result = _proposal_validation_boundary(
+        "source bundle",
+        lambda: service_propose_playbill_source_bundle(
+            get_playbill_manager().get(instance_id),
+            bundle=bundle,
+            source_name=source_name,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+        ),
     )
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
@@ -570,13 +591,16 @@ def playbill_propose_subject(
     base: AcceptedCoordinate | None = None,
 ) -> contracts.PlaybillProposalInspection:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_propose_playbill_subject(
-        get_playbill_manager().get(instance_id),
-        shell=shell,
-        actor_id=_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-        base=base,
+    result = _proposal_validation_boundary(
+        "subject",
+        lambda: service_propose_playbill_subject(
+            get_playbill_manager().get(instance_id),
+            shell=shell,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            base=base,
+        ),
     )
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
@@ -625,13 +649,16 @@ def playbill_propose_claim_type(
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
     instance = get_playbill_manager().get(instance_id)
     coordinate = instance.accepted_coordinate()
-    result = service_propose_playbill_claim_type(
-        instance,
-        claim_type=claim_type,
-        actor_id=_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-        base=base,
+    result = _proposal_validation_boundary(
+        "claim type",
+        lambda: service_propose_playbill_claim_type(
+            instance,
+            claim_type=claim_type,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            base=base,
+        ),
     )
     values = result.model_dump(mode="json")
     lint = lint_claim_type_input(instance, claim_type, coordinate=coordinate)
@@ -647,12 +674,15 @@ def playbill_propose_claim_type_input(
     proposal_name: str,
 ) -> contracts.PlaybillClaimTypeInputProposalResult:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_propose_playbill_claim_type_input(
-        get_playbill_manager().get(instance_id),
-        input=input,
-        actor_id=_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
+    result = _proposal_validation_boundary(
+        "claim type input",
+        lambda: service_propose_playbill_claim_type_input(
+            get_playbill_manager().get(instance_id),
+            input=input,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+        ),
     )
     return contracts.PlaybillClaimTypeInputProposalResult.model_validate(
         result.model_dump(mode="json")
@@ -704,13 +734,16 @@ def playbill_propose_claim(
     base: AcceptedCoordinate | None = None,
 ) -> contracts.PlaybillClaimProposal:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_propose_playbill_claim(
-        get_playbill_manager().get(instance_id),
-        authoring=authoring,
-        actor_id=_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-        base=base,
+    result = _proposal_validation_boundary(
+        "claim",
+        lambda: service_propose_playbill_claim(
+            get_playbill_manager().get(instance_id),
+            authoring=authoring,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            base=base,
+        ),
     )
     return contracts.PlaybillClaimProposal.model_validate(result.model_dump(mode="json"))
 
@@ -723,13 +756,16 @@ def playbill_propose_claims(
     base: AcceptedCoordinate | None = None,
 ) -> contracts.PlaybillClaimBatchProposal:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_propose_playbill_claims(
-        get_playbill_manager().get(instance_id),
-        authorings=authorings,
-        actor_id=_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-        base=base,
+    result = _proposal_validation_boundary(
+        "claim batch",
+        lambda: service_propose_playbill_claims(
+            get_playbill_manager().get(instance_id),
+            authorings=authorings,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            base=base,
+        ),
     )
     return contracts.PlaybillClaimBatchProposal.model_validate(result.model_dump(mode="json"))
 
@@ -1017,13 +1053,16 @@ def playbill_propose_query_definition(
     base: AcceptedCoordinate | None = None,
 ) -> contracts.PlaybillProposalInspection:
     check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = service_propose_playbill_query_definition(
-        get_playbill_manager().get(instance_id),
-        query=query,
-        actor_id=_actor_id(),
-        proposal_name=proposal_name,
-        timestamp=canonical_candidate_timestamp(utc_now()),
-        base=base,
+    result = _proposal_validation_boundary(
+        "query definition",
+        lambda: service_propose_playbill_query_definition(
+            get_playbill_manager().get(instance_id),
+            query=query,
+            actor_id=_actor_id(),
+            proposal_name=proposal_name,
+            timestamp=canonical_candidate_timestamp(utc_now()),
+            base=base,
+        ),
     )
     return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 

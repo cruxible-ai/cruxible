@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from inspect import getsource
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,18 @@ from cruxible_core.playbill.proposals import (
     deterministic_rebase,
     evaluate_proposal_tree,
 )
+from cruxible_core.playbill.service.claim_types import (
+    service_propose_playbill_claim_type,
+    service_propose_playbill_claim_type_input,
+)
+from cruxible_core.playbill.service.documents import service_propose_playbill_document
+from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
+from cruxible_core.playbill.service.query_definitions import (
+    service_propose_playbill_query_definition,
+)
+from cruxible_core.playbill.service.subjects import service_propose_playbill_subject
+from cruxible_core.service.playbill_claims import service_propose_playbill_claims
+from cruxible_core.service.playbill_evidence import service_propose_claim_attestation
 from tests.test_playbill._support import initialize_local
 
 TIMESTAMP = "2026-08-11T12:30:00.000000Z"
@@ -162,6 +175,30 @@ def test_request_model_refuses_non_proposal_namespaces(target_ref: str) -> None:
             target_ref=target_ref,
             proposed_base_oid="0" * 40,
         )
+
+
+@pytest.mark.parametrize(
+    ("family", "entrypoint"),
+    (
+        ("document", service_propose_playbill_document),
+        ("claim attestation", service_propose_claim_attestation),
+        ("claim", service_propose_playbill_claims),
+        ("query definition", service_propose_playbill_query_definition),
+        ("subject", service_propose_playbill_subject),
+        ("claim type", service_propose_playbill_claim_type),
+        ("claim type input", service_propose_playbill_claim_type_input),
+    ),
+)
+def test_every_proposal_family_lowers_a_spaced_display_name(
+    family: str,
+    entrypoint: object,
+) -> None:
+    assert canonical_playbill_proposal_name(f"Add {family.title()}", family=family).startswith(
+        "add-"
+    )
+    source = getsource(entrypoint)
+    assert "canonical_playbill_proposal_name(proposal_name" in source
+    assert 'target_ref=f"refs/proposals/{actor_id}/{proposal_name}"' not in source
 
 
 def test_foreign_actor_namespace_refuses_before_any_ref_changes(tmp_path: Path) -> None:

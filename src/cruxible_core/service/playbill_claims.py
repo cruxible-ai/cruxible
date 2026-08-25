@@ -112,6 +112,7 @@ from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
+from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
 from cruxible_core.playbill.settlement import ChangeSetRecord
 
 
@@ -968,10 +969,11 @@ def service_propose_playbill_claims(
         )
         for authoring in authorings
     )
+    ref_name = canonical_playbill_proposal_name(proposal_name, family="claim")
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{proposal_name}",
+            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
             proposed_base_oid=proposed_base.git_oid,
         ),
         candidate_tree=candidate_tree,

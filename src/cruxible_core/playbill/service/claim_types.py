@@ -35,6 +35,7 @@ from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
+from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
 
 CLAIM_TYPE_PATH_PREFIX = "claim-types/"
 
@@ -104,10 +105,11 @@ def service_propose_playbill_claim_type(
     proposed_base = _resolve_coordinate(instance, base)
     candidate_tree = instance.tree_at(proposed_base.git_oid)
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
+    ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type")
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),
         request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{proposal_name}",
+            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
             proposed_base_oid=proposed_base.git_oid,
         ),
         candidate_tree=candidate_tree,
@@ -137,10 +139,11 @@ def service_propose_playbill_claim_type_input(
     claim_type = lower_claim_type_input(input, tree=tree)
     candidate_tree = dict(tree)
     candidate_tree[claim_type_path(claim_type.predicate)] = render_claim_type(claim_type)
+    ref_name = canonical_playbill_proposal_name(proposal_name, family="claim type input")
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),
         request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{proposal_name}",
+            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
             proposed_base_oid=coordinate.git_oid,
         ),
         candidate_tree=candidate_tree,

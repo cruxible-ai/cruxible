@@ -28,9 +28,7 @@ from cruxible_client.contracts.errors import (
     SettlementIntegrityError,
 )
 from cruxible_client.contracts.principal_rendering import render_principal
-from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.types import PrincipalRecord
-from cruxible_core.errors import DataValidationError
 from cruxible_core.playbill.cas import BodyAccessContext, CasObjectMetadata
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -40,6 +38,7 @@ from cruxible_core.playbill.proposals import (
     ProposalAdmissionRequest,
     ProposalResult,
 )
+from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
 from cruxible_core.playbill.settlement import ChangeActorBinding
 
 
@@ -180,10 +179,11 @@ def service_propose_playbill_document(
     proposed_base = _resolve_coordinate(instance, base)
     candidate_tree = instance.tree_at(proposed_base.git_oid)
     candidate_tree[document_path(shell.document_id)] = render_document(shell)
+    ref_name = canonical_playbill_proposal_name(proposal_name, family="document")
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{proposal_name}",
+            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
             proposed_base_oid=proposed_base.git_oid,
             source_compilation_digest=source_compilation_digest,
         ),
@@ -212,13 +212,7 @@ def service_propose_playbill_principal_change(
     proposed_base = _resolve_coordinate(instance, base)
     candidate_tree = instance.tree_at(proposed_base.git_oid)
     candidate_tree[f"principals/{principal.principal_id}.yaml"] = render_principal(principal)
-    try:
-        ref_name = canonical_proposal_ref_name(proposal_name)
-    except ValueError as exc:
-        raise DataValidationError(
-            "Playbill principal proposal name is invalid",
-            errors=[str(exc)],
-        ) from exc
+    ref_name = canonical_playbill_proposal_name(proposal_name, family="principal")
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(

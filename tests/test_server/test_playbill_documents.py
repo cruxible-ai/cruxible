@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from inspect import getsource
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,9 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
 )
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.playbill.proposals import ProposalAdmissionRequest
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
+from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 
@@ -162,6 +165,60 @@ def test_principal_display_name_is_sanitized_and_invalid_ref_is_a_typed_400(
     assert refused.status_code == 400
     assert refused.json()["error_type"] == "DataValidationError"
     assert "canonical ref characters" in refused.text
+
+
+@pytest.mark.parametrize(
+    "entrypoint",
+    (
+        playbill_api.playbill_propose_document,
+        playbill_api.playbill_propose_subject,
+        playbill_api.playbill_propose_claim_type,
+        playbill_api.playbill_propose_claim_type_input,
+        playbill_api.playbill_propose_claim,
+        playbill_api.playbill_propose_claims,
+        playbill_api.playbill_propose_query_definition,
+    ),
+)
+def test_every_proposal_route_keeps_the_typed_validation_boundary(
+    entrypoint: object,
+) -> None:
+    assert "_proposal_validation_boundary(" in getsource(entrypoint)
+
+
+def test_residual_proposal_ref_validation_is_a_typed_http_400(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, instance_id, _private_key_path = playbill_http
+    instance = get_playbill_manager().get(instance_id)
+    body = instance.store_document_body(b"body")
+    shell = DocumentShell(
+        identity="document:residual-validation",
+        document_kind="design",
+        title="Residual validation",
+        media_type="text/markdown",
+        body_digest=body.digest,
+        authority=DocumentAuthority(required_tier="graph_write", approval_roles=("owner",)),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+
+    def residual_failure(*_args: object, **_kwargs: object) -> object:
+        return ProposalAdmissionRequest(
+            target_ref="not-a-ref",
+            proposed_base_oid="0" * 40,
+        )
+
+    monkeypatch.setattr(playbill_api, "service_propose_playbill_document", residual_failure)
+
+    refused = client.post(
+        f"/api/v1/{instance_id}/playbill/documents/proposals",
+        json={"shell": shell.model_dump(mode="json"), "proposal_name": "Any name"},
+    )
+
+    assert refused.status_code == 400
+    assert refused.json()["error_type"] == "DataValidationError"
+    assert "document proposal reference is invalid" in refused.text
 
 
 def test_http_permission_modes_separate_read_store_propose_approval_and_activation(

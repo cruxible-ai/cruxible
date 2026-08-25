@@ -73,6 +73,7 @@ from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
+from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
 from cruxible_core.playbill.settlement import ChangeSetRecord
 from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
 
@@ -389,10 +390,11 @@ def service_propose_claim_attestation(
             raise ProposalIntegrityError("competing Claim must address the tested subject")
         candidate_tree[competing_path] = render_claim(competing)
         competing_identities.append(competing.identity.qualified)
+    ref_name = canonical_playbill_proposal_name(proposal_name, family="claim attestation")
     proposed = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
         request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{proposal_name}",
+            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
             proposed_base_oid=coordinate.git_oid,
         ),
         candidate_tree=candidate_tree,
