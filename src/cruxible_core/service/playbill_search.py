@@ -26,6 +26,7 @@ from cruxible_core.playbill.brief_health import (
     KnowledgeBriefHealthEvaluator,
     KnowledgeBriefHealthRequestV1,
 )
+from cruxible_core.playbill.claim_slots import ClaimSlotClassification, classify_claim_slot
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.query.semantic_discovery import (
     MATCH_BASIS_PRIORITY,
@@ -109,21 +110,24 @@ def _claim_resolution_statuses(
             at=_accepted_coordinate(request),
             evaluation_time=request.evaluation_time,
         )
-        _apply_resolution_statuses(result, statuses)
-        if first.statement.predicate == KNOWLEDGE_BRIEF_PREDICATE:
-            slots: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
-            for claim in group:
-                slots[claim.statement.qualifier].append(claim)
-            for slot in slots.values():
-                if len(slot) > 1:
-                    for claim in slot:
-                        statuses[claim.identity.name] = "conflicted"
+        groups_by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
+        for claim in group:
+            groups_by_qualifier[claim.statement.qualifier].append(claim)
+        slots = {
+            claim.identity.name: classification
+            for members in groups_by_qualifier.values()
+            for classification in (classify_claim_slot(members),)
+            for claim in members
+        }
+        _apply_resolution_statuses(result, statuses, slots=slots)
     return statuses
 
 
 def _apply_resolution_statuses(
     result: PlaybillClaimQueryResult | PlaybillClaimQueryResultV2,
     statuses: dict[str, SearchStatus],
+    *,
+    slots: Mapping[str, ClaimSlotClassification],
 ) -> None:
     selected = {item.removeprefix("Claim:") for item in result.selected_claim_identities}
     for view, verdict in zip(result.claims, result.verdicts, strict=True):
@@ -131,7 +135,11 @@ def _apply_resolution_statuses(
         if verdict.verdict not in {"supported", "uncovered"}:
             status: SearchStatus = "refused"
         elif result.status == "unresolved":
-            status = "conflicted"
+            status = (
+                "conflicted"
+                if slots[claim.identity.name].resolution == "unresolved"
+                else "accepted"
+            )
         elif claim.identity.name in selected:
             status = "accepted"
         else:
