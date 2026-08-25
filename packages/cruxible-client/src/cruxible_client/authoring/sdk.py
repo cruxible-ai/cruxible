@@ -58,7 +58,10 @@ from cruxible_client.authoring.source_map import (
     capture_keyword_sites,
     entries_for_keywords,
 )
-from cruxible_client.authoring.workspace import observe_playbill_next_workspace
+from cruxible_client.authoring.workspace import (
+    observe_playbill_next_workspace,
+    observe_playbill_next_workspace_with_coverage,
+)
 from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
@@ -1342,13 +1345,23 @@ class Playbill:
         raise ReferenceKindError("explain requires a ClaimRef or SubjectRef in G6")
 
     def next(self, *, expiring_within: Duration) -> NextPage:
+        requested_coordinate = _api_coordinate(self.coordinate)
+        access_profile = self._access_profile.model_dump()
+        observation, scanned_coordinate = observe_playbill_next_workspace_with_coverage(
+            self._client,
+            self._instance_id,
+            self._workspace,
+            observation=observe_playbill_next_workspace(self._workspace),
+            coordinate=requested_coordinate,
+            access_profile=access_profile,
+        )
         result = self._client.next_playbill(
             self._instance_id,
             evaluation_time=self._evaluation_time(),
-            access_profile=self._access_profile.model_dump(),
-            at=_api_coordinate(self.coordinate),
+            access_profile=access_profile,
+            at=scanned_coordinate or requested_coordinate,
             expiring_within=expiring_within.model_dump(),
-            workspace_observation=observe_playbill_next_workspace(self._workspace),
+            workspace_observation=observation,
         )
         return NextPage(
             coordinate=_coordinate(result.coordinate),

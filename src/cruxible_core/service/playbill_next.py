@@ -27,12 +27,19 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     claim_citation_references,
 )
+from cruxible_client.contracts.declared_blocks import (
+    MAX_PROJECTION_BLOCKS_PER_SOURCE,
+    MAX_PROJECTION_CARDS_PER_SOURCE,
+    MAX_PROJECTION_SOURCE_BYTES,
+    ProjectionMarkerSummaryV1,
+)
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_slots import classify_claim_slot
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
@@ -55,12 +62,15 @@ NextReason = Literal[
     "floor_missing",
     "floor_stale",
     "floor_invalid",
+    "projection_dirty",
+    "projection_backing_stale",
 ]
 NextRepairOperation = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",
     "playbill.claim_type.migrate",
     "playbill.floor.export",
+    "playbill.block.repin",
 ]
 
 _SEVERITY_RANK: dict[NextSeverity, int] = {"blocking": 0, "repair": 1, "warning": 2}
@@ -118,6 +128,70 @@ class PlaybillNextSourceObservationV1(_StrictNextModel):
         return value
 
 
+class PlaybillNextSourceObservationV2(_StrictNextModel):
+    tag: Literal["playbill-next-source-observation-v2"]
+    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    observed_source_digest: str
+    byte_length: int = Field(ge=0, le=MAX_PROJECTION_SOURCE_BYTES)
+    marker_summaries: tuple[ProjectionMarkerSummaryV1, ...] = Field(
+        max_length=MAX_PROJECTION_BLOCKS_PER_SOURCE
+    )
+    occurrences: tuple[WorkingOccurrenceV1, ...] = Field(max_length=MAX_PROJECTION_CARDS_PER_SOURCE)
+    scanned_commitment_digests: tuple[str, ...]
+    scan_complete: bool
+    scan_notes: tuple[str, ...]
+    marker_notes: tuple[str, ...]
+
+    @field_validator("observed_source_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("scanned_commitment_digests")
+    @classmethod
+    def _commitments(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for digest in value:
+            Sha256Value.from_tagged(digest)
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("next scanned commitment digests must be sorted and unique")
+        return value
+
+    @field_validator("scan_notes", "marker_notes")
+    @classmethod
+    def _notes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("next observation notes must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _source_shape(self) -> "PlaybillNextSourceObservationV2":
+        ids = tuple(marker.stamp.block_id for marker in self.marker_summaries)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("next marker summaries must be sorted and unique by block ID")
+        previous_end = -1
+        for marker in sorted(self.marker_summaries, key=lambda item: item.start_byte):
+            if marker.stamp.source_id != self.source_id:
+                raise ValueError("next marker summary names a different logical source")
+            if marker.start_byte < previous_end or marker.end_byte > self.byte_length:
+                raise ValueError("next marker summary windows overlap or escape the source")
+            previous_end = marker.end_byte
+        keys = tuple(occurrence.sort_key for occurrence in self.occurrences)
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError("next source occurrences must be sorted and unique")
+        for occurrence in self.occurrences:
+            if (
+                occurrence.source.plane != "external"
+                or occurrence.source.identity != self.source_id
+            ):
+                raise ValueError("next occurrence names a different logical source")
+            if occurrence.line_overlay.end_byte > self.byte_length:
+                raise ValueError("next occurrence presentation window escapes the source")
+        if not self.scan_complete and (self.occurrences or self.scanned_commitment_digests):
+            raise ValueError("an incomplete next scan cannot assert occurrences or scanned digests")
+        return self
+
+
 class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     tag: Literal["playbill-next-workspace-observation-v1"] = (
         "playbill-next-workspace-observation-v1"
@@ -125,7 +199,9 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     floor_status: Literal["not_configured", "missing", "current", "stale", "invalid"] | None = None
     installed_coordinate: AcceptedCoordinate | None = None
     drift_observations: tuple[PlaybillNextDriftObservationV1, ...] | None = None
-    source_observations: tuple[PlaybillNextSourceObservationV1, ...] | None = None
+    source_observations: (
+        tuple[PlaybillNextSourceObservationV1 | PlaybillNextSourceObservationV2, ...] | None
+    ) = None
 
     @field_validator("drift_observations")
     @classmethod
@@ -144,8 +220,8 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     @classmethod
     def _sources(
         cls,
-        value: tuple[PlaybillNextSourceObservationV1, ...] | None,
-    ) -> tuple[PlaybillNextSourceObservationV1, ...] | None:
+        value: tuple[PlaybillNextSourceObservationV1 | PlaybillNextSourceObservationV2, ...] | None,
+    ) -> tuple[PlaybillNextSourceObservationV1 | PlaybillNextSourceObservationV2, ...] | None:
         if value is None:
             return None
         ids = tuple(item.source_id for item in value)
@@ -782,6 +858,7 @@ __all__ = [
     "PlaybillNextRequestV1",
     "PlaybillNextResultV1",
     "PlaybillNextSourceObservationV1",
+    "PlaybillNextSourceObservationV2",
     "PlaybillNextWorkspaceObservationInvalid",
     "PlaybillNextWorkspaceObservationV1",
     "playbill_next_item_id",

@@ -14,12 +14,19 @@ import secrets
 import shutil
 import tempfile
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Protocol
 
 from cruxible_client import contracts
+from cruxible_client.authoring.blocks import ProjectionMarkerError, parse_projection_blocks
 from cruxible_client.authoring.selectors import WorkspaceSources
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.declared_blocks import (
+    MAX_PROJECTION_CARDS_PER_SOURCE,
+    MAX_PROJECTION_SCAN_BYTES,
+    MAX_PROJECTION_SOURCE_BYTES,
+)
 from cruxible_client.contracts.errors import PlaybillError
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
@@ -41,6 +48,18 @@ class _FloorClient(Protocol):
         *,
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillFloorExport: ...
+
+
+class _CoverageClient(Protocol):
+    def resolve_playbill_coverage(
+        self,
+        instance_id: str,
+        *,
+        observations: Sequence[Mapping[str, Any]],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        budget: Mapping[str, Any] | None = None,
+        scan_budget: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillCoverageResult: ...
 
 
 def _canonical_json(value: object) -> bytes:
@@ -374,6 +393,302 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
         )
     observation["source_observations"] = source_observations
     return observation
+
+
+def _unobserved_projection_source(
+    source_id: str,
+    *,
+    content: bytes,
+    scan_notes: Sequence[str],
+    marker_summaries: Sequence[dict[str, object]] = (),
+    marker_notes: Sequence[str] = (),
+) -> dict[str, object]:
+    return {
+        "tag": "playbill-next-source-observation-v2",
+        "source_id": source_id,
+        "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+        "byte_length": len(content),
+        "marker_summaries": list(marker_summaries),
+        "occurrences": [],
+        "scanned_commitment_digests": [],
+        "scan_complete": False,
+        "scan_notes": sorted(set(scan_notes), key=lambda item: item.encode("utf-8")),
+        "marker_notes": sorted(set(marker_notes), key=lambda item: item.encode("utf-8")),
+    }
+
+
+def _projection_marker_observation(
+    source_id: str, content: bytes
+) -> tuple[list[dict[str, object]], tuple[str, ...]]:
+    try:
+        blocks = parse_projection_blocks(content, source_id=source_id)
+    except (ProjectionMarkerError, ValueError):
+        return [], ("projection_marker_invalid",)
+    return (
+        [
+            block.summary().model_dump(mode="json")
+            for block in sorted(blocks, key=lambda item: item.block_id.encode("utf-8"))
+        ],
+        (),
+    )
+
+
+def _coverage_occurrences(
+    span: Mapping[str, Any], *, source_id: str, content: bytes
+) -> tuple[list[dict[str, object]], list[str], tuple[str, ...]]:
+    notes: set[str] = set()
+    if span.get("health") != "complete":
+        notes.add("coverage_" + str(span.get("health", "unavailable")))
+    if span.get("ambiguous_occurrence_count", 0):
+        notes.add("coverage_occurrence_ambiguous")
+    if span.get("omitted_card_count", 0):
+        notes.add("coverage_cards_omitted")
+    cards = span.get("cards", [])
+    if not isinstance(cards, list) or len(cards) > MAX_PROJECTION_CARDS_PER_SOURCE:
+        notes.add("coverage_card_limit_exceeded")
+        return [], [], tuple(sorted(notes))
+
+    occurrences: dict[str, dict[str, object]] = {}
+    scanned: set[str] = set()
+    expected_source = {
+        "tag": "playbill-logical-source-identity-v1",
+        "plane": "external",
+        "identity": source_id,
+    }
+    for card in cards:
+        if not isinstance(card, Mapping):
+            notes.add("coverage_card_invalid")
+            continue
+        observed_source = card.get("observed_source")
+        accepted_source = card.get("accepted_source")
+        if observed_source != expected_source:
+            notes.add("coverage_source_mismatch")
+            continue
+        if card.get("match_state") == "candidate":
+            if accepted_source == expected_source:
+                notes.add("coverage_occurrence_unverified")
+            continue
+        if accepted_source != expected_source:
+            notes.add("coverage_source_mismatch")
+            continue
+        expected_digest = card.get("expected_commitment_digest")
+        if not isinstance(expected_digest, str):
+            notes.add("coverage_card_invalid")
+            continue
+        try:
+            Sha256Value.from_tagged(expected_digest)
+        except ValueError:
+            notes.add("coverage_card_invalid")
+            continue
+        scanned.add(expected_digest)
+        if card.get("match_state") != "exact":
+            continue
+        overlay = card.get("line_overlay")
+        observed_digest = card.get("observed_commitment_digest")
+        identity = card.get("occurrence_identity_digest")
+        if not isinstance(overlay, Mapping) or not isinstance(observed_digest, str):
+            notes.add("coverage_occurrence_invalid")
+            continue
+        start, end = overlay.get("start_byte"), overlay.get("end_byte")
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or not 0 <= start <= end <= len(content)
+            or observed_digest != "sha256:" + hashlib.sha256(content[start:end]).hexdigest()
+        ):
+            notes.add("coverage_occurrence_invalid")
+            continue
+        expected_identity = typed_digest(
+            Sha256Value,
+            "playbill-coverage-occurrence-identity-v1",
+            {
+                "source": expected_source,
+                "observed_commitment_digest": observed_digest,
+                "ordinal": 0,
+            },
+        ).tagged
+        if identity != expected_identity:
+            notes.add("coverage_occurrence_ambiguous")
+            continue
+        occurrence: dict[str, object] = {
+            "tag": "playbill-coverage-working-occurrence-v1",
+            "source": expected_source,
+            "observed_commitment_digest": observed_digest,
+            "byte_length": end - start,
+            "ordinal": 0,
+            "identity_digest": identity,
+            "line_overlay": dict(overlay),
+        }
+        previous = occurrences.get(identity)
+        if previous is not None and previous != occurrence:
+            notes.add("coverage_occurrence_ambiguous")
+            continue
+        occurrences[identity] = occurrence
+    if notes:
+        return [], [], tuple(sorted(notes, key=lambda item: item.encode("utf-8")))
+    return (
+        sorted(
+            occurrences.values(),
+            key=lambda item: str(item["observed_commitment_digest"]).encode("ascii"),
+        ),
+        sorted(scanned, key=lambda item: item.encode("ascii")),
+        (),
+    )
+
+
+def observe_playbill_next_workspace_with_coverage(
+    client: _CoverageClient,
+    instance_id: str,
+    workspace: str | Path,
+    *,
+    observation: Mapping[str, object] | None = None,
+    coordinate: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+    access_profile: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, object], contracts.PlaybillAcceptedCoordinate | None]:
+    """Enrich next with one existing, coordinate-bound coverage-scanner read.
+
+    This adapter never searches source bytes. Every accepted occurrence comes
+    from the existing server coverage card; the local slice check only verifies
+    that card against the exact bytes it previously sent to the sole scanner.
+    """
+
+    base = dict(observation or observe_playbill_next_workspace(workspace))
+    entries = base.get("source_observations")
+    if not isinstance(entries, list) or not entries:
+        return base, None
+
+    root = _workspace_root(workspace)
+    try:
+        sources = WorkspaceSources(root)
+    except (OSError, ValueError, PlaybillError):
+        base.pop("source_observations", None)
+        return base, None
+
+    material: dict[str, bytes] = {}
+    payloads: list[dict[str, object]] = []
+    for entry in entries:
+        if not isinstance(entry, Mapping) or not isinstance(entry.get("source_id"), str):
+            continue
+        source_id = entry["source_id"]
+        try:
+            content = sources.path_for_source(source_id).read_bytes()
+        except (OSError, ValueError, PlaybillError):
+            continue
+        if len(content) > MAX_PROJECTION_SOURCE_BYTES:
+            # The nested contract refuses oversized sources; omission truthfully
+            # leaves every citation to this logical source explicitly unobserved.
+            continue
+        material[source_id] = content
+        payloads.append(
+            {
+                "tag": "playbill-coverage-working-source-observation-v1",
+                "source": {
+                    "tag": "playbill-logical-source-identity-v1",
+                    "plane": "external",
+                    "identity": source_id,
+                },
+                "content_base64": base64.b64encode(content).decode("ascii"),
+                "content_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+                "byte_length": len(content),
+                "selections": [],
+            }
+        )
+
+    if not payloads:
+        base["source_observations"] = []
+        return base, None
+
+    coverage = client.resolve_playbill_coverage(
+        instance_id,
+        observations=payloads,
+        at=coordinate,
+        budget={
+            "tag": "playbill-coverage-card-budget-v1",
+            "max_cards_per_span": MAX_PROJECTION_CARDS_PER_SOURCE,
+            "max_candidate_cards_per_span": MAX_PROJECTION_CARDS_PER_SOURCE,
+        },
+        scan_budget={
+            "tag": "playbill-coverage-scan-budget-v1",
+            "max_scanned_bytes": MAX_PROJECTION_SCAN_BYTES,
+        },
+    )
+    returned_at = coverage.coordinate.model_dump(mode="json")
+    expected_at = (
+        coordinate.model_dump(mode="json")
+        if isinstance(coordinate, contracts.PlaybillAcceptedCoordinate)
+        else dict(coordinate)
+        if coordinate is not None
+        else None
+    )
+    coordinate_matches = coverage.result.get("at") == returned_at and (
+        expected_at is None or expected_at == returned_at
+    )
+    returned_profile = coverage.result.get("access_profile")
+    profile_matches = isinstance(returned_profile, Mapping) and (
+        access_profile is None
+        or (
+            returned_profile.get("permitted_access_classes")
+            == access_profile.get("permitted_access_classes")
+            and returned_profile.get("disclose_restricted_existence")
+            == access_profile.get("disclose_restricted_existence")
+        )
+    )
+    spans = coverage.result.get("spans", [])
+    by_source: dict[str, list[Mapping[str, Any]]] = {}
+    if isinstance(spans, list):
+        for span in spans:
+            if not isinstance(span, Mapping):
+                continue
+            request = span.get("request")
+            source = request.get("source") if isinstance(request, Mapping) else None
+            if isinstance(source, Mapping) and isinstance(source.get("identity"), str):
+                by_source.setdefault(source["identity"], []).append(span)
+
+    enriched: dict[str, dict[str, object]] = {}
+    for source_id, content in material.items():
+        markers, marker_notes = _projection_marker_observation(source_id, content)
+        notes: list[str] = []
+        if not coordinate_matches:
+            notes.append("coverage_coordinate_mismatch")
+        if not profile_matches:
+            notes.append("coverage_access_mismatch")
+        candidates = by_source.get(source_id, [])
+        if len(candidates) != 1:
+            notes.append("coverage_span_missing" if not candidates else "coverage_span_ambiguous")
+        occurrences: list[dict[str, object]] = []
+        scanned: list[str] = []
+        if not notes:
+            occurrences, scanned, scan_notes = _coverage_occurrences(
+                candidates[0], source_id=source_id, content=content
+            )
+            notes.extend(scan_notes)
+        if notes:
+            enriched[source_id] = _unobserved_projection_source(
+                source_id,
+                content=content,
+                scan_notes=notes,
+                marker_summaries=markers,
+                marker_notes=marker_notes,
+            )
+            continue
+        enriched[source_id] = {
+            "tag": "playbill-next-source-observation-v2",
+            "source_id": source_id,
+            "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "byte_length": len(content),
+            "marker_summaries": markers,
+            "occurrences": occurrences,
+            "scanned_commitment_digests": scanned,
+            "scan_complete": True,
+            "scan_notes": [],
+            "marker_notes": list(marker_notes),
+        }
+    base["source_observations"] = [
+        enriched[source_id] for source_id in sorted(enriched, key=lambda item: item.encode("utf-8"))
+    ]
+    return base, coverage.coordinate if coordinate_matches else None
 
 
 def activate_with_workspace_refresh(

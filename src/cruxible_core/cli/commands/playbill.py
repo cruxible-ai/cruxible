@@ -40,6 +40,7 @@ from cruxible_client.authoring.sources import (
     load_source_catalog,
     root_aliases,
 )
+from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.documents import DocumentShell
@@ -1861,14 +1862,28 @@ def next_work(
         else _read_model(access_profile_path, CoverageAccessProfileV1).model_dump(mode="json")
     )
     workspace_observation = observe_playbill_next_workspace(Path(workspace_root))
-    result = _server_call(
-        lambda client, instance_id: client.next_playbill(
+
+    def _next_at_scanned_coordinate(
+        client: CruxibleClient, instance_id: str
+    ) -> contracts.PlaybillNextResult:
+        observed, coordinate = observe_playbill_next_workspace_with_coverage(
+            client,
+            instance_id,
+            Path(workspace_root),
+            observation=workspace_observation,
+            access_profile=profile,
+        )
+        return client.next_playbill(
             instance_id,
             evaluation_time=stamped_evaluation_time,
             access_profile=profile,
+            at=coordinate,
             expiring_within={"microseconds": expiring_within},
-            workspace_observation=workspace_observation,
-        ),
+            workspace_observation=observed,
+        )
+
+    result = _server_call(
+        _next_at_scanned_coordinate,
         command_name="playbill next",
     )
     if output_json:
