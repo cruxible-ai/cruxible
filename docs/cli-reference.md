@@ -212,6 +212,9 @@ digests; the daemon compares them with accepted whole-source snapshots and names
 drifted or unobserved cited sources. The daemon reads no clock or workspace.
 Without a source catalog, `workspace_sources` remains explicitly unobserved.
 Empty output means only that no work exists in the explicitly observed domains.
+Conflicting values in the same claim slot require revisions into distinct
+qualifiers; when a shared value field such as `topic` separates the contenders,
+the repair identifies that field.
 
 ## playbill discover
 

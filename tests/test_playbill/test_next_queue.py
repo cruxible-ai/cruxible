@@ -10,27 +10,42 @@ import pytest
 from cruxible_client.contracts.authoring.models import AuthoringExistingClaimDispositionV1
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import parse_capture_envelope
-from cruxible_client.contracts.claims import claim_citation_references
+from cruxible_client.contracts.claims import claim_citation_references, claim_statement_digest
 from cruxible_client.contracts.knowledge_briefs import KnowledgeBriefValueV1
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.service.playbill_claims import _claim_from_view, service_list_playbill_claims
+from cruxible_core.service.playbill_claims import (
+    ExistingStatementHandoffV1,
+    _claim_from_view,
+    service_list_playbill_claims,
+    service_propose_playbill_claim,
+)
 from cruxible_core.service.playbill_next import (
     PlaybillNextAccessProfileInvalid,
     PlaybillNextDriftObservationV1,
     PlaybillNextRequestV1,
     PlaybillNextWorkspaceObservationInvalid,
     PlaybillNextWorkspaceObservationV1,
+    _qualifier_discriminator,
     service_playbill_next,
     validate_playbill_next_request,
 )
-from tests.test_playbill._knowledge_loop_support import seed_claims
+from tests.test_playbill._knowledge_loop_support import (
+    activate as activate_work_item_claim,
+)
+from tests.test_playbill._knowledge_loop_support import (
+    authoring as work_item_authoring,
+)
+from tests.test_playbill._knowledge_loop_support import (
+    seed_claims,
+)
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
 from tests.test_playbill.test_brief_health import _accepted_brief, _ref
+from tests.test_playbill.test_claim_query_engine import status_claim
 
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
 
@@ -201,3 +216,51 @@ def test_unknown_access_profile_value_has_the_frozen_refusal() -> None:
         )
 
     assert raised.value.code == "playbill.next.access_profile_invalid"
+
+
+def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: Path) -> None:
+    instance, owner = seed_claims(tmp_path)
+    listed = service_list_playbill_claims(instance)
+    current = next(
+        claim
+        for claim in (_claim_from_view(view) for view in listed.claims)
+        if claim.statement.subject.artifact_path.endswith("/wi-42.yaml")
+    )
+    second = service_propose_playbill_claim(
+        instance,
+        authoring=work_item_authoring("wi-42", "blocked", with_claim_type=False).model_copy(
+            update={
+                "existing_statement_handoffs": (
+                    ExistingStatementHandoffV1(
+                        statement_digest=claim_statement_digest(current.statement).tagged,
+                        disposition="contradict",
+                    ),
+                )
+            }
+        ),
+        actor_id="owner",
+        proposal_name="conflicting-work-item",
+        timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    activate_work_item_claim(instance, owner, second, sequence=3)
+
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            evaluation_time=EVALUATION_TIME,
+            access_profile=_access(),
+        ),
+    )
+
+    conflict = next(item for item in result.items if item.reason == "claim_conflicted")
+    assert conflict.repair.required_change == "revise_claims_into_distinct_qualifiers"
+    assert conflict.repair.arguments == {"claim_ids": list(conflict.related_identities)}
+
+
+def test_conflict_repair_names_a_common_disjoint_value_discriminator() -> None:
+    claims = [
+        status_claim(1, "wi-1", {"topic": "paging", "rule": "page"}).accepted.claim,
+        status_claim(2, "wi-1", {"topic": "change_lanes", "rule": "approve"}).accepted.claim,
+    ]
+
+    assert _qualifier_discriminator(claims) == "topic"

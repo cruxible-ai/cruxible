@@ -24,6 +24,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV2
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
+    LiteralClaimObject,
     claim_citation_references,
 )
 from cruxible_client.contracts.errors import PlaybillError
@@ -446,22 +447,28 @@ def _claim_items(
             sorted((claim.identity.qualified for claim in group), key=lambda item: item.encode())
         )
         if slot.resolution == "unresolved":
+            discriminator = _qualifier_discriminator(group)
+            detail: dict[str, object] = {
+                "contender_count": slot.contender_count,
+                "predicate": group[0].statement.predicate,
+                "qualifier": group[0].statement.qualifier,
+            }
+            arguments: dict[str, object] = {"claim_ids": list(identities)}
+            if discriminator is not None:
+                detail["suggested_qualifier_field"] = discriminator
+                arguments["qualifier_field"] = discriminator
             items.append(
                 _item(
                     severity="blocking",
                     reason="claim_conflicted",
                     subject_identity=subject,
                     related_identities=identities,
-                    detail={
-                        "contender_count": slot.contender_count,
-                        "predicate": group[0].statement.predicate,
-                        "qualifier": group[0].statement.qualifier,
-                    },
+                    detail=detail,
                     repair=PlaybillNextRepairV1(
                         operation="playbill.authoring.create",
                         target=subject,
-                        required_change="disposition_conflicting_claims",
-                        arguments={"claim_ids": list(identities)},
+                        required_change="revise_claims_into_distinct_qualifiers",
+                        arguments=arguments,
                     ),
                 )
             )
@@ -555,6 +562,30 @@ def _claim_items(
                 )
             )
     return tuple(items)
+
+
+def _qualifier_discriminator(claims: list[ClaimArtifactAny]) -> str | None:
+    """Name the first field whose scalar values separate all semantic contenders."""
+
+    contender_values: dict[bytes, Mapping[str, object]] = {}
+    for claim in claims:
+        if not isinstance(claim.statement.object, LiteralClaimObject):
+            return None
+        value = claim.statement.object.value
+        if not isinstance(value, Mapping):
+            return None
+        contender_values.setdefault(
+            canonical_bytes(claim.statement.object.model_dump(mode="json")), value
+        )
+    common = set.intersection(*(set(value) for value in contender_values.values()))
+    ordered_fields = sorted(common, key=lambda item: (item != "topic", item.encode("utf-8")))
+    for field in ordered_fields:
+        values = tuple(value[field] for value in contender_values.values())
+        if not all(item is None or isinstance(item, (bool, int, str)) for item in values):
+            continue
+        if len({canonical_bytes(item) for item in values}) == len(values):
+            return field
+    return None
 
 
 def _citation_commitments(
