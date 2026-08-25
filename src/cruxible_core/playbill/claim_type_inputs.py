@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
@@ -22,6 +22,7 @@ from cruxible_client.contracts.claim_types import (
     claim_type_path,
     parse_claim_type,
 )
+from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.service.documents import PlaybillProposalInspection
@@ -29,6 +30,21 @@ from cruxible_core.playbill.service.documents import PlaybillProposalInspection
 
 class _StrictClaimTypeInputModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class ClaimTypeInputValidationError(PlaybillFormatError):
+    """A decision-only ClaimType input violates its final artifact contract."""
+
+    error_code = "playbill.claim_type.input_invalid"
+
+    def __init__(self, validation_error: ValidationError) -> None:
+        details = []
+        for error in validation_error.errors(include_url=False):
+            path = "$" + "".join(
+                f"[{part}]" if isinstance(part, int) else f".{part}" for part in error["loc"]
+            )
+            details.append(f"{path}: {error['msg']}")
+        super().__init__(f"{self.error_code}: {'; '.join(details)}")
 
 
 class ClaimTypeInputV1(_StrictClaimTypeInputModel):
@@ -97,7 +113,10 @@ def lower_claim_type_input(
     payload["lifecycle"] = ArtifactLifecycle(
         predecessor_digest=(None if predecessor is None else claim_type_digest(predecessor).tagged)
     ).model_dump(mode="json")
-    return ClaimType.model_validate(payload)
+    try:
+        return ClaimType.model_validate(payload)
+    except ValidationError as exc:
+        raise ClaimTypeInputValidationError(exc) from exc
 
 
 def claim_type_input_example() -> ClaimTypeInputV1:
@@ -179,6 +198,7 @@ def lint_claim_type_input(
 
 __all__ = [
     "ClaimTypeInputProposalResultV1",
+    "ClaimTypeInputValidationError",
     "ClaimTypeInputV1",
     "ClaimTypeLintWarningV1",
     "ClaimTypeProposalLintV1",

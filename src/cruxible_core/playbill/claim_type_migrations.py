@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -28,7 +28,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lower_claim_type_input
@@ -167,7 +167,7 @@ ClaimTypeMigrationResponse: TypeAlias = (
 )
 
 
-class ClaimTypeMigrationError(PlaybillError):
+class ClaimTypeMigrationError(PlaybillFormatError):
     code = "playbill.claim_type.migration_invalid"
 
 
@@ -394,7 +394,21 @@ def _canonical_successor_bytes(
                 "predecessor_digest": current.artifact_digest,
             }
         if current.artifact_kind == "procedure":
-            definition = ProcedureDefinitionV3.model_validate(payload["definition"])
+            try:
+                definition = ProcedureDefinitionV3.model_validate(payload["definition"])
+            except ValidationError as exc:
+                validation_details = []
+                for error in exc.errors(include_url=False):
+                    path = "$.definition" + "".join(
+                        f"[{part}]" if isinstance(part, int) else f".{part}"
+                        for part in error["loc"]
+                    )
+                    validation_details.append(f"{path}: {error['msg']}")
+                details = "; ".join(validation_details)
+                raise ClaimTypeMigrationDependentInvalid(
+                    f"{ClaimTypeMigrationDependentInvalid.code}: dependent "
+                    f"{current.identity.qualified} has an invalid procedure definition; {details}"
+                ) from exc
             payload["definition_digest"] = compute_procedure_definition_digest_v3(definition).tagged
     else:
         payload = supplied

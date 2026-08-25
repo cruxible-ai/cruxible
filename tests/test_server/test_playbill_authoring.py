@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
+from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
 from tests.test_client.test_playbill_authoring import OBSERVATION
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
@@ -187,6 +189,69 @@ def test_http_migration_route_delegates_the_typed_request(
 
     assert response.status_code == 200, response.text
     assert seen and seen[0][0] == instance_id
+
+
+@pytest.mark.parametrize("operation", ["migrate", "propose"])
+def test_http_claim_type_lowering_returns_typed_nested_validation_refusal(
+    playbill_http: tuple[TestClient, str, Path],
+    operation: str,
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    claim_type_input = claim_type_input_example().model_dump(mode="json")
+    claim_type_input["evidence_admission_policy"] = {
+        "rules": [
+            {
+                "rule_id": "derivational-without-reducer",
+                "claim_roles": ["observation"],
+                "capture_contract_digests": ["sha256:" + "a" * 64],
+                "evidence_kinds": ["self_asserted"],
+                "admission": "derivational",
+                "subject_binding": "exact_claim_subject",
+            }
+        ]
+    }
+    if operation == "migrate":
+        path = f"/api/v1/{instance_id}/playbill/claim-types/migrations"
+        request = {
+            "tag": "playbill-claim-type-migration-request-v2",
+            "mode": "preflight",
+            "successor": claim_type_input,
+        }
+    else:
+        path = f"/api/v1/{instance_id}/playbill/claim-types/proposals"
+        request = {
+            "tag": "playbill-claim-type-input-propose-request-v1",
+            "input": claim_type_input,
+            "proposal_name": "invalid-derivational-policy",
+        }
+
+    response = client.post(path, json=request)
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["error_type"] == "ClaimTypeInputValidationError"
+    assert body["error_code"] == "playbill.claim_type.input_invalid"
+    assert "$.evidence_admission_policy.rules[0]" in body["message"]
+    assert "derivational evidence requires at least one allowed reducer" in body["message"]
+
+
+def test_http_migration_domain_refusal_is_a_bad_request(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/claim-types/migrations",
+        json={
+            "tag": "playbill-claim-type-migration-request-v2",
+            "mode": "preflight",
+            "successor": claim_type_input_example().model_dump(mode="json"),
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error_type"] == "ClaimTypeMigrationError"
+    assert "migration requires an accepted predecessor" in response.json()["message"]
 
 
 def test_http_refuses_digest_and_base_smuggling_in_request_models(
