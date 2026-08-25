@@ -18,7 +18,10 @@ from pydantic import SecretStr, TypeAdapter
 
 from cruxible_client import __version__
 from cruxible_client import contracts as api
-from cruxible_client.authoring.blocks import assert_independent_projection_evidence
+from cruxible_client.authoring.blocks import (
+    assert_independent_projection_evidence,
+    repin_projection_block,
+)
 from cruxible_client.authoring.insertions import apply_playbill_insertion
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
@@ -93,6 +96,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV2,
     LiteralClaimObject,
 )
+from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
@@ -804,6 +808,12 @@ class Playbill:
             raise ValueError("Playbill has not installed an orientation coordinate")
         return self._coordinate
 
+    @property
+    def block(self) -> ProjectionBlocks:
+        """Client-only declaration stamps; prose remains wholly agent-owned."""
+
+        return ProjectionBlocks(self)
+
     def refresh(self) -> SearchPage:
         page = self._search(
             mode="orient",
@@ -1358,6 +1368,51 @@ class Playbill:
 
     def _evaluation_time(self) -> str:
         return cast(str, format_datetime(self._clock()))
+
+
+class ProjectionBlocks:
+    def __init__(self, playbill: Playbill) -> None:
+        self._playbill = playbill
+
+    def repin(
+        self,
+        source: str | SourceRef,
+        block_id: str,
+        *,
+        claims: Sequence[str | ClaimRef] = (),
+        queries: Sequence[
+            str | QueryRef | tuple[str | QueryRef, Mapping[str, CanonicalValue]]
+        ] = (),
+        evaluation_time: datetime,
+    ) -> ProjectionBlockStampV1:
+        source_id = _address(source, RefKind.SOURCE)
+        if isinstance(source, SourceRef):
+            self._playbill._assert_coordinate(source.coordinate)
+        claim_refs: list[str] = []
+        for claim in claims:
+            if isinstance(claim, ClaimRef):
+                self._playbill._assert_coordinate(claim.coordinate)
+            claim_refs.append(_address(claim, RefKind.CLAIM))
+        query_refs: list[tuple[str, Mapping[str, object]]] = []
+        for entry in queries:
+            if isinstance(entry, tuple):
+                query, parameters = entry
+            else:
+                query, parameters = entry, {}
+            if isinstance(query, QueryRef):
+                self._playbill._assert_coordinate(query.coordinate)
+            query_refs.append((_address(query, RefKind.QUERY), parameters))
+        return repin_projection_block(
+            self._playbill._client,
+            self._playbill._instance_id,
+            workspace=self._playbill._workspace,
+            source_id=source_id,
+            block_id=block_id,
+            claims=claim_refs,
+            queries=query_refs,
+            evaluation_time=evaluation_time,
+            coordinate=self._playbill.coordinate,
+        )
 
 
 class Procedure:

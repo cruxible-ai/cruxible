@@ -360,6 +360,18 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="body_group",
             ),
+            "block": _group(
+                "Maintain client-owned declared projection blocks.",
+                {
+                    "repin": _command(
+                        "playbill",
+                        "repin_projection",
+                        "Refresh one declaration marker without editing its prose.",
+                    )
+                },
+                module="playbill",
+                attr="block_group",
+            ),
             "document": _group(
                 "Propose and read governed Documents.",
                 {

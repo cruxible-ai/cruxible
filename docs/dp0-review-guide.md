@@ -39,6 +39,7 @@ playbill authoring rebase
 playbill authoring resume
 playbill authoring status
 playbill authoring submit
+playbill block repin
 playbill body store
 playbill claim explain
 playbill claim get

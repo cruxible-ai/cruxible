@@ -24,6 +24,7 @@ from cruxible_client import (
     observe_playbill_next_workspace,
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
+from cruxible_client.authoring.blocks import repin_projection_block
 from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
     AuthoringExampleName,
@@ -42,6 +43,7 @@ from cruxible_client.authoring.sources import (
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.errors import CanonicalEncodingError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
@@ -1546,6 +1548,86 @@ def explain_claim(identity: str, evaluation_time: str | None, output_json: bool)
         f"at {result.evaluation_time}"
     )
     _emit_admission_accounts(result.admission_accounts)
+
+
+@playbill_group.group("block")
+def block_group() -> None:
+    """Maintain local declarations without rendering or replacing authored prose."""
+
+
+@block_group.command("repin")
+@click.argument("source_id")
+@click.argument("block_id")
+@click.option("--claim", "claims", multiple=True, help="Accepted Claim backing identity.")
+@click.option("--query", "queries", multiple=True, help="Accepted QueryDefinition identity.")
+@click.option(
+    "--params",
+    "parameters",
+    multiple=True,
+    help="Canonical JSON object corresponding positionally to each --query.",
+)
+@click.option("--workspace-root", default=".", show_default=True, type=click.Path(file_okay=False))
+@click.option("--evaluation-time", default=None, help="Explicit absolute ISO-8601 instant.")
+@json_option
+@handle_errors
+def repin_projection(
+    source_id: str,
+    block_id: str,
+    claims: tuple[str, ...],
+    queries: tuple[str, ...],
+    parameters: tuple[str, ...],
+    workspace_root: str,
+    evaluation_time: str | None,
+    output_json: bool,
+) -> None:
+    """Refresh one declaration marker without writing its body or closing line."""
+
+    if parameters and len(parameters) != len(queries):
+        raise click.ClickException("--params must appear once for each --query or not at all")
+    resolved: list[tuple[str, Mapping[str, object]]] = []
+    for index, name in enumerate(queries):
+        if parameters:
+            try:
+                payload = json.loads(parameters[index])
+                if (
+                    not isinstance(payload, dict)
+                    or canonical_bytes(payload).decode() != parameters[index]
+                ):
+                    raise ValueError("expected one canonical JSON object")
+            except (CanonicalEncodingError, ValueError, TypeError) as exc:
+                raise click.ClickException(
+                    f"--params for query {name!r} is not canonical JSON"
+                ) from exc
+        else:
+            payload = {}
+        resolved.append((name, payload))
+    try:
+        instant = (
+            datetime.now(UTC)
+            if evaluation_time is None
+            else datetime.fromisoformat(evaluation_time.replace("Z", "+00:00"))
+        )
+    except ValueError as exc:
+        raise click.ClickException(
+            "--evaluation-time must be an absolute ISO-8601 instant"
+        ) from exc
+    stamp = _server_call(
+        lambda client, instance_id: repin_projection_block(
+            client,
+            instance_id,
+            workspace=workspace_root,
+            source_id=source_id,
+            block_id=block_id,
+            claims=claims,
+            queries=resolved,
+            evaluation_time=instant,
+        ),
+        command_name="playbill block repin",
+    )
+    if output_json:
+        _emit_json(stamp.model_dump(mode="json"))
+        return
+    click.echo(f"Repinned {source_id}#{block_id} at generation {stamp.declared_generation}.")
 
 
 @playbill_group.group("query")

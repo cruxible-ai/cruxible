@@ -196,6 +196,22 @@ execution. `bind` proposes a same-identity Procedure successor with exact accept
 pins; it never mutates the accepted Procedure in place. Runs append replay-verifiable
 journal records and `status` reconstructs the one-read run state from those records.
 
+## playbill block
+
+~~~text
+cruxible playbill block repin SOURCE_ID BLOCK_ID [--claim ID]... [--query ID]...
+  [--params CANONICAL_JSON]... [--workspace-root DIR] [--evaluation-time TS]
+~~~
+
+Refreshes only the opening marker of an agent-authored declared Markdown block.
+An unstamped block requires explicit Claim or QueryDefinition backings; omitting
+them on an already stamped block preserves its existing backing identities and
+resolved query parameters. The client validates accepted state and atomically
+replaces the marker only when the complete local source still matches its
+observed bytes. It never renders prose, edits the body, or mutates governed
+state. Evidence anchors inside declared blocks are refused client-side; an
+explicit copy citation remains available.
+
 ## playbill next
 
 ~~~text
