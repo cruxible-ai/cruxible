@@ -120,6 +120,11 @@ def _claim_resolution_statuses(
             for claim in members
         }
         _apply_resolution_statuses(result, statuses, slots=slots)
+        if first.statement.predicate == KNOWLEDGE_BRIEF_PREDICATE:
+            for members in groups_by_qualifier.values():
+                if classify_claim_slot(members).resolution == "unresolved":
+                    for claim in members:
+                        statuses[claim.identity.name] = "conflicted"
     return statuses
 
 

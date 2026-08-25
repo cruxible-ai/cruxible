@@ -279,3 +279,54 @@ def test_duplicate_brief_statements_remain_visible_without_a_phantom_conflict(
     ).orientation
     assert orientation is not None
     assert orientation.conflicted_count == 0
+
+
+def test_different_same_purpose_briefs_remain_conflicted_under_many_cardinality(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    first_value = KnowledgeBriefValueV1(
+        purpose="What release rule applies?",
+        kind="guidance",
+        prose="Use checklist A.",
+    )
+    first = coordinator.create(
+        actor=actor,
+        payload=_brief_payload(first_value),
+        canonical_timestamp="2026-08-21T12:00:00.000000Z",
+    ).intent
+    _activate(instance, owner, coordinator.submit(first.intent_id, actor=actor))
+    second = coordinator.create(
+        actor=actor,
+        payload=_brief_payload(
+            first_value.model_copy(update={"prose": "Use checklist B instead."}),
+            dispositions=(
+                AuthoringExistingClaimDispositionV1(
+                    claim_id=first.semantic_identity,
+                    disposition="contradict",
+                ),
+            ),
+        ),
+        canonical_timestamp="2026-08-21T12:00:01.000000Z",
+    ).intent
+    _activate(instance, owner, coordinator.submit(second.intent_id, actor=actor))
+
+    listed = service_search_playbill(
+        instance,
+        request=_request(instance, mode="list", kinds=("brief",)),
+    )
+
+    assert {row.identity for row in listed.rows} == {
+        first.semantic_identity,
+        second.semantic_identity,
+    }
+    assert {row.status for row in listed.rows} == {"conflicted"}
+    orientation = service_search_playbill(
+        instance,
+        request=_request(instance, mode="orient", kinds=("brief",)),
+    ).orientation
+    assert orientation is not None
+    assert orientation.conflicted_count == 2
