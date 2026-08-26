@@ -22,7 +22,16 @@ from cruxible_client.contracts.captures import (
     CanonicalDurationV1,
     parse_capture_envelope,
 )
-from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV2
+from cruxible_client.contracts.claim_types import (
+    ClaimType,
+    claim_type_digest,
+    claim_type_path,
+    parse_claim_type,
+)
+from cruxible_client.contracts.claim_verdicts import (
+    ClaimVerdictResultV2,
+    evidence_control_components,
+)
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimCitationV1,
@@ -71,7 +80,11 @@ from cruxible_core.service.playbill_claims import (
     _claim_law_evidence,
     service_list_playbill_claims,
 )
-from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
+from cruxible_core.service.playbill_evidence import (
+    accepted_claim_providers,
+    current_verified_claim_attestations,
+    service_evaluate_playbill_claim_verdict,
+)
 from cruxible_core.service.playbill_query import build_accepted_query_facts
 
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
@@ -99,6 +112,7 @@ NextReason = Literal[
     "projection_backing_stale",
     "self_published_source_stale",
     "claim_dependency_stale",
+    "claim_attestation_threshold_met",
     "document_modified",
 ]
 NextRepairOperation = Literal[
@@ -553,6 +567,108 @@ def _resolve_coordinate(
         ) from exc
 
 
+def _claim_attestation_threshold_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: PlaybillAcceptedCoordinate,
+    evaluation_time: datetime,
+    claims: tuple[ClaimArtifactAny, ...],
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Emit v4 queue consequences from current independent attestation components."""
+
+    internal = instance.resolve_accepted_coordinate(
+        git_oid=coordinate.git_oid,
+        semantic_root=coordinate.semantic_root,
+        generation_root=coordinate.generation_root,
+        compiler_digest=coordinate.compiler_digest,
+    )
+    tree = instance.tree_at(coordinate.git_oid)
+    providers = accepted_claim_providers(tree)
+    claim_types: dict[str, ClaimType] = {}
+    items: list[PlaybillNextItemV1] = []
+    for claim in sorted(claims, key=lambda item: item.identity.qualified.encode("utf-8")):
+        predicate = claim.statement.predicate
+        claim_type = claim_types.get(predicate)
+        if claim_type is None:
+            path = claim_type_path(predicate)
+            claim_type = parse_claim_type(tree[path], path=path)
+            claim_types[predicate] = claim_type
+        policy = claim_type.attestation_consequence_policy
+        if policy is None:
+            continue
+        evidence = _claim_law_evidence(
+            instance,
+            path=claim_path(claim.identity.name),
+            at=internal,
+        )
+        current = current_verified_claim_attestations(
+            tree,
+            claim,
+            evidence.verified_attestations,
+        )
+        for rule in policy.rules:
+            matching = tuple(
+                item
+                for item in current
+                if item.current
+                and item.statement.claim_statement_digest
+                == claim_statement_digest(claim.statement).tagged
+                and item.statement.stance == rule.stance
+                and item.statement.observed_at <= evaluation_time
+                and (
+                    item.statement.valid_until is None
+                    or evaluation_time < item.statement.valid_until
+                )
+            )
+            components = evidence_control_components((), matching, providers=providers)
+            if len(components) < rule.minimum_independent_control_components:
+                continue
+            attestation_digests = tuple(
+                sorted(
+                    (item.attestation_digest for item in matching),
+                    key=lambda item: item.encode("ascii"),
+                )
+            )
+            items.append(
+                _item(
+                    severity="warning",
+                    reason="claim_attestation_threshold_met",
+                    subject_identity=claim.identity.qualified,
+                    related_identities=tuple(
+                        sorted(
+                            (
+                                claim.statement.subject.artifact_path,
+                                claim_type.identity.qualified,
+                            ),
+                            key=lambda item: item.encode("utf-8"),
+                        )
+                    ),
+                    detail={
+                        "claim_identity": claim.identity.qualified,
+                        "claim_type_identity": claim_type.identity.qualified,
+                        "claim_type_digest": claim_type_digest(claim_type).tagged,
+                        "rule_id": rule.rule_id,
+                        "stance": rule.stance,
+                        "independent_control_component_count": len(components),
+                        "minimum_independent_control_components": (
+                            rule.minimum_independent_control_components
+                        ),
+                        "attestation_digests": list(attestation_digests),
+                    },
+                    repair=PlaybillNextRepairV1(
+                        operation="playbill.authoring.create",
+                        target=claim.identity.qualified,
+                        required_change="resolve_attestation_threshold",
+                        arguments={
+                            "claim_id": claim.identity.name,
+                            "rule_id": rule.rule_id,
+                        },
+                    ),
+                )
+            )
+    return tuple(items)
+
+
 def _claim_items(
     instance: PlaybillInstance,
     *,
@@ -577,7 +693,14 @@ def _claim_items(
                 }
             )
         ].append(claim)
-    items: list[PlaybillNextItemV1] = []
+    items = list(
+        _claim_attestation_threshold_items(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+            claims=claims,
+        )
+    )
     for group in groups.values():
         slot = classify_claim_slot(group)
         subject = group[0].statement.subject.artifact_path

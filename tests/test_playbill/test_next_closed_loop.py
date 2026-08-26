@@ -31,6 +31,7 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import (
+    LiteralClaimObject,
     claim_artifact_digest,
     claim_citation_references,
     claim_path,
@@ -147,6 +148,7 @@ EXPECTED_OPERATIONS = {
     "projection_backing_stale": "playbill.block.repin",
     "self_published_source_stale": "playbill.authoring.create",
     "claim_dependency_stale": "playbill.authoring.create",
+    "claim_attestation_threshold_met": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
 }
 
@@ -810,6 +812,34 @@ def _document_modified(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     _assert_gone(instance, "document_modified", _request(instance, workspace=changed_observation))
 
 
+def _claim_attestation_threshold(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.test_playbill.test_attestation_consequence_next import threshold_world
+
+    instance, owner, _claim = threshold_world(root, monkeypatch)
+    row = _row(instance, "claim_attestation_threshold_met", _request(instance))
+    assert row.repair.operation == EXPECTED_OPERATIONS["claim_attestation_threshold_met"]
+    current = _current_claim(instance)
+    repair = service_propose_playbill_claim(
+        instance,
+        authoring=DirectClaimAuthoringV1(
+            statement=current.statement.model_copy(
+                update={"object": LiteralClaimObject(value="blocked")}
+            ),
+            rationale="Revise the tested statement after reviewing the unsure attestations.",
+            claim_id=current.identity.name,
+            predecessor_artifact_digest=claim_artifact_digest(current).tagged,
+        ),
+        actor_id="owner",
+        proposal_name="closed-loop-attestation-threshold",
+        timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    activate(instance, owner, repair, sequence=3)
+    _assert_gone(instance, "claim_attestation_threshold_met", _request(instance))
+
+
 CLOSED_LOOP_CASES: dict[str, RepairCase] = {
     "claim_conflicted": _claim_conflicted,
     "claim_uncovered": _claim_uncovered,
@@ -824,6 +854,7 @@ CLOSED_LOOP_CASES: dict[str, RepairCase] = {
     "projection_backing_stale": _projection_backing_stale,
     "self_published_source_stale": _self_published_source_stale,
     "claim_dependency_stale": _claim_dependency_stale,
+    "claim_attestation_threshold_met": _claim_attestation_threshold,
     "document_modified": _document_modified,
 }
 

@@ -57,8 +57,8 @@ from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.service.playbill_claims import _claim_law_evidence_index
 from cruxible_core.service.playbill_evidence import (
     _current_replay_available,
-    _providers,
     _referent_digests,
+    accepted_claim_providers,
 )
 
 CLAIM_PATH_PREFIX = "claims/"
@@ -224,7 +224,7 @@ def build_accepted_query_facts(
         if path.startswith(CLAIM_PATH_PREFIX)
         and (include_retired or parse_claim(tree[path], path=path).lifecycle.state == "live")
     )
-    providers = _providers(tree)
+    providers = accepted_claim_providers(tree)
     return ClaimQueryFactsV1(
         coordinate=coordinate,
         subjects=_accepted_subjects(tree),

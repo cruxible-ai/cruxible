@@ -92,6 +92,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "projection_backing_stale",
         "self_published_source_stale",
         "claim_dependency_stale",
+        "claim_attestation_threshold_met",
         "document_modified",
     }
     assert set(get_args(NextRepairOperation)) == {

@@ -165,7 +165,7 @@ def _accepted_claim(tree: Mapping[str, bytes], identity: str) -> AcceptedClaim:
     )
 
 
-def _providers(tree: Mapping[str, bytes]) -> dict[str, ProviderV1]:
+def accepted_claim_providers(tree: Mapping[str, bytes]) -> dict[str, ProviderV1]:
     result: dict[str, ProviderV1] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("providers/"):
@@ -173,6 +173,31 @@ def _providers(tree: Mapping[str, bytes]) -> dict[str, ProviderV1]:
         provider = parse_provider(tree[path], path=path)
         result[provider.identity.qualified] = provider
     return result
+
+
+def current_verified_claim_attestations(
+    tree: Mapping[str, bytes],
+    claim: ClaimArtifactAny,
+    attestations: tuple[VerifiedClaimAttestationV1, ...],
+) -> tuple[VerifiedClaimAttestationV1, ...]:
+    """Re-grade accepted attestations against the current referent shells."""
+
+    subject_content_digest, object_content_digest = _referent_digests(tree, claim)
+    return tuple(
+        item.model_copy(
+            update={
+                "coverage": (
+                    "exact_subject"
+                    if item.statement.subject_content_digest == subject_content_digest
+                    and item.statement.object_content_digest == object_content_digest
+                    else "shell_stale"
+                ),
+                "current": item.statement.subject_content_digest == subject_content_digest
+                and item.statement.object_content_digest == object_content_digest,
+            }
+        )
+        for item in attestations
+    )
 
 
 def _capture_contracts(
@@ -290,7 +315,7 @@ def service_propose_claim_attestation(
     accepted = _accepted_claim(tree, claim_identity)
     subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
     principals = principal_registry_from_tree(tree, semantic_root=coordinate.semantic_root)
-    providers = _providers(tree)
+    providers = accepted_claim_providers(tree)
     verify_claim_attestation(
         attestation,
         verification_time=datetime.fromisoformat(timestamp.replace("Z", "+00:00")),
@@ -519,20 +544,10 @@ def service_evaluate_playbill_claim_verdict(
         accepted.claim.backing.referent_context.subject_content_digest == subject_content_digest
         and accepted.claim.backing.referent_context.object_content_digest == object_content_digest
     )
-    attestations: tuple[VerifiedClaimAttestationV1, ...] = tuple(
-        item.model_copy(
-            update={
-                "coverage": (
-                    "exact_subject"
-                    if item.statement.subject_content_digest == subject_content_digest
-                    and item.statement.object_content_digest == object_content_digest
-                    else "shell_stale"
-                ),
-                "current": item.statement.subject_content_digest == subject_content_digest
-                and item.statement.object_content_digest == object_content_digest,
-            }
-        )
-        for item in evidence.verified_attestations
+    attestations = current_verified_claim_attestations(
+        tree,
+        accepted.claim,
+        evidence.verified_attestations,
     )
     verdict = evaluate_claim_verdict(
         claim_statement_digest=accepted.statement_digest,
@@ -540,7 +555,7 @@ def service_evaluate_playbill_claim_verdict(
         evaluation_time=evaluation_time,
         captures=captures,
         attestations=attestations,
-        providers=_providers(tree),
+        providers=accepted_claim_providers(tree),
         claim_effective_from=accepted.claim.statement.effective_from,
         claim_effective_until=accepted.claim.statement.effective_until,
         referent_current=referent_current,
@@ -594,6 +609,8 @@ __all__ = [
     "PlaybillClaimVerdictQueryV2",
     "PlaybillClaimVerdictQueryAny",
     "PreparedClaimAttestationV1",
+    "accepted_claim_providers",
+    "current_verified_claim_attestations",
     "service_evaluate_playbill_claim_verdict",
     "service_get_playbill_standing_mandate",
     "service_prepare_claim_attestation",
