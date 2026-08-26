@@ -24,11 +24,13 @@ from cruxible_client.contracts.claim_attestations import (
     verify_claim_attestation,
 )
 from cruxible_client.contracts.claim_types import (
+    ClaimType,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
+    ClaimAdjudicationRuleV1,
     ClaimVerdictResultV1,
     ClaimVerdictResultV2,
     claim_adjudication_rule,
@@ -496,6 +498,76 @@ def _current_replay_available(
     return reader is not None and reader.replay_available(envelope.source)
 
 
+def _without_queue_only_claim_type_fields(claim_type: ClaimType) -> dict[str, object]:
+    payload = claim_type.model_dump(mode="json")
+    for field in (
+        "artifact_format",
+        "lifecycle",
+        "subject_scope",
+        "slot_policy",
+        "attestation_consequence_policy",
+    ):
+        payload.pop(field, None)
+    return payload
+
+
+def _reproduced_claim_adjudication_rule(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    claim_type: ClaimType,
+    evidence_digest: str,
+) -> ClaimAdjudicationRuleV1:
+    """Return the current rule when accepted evidence proves the same verdict contract.
+
+    ClaimType v4's attestation-consequence policy is queue-only. Its addition
+    therefore cannot invalidate an immediate predecessor's otherwise identical
+    adjudication receipt. The ordinary exact-current digest remains preferred;
+    the predecessor allowance is limited to a byte-equivalent ClaimType after
+    removing version/lifecycle mechanics and the queue-only policy.
+    """
+
+    current_digest = claim_type_digest(claim_type).tagged
+    current_rule = claim_adjudication_rule(
+        claim_type,
+        claim_type_digest=current_digest,
+    )
+    if claim_adjudication_rule_digest(current_rule) == evidence_digest:
+        return current_rule
+    predecessor_digest = claim_type.lifecycle.predecessor_digest
+    if (
+        claim_type.artifact_format != "playbill-claim-type-v4"
+        or claim_type.attestation_consequence_policy is None
+        or predecessor_digest is None
+    ):
+        raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
+    path = claim_type_path(claim_type.predicate)
+    target_index = next(
+        index
+        for index, generation in enumerate(instance.accepted_history())
+        if generation.oid == coordinate.git_oid
+    )
+    for generation in reversed(instance.accepted_history()[:target_index]):
+        content = instance.tree_at(generation.oid).get(path)
+        if content is None:
+            continue
+        predecessor = parse_claim_type(content, path=path)
+        if claim_type_digest(predecessor).tagged != predecessor_digest:
+            continue
+        if _without_queue_only_claim_type_fields(
+            predecessor
+        ) != _without_queue_only_claim_type_fields(claim_type):
+            break
+        predecessor_rule = claim_adjudication_rule(
+            predecessor,
+            claim_type_digest=predecessor_digest,
+        )
+        if claim_adjudication_rule_digest(predecessor_rule) == evidence_digest:
+            return current_rule
+        break
+    raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
+
+
 def service_evaluate_playbill_claim_verdict(
     instance: PlaybillInstance,
     *,
@@ -514,12 +586,12 @@ def service_evaluate_playbill_claim_verdict(
     evidence = _claim_law_evidence(instance, path=accepted.path, coordinate=coordinate)
     type_path = claim_type_path(accepted.claim.statement.predicate)
     claim_type = parse_claim_type(tree[type_path], path=type_path)
-    rule = claim_adjudication_rule(
-        claim_type,
-        claim_type_digest=claim_type_digest(claim_type).tagged,
+    rule = _reproduced_claim_adjudication_rule(
+        instance,
+        coordinate=coordinate,
+        claim_type=claim_type,
+        evidence_digest=evidence.adjudication_rule_digest,
     )
-    if claim_adjudication_rule_digest(rule) != evidence.adjudication_rule_digest:
-        raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
     readers = external_readers or {}
     captures = tuple(
         item.model_copy(

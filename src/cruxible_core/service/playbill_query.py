@@ -16,13 +16,8 @@ from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
 from cruxible_client.contracts.claim_types import (
-    claim_type_digest,
     claim_type_path,
     parse_claim_type,
-)
-from cruxible_client.contracts.claim_verdicts import (
-    claim_adjudication_rule,
-    claim_adjudication_rule_digest,
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
@@ -58,6 +53,7 @@ from cruxible_core.service.playbill_claims import _claim_law_evidence_index
 from cruxible_core.service.playbill_evidence import (
     _current_replay_available,
     _referent_digests,
+    _reproduced_claim_adjudication_rule,
     accepted_claim_providers,
 )
 
@@ -136,12 +132,12 @@ def _fact_row(
     if type_content is None:
         raise ClaimNotFoundError(type_path)
     claim_type = parse_claim_type(type_content, path=type_path)
-    rule = claim_adjudication_rule(
-        claim_type,
-        claim_type_digest=claim_type_digest(claim_type).tagged,
+    rule = _reproduced_claim_adjudication_rule(
+        instance,
+        coordinate=coordinate,
+        claim_type=claim_type,
+        evidence_digest=evidence.adjudication_rule_digest,
     )
-    if claim_adjudication_rule_digest(rule) != evidence.adjudication_rule_digest:
-        raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
     captures = tuple(
         item.model_copy(
             update={

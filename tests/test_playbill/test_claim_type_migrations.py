@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -20,8 +22,10 @@ from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
+    render_claim_type,
 )
 from cruxible_client.contracts.claims import claim_path, parse_claim
+from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_path,
@@ -40,11 +44,16 @@ from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeMigrationResultV2,
     service_migrate_claim_type,
 )
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from cruxible_core.service.playbill_claims import _claim_law_evidence
+from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
+from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
+from cruxible_core.service.playbill_query import build_accepted_query_facts
 from tests.test_playbill._adoption_fixture import _query_definition
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
@@ -92,7 +101,7 @@ def _accepted_claim_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         ).status
         == "accepted"
     )
-    return instance, intent.semantic_identity
+    return instance, intent.semantic_identity, owner
 
 
 def _successor(instance):  # type: ignore[no-untyped-def]
@@ -112,7 +121,7 @@ def _successor(instance):  # type: ignore[no-untyped-def]
 def test_migration_updates_type_and_dependent_in_one_idempotent_candidate(
     tmp_path: Path,
 ) -> None:
-    instance, claim_id = _accepted_claim_world(tmp_path)
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
     request = ClaimTypeMigrationRequestV1(
         successor=_successor(instance),
         dependents=(
@@ -142,7 +151,7 @@ def test_migration_updates_type_and_dependent_in_one_idempotent_candidate(
 
 
 def test_migration_refuses_an_omitted_current_dependent(tmp_path: Path) -> None:
-    instance, claim_id = _accepted_claim_world(tmp_path)
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
 
     with pytest.raises(ClaimTypeMigrationError, match=claim_id):
         service_migrate_claim_type(
@@ -156,7 +165,7 @@ def test_migration_refuses_an_omitted_current_dependent(tmp_path: Path) -> None:
 
 
 def test_invalidation_normalizes_to_a_retired_candidate_member(tmp_path: Path) -> None:
-    instance, claim_id = _accepted_claim_world(tmp_path)
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
     result = service_migrate_claim_type(
         instance,
         request=ClaimTypeMigrationRequestV1(
@@ -375,7 +384,7 @@ def test_decision_only_claim_type_completes_two_successions_without_predecessor_
 def test_decision_only_successor_migrates_freshness_and_its_live_claim(
     tmp_path: Path,
 ) -> None:
-    instance, claim_id = _accepted_claim_world(tmp_path)
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
     freshness = ClaimEvidenceFreshnessV1(
         stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
     )
@@ -508,6 +517,130 @@ def test_claim_type_v3_to_v4_migration_preserves_freshness_and_accepts_policy(
     assert accepted_v4.evidence_freshness == accepted_v3.evidence_freshness
     assert accepted_v4.attestation_consequence_policy == policy
     assert accepted_v4.lifecycle.predecessor_digest == claim_type_digest(accepted_v3).tagged
+
+
+def test_policy_only_v4_migration_keeps_predecessor_adjudication_evidence_reproducible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    actor = AuthenticatedActor(actor_id="owner")
+    path = claim_type_path(_claim_type().predicate)
+    dependent = ClaimTypeDependentDispositionV2(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="successor",
+    )
+
+    def migrate_and_activate(successor: ClaimTypeInputV1) -> None:
+        result = service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequestV2(
+                mode="submit",
+                successor=successor,
+                dependents=(dependent,),
+            ),
+            actor=actor,
+        )
+        assert isinstance(result, ClaimTypeMigrationResultV2)
+        candidate = result.proposal.proposal.candidate
+        assert candidate is not None
+        approval = _sign(
+            owner,
+            candidate.candidate_digest,
+            instance.accepted_coordinate().semantic_root,
+        )
+        service_submit_playbill_approval(
+            instance,
+            proposal_id=result.proposal.proposal.admission.proposal_id,
+            attestation=approval.attestation,
+            authenticated_submitter="owner",
+        )
+        assert (
+            service_activate_playbill_proposal(
+                instance,
+                proposal_id=result.proposal.proposal.admission.proposal_id,
+            ).status
+            == "accepted"
+        )
+
+    freshness = ClaimEvidenceFreshnessV1(
+        stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
+    )
+    migrate_and_activate(
+        _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+            update={"evidence_freshness": freshness}
+        )
+    )
+    v3_coordinate = instance.accepted_coordinate()
+    v3_evidence = _claim_law_evidence(
+        instance,
+        path=claim_path(claim_id),
+        at=v3_coordinate,
+    )
+    policy = ClaimAttestationConsequencePolicyV1(
+        rules=(
+            ClaimAttestationConsequenceRuleV1(
+                rule_id="two-independent-unsure",
+                stance="unsure",
+                minimum_independent_control_components=2,
+            ),
+        )
+    )
+    migrate_and_activate(
+        _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+            update={"attestation_consequence_policy": policy}
+        )
+    )
+
+    evaluation_time = datetime(2026, 8, 26, 12, tzinfo=UTC)
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_evidence._claim_law_evidence",
+        lambda *_args, **_kwargs: v3_evidence,
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_query._claim_law_evidence_index",
+        lambda *_args, **_kwargs: {claim_path(claim_id): v3_evidence},
+    )
+    service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            evaluation_time=evaluation_time,
+            access_profile=CoverageAccessProfileV1(
+                profile_id="migration-test",
+                permitted_access_classes=("instance", "public"),
+            ),
+        ),
+    )
+    service_evaluate_playbill_claim_verdict(
+        instance,
+        claim_identity=claim_id,
+        evaluation_time=evaluation_time,
+    )
+    build_accepted_query_facts(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+    )
+
+    accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    accepted_type = parse_claim_type(accepted_tree[path], path=path)
+    divergent_type = accepted_type.model_copy(
+        update={"literal_schema": {"type": "string", "enum": ["blocked", "ready", "closed"]}}
+    )
+    divergent_tree = {**accepted_tree, path: render_claim_type(divergent_type)}
+    original_tree_at = instance.tree_at
+
+    def divergent_tree_at(git_oid: str) -> dict[str, bytes]:
+        if git_oid == instance.accepted_coordinate().git_oid:
+            return divergent_tree
+        return cast(dict[str, bytes], original_tree_at(git_oid))
+
+    monkeypatch.setattr(instance, "tree_at", divergent_tree_at)
+    with pytest.raises(ProposalIntegrityError, match="adjudication rule does not reproduce"):
+        service_evaluate_playbill_claim_verdict(
+            instance,
+            claim_identity=claim_id,
+            evaluation_time=evaluation_time,
+        )
 
 
 @pytest.mark.parametrize("mode", ["preflight", "submit"])
