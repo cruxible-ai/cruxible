@@ -10,6 +10,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import stat
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,7 @@ REVIEW_OPERATIONAL_STORE_DIRECTORY = "review-operational-v1"
 ReviewOperationalFamily: TypeAlias = Literal[
     "curation", "audit", "consumption", "block_observation"
 ]
+_UNCHECKED_PARTITION_HEAD = object()
 
 
 class ReviewOperationalStoreError(PlaybillError):
@@ -42,6 +44,15 @@ class ReviewOperationalStoreError(PlaybillError):
 
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.code}: {message}")
+
+
+class ReviewOperationalConcurrentChangeError(PlaybillError):
+    """The caller's expected operational partition head is no longer current."""
+
+    code = "playbill.curation.concurrent_change"
+
+    def __init__(self) -> None:
+        super().__init__(f"{self.code}: operational partition changed concurrently")
 
 
 class _StrictOperationalModel(BaseModel):
@@ -250,13 +261,23 @@ class ReviewOperationalStore:
             raise ReviewOperationalStoreError("operational exhaust root is not trustworthy")
         self.exhaust_root = exhaust_root.resolve(strict=True)
         self.root = self.exhaust_root / REVIEW_OPERATIONAL_STORE_DIRECTORY
+        self._creating_root = self.exhaust_root / f".creating-{REVIEW_OPERATIONAL_STORE_DIRECTORY}"
         self.instance_id = instance_id
         self._lock_path = self.exhaust_root / ".review-operational-v1.lock"
         self._crash_hook = crash_hook
 
     @contextmanager
     def _locked(self):  # type: ignore[no-untyped-def]
-        descriptor = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        if self._lock_path.is_symlink():
+            raise ReviewOperationalStoreError("operational lock path is not trustworthy")
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(self._lock_path, flags, 0o600)
+        except OSError as exc:
+            raise ReviewOperationalStoreError("operational lock could not be opened") from exc
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            os.close(descriptor)
+            raise ReviewOperationalStoreError("operational lock path is not a regular file")
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX)
             yield
@@ -275,26 +296,36 @@ class ReviewOperationalStore:
         generation: int,
         initialized_at: datetime,
     ) -> ReviewOperationalStoreManifestV1:
-        if self.root.exists():
+        if self.root.exists() or self.root.is_symlink():
             return self._load_manifest()
-        self.root.mkdir(mode=0o700)
-        os.chmod(self.root, 0o700)
-        (self.root / "partitions").mkdir(mode=0o700)
+        if self._creating_root.exists() or self._creating_root.is_symlink():
+            manifest = self._load_manifest_at(self._creating_root)
+            os.replace(self._creating_root, self.root)
+            _fsync_directory(self.exhaust_root)
+            return manifest
+        self._creating_root.mkdir(mode=0o700)
+        os.chmod(self._creating_root, 0o700)
+        (self._creating_root / "partitions").mkdir(mode=0o700)
         manifest = ReviewOperationalStoreManifestV1(
             instance_id=self.instance_id,
             initialized_coordinate=coordinate,
             initialized_generation=generation,
             initialized_at=initialized_at,
         )
-        _exclusive_write(self.root / "store.json", _render(manifest))
-        _fsync_directory(self.root)
+        _exclusive_write(self._creating_root / "store.json", _render(manifest))
+        _fsync_directory(self._creating_root)
+        self._crash("after_store_manifest_sync")
+        os.replace(self._creating_root, self.root)
         _fsync_directory(self.exhaust_root)
         return manifest
 
     def _load_manifest(self) -> ReviewOperationalStoreManifestV1:
-        if self.root.is_symlink() or not self.root.is_dir():
+        return self._load_manifest_at(self.root)
+
+    def _load_manifest_at(self, root: Path) -> ReviewOperationalStoreManifestV1:
+        if root.is_symlink() or not root.is_dir():
             raise ReviewOperationalStoreError("operational root is not trustworthy")
-        path = self.root / "store.json"
+        path = root / "store.json"
         if path.is_symlink() or not path.is_file():
             raise ReviewOperationalStoreError("operational store manifest is missing")
         try:
@@ -304,7 +335,7 @@ class ReviewOperationalStore:
             raise ReviewOperationalStoreError("operational store manifest is malformed") from exc
         if raw != _render(manifest) or manifest.instance_id != self.instance_id:
             raise ReviewOperationalStoreError("operational store manifest does not reproduce")
-        partitions = self.root / "partitions"
+        partitions = root / "partitions"
         if partitions.is_symlink() or not partitions.is_dir():
             raise ReviewOperationalStoreError("operational partitions root is invalid")
         return manifest
@@ -320,14 +351,27 @@ class ReviewOperationalStore:
         directory = self.root / "partitions" / family / digest
         family_root = directory.parent
         if create:
-            family_root.mkdir(mode=0o700, exist_ok=True)
+            try:
+                family_root.mkdir(mode=0o700, exist_ok=True)
+            except OSError as exc:
+                raise ReviewOperationalStoreError("operational family root is invalid") from exc
             if family_root.is_symlink() or not family_root.is_dir():
                 raise ReviewOperationalStoreError("operational family root is invalid")
-            directory.mkdir(mode=0o700, exist_ok=True)
+            try:
+                directory.mkdir(mode=0o700, exist_ok=True)
+            except OSError as exc:
+                raise ReviewOperationalStoreError("operational partition root is invalid") from exc
             if directory.is_symlink() or not directory.is_dir():
                 raise ReviewOperationalStoreError("operational partition root is invalid")
-            (directory / "events").mkdir(mode=0o700, exist_ok=True)
-            (directory / "payloads").mkdir(mode=0o700, exist_ok=True)
+            for child in (directory / "events", directory / "payloads"):
+                try:
+                    child.mkdir(mode=0o700, exist_ok=True)
+                except OSError as exc:
+                    raise ReviewOperationalStoreError(
+                        "operational partition child is invalid"
+                    ) from exc
+                if child.is_symlink() or not child.is_dir():
+                    raise ReviewOperationalStoreError("operational partition child is invalid")
         return directory
 
     def _load_partition(
@@ -335,7 +379,14 @@ class ReviewOperationalStore:
     ) -> tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...]:
         directory = self._partition_directory(family, partition_id, create=False)
         events_directory = directory / "events"
-        if directory.is_symlink() or events_directory.is_symlink() or not events_directory.is_dir():
+        payloads_directory = directory / "payloads"
+        if (
+            directory.is_symlink()
+            or events_directory.is_symlink()
+            or not events_directory.is_dir()
+            or payloads_directory.is_symlink()
+            or not payloads_directory.is_dir()
+        ):
             raise ReviewOperationalStoreError("operational partition is invalid")
         paths = tuple(sorted(events_directory.glob("*.json"), key=lambda item: item.name))
         if not paths:
@@ -362,7 +413,7 @@ class ReviewOperationalStore:
                 or event.previous_event_digest != previous
             ):
                 raise ReviewOperationalStoreError("operational event chain is broken")
-            payload_path = directory / "payloads" / f"{event.payload_digest[7:]}.json"
+            payload_path = payloads_directory / f"{event.payload_digest[7:]}.json"
             if payload_path.is_symlink() or not payload_path.is_file():
                 raise ReviewOperationalStoreError("operational event payload is missing")
             try:
@@ -391,6 +442,7 @@ class ReviewOperationalStore:
         generation: int,
         actor_context: GovernedActorContext,
         recorded_at: datetime,
+        expected_latest_event_digest: str | None | object = _UNCHECKED_PARTITION_HEAD,
     ) -> PlaybillReviewOperationalEventV1:
         payload_value = (
             payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload
@@ -414,6 +466,12 @@ class ReviewOperationalStore:
                     raise ReviewOperationalStoreError(
                         "operational event identity has conflicting payload bytes"
                     )
+            actual_latest = None if not existing else existing[-1][0].event_digest
+            if (
+                expected_latest_event_digest is not _UNCHECKED_PARTITION_HEAD
+                and expected_latest_event_digest != actual_latest
+            ):
+                raise ReviewOperationalConcurrentChangeError
             payload_path = directory / "payloads" / f"{payload_digest[7:]}.json"
             if payload_path.exists():
                 if payload_path.is_symlink() or payload_path.read_bytes() != payload_bytes:
@@ -465,7 +523,7 @@ class ReviewOperationalStore:
         self, *, family: ReviewOperationalFamily | None = None
     ) -> tuple[tuple[PlaybillReviewOperationalEventV1, dict[str, object]], ...]:
         with self._locked():
-            if not self.root.exists():
+            if not self.root.exists() and not self.root.is_symlink():
                 return ()
             self._load_manifest()
             loaded: list[tuple[PlaybillReviewOperationalEventV1, dict[str, object]]] = []
@@ -502,7 +560,7 @@ class ReviewOperationalStore:
 
     def head(self) -> ReviewOperationalHeadV1:
         with self._locked():
-            if not self.root.exists():
+            if not self.root.exists() and not self.root.is_symlink():
                 return build_review_operational_head(
                     initialized_coordinate=None, initialized_generation=None, partitions=()
                 )
@@ -569,6 +627,7 @@ __all__ = [
     "ReviewOperationalFamily",
     "ReviewOperationalHeadV1",
     "ReviewOperationalPartitionHeadV1",
+    "ReviewOperationalConcurrentChangeError",
     "ReviewOperationalStore",
     "ReviewOperationalStoreError",
     "build_review_operational_head",
