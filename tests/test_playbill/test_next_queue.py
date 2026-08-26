@@ -286,6 +286,48 @@ def test_resolvable_citation_predecessor_still_subtracts_dead_spans(tmp_path: Pa
     assert old_citation.citation_id not in commitments
 
 
+def test_backing_only_successor_keeps_edited_predecessor_span_in_drift_queue(
+    tmp_path: Path,
+) -> None:
+    instance, owner = seed_claims(tmp_path)
+    predecessor = _accept_claim_successor(instance, owner, value="ready", sequence=3)
+    old_citation = claim_citation_references(predecessor)[0]
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            old_citation.capture_digest,
+            access=BodyAccessContext(principal_id="next-test", can_read_body=True),
+        )
+    )
+    observed = typed_digest(
+        Sha256Value,
+        "playbill-next-backing-only-edited-span-v1",
+        {},
+    ).tagged
+
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            evaluation_time=EVALUATION_TIME,
+            access_profile=_access(),
+            workspace_observation=PlaybillNextWorkspaceObservationV1(
+                drift_observations=(
+                    PlaybillNextDriftObservationV1(
+                        citation_id=old_citation.citation_id,
+                        expected_commitment_digest=envelope.commitment.digest,
+                        observed_commitment_digest=observed,
+                    ),
+                )
+            ),
+        ),
+    )
+
+    row = next(item for item in result.items if item.reason == "citation_drifted")
+    assert row.related_identities == (old_citation.citation_id,)
+    assert row.detail["expected_commitment_digest"] == envelope.commitment.digest  # type: ignore[index]
+    assert row.detail["observed_commitment_digest"] == observed  # type: ignore[index]
+    assert "lineage_note" not in row.detail  # type: ignore[operator]
+
+
 def test_unknown_access_profile_value_has_the_frozen_refusal() -> None:
     with pytest.raises(PlaybillNextAccessProfileInvalid) as raised:
         validate_playbill_next_request(
