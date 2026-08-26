@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -43,6 +43,15 @@ from cruxible_core.service.playbill_next import (
 
 BLOCK_OBSERVATION_ID_DOMAIN = "playbill-block-observation-v1"
 CURATION_RESULT_DIGEST_DOMAIN = "playbill-curation-list-result-v1"
+
+PlaybillCurationObservationOmissionReason: TypeAlias = Literal[
+    "block_subject_unresolved",
+    "marker_coordinate_unaccepted",
+    "projection_block_unstamped",
+    "projection_marker_invalid",
+    "source_observation_not_v3",
+    "source_scan_incomplete",
+]
 
 
 class PlaybillCurationError(PlaybillError):
@@ -179,7 +188,7 @@ class BlockObservationV1(_StrictCurationModel):
 
 
 class PlaybillCurationCoverageCountV1(_StrictCurationModel):
-    reason: str
+    reason: PlaybillCurationObservationOmissionReason
     count: int = Field(ge=0)
 
 
@@ -331,7 +340,7 @@ def _record_block_observations(
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     generation = _generation(instance, coordinate)
     tree = instance.tree_at(coordinate.git_oid)
-    counts: Counter[str] = Counter()
+    counts: Counter[PlaybillCurationObservationOmissionReason] = Counter()
     source_count = 0
     observed = 0
     observation = request.workspace_observation
@@ -760,6 +769,7 @@ __all__ = [
     "BLOCK_OBSERVATION_ID_DOMAIN",
     "BlockObservationV1",
     "PlaybillCurationCoverageCountV1",
+    "PlaybillCurationObservationOmissionReason",
     "PlaybillCurationAcceptFixedRequestV1",
     "PlaybillCurationActionResultV1",
     "PlaybillCurationError",

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_args
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.consumption import (
+    QUALIFYING_CONSUMPTION_OPERATIONS,
     ConsumptionContextV1,
+    ConsumptionOperation,
     build_consumption_receipt,
     consumption_aggregate,
     record_consumption,
@@ -18,6 +21,23 @@ from cruxible_core.playbill.consumption import (
 from tests.test_playbill._support import initialize_local
 
 NOW = datetime(2026, 8, 26, 14, 0, tzinfo=timezone.utc)
+
+
+def test_qualifying_consumption_operations_exhaust_the_closed_wire_vocabulary() -> None:
+    expected = {
+        "playbill.claim.get",
+        "playbill.claim_type.get",
+        "playbill.coverage.resolve",
+        "playbill.discover.match",
+        "playbill.expand",
+        "playbill.procedure.run.resolve",
+        "playbill.query.run",
+        "playbill.query_definition.get",
+        "playbill.search.match",
+        "playbill.subject.get",
+    }
+
+    assert set(get_args(ConsumptionOperation)) == set(QUALIFYING_CONSUMPTION_OPERATIONS) == expected
 
 
 def _context(actor_id: str = "reader") -> ConsumptionContextV1:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import get_args
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.declared_blocks import (
@@ -23,6 +24,7 @@ from cruxible_core.playbill.service.documents import service_propose_playbill_do
 from cruxible_core.service.playbill_curation import (
     BlockObservationV1,
     PlaybillCurationListRequestV1,
+    PlaybillCurationObservationOmissionReason,
     build_block_observation,
     service_list_playbill_curation,
 )
@@ -35,6 +37,17 @@ from tests.test_playbill._knowledge_loop_support import accept_proposal
 from tests.test_playbill._support import initialize_local
 
 NOW = datetime(2026, 8, 26, 15, 0, tzinfo=timezone.utc)
+
+
+def test_observation_omission_reasons_exhaust_the_closed_wire_vocabulary() -> None:
+    assert set(get_args(PlaybillCurationObservationOmissionReason)) == {
+        "block_subject_unresolved",
+        "marker_coordinate_unaccepted",
+        "projection_block_unstamped",
+        "projection_marker_invalid",
+        "source_observation_not_v3",
+        "source_scan_incomplete",
+    }
 
 
 def _actor() -> GovernedActorContext:
@@ -214,6 +227,31 @@ def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
         "projection_block_unstamped": 1,
         "projection_marker_invalid": 1,
     }
+    assert instance.review_operational_store().events(family="block_observation") == ()
+
+
+def test_unaccepted_marker_coordinate_is_an_explicit_coverage_omission(
+    tmp_path: Path,
+) -> None:
+    instance = _instance_with_document(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    unaccepted = coordinate.model_copy(update={"git_oid": "f" * 64})
+
+    result = service_list_playbill_curation(
+        instance,
+        request=PlaybillCurationListRequestV1(
+            evaluation_time=NOW,
+            workspace_observation=PlaybillNextWorkspaceObservationV1(
+                source_observations=(_v3(unaccepted),)
+            ),
+        ),
+        actor_context=_actor(),
+    )
+
+    assert result.observation_coverage.observed_block_count == 0
+    assert [item.model_dump(mode="json") for item in result.observation_coverage.omissions] == [
+        {"reason": "marker_coordinate_unaccepted", "count": 1}
+    ]
     assert instance.review_operational_store().events(family="block_observation") == ()
 
 
