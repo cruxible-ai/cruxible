@@ -13,6 +13,7 @@ from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CanonicalDurationV1,
+    DirectByteSpanSelectionV1,
     DirectForeignSourceSelectionV1,
     capture_contract_digest,
     capture_contract_path,
@@ -32,7 +33,9 @@ from cruxible_client.contracts.claim_types import (
 from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_citation_references,
+    claim_path,
     claim_statement_digest,
+    parse_claim,
 )
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
@@ -485,7 +488,48 @@ def _citation_drifted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         access=BodyAccessContext(principal_id="closed-loop", can_read_body=True),
     )
     commitment = parse_capture_envelope(envelope).commitment.digest
-    observed = "sha256:" + "f" * 64
+    rebound_body = instance.body_store().store(b"status: blocked\n")
+    successor = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-42", "blocked", with_claim_type=False).model_copy(
+            update={
+                "claim_id": current.identity.name,
+                "predecessor_artifact_digest": claim_artifact_digest(current).tagged,
+                "source_selection": DirectByteSpanSelectionV1(
+                    span=ContentSpan(
+                        content_digest=rebound_body.digest,
+                        start_byte=8,
+                        end_byte=15,
+                    ),
+                    media_type="text/markdown",
+                ),
+            }
+        ),
+        actor_id="owner",
+        proposal_name="closed-loop-revise-drifted-claim",
+        timestamp="2026-08-24T17:00:03.000000Z",
+    )
+    evaluated_oid = successor.proposal.proposal.evaluation.evaluated_tree_oid
+    assert evaluated_oid is not None
+    proposed_claim = parse_claim(
+        instance.proposal_tree(evaluated_oid)[claim_path(current.identity.name)],
+        path=claim_path(current.identity.name),
+    )
+    rebound_citation, rebound_envelope = next(
+        (candidate, candidate_envelope)
+        for candidate in claim_citation_references(proposed_claim)
+        for candidate_envelope in (
+            parse_capture_envelope(
+                instance.body_store().read(
+                    candidate.capture_digest,
+                    access=BodyAccessContext(principal_id="closed-loop", can_read_body=True),
+                )
+            ),
+        )
+        if candidate_envelope.commitment.digest == rebound_body.digest
+    )
+    observed = rebound_envelope.commitment.digest
+    assert observed != commitment
     before = _request(
         instance,
         workspace=PlaybillNextWorkspaceObservationV1(
@@ -501,25 +545,21 @@ def _citation_drifted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     row = _row(instance, "citation_drifted", before)
     assert row.repair.operation == EXPECTED_OPERATIONS["citation_drifted"]
 
-    successor = service_propose_playbill_claim(
-        instance,
-        authoring=authoring("wi-42", "blocked", with_claim_type=False).model_copy(
-            update={
-                "claim_id": current.identity.name,
-                "predecessor_artifact_digest": claim_artifact_digest(current).tagged,
-            }
-        ),
-        actor_id="owner",
-        proposal_name="closed-loop-revise-drifted-claim",
-        timestamp="2026-08-24T17:00:03.000000Z",
-    )
     activate(instance, owner, successor, sequence=3)
     _assert_gone(
         instance,
         "citation_drifted",
         _request(
             instance,
-            workspace=PlaybillNextWorkspaceObservationV1(drift_observations=()),
+            workspace=PlaybillNextWorkspaceObservationV1(
+                drift_observations=(
+                    PlaybillNextDriftObservationV1(
+                        citation_id=rebound_citation.citation_id,
+                        expected_commitment_digest=rebound_envelope.commitment.digest,
+                        observed_commitment_digest=observed,
+                    ),
+                )
+            ),
         ),
     )
 
