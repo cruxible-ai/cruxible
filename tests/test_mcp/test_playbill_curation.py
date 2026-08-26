@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from cruxible_client import contracts
 from cruxible_core.mcp import handlers
+from cruxible_core.service.playbill_next import PlaybillNextWorkspaceObservationInvalid
 
 
 def _action_result(item_id: str) -> contracts.PlaybillCurationActionResult:
@@ -77,6 +80,30 @@ def test_mcp_curation_list_is_one_thin_read_delegate(monkeypatch) -> None:  # ty
             "workspace_observation": observation,
         },
     }
+
+
+def test_mcp_curation_list_rejects_raw_source_observation_with_typed_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(handlers, "_get_client", lambda: None)
+    raw = {
+        "tag": "playbill-next-workspace-observation-v1",
+        "source_observations": [
+            {
+                "source_id": "corpus.runbook",
+                "document_id": "runbook",
+                "observed_source_digest": "sha256:" + "1" * 64,
+            }
+        ],
+    }
+
+    with pytest.raises(PlaybillNextWorkspaceObservationInvalid):
+        handlers.handle_playbill_curation_list(
+            "inst",
+            evaluation_time="2026-08-26T16:00:00+00:00",
+            access_profile=None,
+            workspace_observation=raw,
+        )
 
 
 def test_mcp_curation_lifecycle_actions_are_thin_delegates(monkeypatch) -> None:  # type: ignore[no-untyped-def]

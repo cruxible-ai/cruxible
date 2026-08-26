@@ -39,6 +39,88 @@ def test_http_curation_list_is_read_tier_and_returns_operational_head(
     assert payload["operational_head_digest"].startswith("sha256:")
 
 
+def test_http_curation_list_maps_raw_source_observation_to_typed_refusal(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/curation/list",
+        json={
+            "tag": "playbill-curation-list-request-v1",
+            "evaluation_time": "2026-08-26T16:00:00+00:00",
+            "access_profile": {
+                "tag": "playbill-coverage-access-profile-v1",
+                "profile_id": "test-curation",
+                "permitted_access_classes": ["instance", "public"],
+                "disclose_restricted_existence": True,
+            },
+            "workspace_observation": {
+                "tag": "playbill-next-workspace-observation-v1",
+                "source_observations": [
+                    {
+                        "source_id": "corpus.runbook",
+                        "document_id": "runbook",
+                        "observed_source_digest": "sha256:" + "1" * 64,
+                    }
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error_code"] == "playbill.next.workspace_observation_invalid"
+
+
+@pytest.mark.parametrize(
+    ("route", "payload"),
+    (
+        (
+            "overrule",
+            {
+                "tag": "playbill-curation-overrule-request-v1",
+                "item_id": "not-a-digest",
+                "expected_latest_event_digest": "sha256:" + "2" * 64,
+                "reason": "operator-reviewed mechanical facts",
+            },
+        ),
+        (
+            "accept-fixed",
+            {
+                "tag": "playbill-curation-accept-fixed-request-v1",
+                "item_id": "not-a-digest",
+                "expected_latest_event_digest": "sha256:" + "2" * 64,
+                "reason": "operator-reviewed mechanical facts",
+                "accepted_proposal_id": "sha256:" + "3" * 64,
+                "accepted_changeset_digest": "sha256:" + "4" * 64,
+            },
+        ),
+        (
+            "suppress",
+            {
+                "tag": "playbill-curation-suppress-request-v1",
+                "item_id": "not-a-digest",
+                "expected_latest_event_digest": "sha256:" + "2" * 64,
+                "reason": "operator-reviewed mechanical facts",
+                "scope": "instance",
+            },
+        ),
+    ),
+)
+def test_http_curation_lifecycle_validation_is_a_typed_refusal(
+    playbill_http: tuple[TestClient, str, Path],
+    route: str,
+    payload: dict[str, object],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/curation/{route}",
+        json=payload,
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error_code"] == "playbill.curation.refused"
+
+
 @pytest.mark.parametrize(
     ("route", "payload"),
     (

@@ -129,6 +129,10 @@ class _StrictNextModel(BaseModel):
 class PlaybillNextError(PlaybillError):
     code = "playbill.next.refused"
 
+    @property
+    def error_code(self) -> str:
+        return self.code
+
 
 class PlaybillNextAccessProfileInvalid(PlaybillNextError):
     code = "playbill.next.access_profile_invalid"

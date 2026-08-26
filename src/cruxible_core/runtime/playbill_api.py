@@ -144,6 +144,7 @@ from cruxible_core.service.playbill_coverage import (
 )
 from cruxible_core.service.playbill_curation import (
     PlaybillCurationAcceptFixedRequestV1,
+    PlaybillCurationError,
     PlaybillCurationListRequestV1,
     PlaybillCurationOverruleRequestV1,
     PlaybillCurationSuppressRequestV1,
@@ -151,6 +152,7 @@ from cruxible_core.service.playbill_curation import (
     service_list_playbill_curation,
     service_overrule_playbill_curation,
     service_suppress_playbill_curation,
+    validate_playbill_curation_list_request,
 )
 from cruxible_core.service.playbill_discovery import (
     PlaybillDiscoveryResultV1,
@@ -182,6 +184,7 @@ from cruxible_core.service.playbill_search import service_search_playbill
 from cruxible_core.service.playbill_since import service_playbill_since
 
 _ProposalResultT = TypeVar("_ProposalResultT")
+_CurationRequestT = TypeVar("_CurationRequestT")
 
 
 def _proposal_validation_boundary(
@@ -196,6 +199,19 @@ def _proposal_validation_boundary(
         raise DataValidationError(
             f"Playbill {family} proposal reference is invalid",
             errors=[str(exc)],
+        ) from exc
+
+
+def _curation_validation_boundary(
+    operation: Callable[[], _CurationRequestT],
+) -> _CurationRequestT:
+    """Map internal curation request validation to its typed HTTP 400 family."""
+
+    try:
+        return operation()
+    except ValidationError as exc:
+        raise PlaybillCurationError(
+            f"{PlaybillCurationError.code}: curation request is malformed: {exc}"
         ) from exc
 
 
@@ -1308,11 +1324,7 @@ def playbill_curation_list(
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Playbill curation reads require an attributed actor")
-    parsed = (
-        request
-        if isinstance(request, PlaybillCurationListRequestV1)
-        else PlaybillCurationListRequestV1.model_validate(request)
-    )
+    parsed = validate_playbill_curation_list_request(request)
     result = service_list_playbill_curation(
         get_playbill_manager().get(instance_id),
         request=parsed,
@@ -1352,10 +1364,12 @@ def playbill_curation_overrule(
     request: PlaybillCurationOverruleRequestV1 | Mapping[str, object],
 ) -> contracts.PlaybillCurationActionResult:
     check_permission("cruxible_playbill_curation_overrule", instance_id=instance_id)
-    parsed = (
-        request
-        if isinstance(request, PlaybillCurationOverruleRequestV1)
-        else PlaybillCurationOverruleRequestV1.model_validate(request)
+    parsed = _curation_validation_boundary(
+        lambda: (
+            request
+            if isinstance(request, PlaybillCurationOverruleRequestV1)
+            else PlaybillCurationOverruleRequestV1.model_validate(request)
+        )
     )
     result = service_overrule_playbill_curation(
         get_playbill_manager().get(instance_id),
@@ -1371,10 +1385,12 @@ def playbill_curation_accept_fixed(
     request: PlaybillCurationAcceptFixedRequestV1 | Mapping[str, object],
 ) -> contracts.PlaybillCurationActionResult:
     check_permission("cruxible_playbill_curation_accept_fixed", instance_id=instance_id)
-    parsed = (
-        request
-        if isinstance(request, PlaybillCurationAcceptFixedRequestV1)
-        else PlaybillCurationAcceptFixedRequestV1.model_validate(request)
+    parsed = _curation_validation_boundary(
+        lambda: (
+            request
+            if isinstance(request, PlaybillCurationAcceptFixedRequestV1)
+            else PlaybillCurationAcceptFixedRequestV1.model_validate(request)
+        )
     )
     result = service_accept_fixed_playbill_curation(
         get_playbill_manager().get(instance_id),
@@ -1390,10 +1406,12 @@ def playbill_curation_suppress(
     request: PlaybillCurationSuppressRequestV1 | Mapping[str, object],
 ) -> contracts.PlaybillCurationActionResult:
     check_permission("cruxible_playbill_curation_suppress", instance_id=instance_id)
-    parsed = (
-        request
-        if isinstance(request, PlaybillCurationSuppressRequestV1)
-        else PlaybillCurationSuppressRequestV1.model_validate(request)
+    parsed = _curation_validation_boundary(
+        lambda: (
+            request
+            if isinstance(request, PlaybillCurationSuppressRequestV1)
+            else PlaybillCurationSuppressRequestV1.model_validate(request)
+        )
     )
     result = service_suppress_playbill_curation(
         get_playbill_manager().get(instance_id),

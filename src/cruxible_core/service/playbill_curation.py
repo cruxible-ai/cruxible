@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
@@ -38,7 +38,9 @@ from cruxible_core.playbill.review_operational import (
 )
 from cruxible_core.playbill.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.service.playbill_next import (
+    PlaybillNextAccessProfileInvalid,
     PlaybillNextSourceObservationV3,
+    PlaybillNextWorkspaceObservationInvalid,
     PlaybillNextWorkspaceObservationV1,
 )
 
@@ -101,6 +103,26 @@ class PlaybillCurationListRequestV1(_StrictCurationModel):
     @classmethod
     def _evaluation_time(cls, value: datetime) -> datetime:
         return ensure_utc(value)
+
+
+def validate_playbill_curation_list_request(
+    value: PlaybillCurationListRequestV1 | Mapping[str, object],
+) -> PlaybillCurationListRequestV1:
+    if isinstance(value, PlaybillCurationListRequestV1):
+        return value
+    try:
+        return PlaybillCurationListRequestV1.model_validate(value)
+    except ValidationError as exc:
+        roots = {str(item["loc"][0]) for item in exc.errors() if item["loc"]}
+        if "access_profile" in roots:
+            raise PlaybillNextAccessProfileInvalid(
+                f"{PlaybillNextAccessProfileInvalid.code}: {exc}"
+            ) from exc
+        if "workspace_observation" in roots:
+            raise PlaybillNextWorkspaceObservationInvalid(
+                f"{PlaybillNextWorkspaceObservationInvalid.code}: {exc}"
+            ) from exc
+        raise PlaybillCurationError(f"{PlaybillCurationError.code}: {exc}") from exc
 
 
 class PlaybillCurationOverruleRequestV1(_StrictCurationModel):
@@ -858,4 +880,5 @@ __all__ = [
     "service_list_playbill_curation",
     "service_overrule_playbill_curation",
     "service_suppress_playbill_curation",
+    "validate_playbill_curation_list_request",
 ]
