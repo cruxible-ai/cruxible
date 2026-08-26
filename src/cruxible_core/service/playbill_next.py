@@ -654,12 +654,20 @@ def _claim_items(
                 "unresolved",
             }:
                 lead_end = evaluation_time + timedelta(microseconds=expiring_within.microseconds)
-                expiring = tuple(
+                supporting = set(verdict.supporting_evidence_digests)
+                current_support_expirations = tuple(
                     item
                     for item in verdict.freshness_expirations
+                    if item.capture_digest in supporting and evaluation_time < item.expires_at
+                )
+                expiring = tuple(
+                    item
+                    for item in current_support_expirations
                     if evaluation_time < item.expires_at <= lead_end
                 )
-                if expiring:
+                if expiring and not any(
+                    item.expires_at > lead_end for item in current_support_expirations
+                ):
                     items.append(
                         _item(
                             severity="warning",
