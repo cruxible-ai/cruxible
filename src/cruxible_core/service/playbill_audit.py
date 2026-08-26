@@ -53,6 +53,7 @@ from cruxible_core.playbill.audit import (
 )
 from cruxible_core.playbill.consumption import consumption_aggregate
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.coverage.indexes import accepted_logical_source
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import ClaimFactRowV1, claim_row_visibility
@@ -320,8 +321,8 @@ def _current_verdict(
 
 def _logical_source_keys(
     instance: PlaybillInstance, captures: tuple[CaptureVerdictEvidenceV1, ...]
-) -> dict[str, str]:
-    result: dict[str, str] = {}
+) -> dict[str, str | None]:
+    result: dict[str, str | None] = {}
     access = BodyAccessContext(principal_id="playbill-audit", can_read_body=True)
     store = instance.body_store()
     for capture in captures:
@@ -331,10 +332,9 @@ def _logical_source_keys(
             raise PlaybillAuditError(
                 f"supporting Capture cannot be reproduced: {capture.capture_digest}"
             ) from exc
-        result[capture.capture_digest] = getattr(
-            envelope.source,
-            "source_identity",
-            capture.producer.qualified,
+        source = accepted_logical_source(envelope.source)
+        result[capture.capture_digest] = (
+            None if source is None else f"{source.plane}:{source.identity}"
         )
     return result
 
@@ -394,7 +394,8 @@ def _row(
             and item.expires_at - evaluation_time <= quarter
             for item in verdict.freshness_expirations
         )
-    single_source = bool(source_keys) and len(set(source_keys.values())) == 1
+    named_sources = tuple(key for key in source_keys.values() if key is not None)
+    single_source = bool(named_sources) and len(set(named_sources)) == 1
     proposer_only = (
         bool(captures)
         and all(item.provenance_grade == "self-asserted" for item in captures)

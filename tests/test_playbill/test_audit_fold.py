@@ -34,7 +34,10 @@ from cruxible_core.playbill.audit import (
     build_reverse_dependency_index,
 )
 from cruxible_core.playbill.consumption import consumption_aggregate
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.coverage.contracts import (
+    CoverageAccessProfileV1,
+    LogicalSourceIdentityV1,
+)
 from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 from cruxible_core.playbill.query.impact import (
     DependencyImpactRequestV1,
@@ -45,6 +48,7 @@ from cruxible_core.service.playbill_audit import (
     PlaybillAuditRequestV1,
     _AuditHistoryIndex,
     _history_index,
+    _logical_source_keys,
     _row,
     completed_audit_runs,
     service_playbill_audit,
@@ -320,6 +324,39 @@ def test_factor_fold_exposes_raw_counts_flags_and_exact_integer_score(
     assert result.factors.staleness == 6
     assert result.rank_score == 144
     assert "recommend" not in str(result.model_dump(mode="json")).lower()
+
+
+def test_logical_source_factor_uses_accepted_identity_and_does_not_invent_one_for_cas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external = _capture("external")
+    ledger = _capture("ledger")
+    cas = _capture("cas")
+    sources = {
+        external.capture_digest: LogicalSourceIdentityV1(
+            plane="external", identity="db.work_items"
+        ),
+        ledger.capture_digest: LogicalSourceIdentityV1(
+            plane="ledger", identity="documents/runbook.md"
+        ),
+        cas.capture_digest: None,
+    }
+    store = SimpleNamespace(read=lambda digest, *, access: digest)  # noqa: ARG005
+    instance = SimpleNamespace(body_store=lambda: store)
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_audit.parse_capture_envelope",
+        lambda raw: SimpleNamespace(source=raw),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_audit.accepted_logical_source",
+        lambda source: sources[source],
+    )
+
+    assert _logical_source_keys(instance, (external, ledger, cas)) == {
+        external.capture_digest: "external:db.work_items",
+        ledger.capture_digest: "ledger:documents/runbook.md",
+        cas.capture_digest: None,
+    }
 
 
 def test_near_horizon_is_one_quarter_of_the_exact_v2_expiration(
