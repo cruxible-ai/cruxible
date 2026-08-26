@@ -71,6 +71,7 @@ from cruxible_core.playbill.recovery import (
     RecoveredInstanceState,
     recover_instance,
 )
+from cruxible_core.playbill.review_operational import ReviewOperationalStore
 from cruxible_core.playbill.serving import bind_current_projection
 from cruxible_core.playbill.settlement import (
     ChangeActorBinding,
@@ -517,6 +518,19 @@ class PlaybillInstance:
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
         return ProposalEvidenceStore(paths["exhaust"])
+
+    def review_operational_store(self) -> ReviewOperationalStore:
+        """Return the local append-only review observation store.
+
+        This accessor does not initialize the store.  The first successful
+        operational append binds its initialization coordinate and generation.
+        """
+
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        return ReviewOperationalStore(
+            paths["exhaust"],
+            instance_id=self.descriptor.instance_id,
+        )
 
     def accepted_history(self) -> tuple[RecoveredGeneration, ...]:
         """Return the genesis-rooted, replay-verified accepted history."""
