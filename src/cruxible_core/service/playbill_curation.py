@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -13,22 +15,66 @@ from cruxible_client.contracts.declared_blocks import ProjectionMarkerSummaryV1
 from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.closure import dependency_artifacts, parse_dependency_artifact
+from cruxible_core.playbill.consumption import ensure_consumption_epoch
+from cruxible_core.playbill.curation import (
+    CurationAffectedMemberV1,
+    CurationDetectorCoverageV1,
+    CurationItemV1,
+    build_curation_accepted_fixed,
+    build_curation_overruled,
+    build_curation_suppressed,
+    build_pattern_observation,
+    replay_curation_items,
+)
+from cruxible_core.playbill.curation_detectors import run_curation_detectors
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.review_operational import (
+    ReviewOperationalConcurrentChangeError,
+    ReviewOperationalStoreError,
+)
+from cruxible_core.playbill.settlement import ChangeSetRecordAnyVersion
 from cruxible_core.service.playbill_next import (
     PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationV1,
 )
 
 BLOCK_OBSERVATION_ID_DOMAIN = "playbill-block-observation-v1"
+CURATION_RESULT_DIGEST_DOMAIN = "playbill-curation-list-result-v1"
 
 
 class PlaybillCurationError(PlaybillError):
     code = "playbill.curation.refused"
 
+    @property
+    def error_code(self) -> str:
+        return self.code
+
 
 class PlaybillCurationCoordinateNotAccepted(PlaybillCurationError):
     code = "playbill.curation.coordinate_not_accepted"
+
+
+class PlaybillCurationItemNotFound(PlaybillCurationError):
+    code = "playbill.curation.item_not_found"
+
+
+class PlaybillCurationItemAlreadyResolved(PlaybillCurationError):
+    code = "playbill.curation.item_already_resolved"
+
+
+class PlaybillCurationSuppressionInvalid(PlaybillCurationError):
+    code = "playbill.curation.suppression_invalid"
+
+
+class PlaybillCurationResolvingProposalInvalid(PlaybillCurationError):
+    code = "playbill.curation.resolving_proposal_invalid"
+
+
+class PlaybillCurationResolvingChangeUnrelated(PlaybillCurationError):
+    code = "playbill.curation.resolving_change_unrelated"
 
 
 class _StrictCurationModel(BaseModel):
@@ -37,7 +83,66 @@ class _StrictCurationModel(BaseModel):
 
 class PlaybillCurationListRequestV1(_StrictCurationModel):
     tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
+    evaluation_time: datetime
     workspace_observation: PlaybillNextWorkspaceObservationV1 | None = None
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+
+class PlaybillCurationOverruleRequestV1(_StrictCurationModel):
+    tag: Literal["playbill-curation-overrule-request-v1"] = "playbill-curation-overrule-request-v1"
+    item_id: str
+    expected_latest_event_digest: str
+    reason: str = Field(min_length=1)
+    attribution_refs: tuple[str, ...] = ()
+
+    @field_validator("item_id", "expected_latest_event_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class PlaybillCurationAcceptFixedRequestV1(_StrictCurationModel):
+    tag: Literal["playbill-curation-accept-fixed-request-v1"] = (
+        "playbill-curation-accept-fixed-request-v1"
+    )
+    item_id: str
+    expected_latest_event_digest: str
+    reason: str = Field(min_length=1)
+    accepted_proposal_id: str
+    accepted_changeset_digest: str
+    attribution_refs: tuple[str, ...] = ()
+
+    @field_validator(
+        "item_id",
+        "expected_latest_event_digest",
+        "accepted_proposal_id",
+        "accepted_changeset_digest",
+    )
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+class PlaybillCurationSuppressRequestV1(_StrictCurationModel):
+    tag: Literal["playbill-curation-suppress-request-v1"] = "playbill-curation-suppress-request-v1"
+    item_id: str
+    expected_latest_event_digest: str
+    reason: str = Field(min_length=1)
+    scope: Literal["item", "pattern", "instance"]
+    until_generation: int | None = Field(default=None, ge=0)
+    attribution_refs: tuple[str, ...] = ()
+
+    @field_validator("item_id", "expected_latest_event_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
 
 
 class BlockObservationV1(_StrictCurationModel):
@@ -92,15 +197,50 @@ class PlaybillCurationListResultV1(_StrictCurationModel):
     tag: Literal["playbill-curation-list-result-v1"] = "playbill-curation-list-result-v1"
     coordinate: AcceptedCoordinate
     generation: int = Field(ge=0)
+    evaluation_time: datetime
     operational_head_digest: str
-    items: tuple[object, ...] = ()
+    items: tuple[CurationItemV1, ...] = ()
+    detector_coverage: tuple[CurationDetectorCoverageV1, ...]
     observation_coverage: PlaybillCurationObservationCoverageV1
+    result_digest: str
 
-    @field_validator("operational_head_digest")
+    @field_validator("operational_head_digest", "result_digest")
     @classmethod
     def _digest(cls, value: str) -> str:
         Sha256Value.from_tagged(value)
         return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @model_validator(mode="after")
+    def _reproduces(self) -> PlaybillCurationListResultV1:
+        if self.result_digest != curation_list_result_digest(self):
+            raise ValueError("curation list result digest does not reproduce")
+        return self
+
+
+class PlaybillCurationActionResultV1(_StrictCurationModel):
+    tag: Literal["playbill-curation-action-result-v1"] = "playbill-curation-action-result-v1"
+    coordinate: AcceptedCoordinate
+    generation: int = Field(ge=0)
+    operational_head_digest: str
+    item: CurationItemV1
+
+    @field_validator("operational_head_digest")
+    @classmethod
+    def _head_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+
+def curation_list_result_digest(result: PlaybillCurationListResultV1) -> str:
+    payload = result.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("result_digest")
+    return typed_digest(Sha256Value, CURATION_RESULT_DIGEST_DOMAIN, payload).tagged
 
 
 def block_observation_id(observation: BlockObservationV1) -> str:
@@ -182,16 +322,13 @@ def _valid_document_identity(tree: dict[str, bytes], document_id: str) -> Artifa
     return identity
 
 
-def service_list_playbill_curation(
+def _record_block_observations(
     instance: PlaybillInstance,
     *,
     request: PlaybillCurationListRequestV1,
     actor_context: GovernedActorContext,
-) -> PlaybillCurationListResultV1:
-    """Append explicit client block observations and return the empty G9a queue."""
-
-    internal_coordinate = instance.accepted_coordinate()
-    coordinate = AcceptedCoordinate.from_internal(internal_coordinate)
+) -> PlaybillCurationObservationCoverageV1:
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     generation = _generation(instance, coordinate)
     tree = instance.tree_at(coordinate.git_oid)
     counts: Counter[str] = Counter()
@@ -253,33 +390,394 @@ def service_list_playbill_curation(
                 )
                 observed += 1
 
-    head = instance.review_operational_store().head()
+    return PlaybillCurationObservationCoverageV1(
+        source_count=source_count,
+        observed_block_count=observed,
+        omitted_source_count=sum(counts.values()),
+        omissions=tuple(
+            PlaybillCurationCoverageCountV1(reason=reason, count=counts[reason])
+            for reason in sorted(counts, key=lambda item: item.encode("utf-8"))
+        ),
+    )
+
+
+def _replay_items(instance: PlaybillInstance) -> tuple[CurationItemV1, ...]:
+    try:
+        return replay_curation_items(instance.review_operational_store().events(family="curation"))
+    except ValueError as exc:
+        raise ReviewOperationalStoreError("curation event replay is invalid") from exc
+
+
+def service_list_playbill_curation(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillCurationListRequestV1,
+    actor_context: GovernedActorContext,
+) -> PlaybillCurationListResultV1:
+    """Refresh mechanical detections and return the visible current queue."""
+
+    internal_coordinate = instance.accepted_coordinate()
+    coordinate = AcceptedCoordinate.from_internal(internal_coordinate)
+    generation = _generation(instance, coordinate)
+    observation_coverage = _record_block_observations(
+        instance, request=request, actor_context=actor_context
+    )
+    ensure_consumption_epoch(
+        instance,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=actor_context,
+    )
+    store = instance.review_operational_store()
+    detector_input_head = store.head().head_digest
+    detected = run_curation_detectors(
+        instance,
+        coordinate=coordinate,
+        generation=generation,
+        evaluation_time=request.evaluation_time,
+        operational_head_digest=detector_input_head,
+    )
+    existing = _replay_items(instance)
+    by_pattern: dict[str, list[CurationItemV1]] = {}
+    for item in existing:
+        by_pattern.setdefault(item.pattern_id, []).append(item)
+    for detection in detected.detections:
+        lineage = sorted(
+            by_pattern.get(detection.pattern_id, []),
+            key=lambda item: (item.first_proposed_generation, item.item_id),
+        )
+        current = None if not lineage else lineage[-1]
+        if current is not None and current.status == "overruled":
+            continue
+        predecessor = (
+            current.item_id
+            if current is not None and current.status == "accepted_fixed"
+            else (None if current is None else current.predecessor_item_id)
+        )
+        observation = build_pattern_observation(
+            detection=detection,
+            predecessor_item_id=predecessor,
+            accepted_generation=generation,
+        )
+        expected = (
+            None
+            if current is None or current.status == "accepted_fixed"
+            else (current.latest_event_digest)
+        )
+        try:
+            store.append(
+                family="curation",
+                partition_id=observation.item_id,
+                event_id=observation.event_id,
+                payload=observation,
+                coordinate=coordinate,
+                generation=generation,
+                actor_context=actor_context,
+                recorded_at=request.evaluation_time,
+                expected_latest_event_digest=expected,
+            )
+        except ReviewOperationalConcurrentChangeError:
+            raise
+        # Make another same-call detection of a newly-created recurrence reuse
+        # the exact item.  Pattern IDs are unique in detector output by law.
+        projected = _replay_items(instance)
+        by_pattern[detection.pattern_id] = [
+            item for item in projected if item.pattern_id == detection.pattern_id
+        ]
+    all_items = _replay_items(instance)
+    items = tuple(
+        sorted(
+            (
+                item
+                for item in all_items
+                if item.status == "open" and not item.suppressed_at(generation, all_items=all_items)
+            ),
+            key=lambda item: (
+                item.pattern_kind.encode("ascii"),
+                item.subject.qualified.encode("utf-8"),
+                item.item_id.encode("ascii"),
+            ),
+        )
+    )
+    head = store.head()
+    provisional = PlaybillCurationListResultV1.model_construct(
+        tag="playbill-curation-list-result-v1",
+        coordinate=coordinate,
+        generation=generation,
+        evaluation_time=request.evaluation_time,
+        operational_head_digest=head.head_digest,
+        items=items,
+        detector_coverage=detected.coverage,
+        observation_coverage=observation_coverage,
+        result_digest="sha256:" + "0" * 64,
+    )
     return PlaybillCurationListResultV1(
         coordinate=coordinate,
         generation=generation,
+        evaluation_time=request.evaluation_time,
         operational_head_digest=head.head_digest,
-        items=(),
-        observation_coverage=PlaybillCurationObservationCoverageV1(
-            source_count=source_count,
-            observed_block_count=observed,
-            omitted_source_count=sum(counts.values()),
-            omissions=tuple(
-                PlaybillCurationCoverageCountV1(reason=reason, count=counts[reason])
-                for reason in sorted(counts, key=lambda item: item.encode("utf-8"))
-            ),
-        ),
+        items=items,
+        detector_coverage=detected.coverage,
+        observation_coverage=observation_coverage,
+        result_digest=curation_list_result_digest(provisional),
     )
+
+
+def _open_item(instance: PlaybillInstance, item_id: str) -> CurationItemV1:
+    item = next((item for item in _replay_items(instance) if item.item_id == item_id), None)
+    if item is None:
+        raise PlaybillCurationItemNotFound(f"curation item does not exist: {item_id}")
+    if item.status != "open":
+        raise PlaybillCurationItemAlreadyResolved(
+            f"curation item is already {item.status}: {item_id}"
+        )
+    return item
+
+
+def _action_result(instance: PlaybillInstance, item_id: str) -> PlaybillCurationActionResultV1:
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    generation = _generation(instance, coordinate)
+    item = next(item for item in _replay_items(instance) if item.item_id == item_id)
+    return PlaybillCurationActionResultV1(
+        coordinate=coordinate,
+        generation=generation,
+        operational_head_digest=instance.review_operational_store().head().head_digest,
+        item=item,
+    )
+
+
+def service_overrule_playbill_curation(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillCurationOverruleRequestV1,
+    actor_context: GovernedActorContext,
+) -> PlaybillCurationActionResultV1:
+    item = _open_item(instance, request.item_id)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    generation = _generation(instance, coordinate)
+    payload = build_curation_overruled(
+        item_id=item.item_id,
+        expected_latest_event_digest=request.expected_latest_event_digest,
+        actor_principal_id=actor_context.actor_id,
+        reason=request.reason,
+        attribution_refs=request.attribution_refs,
+    )
+    instance.review_operational_store().append(
+        family="curation",
+        partition_id=item.item_id,
+        event_id=payload.event_id,
+        payload=payload,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=actor_context,
+        recorded_at=actor_context.timestamp,
+        expected_latest_event_digest=request.expected_latest_event_digest,
+    )
+    return _action_result(instance, item.item_id)
+
+
+def service_suppress_playbill_curation(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillCurationSuppressRequestV1,
+    actor_context: GovernedActorContext,
+) -> PlaybillCurationActionResultV1:
+    item = _open_item(instance, request.item_id)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    generation = _generation(instance, coordinate)
+    if request.until_generation is not None and request.until_generation < generation:
+        raise PlaybillCurationSuppressionInvalid(
+            "curation suppression until_generation is already expired"
+        )
+    payload = build_curation_suppressed(
+        item_id=item.item_id,
+        expected_latest_event_digest=request.expected_latest_event_digest,
+        actor_principal_id=actor_context.actor_id,
+        reason=request.reason,
+        scope=request.scope,
+        until_generation=request.until_generation,
+        attribution_refs=request.attribution_refs,
+    )
+    instance.review_operational_store().append(
+        family="curation",
+        partition_id=item.item_id,
+        event_id=payload.event_id,
+        payload=payload,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=actor_context,
+        recorded_at=actor_context.timestamp,
+        expected_latest_event_digest=request.expected_latest_event_digest,
+    )
+    return _action_result(instance, item.item_id)
+
+
+def _accepted_change(
+    instance: PlaybillInstance,
+    *,
+    proposal_id: str,
+    changeset_digest: str,
+) -> tuple[int, ChangeSetRecordAnyVersion, dict[str, bytes], dict[str, bytes]]:
+    try:
+        evaluation = instance.proposal_evidence().read_evaluation(proposal_id)
+    except PlaybillError as exc:
+        raise PlaybillCurationResolvingProposalInvalid(
+            "curation resolving proposal has no unique durable evaluation"
+        ) from exc
+    if evaluation.verdict != "candidate" or evaluation.candidate_digest is None:
+        raise PlaybillCurationResolvingProposalInvalid(
+            "curation resolving proposal did not produce a candidate"
+        )
+    history = instance.accepted_history()
+    matches = tuple(
+        (index, generation)
+        for index, generation in enumerate(history)
+        if generation.record is not None
+        and generation.record.candidate_digest == evaluation.candidate_digest
+        and generation.record.changeset_digest == changeset_digest
+    )
+    if len(matches) != 1:
+        raise PlaybillCurationResolvingProposalInvalid(
+            "curation resolving proposal/ChangeSet is not one accepted generation"
+        )
+    index, generation = matches[0]
+    assert generation.record is not None
+    parent_tree = instance.tree_at(history[index - 1].oid)
+    candidate_tree = instance.tree_at(generation.oid)
+    return generation.sequence, generation.record, parent_tree, candidate_tree
+
+
+def _affected_members(
+    record: ChangeSetRecordAnyVersion,
+    *,
+    parent_tree: Mapping[str, bytes],
+    candidate_tree: Mapping[str, bytes],
+) -> tuple[CurationAffectedMemberV1, ...]:
+    members = getattr(record, "members")
+    result: list[CurationAffectedMemberV1] = []
+    for member in members:
+        path = str(member.path)
+        before = parent_tree.get(path)
+        after = candidate_tree.get(path)
+        before_state = None if before is None else parse_dependency_artifact(path, before)
+        after_state = None if after is None else parse_dependency_artifact(path, after)
+        if before is None:
+            disposition: Literal["create", "replace", "retire", "delete"] = "create"
+        elif after is None:
+            disposition = "delete"
+        elif (
+            before_state is not None
+            and after_state is not None
+            and before_state.lifecycle.state == "live"
+            and after_state.lifecycle.state == "retired"
+        ):
+            disposition = "retire"
+        else:
+            disposition = "replace"
+        predecessor = None if before_state is None else before_state.artifact_digest
+        candidate = None if after_state is None else after_state.artifact_digest
+        if predecessor is None:
+            predecessor = getattr(member, "predecessor_artifact_digest", None)
+        if candidate is None:
+            candidate = getattr(
+                member,
+                "candidate_artifact_digest",
+                getattr(member, "artifact_digest", None),
+            )
+        result.append(
+            CurationAffectedMemberV1(
+                path=path,
+                disposition=disposition,
+                predecessor_artifact_digest=predecessor,
+                candidate_artifact_digest=candidate,
+            )
+        )
+    return tuple(sorted(result, key=lambda item: item.path.encode("utf-8")))
+
+
+def _related_paths(
+    item: CurationItemV1,
+    *,
+    tree: Mapping[str, bytes],
+) -> set[str]:
+    paths = {ref.path for ref in item.latest_evidence_refs if ref.path is not None}
+    paths.update(
+        state.path for state in dependency_artifacts(tree) if state.identity == item.subject
+    )
+    return paths
+
+
+def service_accept_fixed_playbill_curation(
+    instance: PlaybillInstance,
+    *,
+    request: PlaybillCurationAcceptFixedRequestV1,
+    actor_context: GovernedActorContext,
+) -> PlaybillCurationActionResultV1:
+    item = _open_item(instance, request.item_id)
+    resolved_generation, record, parent_tree, candidate_tree = _accepted_change(
+        instance,
+        proposal_id=request.accepted_proposal_id,
+        changeset_digest=request.accepted_changeset_digest,
+    )
+    if resolved_generation < item.first_proposed_generation:
+        raise PlaybillCurationResolvingProposalInvalid(
+            "curation resolving generation predates the item"
+        )
+    affected = _affected_members(record, parent_tree=parent_tree, candidate_tree=candidate_tree)
+    related = _related_paths(item, tree=parent_tree) | _related_paths(item, tree=candidate_tree)
+    if not any(member.path in related for member in affected):
+        raise PlaybillCurationResolvingChangeUnrelated(
+            "accepted ChangeSet does not intersect the curation subject or evidence"
+        )
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    generation = _generation(instance, coordinate)
+    payload = build_curation_accepted_fixed(
+        item_id=item.item_id,
+        expected_latest_event_digest=request.expected_latest_event_digest,
+        actor_principal_id=actor_context.actor_id,
+        reason=request.reason,
+        accepted_proposal_id=request.accepted_proposal_id,
+        accepted_changeset_digest=request.accepted_changeset_digest,
+        resolved_generation=resolved_generation,
+        affected_members=affected,
+        attribution_refs=request.attribution_refs,
+    )
+    instance.review_operational_store().append(
+        family="curation",
+        partition_id=item.item_id,
+        event_id=payload.event_id,
+        payload=payload,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=actor_context,
+        recorded_at=actor_context.timestamp,
+        expected_latest_event_digest=request.expected_latest_event_digest,
+    )
+    return _action_result(instance, item.item_id)
 
 
 __all__ = [
     "BLOCK_OBSERVATION_ID_DOMAIN",
     "BlockObservationV1",
     "PlaybillCurationCoverageCountV1",
+    "PlaybillCurationAcceptFixedRequestV1",
+    "PlaybillCurationActionResultV1",
     "PlaybillCurationError",
+    "PlaybillCurationItemAlreadyResolved",
+    "PlaybillCurationItemNotFound",
     "PlaybillCurationListRequestV1",
     "PlaybillCurationListResultV1",
     "PlaybillCurationObservationCoverageV1",
+    "PlaybillCurationOverruleRequestV1",
+    "PlaybillCurationResolvingChangeUnrelated",
+    "PlaybillCurationResolvingProposalInvalid",
+    "PlaybillCurationSuppressRequestV1",
+    "PlaybillCurationSuppressionInvalid",
     "block_observation_id",
     "build_block_observation",
+    "curation_list_result_digest",
+    "service_accept_fixed_playbill_curation",
     "service_list_playbill_curation",
+    "service_overrule_playbill_curation",
+    "service_suppress_playbill_curation",
 ]

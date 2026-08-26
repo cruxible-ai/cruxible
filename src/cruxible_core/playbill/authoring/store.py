@@ -352,6 +352,22 @@ class AuthoringIntentStore:
                     pending.append(intent)
             return tuple(sorted(pending, key=lambda item: item.intent_id.encode("ascii")))
 
+    def events(self) -> tuple[AuthoringIntentEventAny, ...]:
+        """Return every durable intent transition in canonical stream order.
+
+        Curation consumes these records as immutable attempt evidence.  It does
+        not infer from mutable intent snapshots or inspect the filesystem
+        outside this validated store boundary.
+        """
+
+        with self._locked():
+            self._recover_creating_directories()
+            return tuple(
+                event
+                for directory in self._intent_directories()
+                for event in self._load_events(directory)
+            )
+
     def latest_transition(
         self,
         intent_id: str,

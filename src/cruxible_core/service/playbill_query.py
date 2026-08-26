@@ -26,6 +26,7 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
+    ClaimLawEvidenceAny,
     claim_artifact_digest,
     claim_statement_digest,
     parse_claim,
@@ -53,7 +54,7 @@ from cruxible_core.playbill.query.engine import (
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.service.query_definitions import accepted_query_definition
 from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
-from cruxible_core.service.playbill_claims import _claim_law_evidence
+from cruxible_core.service.playbill_claims import _claim_law_evidence_index
 from cruxible_core.service.playbill_evidence import (
     _current_replay_available,
     _providers,
@@ -117,6 +118,7 @@ def _fact_row(
     tree: Mapping[str, bytes],
     coordinate: AcceptedProjectionCoordinate,
     readers: Mapping[str, ExternalSourceReaderProtocol],
+    evidence: ClaimLawEvidenceAny,
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
 
@@ -127,7 +129,8 @@ def _fact_row(
         statement_digest=claim_statement_digest(claim.statement).tagged,
         artifact_digest=claim_artifact_digest(claim).tagged,
     )
-    evidence = _claim_law_evidence(instance, path=path, at=coordinate)
+    # The caller supplies the accepted-history evidence from one shared index;
+    # rebuilding it per row would make current-state folds quadratic in Claims.
     type_path = claim_type_path(claim.statement.predicate)
     type_content = tree.get(type_path)
     if type_content is None:
@@ -200,6 +203,14 @@ def build_accepted_query_facts(
 
     tree = instance.tree_at(coordinate.git_oid)
     readers = external_readers or {}
+    evidence_by_path = _claim_law_evidence_index(instance, at=coordinate)
+
+    def evidence_for(path: str) -> ClaimLawEvidenceAny:
+        evidence = evidence_by_path.get(path)
+        if evidence is None:
+            raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
+        return evidence
+
     claims = tuple(
         _fact_row(
             instance,
@@ -207,6 +218,7 @@ def build_accepted_query_facts(
             tree=tree,
             coordinate=coordinate,
             readers=readers,
+            evidence=evidence_for(path),
         )
         for path in sorted(tree, key=lambda item: item.encode("utf-8"))
         if path.startswith(CLAIM_PATH_PREFIX)

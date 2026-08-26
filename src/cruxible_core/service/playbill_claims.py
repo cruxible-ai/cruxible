@@ -1117,7 +1117,20 @@ def _claim_law_evidence(
     path: str,
     at: AcceptedProjectionCoordinate,
 ) -> ClaimLawEvidenceAny:
-    found: ClaimLawEvidenceAny | None = None
+    found = _claim_law_evidence_index(instance, at=at).get(path)
+    if found is None:
+        raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
+    return found
+
+
+def _claim_law_evidence_index(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedProjectionCoordinate,
+) -> dict[str, ClaimLawEvidenceAny]:
+    """Index the latest accepted Claim evidence with one history traversal."""
+
+    found: dict[str, ClaimLawEvidenceAny] = {}
     target_sequence = next(
         item.sequence for item in instance.accepted_history() if item.oid == at.git_oid
     )
@@ -1130,13 +1143,9 @@ def _claim_law_evidence(
         if record is None or isinstance(record, ChangeSetRecord):
             continue
         for evidence in record.law_evidence:
-            if evidence.path != path:
-                continue
             raw = evidence.result.get("claim_evidence")
             if raw is not None:
-                found = parse_claim_law_evidence(raw)
-    if found is None:
-        raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
+                found[evidence.path] = parse_claim_law_evidence(raw)
     return found
 
 

@@ -188,22 +188,12 @@ def record_consumption(
     if not ordered:
         return ()
     store = instance.review_operational_store()
-    existing = store.events(family="consumption")
-    if not any(payload.get("tag") == "playbill-consumption-epoch-v1" for _, payload in existing):
-        epoch = ConsumptionEpochV1(
-            consumption_epoch_generation=generation,
-            accepted_coordinate=coordinate,
-        )
-        store.append(
-            family="consumption",
-            partition_id=CONSUMPTION_PARTITION_ID,
-            event_id=epoch.event_id,
-            payload=epoch,
-            coordinate=coordinate,
-            generation=generation,
-            actor_context=context.actor_context,
-            recorded_at=context.actor_context.timestamp,
-        )
+    ensure_consumption_epoch(
+        instance,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=context.actor_context,
+    )
     receipts: list[ConsumptionReceiptV1] = []
     for identity, digest in ordered:
         receipt = build_consumption_receipt(
@@ -225,6 +215,43 @@ def record_consumption(
         )
         receipts.append(receipt)
     return tuple(receipts)
+
+
+def ensure_consumption_epoch(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedCoordinate,
+    generation: int,
+    actor_context: GovernedActorContext,
+) -> ConsumptionEpochV1:
+    """Initialize the dead-vocabulary observation epoch without a fake touch."""
+
+    store = instance.review_operational_store()
+    existing = store.events(family="consumption")
+    epochs = tuple(
+        ConsumptionEpochV1.model_validate(payload)
+        for _event, payload in existing
+        if payload.get("tag") == "playbill-consumption-epoch-v1"
+    )
+    if epochs:
+        if any(item != epochs[0] for item in epochs[1:]):
+            raise ReviewOperationalStoreError("consumption epoch is not unique")
+        return epochs[0]
+    epoch = ConsumptionEpochV1(
+        consumption_epoch_generation=generation,
+        accepted_coordinate=coordinate,
+    )
+    store.append(
+        family="consumption",
+        partition_id=CONSUMPTION_PARTITION_ID,
+        event_id=epoch.event_id,
+        payload=epoch,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=actor_context,
+        recorded_at=actor_context.timestamp,
+    )
+    return epoch
 
 
 def consumption_artifacts_for_paths(
@@ -329,5 +356,6 @@ __all__ = [
     "consumption_artifacts_for_dependency_closure",
     "consumption_artifacts_for_paths",
     "consumption_receipt_id",
+    "ensure_consumption_epoch",
     "record_consumption",
 ]

@@ -250,3 +250,25 @@ def test_naive_evaluation_time_is_refused_rather_than_localized(tmp_path: Path) 
             name=QUERY_NAME,
             evaluation_time=datetime(2026, 8, 16, 21, 0),
         )
+
+
+def test_query_fact_projection_indexes_claim_law_history_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    instance, _owner = _instance_with_query(tmp_path)
+    original = instance.accepted_history
+    calls = 0
+
+    def counted():  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return original()
+
+    monkeypatch.setattr(instance, "accepted_history", counted)
+    facts = build_accepted_query_facts(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+    )
+
+    assert len(facts.claims) == 2
+    assert calls == 2

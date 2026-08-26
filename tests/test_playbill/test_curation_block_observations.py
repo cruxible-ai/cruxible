@@ -18,10 +18,12 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.curation_detectors import _block_churn
 from cruxible_core.playbill.service.documents import service_propose_playbill_document
 from cruxible_core.service.playbill_curation import (
     BlockObservationV1,
     PlaybillCurationListRequestV1,
+    build_block_observation,
     service_list_playbill_curation,
 )
 from cruxible_core.service.playbill_next import (
@@ -119,9 +121,10 @@ def test_valid_stamped_v3_observation_persists_once_and_remains_client_observed(
     instance = _instance_with_document(tmp_path)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     request = PlaybillCurationListRequestV1(
+        evaluation_time=NOW,
         workspace_observation=PlaybillNextWorkspaceObservationV1(
             source_observations=(_v3(coordinate),)
-        )
+        ),
     )
 
     first = service_list_playbill_curation(instance, request=request, actor_context=_actor())
@@ -160,6 +163,7 @@ def test_incomplete_legacy_and_unresolved_document_sources_are_coverage_omission
         marker_notes=(),
     )
     request = PlaybillCurationListRequestV1(
+        evaluation_time=NOW,
         workspace_observation=PlaybillNextWorkspaceObservationV1(
             source_observations=(
                 legacy,
@@ -168,7 +172,7 @@ def test_incomplete_legacy_and_unresolved_document_sources_are_coverage_omission
                     update={"source_id": "docs.unresolved", "marker_summaries": ()}
                 ),
             )
-        )
+        ),
     )
 
     result = service_list_playbill_curation(instance, request=request, actor_context=_actor())
@@ -200,7 +204,8 @@ def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
     result = service_list_playbill_curation(
         instance,
         request=PlaybillCurationListRequestV1(
-            workspace_observation=PlaybillNextWorkspaceObservationV1(source_observations=(source,))
+            evaluation_time=NOW,
+            workspace_observation=PlaybillNextWorkspaceObservationV1(source_observations=(source,)),
         ),
         actor_context=_actor(),
     )
@@ -210,3 +215,47 @@ def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
         "projection_marker_invalid": 1,
     }
     assert instance.review_operational_store().events(family="block_observation") == ()
+
+
+def test_block_churn_counts_body_transitions_across_the_bounded_generation_window(
+    tmp_path: Path,
+) -> None:
+    instance = _instance_with_document(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    document_identity = ArtifactIdentity(kind="document", name="runbook")
+    store = instance.review_operational_store()
+    for index, scan_generation in enumerate((0, 1, 1)):
+        marker = _marker(coordinate).model_copy(
+            update={"observed_body_digest": "sha256:" + str(index + 1) * 64}
+        )
+        source = _v3(coordinate).model_copy(
+            update={
+                "observed_source_digest": "sha256:" + str(index + 4) * 64,
+                "marker_summaries": (marker,),
+            }
+        )
+        observation = build_block_observation(
+            document_identity=document_identity,
+            source=source,
+            marker=marker,
+            scan_coordinate=coordinate,
+            scan_generation=scan_generation,
+            actor_context=_actor(),
+        )
+        store.append(
+            family="block_observation",
+            partition_id="document:runbook/docs.runbook/status",
+            event_id=observation.event_id,
+            payload=observation,
+            coordinate=coordinate,
+            generation=scan_generation,
+            actor_context=_actor(),
+            recorded_at=NOW,
+        )
+
+    detected, coverage = _block_churn(instance=instance, generation=1)
+
+    assert coverage.evaluated_fact_count == 3
+    assert len(detected) == 1
+    assert detected[0].subject == document_identity
+    assert detected[0].detail == {"block_id": "status", "source_id": "docs.runbook"}
