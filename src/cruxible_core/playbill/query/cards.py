@@ -136,7 +136,12 @@ class InterfacePolicySummaryV1(_StrictCardModel):
     """One governing policy as a digest plus one line of exact counted facts."""
 
     tag: Literal["playbill-interface-policy-summary-v1"] = "playbill-interface-policy-summary-v1"
-    policy: Literal["admission", "evidence_admission", "resolution"]
+    policy: Literal[
+        "admission",
+        "attestation_consequence",
+        "evidence_admission",
+        "resolution",
+    ]
     policy_digest: str
     summary: str
 
@@ -363,7 +368,7 @@ def _policy_summaries(claim_type: ClaimType) -> tuple[InterfacePolicySummaryV1, 
     evidence = claim_type.evidence_admission_policy
     resolution = claim_type.resolution_policy
     signers = tuple(item.minimum_distinct_signers for item in admission.actor_requirements)
-    return (
+    summaries = [
         InterfacePolicySummaryV1(
             policy="admission",
             policy_digest=_policy_digest("admission", admission.model_dump(mode="json")),
@@ -395,7 +400,30 @@ def _policy_summaries(claim_type: ClaimType) -> tuple[InterfacePolicySummaryV1, 
                 f"conflict_result={resolution.conflict_result}"
             ),
         ),
-    )
+    ]
+    consequence = claim_type.attestation_consequence_policy
+    if consequence is not None:
+        summaries.insert(
+            1,
+            InterfacePolicySummaryV1(
+                policy="attestation_consequence",
+                policy_digest=_policy_digest(
+                    "attestation_consequence", consequence.model_dump(mode="json")
+                ),
+                summary=(
+                    f"rules={len(consequence.rules)} "
+                    "stances="
+                    + ",".join(byte_sorted(tuple(rule.stance for rule in consequence.rules)))
+                    + " thresholds="
+                    + ",".join(
+                        str(rule.minimum_independent_control_components)
+                        for rule in consequence.rules
+                    )
+                    + " require_current=true"
+                ),
+            ),
+        )
+    return tuple(summaries)
 
 
 def _literal_schema_summary(claim_type: ClaimType) -> tuple[str | None, str | None]:

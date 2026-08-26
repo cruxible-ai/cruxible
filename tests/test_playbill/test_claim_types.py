@@ -25,6 +25,8 @@ from cruxible_client.contracts.authoring_profiles import (
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import (
     AcceptedClaimType,
+    ClaimAttestationConsequencePolicyV1,
+    ClaimAttestationConsequenceRuleV1,
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
     ClaimType,
@@ -243,6 +245,64 @@ def test_claim_type_v1_and_v3_preserve_the_exact_precut_wire_and_digest() -> Non
     assert b'"slot_policy":null' in render_claim_type(successor)
     assert b'"subject_scope"' not in render_claim_type(original)
     assert b'"slot_policy"' not in render_claim_type(original)
+    assert b'"attestation_consequence_policy"' not in render_claim_type(original)
+    assert b'"attestation_consequence_policy"' not in render_claim_type(successor)
+
+
+def test_claim_type_v4_commits_a_canonical_attestation_consequence_policy() -> None:
+    original = literal_claim_type()
+    policy = ClaimAttestationConsequencePolicyV1(
+        rules=(
+            ClaimAttestationConsequenceRuleV1(
+                rule_id="two-independent-unsure",
+                stance="unsure",
+                minimum_independent_control_components=2,
+            ),
+        )
+    )
+    successor = ClaimType.model_validate(
+        {
+            **original.model_dump(mode="json"),
+            "artifact_format": "playbill-claim-type-v4",
+            "attestation_consequence_policy": policy.model_dump(mode="json"),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_type_digest(original).tagged
+            ).model_dump(mode="json"),
+        }
+    )
+
+    rendered = render_claim_type(successor)
+    assert parse_claim_type(rendered, path=claim_type_path(successor.predicate)) == successor
+    assert b'"attestation_consequence_policy"' in rendered
+    assert successor.structure == original.structure
+    assert claim_type_digest(successor).tagged != claim_type_digest(original).tagged
+
+
+def test_claim_type_v4_policy_rules_are_nonempty_sorted_unique_and_thresholded() -> None:
+    rule = ClaimAttestationConsequenceRuleV1(
+        rule_id="z-rule",
+        stance="contradict",
+        minimum_independent_control_components=2,
+    )
+    with pytest.raises(ValidationError, match="at least 1"):
+        ClaimAttestationConsequencePolicyV1(rules=())
+    with pytest.raises(ValidationError, match="greater than or equal to 2"):
+        ClaimAttestationConsequenceRuleV1(
+            rule_id="minimum",
+            stance="unsure",
+            minimum_independent_control_components=1,
+        )
+    with pytest.raises(ValidationError, match="sorted and unique"):
+        ClaimAttestationConsequencePolicyV1(
+            rules=(
+                rule,
+                ClaimAttestationConsequenceRuleV1(
+                    rule_id="a-rule",
+                    stance="unsure",
+                    minimum_independent_control_components=2,
+                ),
+            )
+        )
 
 
 @pytest.mark.parametrize("field", ["subject_scope", "slot_policy"])

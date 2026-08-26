@@ -89,6 +89,7 @@ from cruxible_client.contracts.captures import (
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
+    ClaimAttestationConsequencePolicyV1,
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
     ClaimType,
@@ -872,6 +873,7 @@ class Playbill:
         authority: ArtifactAuthority,
         pins: Sequence[ArtifactPin],
         evidence_freshness: Duration | None,
+        attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None,
     ) -> ClaimTypeDraft:
         name = _address(predicate, RefKind.CLAIM_TYPE)
         if isinstance(predicate, ClaimTypeRef):
@@ -896,7 +898,14 @@ class Playbill:
         artifact_format: Literal[
             "playbill-claim-type-v1",
             "playbill-claim-type-v3",
-        ] = "playbill-claim-type-v3" if evidence_freshness is not None else "playbill-claim-type-v1"
+            "playbill-claim-type-v4",
+        ]
+        if attestation_consequence_policy is not None:
+            artifact_format = "playbill-claim-type-v4"
+        elif evidence_freshness is not None:
+            artifact_format = "playbill-claim-type-v3"
+        else:
+            artifact_format = "playbill-claim-type-v1"
         lifecycle = ArtifactLifecycle()
         if isinstance(predicate, ClaimTypeRef):
             predecessor = self._client.get_playbill_claim_type(
@@ -929,6 +938,7 @@ class Playbill:
                     stale_after=ClaimFreshnessDurationV1(microseconds=evidence_freshness.value)
                 )
             ),
+            attestation_consequence_policy=attestation_consequence_policy,
         )
         return ClaimTypeDraft(self, definition)
 

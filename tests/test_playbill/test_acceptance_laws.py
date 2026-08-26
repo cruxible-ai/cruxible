@@ -10,6 +10,7 @@ from cruxible_client.contracts.laws import (
     CLAIM_LAW_V2,
     CLAIM_TYPE_LAW,
     CLAIM_TYPE_LAW_V3,
+    CLAIM_TYPE_LAW_V4,
     DOCUMENT_LAW,
     LINE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
@@ -69,7 +70,7 @@ def test_claim_v1_and_v2_laws_remain_independently_replayable() -> None:
     )
 
 
-def test_claim_type_v1_and_v3_survive_but_removed_v2_has_no_acceptance_law() -> None:
+def test_claim_type_v1_v3_and_v4_survive_but_removed_v2_has_no_acceptance_law() -> None:
     assert (
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v1").coordinate
         == CLAIM_TYPE_LAW
@@ -77,6 +78,10 @@ def test_claim_type_v1_and_v3_survive_but_removed_v2_has_no_acceptance_law() -> 
     assert (
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v3").coordinate
         == CLAIM_TYPE_LAW_V3
+    )
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v4").coordinate
+        == CLAIM_TYPE_LAW_V4
     )
     with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v2")

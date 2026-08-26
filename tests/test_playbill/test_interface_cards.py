@@ -22,9 +22,14 @@ from datetime import datetime
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
+from cruxible_client.contracts.claim_types import (
+    ClaimAttestationConsequencePolicyV1,
+    ClaimAttestationConsequenceRuleV1,
+    claim_type_digest,
+    claim_type_path,
+)
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifact,
@@ -64,6 +69,7 @@ from cruxible_core.playbill.query.cards import (
     InterfaceProjectionBudgetV1,
     SubjectProfilePredicateV1,
     SubjectProfileV1,
+    _policy_summaries,
     build_interface_projections,
     claim_type_card_digest,
     discover_interfaces,
@@ -309,6 +315,35 @@ def test_a_card_states_the_interface_and_its_policies_without_any_policy_body() 
     assert card.usage.contended_subject_count == 0
     assert card.expansion_links[0].operation == "expand"
     assert card.coverage.truncated_facets == ()
+
+
+def test_v4_card_adds_a_compact_attestation_consequence_policy_summary() -> None:
+    original = claim_type(STATUS_PREDICATE)
+    governed = original.model_copy(
+        update={
+            "artifact_format": "playbill-claim-type-v4",
+            "attestation_consequence_policy": ClaimAttestationConsequencePolicyV1(
+                rules=(
+                    ClaimAttestationConsequenceRuleV1(
+                        rule_id="two-independent-unsure",
+                        stance="unsure",
+                        minimum_independent_control_components=2,
+                    ),
+                )
+            ),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(original).tagged),
+        }
+    )
+
+    policies = _policy_summaries(governed)
+
+    assert tuple(item.policy for item in policies) == (
+        "admission",
+        "attestation_consequence",
+        "evidence_admission",
+        "resolution",
+    )
+    assert policies[1].summary == ("rules=1 stances=unsure thresholds=2 require_current=true")
 
 
 def test_a_card_carries_the_accepted_alias_tag_and_reviewed_distinction() -> None:

@@ -18,6 +18,8 @@ from cruxible_client.authoring.inputs import (
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.claim_types import (
+    ClaimAttestationConsequencePolicyV1,
+    ClaimAttestationConsequenceRuleV1,
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
 )
@@ -263,6 +265,32 @@ def test_claim_type_input_lowers_freshness_into_the_existing_v3_artifact() -> No
     assert "evidence_freshness" not in original.model_dump(mode="json")
     assert governed.artifact_format == "playbill-claim-type-v3"
     assert governed.evidence_freshness == freshness
+
+
+def test_claim_type_input_lowers_attestation_consequences_into_v4() -> None:
+    original = claim_type_input_example()
+    policy = ClaimAttestationConsequencePolicyV1(
+        rules=(
+            ClaimAttestationConsequenceRuleV1(
+                rule_id="two-independent-unsure",
+                stance="unsure",
+                minimum_independent_control_components=2,
+            ),
+        )
+    )
+    governed = lower_claim_type_input(
+        ClaimTypeInputV1.model_validate(
+            {
+                **original.model_dump(mode="json"),
+                "attestation_consequence_policy": policy.model_dump(mode="json"),
+            }
+        ),
+        tree={},
+    )
+
+    assert governed.artifact_format == "playbill-claim-type-v4"
+    assert governed.evidence_freshness is None
+    assert governed.attestation_consequence_policy == policy
 
 
 def test_empty_claim_type_policy_warns_when_an_accepted_capture_contract_exists(

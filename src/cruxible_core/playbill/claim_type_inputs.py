@@ -18,6 +18,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
+    ClaimAttestationConsequencePolicyV1,
     ClaimEvidenceFreshnessV1,
     ClaimType,
     claim_type_digest,
@@ -69,6 +70,10 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
         default=None,
         exclude_if=lambda value: value is None,
     )
+    attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     anticipated_source_ids: tuple[str, ...] = ()
 
     @field_validator("anticipated_source_ids")
@@ -117,11 +122,12 @@ def lower_claim_type_input(
         predecessor = parse_claim_type(tree[path], path=path)
     payload = value.model_dump(mode="json")
     payload.pop("anticipated_source_ids", None)
-    payload["artifact_format"] = (
-        "playbill-claim-type-v3"
-        if value.evidence_freshness is not None
-        else "playbill-claim-type-v1"
-    )
+    if value.attestation_consequence_policy is not None:
+        payload["artifact_format"] = "playbill-claim-type-v4"
+    elif value.evidence_freshness is not None:
+        payload["artifact_format"] = "playbill-claim-type-v3"
+    else:
+        payload["artifact_format"] = "playbill-claim-type-v1"
     payload["identity"] = ArtifactIdentity(kind="ClaimType", name=value.predicate).model_dump(
         mode="json"
     )

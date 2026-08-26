@@ -27,7 +27,7 @@ from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes,
 from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.governance import PermissionTier
+from cruxible_client.contracts.governance import PermissionTier, governance_identifier
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
@@ -66,10 +66,44 @@ class ClaimEvidenceFreshnessV1(_StrictClaimTypeModel):
         return self
 
 
+class ClaimAttestationConsequenceRuleV1(_StrictClaimTypeModel):
+    tag: Literal["playbill-claim-attestation-consequence-rule-v1"] = (
+        "playbill-claim-attestation-consequence-rule-v1"
+    )
+    rule_id: str
+    stance: Literal["unsure", "contradict"]
+    minimum_independent_control_components: int = Field(ge=2)
+    consequence: Literal["next_claim_attestation_threshold"] = "next_claim_attestation_threshold"
+    require_current: Literal[True] = True
+
+    @field_validator("rule_id")
+    @classmethod
+    def _rule_id(cls, value: str) -> str:
+        return governance_identifier(value, label="attestation consequence rule_id")
+
+
+class ClaimAttestationConsequencePolicyV1(_StrictClaimTypeModel):
+    tag: Literal["playbill-claim-attestation-consequence-policy-v1"] = (
+        "playbill-claim-attestation-consequence-policy-v1"
+    )
+    rules: tuple[ClaimAttestationConsequenceRuleV1, ...] = Field(min_length=1)
+
+    @field_validator("rules")
+    @classmethod
+    def _rules(
+        cls, value: tuple[ClaimAttestationConsequenceRuleV1, ...]
+    ) -> tuple[ClaimAttestationConsequenceRuleV1, ...]:
+        rule_ids = tuple(rule.rule_id for rule in value)
+        if rule_ids != tuple(sorted(set(rule_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("attestation consequence rules must be sorted and unique by rule_id")
+        return value
+
+
 class ClaimType(_StrictClaimTypeModel):
     artifact_format: Literal[
         "playbill-claim-type-v1",
         "playbill-claim-type-v3",
+        "playbill-claim-type-v4",
     ] = "playbill-claim-type-v1"
     identity: ArtifactIdentity
     predicate: str
@@ -93,10 +127,16 @@ class ClaimType(_StrictClaimTypeModel):
     subject_scope: None = None
     slot_policy: None = None
     evidence_freshness: ClaimEvidenceFreshnessV1 | None = None
+    attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None
 
     @model_serializer(mode="wrap")
     def _versioned_wire(self, handler: Any) -> dict[str, object]:
         payload = cast(dict[str, object], handler(self))
+        if self.artifact_format in {
+            "playbill-claim-type-v1",
+            "playbill-claim-type-v3",
+        }:
+            payload.pop("attestation_consequence_policy", None)
         if self.artifact_format == "playbill-claim-type-v1":
             payload.pop("subject_scope", None)
             payload.pop("slot_policy", None)
@@ -133,9 +173,15 @@ class ClaimType(_StrictClaimTypeModel):
         if self.artifact_format == "playbill-claim-type-v1":
             if self.evidence_freshness is not None:
                 raise ValueError("ClaimType v1 cannot carry v3 evidence freshness")
-        else:
+            if self.attestation_consequence_policy is not None:
+                raise ValueError("ClaimType v1 cannot carry v4 attestation consequences")
+        elif self.artifact_format == "playbill-claim-type-v3":
             if self.evidence_freshness is None:
                 raise ValueError("ClaimType v3 requires evidence freshness")
+            if self.attestation_consequence_policy is not None:
+                raise ValueError("ClaimType v3 cannot carry v4 attestation consequences")
+        elif self.attestation_consequence_policy is None:
+            raise ValueError("ClaimType v4 requires an attestation consequence policy")
         ClaimTypeStructure(
             predicate=self.predicate,
             allowed_subject_kinds=self.allowed_subject_kinds,
@@ -183,6 +229,11 @@ def validate_claim_type_path(claim_type: ClaimType, path: str) -> str:
 
 def render_claim_type(claim_type: ClaimType) -> bytes:
     payload = claim_type.model_dump(mode="json")
+    if claim_type.artifact_format in {
+        "playbill-claim-type-v1",
+        "playbill-claim-type-v3",
+    }:
+        payload.pop("attestation_consequence_policy", None)
     if claim_type.artifact_format == "playbill-claim-type-v1":
         payload.pop("subject_scope", None)
         payload.pop("slot_policy", None)
@@ -198,6 +249,7 @@ def parse_claim_type(content: bytes, *, path: str) -> ClaimType:
     if not isinstance(payload, dict) or payload.get("artifact_format") not in {
         "playbill-claim-type-v1",
         "playbill-claim-type-v3",
+        "playbill-claim-type-v4",
     }:
         declared = payload.get("artifact_format") if isinstance(payload, dict) else None
         raise ClaimTypeFormatError(f"unsupported ClaimType artifact format: {declared!r}")
@@ -236,9 +288,18 @@ def _claim_type_digest_v3(claim_type: ClaimType) -> ArtifactDigest:
     )
 
 
+def _claim_type_digest_v4(claim_type: ClaimType) -> ArtifactDigest:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-envelope-v1",
+        claim_type.model_dump(mode="json"),
+    )
+
+
 CLAIM_TYPE_DIGEST_FUNCTIONS: dict[str, Callable[[ClaimType], ArtifactDigest]] = {
     "playbill-claim-type-v1": _claim_type_digest_v1,
     "playbill-claim-type-v3": _claim_type_digest_v3,
+    "playbill-claim-type-v4": _claim_type_digest_v4,
 }
 
 
@@ -468,6 +529,8 @@ def evaluate_claim_type_law(
 __all__ = [
     "AcceptedClaimType",
     "CLAIM_TYPE_DIGEST_FUNCTIONS",
+    "ClaimAttestationConsequencePolicyV1",
+    "ClaimAttestationConsequenceRuleV1",
     "ClaimType",
     "ClaimEvidenceFreshnessV1",
     "ClaimFreshnessDurationV1",

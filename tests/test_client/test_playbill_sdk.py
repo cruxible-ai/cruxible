@@ -29,6 +29,10 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
 )
 from cruxible_client.contracts.authoring.models import ClaimAuthoringPayloadV2
+from cruxible_client.contracts.claim_types import (
+    ClaimAttestationConsequencePolicyV1,
+    ClaimAttestationConsequenceRuleV1,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -375,6 +379,51 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
     assert client.compiled["reference_expectations"] == []
     stamp = client.compiled["program_stamp"]
     assert stamp["tag"] == "playbill-authoring-program-stamp-v1"
+
+
+def test_claim_type_builder_selects_v4_for_attestation_consequences(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        _Client(),
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+    authority = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
+    policy = ClaimAttestationConsequencePolicyV1(
+        rules=(
+            ClaimAttestationConsequenceRuleV1(
+                rule_id="two-independent-unsure",
+                stance="unsure",
+                minimum_independent_control_components=2,
+            ),
+        )
+    )
+
+    draft = pb.claim_type(
+        predicate="secops.policy.patch_sla",
+        subject_kinds=("secops.policy",),
+        object_kind=ClaimObjectKind.LITERAL,
+        value_schema={"type": "object"},
+        object_subject_kinds=(),
+        cardinality=Cardinality.ONE,
+        permitted_roles=(ClaimRole.NORMATIVE,),
+        referent_sensitivity=ReferentSensitivity.IDENTITY,
+        sources=("corpus.runbook",),
+        admission_policy=ClaimAdmissionPolicyV1(),
+        resolution_policy=ClaimResolutionPolicyV1(
+            cardinality="one",
+            eligible_verdicts=("supported",),
+            selector="only_contender",
+        ),
+        authority=authority,
+        pins=(),
+        evidence_freshness=None,
+        attestation_consequence_policy=policy,
+    )
+
+    assert draft.definition.artifact_format == "playbill-claim-type-v4"
+    assert draft.definition.attestation_consequence_policy == policy
 
 
 def test_claim_requires_exactly_one_explicit_source_role(tmp_path: Path) -> None:
