@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Protocol
 
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_types import parse_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     claim_path,
@@ -23,6 +24,7 @@ from cruxible_core.playbill.query.semantic_discovery import (
 )
 from cruxible_core.playbill.search import (
     SEARCH_KINDS,
+    PlaybillSearchApprovalAuthorityV1,
     PlaybillSearchCountV1,
     PlaybillSearchFollowUpV1,
     PlaybillSearchKindAvailabilityV1,
@@ -293,6 +295,23 @@ def _orientation(
         for item in instance.accepted_history()
         if item.oid == request.accepted_coordinate.git_oid
     )
+    tree = instance.tree_at(request.accepted_coordinate.git_oid)
+    approval_authorities = tuple(
+        sorted(
+            (
+                PlaybillSearchApprovalAuthorityV1(
+                    artifact_identity=claim_type.identity.qualified,
+                    artifact_kind="claim_type",
+                    approvable_by_roles=claim_type.authority.approve_roles,
+                )
+                for path, content in tree.items()
+                if path.startswith("claim-types/") and path.endswith(".yaml")
+                for claim_type in (parse_claim_type(content, path=path),)
+                if claim_type.lifecycle.state == "live"
+            ),
+            key=lambda item: item.artifact_identity.encode("utf-8"),
+        )
+    )
     return PlaybillSearchOrientationV1(
         coordinate=request.accepted_coordinate,
         generation=generation,
@@ -304,6 +323,7 @@ def _orientation(
             for status in sorted(statuses, key=lambda item: item.encode("utf-8"))
         ),
         conflicted_count=sum(row.status == "conflicted" for row in rows),
+        approval_authorities=approval_authorities,
         available_kinds=tuple(
             item.kind for item in availability if item.availability == "installed"
         ),

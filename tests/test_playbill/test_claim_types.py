@@ -24,6 +24,7 @@ from cruxible_client.contracts.authoring_profiles import (
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import (
+    AcceptedClaimType,
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
     ClaimType,
@@ -31,6 +32,7 @@ from cruxible_client.contracts.claim_types import (
     ClaimTypeFreshnessHorizonInvalid,
     claim_type_digest,
     claim_type_path,
+    evaluate_claim_type_law,
     parse_claim_type,
     render_claim_type,
 )
@@ -141,6 +143,54 @@ def test_claim_type_successor_requires_exact_predecessor_digest_shape() -> None:
         }
     )
     assert successor.lifecycle.predecessor_digest == claim_type_digest(claim_type).tagged
+
+
+def test_claim_type_authority_widens_only_and_requires_owner_approval(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    original = literal_claim_type()
+    predecessor = AcceptedClaimType(
+        path=claim_type_path(original.predicate),
+        claim_type=original,
+        artifact_digest=claim_type_digest(original).tagged,
+    )
+    widened = original.model_copy(
+        update={
+            "authority": ArtifactAuthority(
+                propose_roles=("owner",),
+                approve_roles=("owner", "reviewer"),
+            ),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(original).tagged),
+        }
+    )
+
+    accepted = evaluate_claim_type_law(
+        widened,
+        path=predecessor.path,
+        principals=instance.accepted_history()[-1].principals,
+        actor_id="owner",
+        predecessor=predecessor,
+    )
+    assert accepted.verdict == "accepted"
+    assert accepted.approval_scope == ("owner",)
+
+    narrowed = original.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(widened).tagged)
+        }
+    )
+    refused = evaluate_claim_type_law(
+        narrowed,
+        path=predecessor.path,
+        principals=instance.accepted_history()[-1].principals,
+        actor_id="owner",
+        predecessor=AcceptedClaimType(
+            path=predecessor.path,
+            claim_type=widened,
+            artifact_digest=claim_type_digest(widened).tagged,
+        ),
+    )
+    assert refused.verdict == "refused"
+    assert refused.diagnostics[0].code == "playbill.claim_type.authority_change_unsupported"
 
 
 def test_claim_type_v3_adds_only_a_positive_freshness_horizon() -> None:

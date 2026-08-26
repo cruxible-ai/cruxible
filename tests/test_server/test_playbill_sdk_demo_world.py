@@ -475,15 +475,11 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         },
     )
     assert response.status_code == 200, response.text
-    diagnostic = next(
-        item
+    assert response.json()["verdict"] == "passed"
+    assert not any(
+        item["code"] == "playbill.authoring.existing_claim_dispositions_incomplete"
         for item in response.json()["frontier"]["diagnostics"]
-        if item["code"] == "playbill.authoring.existing_claim_dispositions_incomplete"
     )
-    replacement = diagnostic["repairs"][0]["replacement"]
-    assert replacement["required_claims"] == [{"claim_id": claim_id, "status": "live"}]
-    assert replacement["missing_claims"] == [{"claim_id": claim_id, "status": "live"}]
-    assert replacement["unexpected_claim_ids"] == []
 
     revision = pb.claim(
         subject="secops.policy/patch-sla.yaml",
@@ -517,6 +513,16 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     assert facts["playbill.claim.statement"]["object"]["value"] == 72
     assert successor.envelope["predecessor_digest"] is not None
     assert successor.envelope["identity"] == predecessor.envelope["identity"]
+
+    # The successor retains the predecessor's historical citation, but only the
+    # new revision's admitted verdict Capture belongs in the repair inventory.
+    pb.refresh()
+    runbook.write_text(
+        original_runbook.replace("forty-eight hours", "forty-nine hours"),
+        encoding="utf-8",
+    )
+    after_successor = pb.next(expiring_within=Duration.days(count=7))
+    assert all(item["reason"] != "citation_drifted" for item in after_successor.items)
 
 
 def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(

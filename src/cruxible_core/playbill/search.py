@@ -164,6 +164,12 @@ class PlaybillSearchFollowUpV1(_StrictSearchModel):
     subject: SemanticAddress | None = None
 
 
+class PlaybillSearchApprovalAuthorityV1(_StrictSearchModel):
+    artifact_identity: str
+    artifact_kind: Literal["claim_type"]
+    approvable_by_roles: tuple[str, ...]
+
+
 class PlaybillSearchOrientationV1(_StrictSearchModel):
     tag: Literal["playbill-search-orientation-v1"] = "playbill-search-orientation-v1"
     coordinate: AcceptedCoordinate
@@ -171,6 +177,7 @@ class PlaybillSearchOrientationV1(_StrictSearchModel):
     counts_by_kind: tuple[PlaybillSearchCountV1, ...]
     counts_by_status: tuple[PlaybillSearchCountV1, ...]
     conflicted_count: int = Field(ge=0)
+    approval_authorities: tuple[PlaybillSearchApprovalAuthorityV1, ...]
     available_kinds: tuple[SearchKind, ...]
     kind_availability: tuple[PlaybillSearchKindAvailabilityV1, ...]
     truncated: bool
@@ -285,6 +292,7 @@ __all__ = [
     "SEARCH_SELECTION_BASIS_DOMAIN",
     "SEARCH_STATUSES",
     "PlaybillSearchBudgetsV1",
+    "PlaybillSearchApprovalAuthorityV1",
     "PlaybillSearchCountV1",
     "PlaybillSearchCursorV1",
     "PlaybillSearchFollowUpV1",

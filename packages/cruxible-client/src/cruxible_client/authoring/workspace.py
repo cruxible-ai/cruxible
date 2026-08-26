@@ -441,6 +441,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
         source_observations.append(
             {
                 "source_id": entry.name,
+                "document_id": entry.document_id,
                 "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
             }
         )
@@ -451,6 +452,7 @@ def observe_playbill_next_workspace(workspace: str | Path) -> dict[str, object]:
 def _unobserved_projection_source(
     source_id: str,
     *,
+    document_id: str | None,
     content: bytes,
     scan_notes: Sequence[str],
     marker_summaries: Sequence[dict[str, object]] = (),
@@ -459,6 +461,7 @@ def _unobserved_projection_source(
     return {
         "tag": "playbill-next-source-observation-v2",
         "source_id": source_id,
+        "document_id": document_id,
         "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
         "byte_length": len(content),
         "marker_summaries": list(marker_summaries),
@@ -622,6 +625,7 @@ def observe_playbill_next_workspace_with_coverage(
         return base, None
 
     material: dict[str, bytes] = {}
+    document_ids: dict[str, str | None] = {}
     payloads: list[dict[str, object]] = []
     for entry in entries:
         if not isinstance(entry, Mapping) or not isinstance(entry.get("source_id"), str):
@@ -636,6 +640,8 @@ def observe_playbill_next_workspace_with_coverage(
             # leaves every citation to this logical source explicitly unobserved.
             continue
         material[source_id] = content
+        document_id = entry.get("document_id")
+        document_ids[source_id] = document_id if isinstance(document_id, str) else None
         payloads.append(
             {
                 "tag": "playbill-coverage-working-source-observation-v1",
@@ -722,6 +728,7 @@ def observe_playbill_next_workspace_with_coverage(
         if notes:
             enriched[source_id] = _unobserved_projection_source(
                 source_id,
+                document_id=document_ids[source_id],
                 content=content,
                 scan_notes=notes,
                 marker_summaries=markers,
@@ -731,6 +738,7 @@ def observe_playbill_next_workspace_with_coverage(
         enriched[source_id] = {
             "tag": "playbill-next-source-observation-v2",
             "source_id": source_id,
+            "document_id": document_ids[source_id],
             "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
             "byte_length": len(content),
             "marker_summaries": markers,

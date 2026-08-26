@@ -406,13 +406,19 @@ def evaluate_claim_type_law(
                     ),
                 ),
             )
-        if claim_type.authority != previous.authority:
+        authority_widened = claim_type.authority != previous.authority
+        if authority_widened and (
+            claim_type.authority.propose_roles != previous.authority.propose_roles
+            or not set(previous.authority.approve_roles).issubset(
+                claim_type.authority.approve_roles
+            )
+        ):
             return ClaimTypeLawResult(
                 verdict="refused",
                 diagnostics=(
                     _diagnostic(
                         "playbill.claim_type.authority_change_unsupported",
-                        "ClaimType succession cannot rewrite accepted authority in v1.",
+                        "ClaimType succession may only widen accepted approval roles.",
                         path=path,
                     ),
                 ),
@@ -450,7 +456,7 @@ def evaluate_claim_type_law(
                     ),
                 ),
             )
-        approval_scope = previous.authority.approve_roles
+        approval_scope = ("owner",) if authority_widened else previous.authority.approve_roles
     return ClaimTypeLawResult(
         verdict="accepted",
         artifact_digest=digest,

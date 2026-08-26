@@ -16,6 +16,12 @@ from cruxible_client.contracts.captures import (
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claims import claim_citation_references, claim_statement_digest
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+    render_document,
+)
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
@@ -38,6 +44,7 @@ from cruxible_core.service.playbill_next import (
     service_playbill_next,
     validate_playbill_next_request,
 )
+from tests.test_playbill._adoption_fixture import _Builder
 from tests.test_playbill._knowledge_loop_support import (
     activate as activate_work_item_claim,
 )
@@ -47,6 +54,7 @@ from tests.test_playbill._knowledge_loop_support import (
 from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
 )
+from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_claim_query_engine import status_claim
 
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
@@ -166,6 +174,60 @@ def test_unknown_access_profile_value_has_the_frozen_refusal() -> None:
         )
 
     assert raised.value.code == "playbill.next.access_profile_invalid"
+
+
+def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"accepted body\n")
+    document = DocumentShell(
+        identity="document:runbook",
+        document_kind="runbook",
+        title="Runbook",
+        media_type="text/markdown",
+        body_digest=body.digest,
+        authority=DocumentAuthority(required_tier="governed_write", approval_roles=("owner",)),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    builder = _Builder(instance, owner)
+    builder.accept(
+        {"documents/runbook.yaml": render_document(document)},
+        phase="document-next",
+    )
+    current = instance.__class__.open(instance.root, trust_root=instance.trust_root)
+    changed = typed_digest(Sha256Value, "playbill-next-modified-document-v1", {}).tagged
+
+    def queued(  # type: ignore[no-untyped-def]
+        observed_digest: str,
+        access_profile: CoverageAccessProfileV1 = _access(),
+    ):
+        return service_playbill_next(
+            current,
+            request=PlaybillNextRequestV1(
+                evaluation_time=EVALUATION_TIME,
+                access_profile=access_profile,
+                workspace_observation=PlaybillNextWorkspaceObservationV1(
+                    source_observations=(
+                        PlaybillNextSourceObservationV1(
+                            source_id="corpus.runbook",
+                            document_id="runbook",
+                            observed_source_digest=observed_digest,
+                        ),
+                    )
+                ),
+            ),
+        )
+
+    row = next(item for item in queued(changed).items if item.reason == "document_modified")
+    assert row.severity == "warning"
+    assert row.repair.operation == "playbill.document.propose"
+    assert row.repair.required_change == "repropose_modified_document"
+    assert all(item.reason != "document_modified" for item in queued(body.digest).items)
+    public_only = CoverageAccessProfileV1(
+        profile_id="public-only",
+        permitted_access_classes=("public",),
+    )
+    assert all(item.reason != "document_modified" for item in queued(changed, public_only).items)
 
 
 @pytest.mark.parametrize(

@@ -711,7 +711,17 @@ def _author_direct_claim(
     existing = _existing_statements(base_tree, statement)
     expected_handoffs = {item.statement_digest for item in existing}
     supplied_handoffs = {item.statement_digest for item in authoring.existing_statement_handoffs}
-    if expected_handoffs != supplied_handoffs:
+    inferred_handoffs = {
+        item.statement_digest
+        for item in existing
+        if authoring.claim_id is not None
+        and item.claim_identity == f"Claim:{authoring.claim_id}"
+        and authoring.predecessor_artifact_digest == item.artifact_digest
+    }
+    required_handoffs = expected_handoffs - inferred_handoffs
+    if not required_handoffs.issubset(supplied_handoffs) or not supplied_handoffs.issubset(
+        expected_handoffs
+    ):
         raise ProposalIntegrityError(
             "authoring must explicitly disposition every existing same-subject/predicate "
             "statement before proposing an adjacent Claim"

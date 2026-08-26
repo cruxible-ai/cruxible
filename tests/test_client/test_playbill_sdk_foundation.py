@@ -91,6 +91,7 @@ def test_next_workspace_observes_confined_whole_source_bytes(tmp_path: Path) -> 
     assert observation["source_observations"] == [
         {
             "source_id": "corpus.runbook",
+            "document_id": "runbook",
             "observed_source_digest": "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest(),
         }
     ]
@@ -256,6 +257,7 @@ def test_next_workspace_observes_absolute_source_from_explicit_local_overlay(
     assert observation["source_observations"] == [
         {
             "source_id": "corpus.runbook",
+            "document_id": "runbook",
             "observed_source_digest": "sha256:" + hashlib.sha256(external.read_bytes()).hexdigest(),
         }
     ]
@@ -296,6 +298,7 @@ def test_next_workspace_observes_root_level_source_catalog(tmp_path: Path) -> No
     assert observation["source_observations"] == [
         {
             "source_id": "corpus.runbook",
+            "document_id": "runbook",
             "observed_source_digest": "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest(),
         }
     ]

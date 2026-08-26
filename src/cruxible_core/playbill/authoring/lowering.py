@@ -394,7 +394,9 @@ def _lower_claim(
     existing = _same_statement_claims(candidate_base_tree, statement)
     expected = {item.identity.name for item in existing}
     supplied = {item.claim_id for item in payload.existing_claim_dispositions}
-    if expected != supplied:
+    inferred = {payload.claim_ref} if payload.claim_ref in expected else set()
+    required_ids = expected - inferred
+    if not required_ids.issubset(supplied) or not supplied.issubset(expected):
         required = tuple(sorted(existing, key=lambda item: item.identity.name.encode("ascii")))
         _refuse(
             "playbill.authoring.existing_claim_dispositions_incomplete",
@@ -410,7 +412,7 @@ def _lower_claim(
                 "missing_claims": [
                     {"claim_id": claim.identity.name, "status": claim.lifecycle.state}
                     for claim in required
-                    if claim.identity.name not in supplied
+                    if claim.identity.name in required_ids and claim.identity.name not in supplied
                 ],
                 "unexpected_claim_ids": sorted(
                     supplied - expected,

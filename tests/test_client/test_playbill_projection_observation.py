@@ -150,6 +150,7 @@ def test_one_coordinate_pinned_coverage_read_enriches_existing_v1_without_replac
     assert old["source_observations"] == [
         {
             "source_id": "corpus.runbook",
+            "document_id": "runbook",
             "observed_source_digest": enriched["source_observations"][0]["observed_source_digest"],
         }
     ]

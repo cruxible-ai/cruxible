@@ -29,6 +29,8 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     claim_artifact_digest,
     claim_citation_references,
+    claim_path,
+    claim_statement_digest,
     parse_claim,
 )
 from cruxible_client.contracts.declared_blocks import (
@@ -42,6 +44,7 @@ from cruxible_client.contracts.declared_blocks import (
     ProjectionQueryBackingV1,
     projection_query_semantic_result_digest,
 )
+from cruxible_client.contracts.documents import document_path, parse_document
 from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -63,7 +66,11 @@ from cruxible_core.playbill.query.impact import (
 )
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.service.query_definitions import accepted_query_definition
-from cruxible_core.service.playbill_claims import _claim_from_view, service_list_playbill_claims
+from cruxible_core.service.playbill_claims import (
+    _claim_from_view,
+    _claim_law_evidence,
+    service_list_playbill_claims,
+)
 from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
 from cruxible_core.service.playbill_query import build_accepted_query_facts
 
@@ -88,6 +95,7 @@ NextReason = Literal[
     "projection_backing_stale",
     "self_published_source_stale",
     "claim_dependency_stale",
+    "document_modified",
 ]
 NextRepairOperation = Literal[
     "playbill.authoring.create",
@@ -95,6 +103,7 @@ NextRepairOperation = Literal[
     "playbill.claim_type.migrate",
     "playbill.floor.export",
     "playbill.block.repin",
+    "playbill.document.propose",
 ]
 
 _SEVERITY_RANK: dict[NextSeverity, int] = {"blocking": 0, "repair": 1, "warning": 2}
@@ -148,6 +157,7 @@ class PlaybillNextDriftObservationV1(_StrictNextModel):
 
 class PlaybillNextSourceObservationV1(_StrictNextModel):
     source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
     observed_source_digest: str
 
     @field_validator("observed_source_digest")
@@ -160,6 +170,7 @@ class PlaybillNextSourceObservationV1(_StrictNextModel):
 class PlaybillNextSourceObservationV2(_StrictNextModel):
     tag: Literal["playbill-next-source-observation-v2"]
     source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
     observed_source_digest: str
     byte_length: int = Field(ge=0, le=MAX_PROJECTION_SOURCE_BYTES)
     marker_summaries: tuple[ProjectionMarkerSummaryV1, ...] = Field(
@@ -672,15 +683,56 @@ def _citation_commitments(
     coordinate: PlaybillAcceptedCoordinate,
 ) -> dict[str, _CitationCommitment]:
     listed = service_list_playbill_claims(instance, at=coordinate)
+    internal_coordinate = instance.resolve_accepted_coordinate(
+        git_oid=coordinate.git_oid,
+        semantic_root=coordinate.semantic_root,
+        generation_root=coordinate.generation_root,
+        compiler_digest=coordinate.compiler_digest,
+    )
     store = instance.body_store()
     access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
     result: dict[str, _CitationCommitment] = {}
+    target_index = next(
+        index
+        for index, generation in enumerate(instance.accepted_history())
+        if generation.oid == coordinate.git_oid
+    )
     try:
         for view in listed.claims:
             claim = _claim_from_view(view)
             if claim.lifecycle.state != "live":
                 continue
+            evidence = _claim_law_evidence(
+                instance,
+                path=claim_path(claim.identity.name),
+                at=internal_coordinate,
+            )
+            effective_captures = {item.capture_digest for item in evidence.verdict_captures}
+            predecessor_digest = claim.lifecycle.predecessor_digest
+            if predecessor_digest is not None:
+                path = claim_path(claim.identity.name)
+                predecessor = next(
+                    (
+                        parsed
+                        for generation in reversed(instance.accepted_history()[:target_index])
+                        for content in (instance.tree_at(generation.oid).get(path),)
+                        if content is not None
+                        for parsed in (parse_claim(content, path=path),)
+                        if claim_artifact_digest(parsed).tagged == predecessor_digest
+                    ),
+                    None,
+                )
+                if predecessor is None:
+                    raise PlaybillNextAcceptedStateInvalid(
+                        "live Claim predecessor cannot be resolved from accepted history"
+                    )
+                if claim_statement_digest(predecessor.statement) != claim_statement_digest(
+                    claim.statement
+                ):
+                    effective_captures.difference_update(predecessor.backing.capture_digests)
             for citation in claim_citation_references(claim):
+                if citation.capture_digest not in effective_captures:
+                    continue
                 envelope = parse_capture_envelope(
                     store.read(citation.capture_digest, access=access)
                 )
@@ -1210,6 +1262,58 @@ def _workspace_items(
     return tuple(domains), tuple(items)
 
 
+def _document_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfileV1,
+    observation: PlaybillNextWorkspaceObservationV1 | None,
+) -> tuple[PlaybillNextItemV1, ...]:
+    if (
+        observation is None
+        or observation.source_observations is None
+        or not access_profile.permits("instance")
+    ):
+        return ()
+    tree = instance.tree_at(coordinate.git_oid)
+    items: list[PlaybillNextItemV1] = []
+    for source in observation.source_observations:
+        if source.document_id is None:
+            continue
+        path = document_path(source.document_id)
+        content = tree.get(path)
+        if content is None:
+            continue
+        document = parse_document(content, path=path)
+        if document.body_digest == source.observed_source_digest:
+            continue
+        identity = f"document:{source.document_id}"
+        items.append(
+            _item(
+                severity="warning",
+                reason="document_modified",
+                subject_identity=identity,
+                related_identities=(source.source_id,),
+                detail={
+                    "document_id": source.document_id,
+                    "source_id": source.source_id,
+                    "accepted_body_digest": document.body_digest,
+                    "observed_source_digest": source.observed_source_digest,
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.document.propose",
+                    target=identity,
+                    required_change="repropose_modified_document",
+                    arguments={
+                        "document_id": source.document_id,
+                        "source_id": source.source_id,
+                    },
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _projection_items(
     instance: PlaybillInstance,
     *,
@@ -1395,6 +1499,12 @@ def service_playbill_next(
                     coordinate=coordinate,
                     evaluation_time=request.evaluation_time,
                     access_profile=request.access_profile,
+                ),
+                *_document_items(
+                    instance,
+                    coordinate=coordinate,
+                    access_profile=request.access_profile,
+                    observation=request.workspace_observation,
                 ),
             ),
             key=_item_sort_key,
