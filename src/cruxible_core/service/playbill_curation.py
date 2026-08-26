@@ -487,12 +487,6 @@ def service_list_playbill_curation(
             )
         except ReviewOperationalConcurrentChangeError:
             raise
-        # Make another same-call detection of a newly-created recurrence reuse
-        # the exact item.  Pattern IDs are unique in detector output by law.
-        projected = _replay_items(instance)
-        by_pattern[detection.pattern_id] = [
-            item for item in projected if item.pattern_id == detection.pattern_id
-        ]
     all_items = _replay_items(instance)
     items = tuple(
         sorted(

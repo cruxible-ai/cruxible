@@ -106,6 +106,38 @@ class _Coverage:
         )
 
 
+@dataclass(frozen=True)
+class _CurationHistoryIndex:
+    claims: tuple[tuple[int, str, ClaimArtifactAny], ...]
+    capture_contract_identities: Mapping[str, str]
+    first_accepted_generations: Mapping[str, int]
+    last_generation: int
+
+
+def _curation_history_index(instance: PlaybillInstance) -> _CurationHistoryIndex:
+    claims: list[tuple[int, str, ClaimArtifactAny]] = []
+    contracts: dict[str, str] = {}
+    first: dict[str, int] = {}
+    last_generation = 0
+    for generation in instance.accepted_history():
+        last_generation = generation.sequence
+        tree = instance.tree_at(generation.oid)
+        for state in dependency_artifacts(tree):
+            first.setdefault(state.identity.qualified, generation.sequence)
+        for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+            if path.startswith("claims/"):
+                claims.append((generation.sequence, path, parse_claim(tree[path], path=path)))
+            elif path.startswith("capture-contracts/"):
+                contract = parse_capture_contract(tree[path], path=path)
+                contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    return _CurationHistoryIndex(
+        claims=tuple(claims),
+        capture_contract_identities=contracts,
+        first_accepted_generations=first,
+        last_generation=last_generation,
+    )
+
+
 def _artifact_ref(
     *,
     identity: ArtifactIdentity,
@@ -298,28 +330,28 @@ def _qualifier_crystallization(
 
 
 def _duplicate_statements(
-    *, instance: PlaybillInstance
+    *,
+    instance: PlaybillInstance,
+    history: _CurationHistoryIndex | None = None,
 ) -> tuple[tuple[CurationDetectionV1, ...], CurationDetectorCoverageV1]:
     kind: CurationPatternKind = "playbill.curation.duplicate_statement_lineages.v1"
     coverage = _Coverage(kind)
-    grouped: dict[tuple[str, str], dict[str, CurationEvidenceRefV1]] = defaultdict(dict)
-    for generation in instance.accepted_history():
-        tree = instance.tree_at(generation.oid)
-        for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-            if not path.startswith("claims/"):
-                continue
-            claim = parse_claim(tree[path], path=path)
-            coverage.evaluated += 1
-            statement = claim_statement_digest(claim.statement).tagged
-            grouped[(claim.statement.predicate, statement)][claim.identity.qualified] = (
-                _artifact_ref(
-                    identity=claim.identity,
-                    path=path,
-                    generation=generation.sequence,
-                    artifact_digest=claim_artifact_digest(claim).tagged,
-                    statement_digest=statement,
-                )
+    grouped: dict[tuple[str, str], dict[str, dict[int, CurationEvidenceRefV1]]] = defaultdict(
+        lambda: defaultdict(dict)
+    )
+    indexed = history or _curation_history_index(instance)
+    for generation, path, claim in indexed.claims:
+        coverage.evaluated += 1
+        statement = claim_statement_digest(claim.statement).tagged
+        grouped[(claim.statement.predicate, statement)][claim.identity.qualified][generation] = (
+            _artifact_ref(
+                identity=claim.identity,
+                path=path,
+                generation=generation,
+                artifact_digest=claim_artifact_digest(claim).tagged,
+                statement_digest=statement,
             )
+        )
     frozen_coverage = coverage.freeze()
     detections: list[CurationDetectionV1] = []
     for (predicate, statement), lineages in sorted(
@@ -334,7 +366,9 @@ def _duplicate_statements(
                 detail={"statement_digest": statement},
                 coverage=frozen_coverage,
                 evidence_refs=tuple(
-                    lineages[key] for key in sorted(lineages, key=lambda item: item.encode("utf-8"))
+                    lineages[key][generation]
+                    for key in sorted(lineages, key=lambda item: item.encode("utf-8"))
+                    for generation in sorted(lineages[key])
                 ),
             )
         )
@@ -451,23 +485,13 @@ def _block_churn(
     return tuple(detections), frozen_coverage
 
 
-def _first_accepted_generations(
-    instance: PlaybillInstance,
-) -> dict[str, int]:
-    result: dict[str, int] = {}
-    for generation in instance.accepted_history():
-        tree = instance.tree_at(generation.oid)
-        for state in dependency_artifacts(tree):
-            result.setdefault(state.identity.qualified, generation.sequence)
-    return result
-
-
 def _dead_vocabulary(
     *,
     instance: PlaybillInstance,
     tree: Mapping[str, bytes],
     generation: int,
     operational_head_digest: str,
+    history: _CurationHistoryIndex | None = None,
 ) -> tuple[tuple[CurationDetectionV1, ...], CurationDetectorCoverageV1]:
     kind: CurationPatternKind = "playbill.curation.dead_vocabulary.v1"
     coverage = _Coverage(kind)
@@ -476,7 +500,7 @@ def _dead_vocabulary(
         coverage.omit("consumption_epoch_uninitialized")
         return (), coverage.freeze()
     by_identity = {item.artifact_identity.qualified: item for item in aggregate.artifacts}
-    first = _first_accepted_generations(instance)
+    first = (history or _curation_history_index(instance)).first_accepted_generations
     allowed = {
         "subject": "Subject",
         "claim-type": "ClaimType",
@@ -684,22 +708,12 @@ class _CaptureObservation:
     observed_at: datetime
 
 
-def _capture_contract_identities(instance: PlaybillInstance) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for generation in instance.accepted_history():
-        tree = instance.tree_at(generation.oid)
-        for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-            if not path.startswith("capture-contracts/"):
-                continue
-            contract = parse_capture_contract(tree[path], path=path)
-            result[capture_contract_digest(contract).tagged] = contract.identity.qualified
-    return result
-
-
 def _freshness_calibration(
     *,
     instance: PlaybillInstance,
     tree: Mapping[str, bytes],
+    generation: int | None = None,
+    history: _CurationHistoryIndex | None = None,
 ) -> tuple[tuple[CurationDetectionV1, ...], CurationDetectorCoverageV1]:
     kind: CurationPatternKind = "playbill.curation.freshness_drift_calibration.v1"
     coverage = _Coverage(kind)
@@ -710,20 +724,16 @@ def _freshness_calibration(
         for item in (parse_claim_type(tree[state.path], path=state.path),)
         if item.evidence_freshness is not None
     }
-    contracts = _capture_contract_identities(instance)
+    indexed = history or _curation_history_index(instance)
+    contracts = indexed.capture_contract_identities
     captures: dict[tuple[str, str], int] = {}
-    for generation in instance.accepted_history():
-        accepted_tree = instance.tree_at(generation.oid)
-        for path in sorted(accepted_tree, key=lambda item: item.encode("utf-8")):
-            if not path.startswith("claims/"):
-                continue
-            claim = parse_claim(accepted_tree[path], path=path)
-            if claim.statement.predicate not in current_types:
-                continue
-            for capture_digest_value in claim.backing.capture_digests:
-                captures.setdefault(
-                    (claim.statement.predicate, capture_digest_value), generation.sequence
-                )
+    for accepted_generation, _path, claim in indexed.claims:
+        if claim.statement.predicate not in current_types:
+            continue
+        for capture_digest_value in claim.backing.capture_digests:
+            captures.setdefault(
+                (claim.statement.predicate, capture_digest_value), accepted_generation
+            )
     body_store = instance.body_store()
     access = BodyAccessContext(principal_id="playbill-curation", can_read_body=True)
     observations: list[_CaptureObservation] = []
@@ -818,7 +828,7 @@ def _freshness_calibration(
             _artifact_ref(
                 identity=claim_type.identity,
                 path=type_path,
-                generation=len(instance.accepted_history()) - 1,
+                generation=(generation if generation is not None else indexed.last_generation),
                 artifact_digest=type_digest,
                 facts={"stale_after_microseconds": horizon},
             )
@@ -997,17 +1007,23 @@ def run_curation_detectors(
         providers=facts.providers,
         evaluation_time=evaluation_time,
     )
+    history = _curation_history_index(instance)
     results = (
         _recurring_conflicts(tree=tree, rows=rows, generation=generation),
         _admission_failures(instance=instance),
-        _freshness_calibration(instance=instance, tree=tree),
+        _freshness_calibration(
+            instance=instance,
+            tree=tree,
+            generation=generation,
+            history=history,
+        ),
         _provenance_concentration(
             rows=rows,
             providers=facts.providers,
             evaluation_time=evaluation_time,
             generation=generation,
         ),
-        _duplicate_statements(instance=instance),
+        _duplicate_statements(instance=instance, history=history),
         _qualifier_crystallization(rows=rows, generation=generation),
         _block_churn(instance=instance, generation=generation),
         _dead_vocabulary(
@@ -1015,6 +1031,7 @@ def run_curation_detectors(
             tree=tree,
             generation=generation,
             operational_head_digest=operational_head_digest,
+            history=history,
         ),
     )
     detections = tuple(

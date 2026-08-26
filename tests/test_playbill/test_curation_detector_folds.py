@@ -36,6 +36,8 @@ from cruxible_client.contracts.source_references import (
 )
 from cruxible_core.playbill.consumption import ConsumptionAggregateV1
 from cruxible_core.playbill.curation_detectors import (
+    _curation_history_index,
+    _CurationHistoryIndex,
     _dead_vocabulary,
     _duplicate_statements,
     _freshness_calibration,
@@ -156,7 +158,8 @@ def test_duplicate_statement_fold_counts_lineages_across_history_not_revisions()
 
     assert coverage.evaluated_fact_count == 4
     assert len(detected) == 1
-    assert len(detected[0].evidence_refs) == 2
+    assert len(detected[0].evidence_refs) == 4
+    assert {ref.generation for ref in detected[0].evidence_refs} == {1, 2}
     assert detected[0].detail == {"statement_digest": first.accepted.statement_digest}
 
 
@@ -345,9 +348,11 @@ def test_dead_vocabulary_starts_at_the_later_of_acceptance_and_receipt_epoch(
             artifacts=(),
         ),
     )
-    monkeypatch.setattr(
-        "cruxible_core.playbill.curation_detectors._first_accepted_generations",
-        lambda _instance: {contract.identity.qualified: 1},
+    history = _CurationHistoryIndex(
+        claims=(),
+        capture_contract_identities={},
+        first_accepted_generations={contract.identity.qualified: 1},
+        last_generation=13,
     )
     fake = SimpleNamespace()
 
@@ -356,15 +361,52 @@ def test_dead_vocabulary_starts_at_the_later_of_acceptance_and_receipt_epoch(
         tree=tree,
         generation=12,
         operational_head_digest="sha256:" + "9" * 64,
+        history=history,
     )
     due, _ = _dead_vocabulary(
         instance=fake,  # type: ignore[arg-type]
         tree=tree,
         generation=13,
         operational_head_digest="sha256:" + "9" * 64,
+        history=history,
     )
 
     assert too_early == ()
     assert len(due) == 1
     assert due[0].subject == contract.identity
     assert due[0].detail == {"artifact_family": "ClaimType"}
+
+
+def test_shared_history_index_prevents_per_detector_and_per_claim_rescans() -> None:
+    subject_row = subject("project.work_item", "wi-42")
+    claim = claim_fact(1, subject_row=subject_row, predicate=PREDICATE, value="ready")
+    tree = {claim.accepted.path: render_claim(claim.accepted.claim)}
+    calls = {"history": 0, "tree": 0}
+
+    def history():  # type: ignore[no-untyped-def]
+        calls["history"] += 1
+        return (
+            SimpleNamespace(sequence=1, oid="one"),
+            SimpleNamespace(sequence=2, oid="two"),
+        )
+
+    def tree_at(_oid):  # type: ignore[no-untyped-def]
+        calls["tree"] += 1
+        return tree
+
+    fake = SimpleNamespace(
+        accepted_history=history,
+        tree_at=tree_at,
+        body_store=lambda: None,
+    )
+
+    indexed = _curation_history_index(fake)  # type: ignore[arg-type]
+    _duplicate_statements(instance=fake, history=indexed)  # type: ignore[arg-type]
+    _freshness_calibration(
+        instance=fake,  # type: ignore[arg-type]
+        tree={},
+        generation=2,
+        history=indexed,
+    )
+
+    assert calls == {"history": 1, "tree": 2}
