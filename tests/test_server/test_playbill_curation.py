@@ -7,6 +7,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from cruxible_core.playbill.review_operational import (
+    ReviewOperationalConcurrentChangeError,
+    ReviewOperationalStoreError,
+)
+
 
 def test_http_curation_list_is_read_tier_and_returns_operational_head(
     playbill_http: tuple[TestClient, str, Path],
@@ -67,3 +72,45 @@ def test_http_curation_lifecycle_routes_deliver_typed_domain_refusals(
 
     assert response.status_code == 400, response.text
     assert response.json()["error_code"] == "playbill.curation.item_not_found"
+
+
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    (
+        (
+            ReviewOperationalStoreError("corrupt operational event"),
+            400,
+            "playbill.curation.operational_store_invalid",
+        ),
+        (
+            ReviewOperationalConcurrentChangeError(),
+            409,
+            "playbill.curation.concurrent_change",
+        ),
+    ),
+)
+def test_http_curation_maps_both_operational_store_statuses(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+    status: int,
+    code: str,
+) -> None:
+    from cruxible_core.runtime import playbill_api
+
+    client, instance_id, _private_key = playbill_http
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(playbill_api, "playbill_curation_list", refuse)
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/curation/list",
+        json={
+            "tag": "playbill-curation-list-request-v1",
+            "evaluation_time": "2026-08-26T16:00:00+00:00",
+        },
+    )
+
+    assert response.status_code == status, response.text
+    assert response.json()["error_code"] == code
