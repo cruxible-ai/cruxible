@@ -164,11 +164,11 @@ Query execution is a read: it returns the result together with its
 matches, coverage delivery, and Procedure dependency resolution also append
 idempotent per-artifact touches to the daemon-local operational store. A
 `READ_ONLY` actor can therefore grow that store, but these records never alter
-accepted state. Audit likewise appends an idempotent completed-run record, but
-audit and curation never create qualifying consumption touches and never
-execute Procedures or emit repair recommendations.
-accepted state or any semantic/generation root. The floor export returns bytes
-keyed by floor path; materializing a directory is a client act.
+accepted state or any semantic/generation root. Audit likewise appends an
+idempotent completed-run record, but audit and curation never create
+qualifying consumption touches and never execute Procedures or emit repair
+recommendations. The floor export returns bytes keyed by floor path;
+materializing a directory is a client act.
 Coverage resolution takes observations -- a declared logical-source binding and
 the bytes the caller read -- rather than paths, so the daemon reads no client
 filesystem. It appends no receipt: it changes no accepted state, and the
