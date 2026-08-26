@@ -155,8 +155,12 @@ themselves a governed track record; promotion remains a separate governed act.
 | `cruxible_playbill_workspace_coverage_status` | Resolve coverage for the full declared workspace binding set | `READ_ONLY` |
 
 Query execution is a read: it returns the result together with its
-`playbill-query-execution-receipt-v1`, and it writes nothing. The floor export
-returns bytes keyed by floor path; materializing a directory is a client act.
+`playbill-query-execution-receipt-v1`. Qualifying direct reads, query/search
+matches, coverage delivery, and Procedure dependency resolution also append
+idempotent per-artifact touches to the daemon-local operational store. A
+`READ_ONLY` actor can therefore grow that store, but these records never alter
+accepted state or any semantic/generation root. The floor export returns bytes
+keyed by floor path; materializing a directory is a client act.
 Coverage resolution takes observations -- a declared logical-source binding and
 the bytes the caller read -- rather than paths, so the daemon reads no client
 filesystem. It appends no receipt: it changes no accepted state, and the

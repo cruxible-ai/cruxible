@@ -36,6 +36,7 @@ from cruxible_client.contracts.discovery import (
 )
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.primitives import new_id
+from cruxible_client.contracts.procedures.artifacts import procedure_path
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -51,6 +52,13 @@ from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lint_clai
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeMigrationRequest,
     service_migrate_claim_type,
+)
+from cruxible_core.playbill.consumption import (
+    ConsumptionContextV1,
+    ConsumptionOperation,
+    consumption_artifacts_for_dependency_closure,
+    consumption_artifacts_for_paths,
+    record_consumption,
 )
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -218,6 +226,36 @@ def _access(instance_id: str, *, include_body: bool) -> BodyAccessContext:
     if include_body:
         check_permission("cruxible_playbill_body_read", instance_id=instance_id)
     return BodyAccessContext(principal_id=principal_id, can_read_body=include_body)
+
+
+def _consumption_context() -> ConsumptionContextV1 | None:
+    actor = _actor_context()
+    if actor is None:
+        return None
+    return ConsumptionContextV1(
+        actor_context=actor,
+        access_profile_id=coverage_access_profile().profile_id,
+    )
+
+
+def _record_consumed_paths(
+    instance_id: str,
+    *,
+    operation: ConsumptionOperation,
+    coordinate: AcceptedCoordinate,
+    paths: tuple[str, ...],
+) -> None:
+    instance = get_playbill_manager().get(instance_id)
+    record_consumption(
+        instance,
+        context=_consumption_context(),
+        operation=operation,
+        coordinate=coordinate,
+        artifacts=consumption_artifacts_for_paths(
+            instance.tree_at(coordinate.git_oid),
+            paths,
+        ),
+    )
 
 
 def playbill_init(
@@ -626,6 +664,14 @@ def playbill_get_subject(
     result = service_get_playbill_subject(
         get_playbill_manager().get(instance_id), identity=identity, at=at
     )
+    path = result.envelope.get("path")
+    if isinstance(path, str):
+        _record_consumed_paths(
+            instance_id,
+            operation="playbill.subject.get",
+            coordinate=result.coordinate,
+            paths=(path,),
+        )
     return contracts.PlaybillSubjectView.model_validate(result.model_dump(mode="json"))
 
 
@@ -723,6 +769,12 @@ def playbill_get_claim_type(
     check_permission("cruxible_playbill_read", instance_id=instance_id)
     result = service_get_playbill_claim_type(
         get_playbill_manager().get(instance_id), predicate=predicate, at=at
+    )
+    _record_consumed_paths(
+        instance_id,
+        operation="playbill.claim_type.get",
+        coordinate=result.coordinate,
+        paths=(result.path,),
     )
     return contracts.PlaybillClaimTypeView.model_validate(result.model_dump(mode="json"))
 
@@ -1012,6 +1064,14 @@ def playbill_get_claim(
         at=at,
         evaluation_time=_evaluation_time(evaluation_time),
     )
+    path = result.envelope.get("path")
+    if isinstance(path, str):
+        _record_consumed_paths(
+            instance_id,
+            operation="playbill.claim.get",
+            coordinate=result.coordinate,
+            paths=(path,),
+        )
     return contracts.PlaybillClaimViewV2.model_validate(result.model_dump(mode="json"))
 
 
@@ -1088,6 +1148,12 @@ def playbill_get_query_definition(
     result = service_get_playbill_query_definition(
         get_playbill_manager().get(instance_id), name=name, at=at
     )
+    _record_consumed_paths(
+        instance_id,
+        operation="playbill.query_definition.get",
+        coordinate=result.coordinate,
+        paths=(result.path,),
+    )
     return contracts.PlaybillQueryDefinitionView.model_validate(result.model_dump(mode="json"))
 
 
@@ -1115,6 +1181,12 @@ def playbill_run_query(
         parameters=parameters,
         at=at,
         budgets=budgets,
+    )
+    _record_consumed_paths(
+        instance_id,
+        operation="playbill.query.run",
+        coordinate=result.coordinate,
+        paths=(result.definition_path,),
     )
     return contracts.PlaybillQueryRun.model_validate(result.model_dump(mode="json"))
 
@@ -1166,6 +1238,20 @@ def playbill_procedure_run(
         name=name,
         request=request,
         actor_context=actor,
+    )
+    instance = get_playbill_manager().get(instance_id)
+    record_consumption(
+        instance,
+        context=ConsumptionContextV1(
+            actor_context=actor,
+            access_profile_id=coverage_access_profile().profile_id,
+        ),
+        operation="playbill.procedure.run.resolve",
+        coordinate=result.coordinate,
+        artifacts=consumption_artifacts_for_dependency_closure(
+            instance.tree_at(result.coordinate.git_oid),
+            procedure_path(name),
+        ),
     )
     return contracts.PlaybillProcedureRunState.model_validate(result.model_dump(mode="json"))
 
@@ -1249,8 +1335,9 @@ def playbill_search(
     budgets: PlaybillSearchBudgetsV1 | None = None,
 ) -> contracts.PlaybillSearchResult:
     check_permission("cruxible_playbill_search", instance_id=instance_id)
+    instance = get_playbill_manager().get(instance_id)
     result = service_search_playbill(
-        get_playbill_manager().get(instance_id),
+        instance,
         request=PlaybillSearchRequestV1(
             mode=mode,
             accepted_coordinate=_accepted_coordinate(instance_id, at),
@@ -1265,6 +1352,13 @@ def playbill_search(
             or (cursor.budgets if cursor is not None else PlaybillSearchBudgetsV1()),
         ),
     )
+    if result.mode == "search":
+        _record_consumed_paths(
+            instance_id,
+            operation="playbill.search.match",
+            coordinate=result.coordinate,
+            paths=tuple(row.address.artifact_path for row in result.rows),
+        )
     return contracts.PlaybillSearchResult.model_validate(result.model_dump(mode="json"))
 
 
@@ -1288,6 +1382,13 @@ def playbill_expand(
             budget=budget or ExpansionBudgetV1(),
         ),
     )
+    if isinstance(result.at, AcceptedCoordinate):
+        _record_consumed_paths(
+            instance_id,
+            operation="playbill.expand",
+            coordinate=result.at,
+            paths=(address.artifact_path,),
+        )
     return contracts.PlaybillContextCapsule.model_validate(result.model_dump(mode="json"))
 
 
@@ -1308,17 +1409,10 @@ def playbill_resolve_coverage(
     observations and the spans they carry, because an adapter contains no
     semantic logic and this operation reads no filesystem.
 
-    **No receipt is appended, and that is a decision rather than an omission.**
-    §11.6 makes coverage delivery semantically side-effect-free: it changes no
-    accepted state, no candidate, no permission, no verdict input, and no
-    evaluation episode, and it adds no authority to the material it describes.
-    Whether ordinary reads append to a daemon-owned journal is PC-G's
-    journal-ownership decision -- the same open seam that leaves
-    ``journal_record_digest`` absent on query execution -- and settling it here
-    would settle it from the wrong end, by making the highest-frequency read in
-    the system the first journal writer. A coverage answer stays checkable
-    without one: it names the evidence-index digest, the overlay digest, and the
-    manifest digest it resolved against, and those three reproduce it exactly.
+    A successful outer call appends local, idempotent per-artifact consumption
+    receipts.  They add no authority and enter no accepted-state or answer
+    digest; they only account for which accepted artifacts this service
+    actually delivered.
 
     The access profile is derived from this surface's read authority and is
     never accepted from the caller, so a request cannot widen its own
@@ -1333,6 +1427,18 @@ def playbill_resolve_coverage(
         at=at,
         budget=budget,
         scan_budget=scan_budget,
+    )
+    claim_paths = tuple(
+        address.artifact_path
+        for span in result.spans
+        for card in span.cards
+        for address in card.claim_addresses
+    )
+    _record_consumed_paths(
+        instance_id,
+        operation="playbill.coverage.resolve",
+        coordinate=result.at,
+        paths=claim_paths,
     )
     return contracts.PlaybillCoverageResult(
         coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
