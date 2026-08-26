@@ -801,6 +801,19 @@ class PlaybillNextResult(BaseModel):
     result_digest: str
 
 
+class PlaybillCurationListResult(BaseModel):
+    """G9 curation queue plus request-bound observation accounting."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-curation-list-result-v1"] = "playbill-curation-list-result-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    generation: int = Field(ge=0)
+    operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    observation_coverage: dict[str, Any]
+
+
 def _since_digest(domain: str, payload: dict[str, Any]) -> str:
     return (
         "sha256:"
@@ -1009,8 +1022,9 @@ class PlaybillCoverageResult(BaseModel):
     ``result`` carries the frozen coverage grammar verbatim -- span results,
     cards, the one batch summary, coverage health, accepted coordinate, scope,
     manifest epoch, and the index/overlay/manifest digests the answer was
-    resolved against. Resolving coverage appends no receipt: it changes no
-    accepted state, and those three digests are what make it reproducible.
+    resolved against. Coverage remains reproducible from those three digests;
+    a successful outer read may additionally append a local consumption touch,
+    which enters neither this answer nor accepted state.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

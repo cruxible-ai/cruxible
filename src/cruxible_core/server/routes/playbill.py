@@ -28,6 +28,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringRebaseRequest,
     PlaybillAuthoringSubmitRequest,
     PlaybillClaimExplainRequest,
+    PlaybillCurationListRequest,
     PlaybillDiscoverRequest,
     PlaybillExpandRequest,
     PlaybillExplainRequest,
@@ -987,6 +988,20 @@ async def next_work(
     req: PlaybillNextRequest,
 ) -> contracts.PlaybillNextResult:
     return playbill_api.playbill_next(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json", exclude_none=True),
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/curation/list",
+    response_model=contracts.PlaybillCurationListResult,
+)
+async def curation_list(
+    instance_id: str,
+    req: PlaybillCurationListRequest,
+) -> contracts.PlaybillCurationListResult:
+    return playbill_api.playbill_curation_list(
         resolve_server_instance_id(instance_id),
         request=req.model_dump(mode="json", exclude_none=True),
     )

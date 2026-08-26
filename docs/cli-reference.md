@@ -234,6 +234,16 @@ Conflicting values in the same claim slot require revisions into distinct
 qualifiers; when a shared value field such as `topic` separates the contenders,
 the repair identifies that field.
 
+## playbill curation
+
+~~~text
+cruxible playbill curation list [--workspace-root PATH] [--json]
+~~~
+
+Lists the mechanical curation queue and explicitly submits the declared-block
+observation produced by the client-side workspace scanner. The daemon does not
+read workspace files.
+
 ## playbill discover
 
 ~~~text

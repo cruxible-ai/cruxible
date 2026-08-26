@@ -51,6 +51,7 @@ _COORDINATE = api.PlaybillAcceptedCoordinate(
 class _Client:
     def __init__(self) -> None:
         self.compiled: dict[str, Any] | None = None
+        self.curation_observation: object | None = None
 
     def search_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSearchResult:
         return api.PlaybillSearchResult(
@@ -79,6 +80,24 @@ class _Client:
                     "playbill-since-result-v1", result_values
                 ),
             }
+        )
+
+    def list_playbill_curation(
+        self, _instance_id: str, **values: object
+    ) -> api.PlaybillCurationListResult:
+        self.curation_observation = values["workspace_observation"]
+        return api.PlaybillCurationListResult(
+            coordinate=_COORDINATE,
+            generation=4,
+            operational_head_digest="sha256:" + "6" * 64,
+            items=[],
+            observation_coverage={
+                "tag": "playbill-curation-observation-coverage-v1",
+                "source_count": 1,
+                "observed_block_count": 0,
+                "omitted_source_count": 0,
+                "omissions": [],
+            },
         )
 
     def compile_playbill_authoring(
@@ -147,6 +166,25 @@ def test_sdk_since_uses_its_active_orientation(tmp_path: Path) -> None:
 
     assert result.generation == 4
     assert result.rows == []
+
+
+def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+
+    result = pb.curation_list()
+
+    assert result.generation == 4
+    assert isinstance(client.curation_observation, dict)
+    assert client.curation_observation["tag"] == "playbill-next-workspace-observation-v1"
 
 
 @pytest.mark.parametrize("window", [False, True])

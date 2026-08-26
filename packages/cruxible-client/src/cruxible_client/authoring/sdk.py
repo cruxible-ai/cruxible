@@ -1392,6 +1392,15 @@ class Playbill:
             cursor=cursor,
         )
 
+    def curation_list(self) -> api.PlaybillCurationListResult:
+        """Read the curation queue with one explicit attributed workspace scan."""
+
+        observation = observe_playbill_next_workspace(self._workspace)
+        return self._client.list_playbill_curation(
+            self._instance_id,
+            workspace_observation=observation,
+        )
+
     def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:
         if coordinate != self.coordinate:
             raise ValueError(

@@ -1906,6 +1906,39 @@ def next_work(
         click.echo("Unobserved: " + ", ".join(result.unobserved_domains))
 
 
+@playbill_group.group("curation")
+def curation_group() -> None:
+    """Inspect mechanically detected ontology-maintenance patterns."""
+
+
+@curation_group.command("list")
+@click.option(
+    "--workspace-root",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Workspace scanned explicitly for declared-block observations.",
+)
+@json_option
+@handle_errors
+def curation_list(workspace_root: str, output_json: bool) -> None:
+    observation = observe_playbill_next_workspace(Path(workspace_root))
+    result = _server_call(
+        lambda client, instance_id: client.list_playbill_curation(
+            instance_id,
+            workspace_observation=observation,
+        ),
+        command_name="playbill curation list",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(
+        f"Curation queue at generation {result.generation}: {len(result.items)} item(s); "
+        f"observed {result.observation_coverage['observed_block_count']} declared block(s)."
+    )
+
+
 @playbill_group.command("since")
 @click.argument("generation", type=click.IntRange(min=0))
 @click.option("--max-rows", default=100, show_default=True, type=click.IntRange(1, 1000))

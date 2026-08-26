@@ -137,7 +137,14 @@ from cruxible_core.service.playbill_coverage import (
     coverage_access_profile,
     service_resolve_playbill_coverage,
 )
-from cruxible_core.service.playbill_discovery import service_discover_playbill_semantic
+from cruxible_core.service.playbill_curation import (
+    PlaybillCurationListRequestV1,
+    service_list_playbill_curation,
+)
+from cruxible_core.service.playbill_discovery import (
+    PlaybillDiscoveryResultV1,
+    service_discover_playbill_semantic,
+)
 from cruxible_core.service.playbill_floor import MANIFEST_PATH, service_export_playbill_floor
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
@@ -1281,6 +1288,28 @@ def playbill_next(
     return contracts.PlaybillNextResult.model_validate(result.model_dump(mode="json"))
 
 
+def playbill_curation_list(
+    instance_id: str,
+    *,
+    request: PlaybillCurationListRequestV1 | Mapping[str, object],
+) -> contracts.PlaybillCurationListResult:
+    check_permission("cruxible_playbill_curation_list", instance_id=instance_id)
+    actor = _actor_context()
+    if actor is None:
+        raise AuthenticationError("Playbill curation reads require an attributed actor")
+    parsed = (
+        request
+        if isinstance(request, PlaybillCurationListRequestV1)
+        else PlaybillCurationListRequestV1.model_validate(request)
+    )
+    result = service_list_playbill_curation(
+        get_playbill_manager().get(instance_id),
+        request=parsed,
+        actor_context=actor,
+    )
+    return contracts.PlaybillCurationListResult.model_validate(result.model_dump(mode="json"))
+
+
 def playbill_since(
     instance_id: str,
     *,
@@ -1315,6 +1344,13 @@ def playbill_discover(
         profile=profile,
         budget=budget or DiscoveryBudgetV1(),
     )
+    if isinstance(result, PlaybillDiscoveryResultV1):
+        _record_consumed_paths(
+            instance_id,
+            operation="playbill.discover.match",
+            coordinate=result.coordinate,
+            paths=tuple(hit.address.artifact_path for hit in result.page.hits),
+        )
     payload = result.model_dump(mode="json")
     if payload.get("tag") == "playbill-interface-inventory-v1":
         return contracts.PlaybillInterfaceInventory.model_validate(payload)

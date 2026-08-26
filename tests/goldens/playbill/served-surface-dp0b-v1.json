@@ -17,6 +17,7 @@
     "playbill_authoring_submit",
     "playbill_check_source_bundle",
     "playbill_claim_history",
+    "playbill_curation_list",
     "playbill_dereference_document",
     "playbill_discover",
     "playbill_document_history",
@@ -67,6 +68,6 @@
     "playbill_submit_approval",
     "playbill_whoami"
   ],
-  "http_delegate_count": 65,
-  "mcp_delegate_count": 62
+  "http_delegate_count": 66,
+  "mcp_delegate_count": 63
 }

@@ -1129,6 +1129,23 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillSinceResult)
 
+    def list_playbill_curation(
+        self,
+        instance_id: str,
+        *,
+        workspace_observation: Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillCurationListResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/curation/list",
+            json={
+                "tag": "playbill-curation-list-request-v1",
+                "workspace_observation": (
+                    None if workspace_observation is None else dict(workspace_observation)
+                ),
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillCurationListResult)
+
     def discover_playbill(
         self,
         instance_id: str,

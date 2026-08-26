@@ -234,6 +234,11 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
     workspace_observation: dict[str, Any] | None = None
 
 
+class PlaybillCurationListRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
+    workspace_observation: dict[str, Any] | None = None
+
+
 class PlaybillExpandRequest(_StrictPlaybillRequest):
     address: SemanticAddress
     at: AcceptedCoordinate | None = None

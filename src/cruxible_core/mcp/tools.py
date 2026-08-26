@@ -649,6 +649,17 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_curation_list(
+        instance_id: str,
+        workspace_observation: dict[str, Any] | None = None,
+    ) -> contracts.PlaybillCurationListResult:
+        """List mechanical curation patterns and explicitly ingest block observations."""
+        return handlers.handle_playbill_curation_list(
+            instance_id,
+            workspace_observation=workspace_observation,
+        )
+
+    @_tool
     def cruxible_playbill_expand(
         instance_id: str,
         address: dict[str, Any],

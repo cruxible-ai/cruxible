@@ -569,6 +569,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="procedure_group",
             ),
             "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
+            "curation": _group(
+                "Inspect mechanically detected ontology-maintenance patterns.",
+                {"list": _command("playbill", "curation_list", "Read the curation queue.")},
+                module="playbill",
+                attr="curation_group",
+            ),
             "discover": _command(
                 "playbill", "discover", "Find accepted interfaces and Subjects by name."
             ),

@@ -1289,6 +1289,25 @@ def handle_playbill_since(
     )
 
 
+def handle_playbill_curation_list(
+    instance_id: str,
+    *,
+    workspace_observation: dict[str, Any] | None,
+) -> contracts.PlaybillCurationListResult:
+    request = {
+        "tag": "playbill-curation-list-request-v1",
+        "workspace_observation": workspace_observation,
+    }
+    return _dispatch_remote_or_local(
+        lambda client: client.list_playbill_curation(
+            instance_id,
+            workspace_observation=workspace_observation,
+        ),
+        lambda: playbill_api.playbill_curation_list(instance_id, request=request),
+        operation_name="cruxible_playbill_curation_list",
+    )
+
+
 def handle_playbill_expand(
     instance_id: str,
     address: dict[str, Any],

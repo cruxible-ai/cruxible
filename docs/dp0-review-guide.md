@@ -74,6 +74,7 @@ playbill native stash restore
 playbill native stash show
 playbill native status
 playbill next
+playbill curation list
 playbill orient
 playbill principal add
 playbill principal list
@@ -183,6 +184,7 @@ GET  /api/v1/{instance_id}/playbill/queries
 GET  /api/v1/{instance_id}/playbill/queries/{name}
 POST /api/v1/{instance_id}/playbill/queries/{name}/run
 POST /api/v1/{instance_id}/playbill/next
+POST /api/v1/{instance_id}/playbill/curation/list
 GET  /api/v1/{instance_id}/playbill/procedures/{name}/readiness
 POST /api/v1/{instance_id}/playbill/procedures/{name}/bind
 POST /api/v1/{instance_id}/playbill/procedures/{name}/runs
@@ -273,6 +275,7 @@ cruxible_playbill_seed_apply
 cruxible_playbill_seed_plan
 cruxible_playbill_search
 cruxible_playbill_since
+cruxible_playbill_curation_list
 cruxible_playbill_whoami
 ```
 

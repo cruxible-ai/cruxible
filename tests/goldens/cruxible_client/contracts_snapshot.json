@@ -6546,7 +6546,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "One resolved coverage answer: the whole `playbill-coverage-result-v1`.\n\n``result`` carries the frozen coverage grammar verbatim -- span results,\ncards, the one batch summary, coverage health, accepted coordinate, scope,\nmanifest epoch, and the index/overlay/manifest digests the answer was\nresolved against. Resolving coverage appends no receipt: it changes no\naccepted state, and those three digests are what make it reproducible.",
+        "description": "One resolved coverage answer: the whole `playbill-coverage-result-v1`.\n\n``result`` carries the frozen coverage grammar verbatim -- span results,\ncards, the one batch summary, coverage health, accepted coordinate, scope,\nmanifest epoch, and the index/overlay/manifest digests the answer was\nresolved against. Coverage remains reproducible from those three digests;\na successful outer read may additionally append a local consumption touch,\nwhich enters neither this answer nor accepted state.",
         "properties": {
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
@@ -6573,6 +6573,173 @@
       "required_fields": [
         "coordinate",
         "result"
+      ]
+    },
+    "PlaybillCurationListResult": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "items": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "items",
+          "required": false,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "observation_coverage": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "observation_coverage",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Observation Coverage",
+            "type": "object"
+          }
+        },
+        "operational_head_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operational_head_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Operational Head Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-curation-list-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-curation-list-result-v1",
+            "default": "playbill-curation-list-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "G9 curation queue plus request-bound observation accounting.",
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "observation_coverage": {
+            "additionalProperties": true,
+            "title": "Observation Coverage",
+            "type": "object"
+          },
+          "operational_head_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Operational Head Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-curation-list-result-v1",
+            "default": "playbill-curation-list-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "generation",
+          "operational_head_digest",
+          "observation_coverage"
+        ],
+        "title": "PlaybillCurationListResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "generation",
+        "observation_coverage",
+        "operational_head_digest"
       ]
     },
     "PlaybillDiscoveryResult": {
