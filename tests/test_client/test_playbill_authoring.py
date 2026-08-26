@@ -11,7 +11,8 @@ from pydantic import TypeAdapter, ValidationError
 
 import cruxible_client
 from cruxible_client import CruxibleClient, Playbill
-from cruxible_client.authoring.inputs import AuthoringInputV1
+from cruxible_client.authoring.inputs import AuthoringInputError, AuthoringInputV1
+from cruxible_client.contracts.errors import PlaybillFormatError
 
 COORDINATE = {
     "tag": "playbill-accepted-coordinate-v1",
@@ -85,6 +86,19 @@ def _claim_payload() -> dict[str, Any]:
         "existing_claim_dispositions": [],
         "insertion_target": None,
     }
+
+
+def test_authoring_input_error_preserves_published_exception_compatibility() -> None:
+    error = AuthoringInputError(
+        code="playbill.authoring.input_invalid",
+        field_path="$.statement.subject",
+        message="subject is invalid",
+        repair="choose a listed subject",
+    )
+
+    assert isinstance(error, PlaybillFormatError)
+    assert isinstance(error, ValueError)
+    assert isinstance(hash(error), int)
 
 
 def test_client_speaks_frozen_compile_and_submit_requests() -> None:

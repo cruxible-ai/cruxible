@@ -85,7 +85,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjec
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
 
 
-@dataclass
+@dataclass(eq=False)
 class AuthoringLoweringError(ValueError):
     code: str
     offending_element: str

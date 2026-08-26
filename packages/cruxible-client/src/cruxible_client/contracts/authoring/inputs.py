@@ -148,8 +148,8 @@ AuthoringInputV1: TypeAlias = Annotated[
 ]
 
 
-@dataclass
-class AuthoringInputError(PlaybillFormatError):
+@dataclass(eq=False)
+class AuthoringInputError(PlaybillFormatError, ValueError):
     code: str
     field_path: str
     message: str
