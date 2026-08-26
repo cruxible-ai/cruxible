@@ -271,4 +271,4 @@ def test_query_fact_projection_indexes_claim_law_history_once(
     )
 
     assert len(facts.claims) == 2
-    assert calls == 2
+    assert calls == 1
