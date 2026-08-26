@@ -192,6 +192,47 @@ def test_failed_fold_writes_no_completed_run(
     assert completed_audit_runs(instance) == ()
 
 
+def test_byte_budget_records_exact_omission_without_skipping_the_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    subject_row = subject("project.work_item", "wi-byte-budget")
+    claim_row = claim_fact(
+        9,
+        subject_row=subject_row,
+        predicate=PREDICATE,
+        value="ready",
+    )
+    projected = ClaimQueryFactsV1(
+        coordinate=instance.accepted_coordinate(),
+        subjects=(subject_row,),
+        claims=(claim_row,),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_audit.build_accepted_query_facts",
+        lambda *_args, **_kwargs: projected,
+    )
+
+    result = service_playbill_audit(
+        instance,
+        request=PlaybillAuditRequestV1(
+            evaluation_time=NOW,
+            access_profile=CoverageAccessProfileV1(profile_id="test-audit-bytes"),
+            budget=AuditBudgetV1(max_rows=10, max_bytes=1_024),
+        ),
+        actor_context=_actor(),
+    )
+
+    assert result.rows == ()
+    assert result.coverage.candidate_claim_count == 1
+    assert result.coverage.returned_claim_count == 0
+    assert result.coverage.omitted_claim_count == 1
+    assert result.coverage.omission_reasons == ("byte_budget_exceeded",)
+    assert result.next_cursor is None
+    assert len(completed_audit_runs(instance)) == 1
+
+
 def test_audit_scope_and_budget_are_closed_and_canonical() -> None:
     assert (
         AuditScopeV1(
