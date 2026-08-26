@@ -155,7 +155,7 @@ def test_one_coordinate_pinned_coverage_read_enriches_existing_v1_without_replac
         }
     ]
     (source,) = enriched["source_observations"]
-    assert source["tag"] == "playbill-next-source-observation-v2"
+    assert source["tag"] == "playbill-next-source-observation-v3"
     assert source["scan_complete"] is True
     assert source["marker_summaries"][0]["stamp"]["block_id"] == "summary"
     assert len(source["occurrences"]) == 1

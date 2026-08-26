@@ -38,6 +38,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextDriftObservationV1,
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV1,
+    PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationInvalid,
     PlaybillNextWorkspaceObservationV1,
     _qualifier_discriminator,
@@ -208,10 +209,18 @@ def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path
                 access_profile=access_profile,
                 workspace_observation=PlaybillNextWorkspaceObservationV1(
                     source_observations=(
-                        PlaybillNextSourceObservationV1(
+                        PlaybillNextSourceObservationV3(
+                            tag="playbill-next-source-observation-v3",
                             source_id="corpus.runbook",
                             document_id="runbook",
                             observed_source_digest=observed_digest,
+                            byte_length=0,
+                            marker_summaries=(),
+                            occurrences=(),
+                            scanned_commitment_digests=(),
+                            scan_complete=True,
+                            scan_notes=(),
+                            marker_notes=(),
                         ),
                     )
                 ),

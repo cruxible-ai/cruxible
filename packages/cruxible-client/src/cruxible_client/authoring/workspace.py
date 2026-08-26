@@ -459,7 +459,7 @@ def _unobserved_projection_source(
     marker_notes: Sequence[str] = (),
 ) -> dict[str, object]:
     return {
-        "tag": "playbill-next-source-observation-v2",
+        "tag": "playbill-next-source-observation-v3",
         "source_id": source_id,
         "document_id": document_id,
         "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
@@ -736,7 +736,7 @@ def observe_playbill_next_workspace_with_coverage(
             )
             continue
         enriched[source_id] = {
-            "tag": "playbill-next-source-observation-v2",
+            "tag": "playbill-next-source-observation-v3",
             "source_id": source_id,
             "document_id": document_ids[source_id],
             "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
