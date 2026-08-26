@@ -917,7 +917,12 @@ def _provenance_concentration(
         attestations: dict[str, VerifiedClaimAttestationV1] = {}
         refs: list[CurationEvidenceRefV1] = []
         for row, verdict in members:
-            supporting = set(verdict.supporting_evidence_digests)
+            current_evidence = {
+                digest
+                for component in verdict.control_components
+                for digest in component.evidence_digests
+            }
+            supporting = set(verdict.supporting_evidence_digests).intersection(current_evidence)
             for capture in row.captures:
                 if capture.capture_digest in supporting:
                     captures[capture.capture_digest] = capture

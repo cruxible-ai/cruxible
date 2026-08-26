@@ -44,7 +44,7 @@ from cruxible_core.playbill.curation_detectors import (
     _recurring_conflicts,
 )
 from tests.test_playbill._modeling_parity_support import claim_fact, claim_type, subject
-from tests.test_playbill._pc_c_support import capture_contract, digest
+from tests.test_playbill._pc_c_support import capture_contract, digest, provider
 
 NOW = datetime(2026, 8, 16, 12, tzinfo=UTC)
 PREDICATE = "project.work_item.status"
@@ -187,6 +187,53 @@ def test_provenance_concentration_uses_effective_supporting_control_components()
     assert len(detected) == 1
     component = next(ref for ref in detected[0].evidence_refs if ref.kind == "control_component")
     assert component.facts["control_domains"] == ["shared-owner"]
+
+
+def test_provenance_concentration_excludes_a_stale_capture_that_bridges_current_components() -> (
+    None
+):
+    contract = capture_contract()
+    upstream = provider(contract, name="upstream-b", control_domain="independent-b")
+    first = claim_fact(
+        1,
+        subject_row=subject("project.work_item", "wi-1"),
+        predicate=PREDICATE,
+        value="ready",
+    ).model_copy(
+        update={
+            "captures": (
+                _capture(1, "independent-a"),
+                _capture(3, "independent-a").model_copy(
+                    update={
+                        "current_replay_available": False,
+                        "upstream_provenance": (upstream.identity,),
+                    }
+                ),
+            ),
+            "resolved_authority_basis": (),
+        }
+    )
+    second = claim_fact(
+        2,
+        subject_row=subject("project.work_item", "wi-2"),
+        predicate=PREDICATE,
+        value="ready",
+    ).model_copy(
+        update={
+            "captures": (_capture(2, "independent-b"),),
+            "resolved_authority_basis": (),
+        }
+    )
+
+    detected, coverage = _provenance_concentration(
+        rows=(first, second),
+        providers=(upstream,),
+        evaluation_time=NOW,
+        generation=3,
+    )
+
+    assert coverage.evaluated_fact_count == 2
+    assert detected == ()
 
 
 def test_freshness_calibration_uses_changed_commitment_intervals_without_recommendation() -> None:
