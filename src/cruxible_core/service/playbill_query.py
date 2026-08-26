@@ -49,8 +49,9 @@ from cruxible_core.playbill.query.engine import (
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.service.query_definitions import accepted_query_definition
 from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
-from cruxible_core.service.playbill_claims import _claim_law_evidence_index
 from cruxible_core.service.playbill_evidence import (
+    ClaimReadHistoryIndex,
+    _claim_read_history_index,
     _current_replay_available,
     _referent_digests,
     _reproduced_claim_adjudication_rule,
@@ -115,6 +116,7 @@ def _fact_row(
     coordinate: AcceptedProjectionCoordinate,
     readers: Mapping[str, ExternalSourceReaderProtocol],
     evidence: ClaimLawEvidenceAny,
+    history: ClaimReadHistoryIndex,
 ) -> ClaimFactRowV1:
     """Assemble one Claim's verdict inputs exactly as the verdict service does."""
 
@@ -133,10 +135,9 @@ def _fact_row(
         raise ClaimNotFoundError(type_path)
     claim_type = parse_claim_type(type_content, path=type_path)
     rule = _reproduced_claim_adjudication_rule(
-        instance,
-        coordinate=coordinate,
         claim_type=claim_type,
         evidence_digest=evidence.adjudication_rule_digest,
+        history=history,
     )
     captures = tuple(
         item.model_copy(
@@ -199,10 +200,10 @@ def build_accepted_query_facts(
 
     tree = instance.tree_at(coordinate.git_oid)
     readers = external_readers or {}
-    evidence_by_path = _claim_law_evidence_index(instance, at=coordinate)
+    history = _claim_read_history_index(instance, coordinate=coordinate)
 
     def evidence_for(path: str) -> ClaimLawEvidenceAny:
-        evidence = evidence_by_path.get(path)
+        evidence = history.law_evidence.get(path)
         if evidence is None:
             raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
         return evidence
@@ -215,6 +216,7 @@ def build_accepted_query_facts(
             coordinate=coordinate,
             readers=readers,
             evidence=evidence_for(path),
+            history=history,
         )
         for path in sorted(tree, key=lambda item: item.encode("utf-8"))
         if path.startswith(CLAIM_PATH_PREFIX)

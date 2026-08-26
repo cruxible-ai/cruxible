@@ -1075,6 +1075,33 @@ def _citation_origin_refusal(
     return None
 
 
+def _is_claim_type_rederivation(
+    claim: ClaimArtifactAny,
+    *,
+    predecessor: ClaimArtifactAny,
+    claim_type_digest: str,
+    claim_type_identity: ArtifactIdentity,
+) -> bool:
+    """Recognize the exact machine-generated delta for ClaimType succession."""
+
+    expected_statement = predecessor.statement.model_copy(
+        update={"claim_type_digest": claim_type_digest}
+    )
+    expected_pins = tuple(
+        pin.model_copy(update={"artifact_digest": claim_type_digest})
+        if pin.role == "claim-type" and pin.target == claim_type_identity
+        else pin
+        for pin in predecessor.pins
+    )
+    return (
+        claim.artifact_format == predecessor.artifact_format
+        and claim.statement == expected_statement
+        and claim.backing == predecessor.backing
+        and claim.pins == expected_pins
+        and claim.lifecycle.state == predecessor.lifecycle.state
+    )
+
+
 def evaluate_claim_law(
     claim: ClaimArtifactAny,
     *,
@@ -1390,13 +1417,19 @@ def evaluate_claim_law(
                 "The Claim successor does not name the exact live predecessor.",
                 path=path,
             )
-        if predecessor.claim.lifecycle.state == "retired":
+        claim_type_rederivation = _is_claim_type_rederivation(
+            claim,
+            predecessor=predecessor.claim,
+            claim_type_digest=claim_type.artifact_digest,
+            claim_type_identity=contract.identity,
+        )
+        if predecessor.claim.lifecycle.state == "retired" and not claim_type_rederivation:
             return _diagnostic(
                 "playbill.claim.lifecycle_invalid",
                 "A retired Claim lineage cannot be revived.",
                 path=path,
             )
-        if claim.authority != predecessor.claim.authority:
+        if claim.authority != predecessor.claim.authority and not claim_type_rederivation:
             return _diagnostic(
                 "playbill.claim.authority_change_unsupported",
                 "Claim succession cannot weaken or rewrite accepted authority in v1.",

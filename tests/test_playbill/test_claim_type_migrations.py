@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -13,7 +12,12 @@ from cruxible_client.authoring.inputs import (
     LiteralObjectInput,
     SelfSourceInput,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import (
+    ArtifactAuthority,
+    ArtifactIdentity,
+    ArtifactLifecycle,
+    ArtifactPin,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimAttestationConsequenceRuleV1,
@@ -24,7 +28,16 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
     render_claim_type,
 )
-from cruxible_client.contracts.claims import claim_path, parse_claim
+from cruxible_client.contracts.claim_verdicts import (
+    claim_adjudication_rule,
+    claim_adjudication_rule_digest,
+)
+from cruxible_client.contracts.claims import (
+    claim_artifact_digest,
+    claim_path,
+    parse_claim,
+    render_claim,
+)
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
@@ -32,7 +45,7 @@ from cruxible_client.contracts.query.definitions import (
     render_query_definition,
 )
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lower_claim_type_input
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeDependentDispositionV2,
@@ -51,9 +64,7 @@ from cruxible_core.playbill.service.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.playbill_claims import _claim_law_evidence
-from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
 from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
-from cruxible_core.service.playbill_query import build_accepted_query_facts
 from tests.test_playbill._adoption_fixture import _query_definition
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
@@ -271,6 +282,98 @@ def _decision_only_successor(instance, *, enum: list[str]):  # type: ignore[no-u
         values.pop(mechanical, None)
     values["literal_schema"] = {"type": "string", "enum": enum}
     return ClaimTypeInputV1.model_validate(values)
+
+
+def _activate_migration(instance, owner, successor, dependents):  # type: ignore[no-untyped-def]
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV2(
+            mode="submit",
+            successor=successor,
+            dependents=dependents,
+        ),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert isinstance(result, ClaimTypeMigrationResultV2)
+    candidate = result.proposal.proposal.candidate
+    assert candidate is not None
+    approval = _sign(
+        owner,
+        candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=result.proposal.proposal.admission.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=result.proposal.proposal.admission.proposal_id,
+        ).status
+        == "accepted"
+    )
+    return result
+
+
+def _accept_claim_type_only(
+    instance,
+    owner,
+    successor: ClaimTypeInputV1,
+    *,
+    proposal_name: str,
+):  # type: ignore[no-untyped-def]
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    lowered = lower_claim_type_input(successor, tree=tree)
+    tree[claim_type_path(lowered.predicate)] = render_claim_type(lowered)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name=proposal_name,
+    )
+    return lowered
+
+
+def _next(instance):  # type: ignore[no-untyped-def]
+    return service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            evaluation_time=datetime(2026, 8, 26, 12, tzinfo=UTC),
+            access_profile=CoverageAccessProfileV1(
+                profile_id="migration-test",
+                permitted_access_classes=("instance", "public"),
+            ),
+        ),
+    )
+
+
+def _policy(threshold: int) -> ClaimAttestationConsequencePolicyV1:
+    return ClaimAttestationConsequencePolicyV1(
+        rules=(
+            ClaimAttestationConsequenceRuleV1(
+                rule_id="independent-unsure",
+                stance="unsure",
+                minimum_independent_control_components=threshold,
+            ),
+        )
+    )
+
+
+def _assert_current_adjudication_evidence(instance, claim_id: str) -> None:  # type: ignore[no-untyped-def]
+    coordinate = instance.accepted_coordinate()
+    tree = instance.tree_at(coordinate.git_oid)
+    path = claim_type_path(_claim_type().predicate)
+    claim_type = parse_claim_type(tree[path], path=path)
+    evidence = _claim_law_evidence(instance, path=claim_path(claim_id), at=coordinate)
+    rule = claim_adjudication_rule(
+        claim_type,
+        claim_type_digest=claim_type_digest(claim_type).tagged,
+    )
+    assert evidence.adjudication_rule_digest == claim_adjudication_rule_digest(rule)
 
 
 def test_migration_refuses_hand_authored_predecessor_artifact_pins(tmp_path: Path) -> None:
@@ -519,128 +622,197 @@ def test_claim_type_v3_to_v4_migration_preserves_freshness_and_accepts_policy(
     assert accepted_v4.lifecycle.predecessor_digest == claim_type_digest(accepted_v3).tagged
 
 
-def test_policy_only_v4_migration_keeps_predecessor_adjudication_evidence_reproducible(
+def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
-    actor = AuthenticatedActor(actor_id="owner")
-    path = claim_type_path(_claim_type().predicate)
-    dependent = ClaimTypeDependentDispositionV2(
-        identity=ArtifactIdentity(kind="Claim", name=claim_id),
-        disposition="successor",
-    )
-
-    def migrate_and_activate(successor: ClaimTypeInputV1) -> None:
-        result = service_migrate_claim_type(
-            instance,
-            request=ClaimTypeMigrationRequestV2(
-                mode="submit",
-                successor=successor,
-                dependents=(dependent,),
-            ),
-            actor=actor,
-        )
-        assert isinstance(result, ClaimTypeMigrationResultV2)
-        candidate = result.proposal.proposal.candidate
-        assert candidate is not None
-        approval = _sign(
-            owner,
-            candidate.candidate_digest,
-            instance.accepted_coordinate().semantic_root,
-        )
-        service_submit_playbill_approval(
-            instance,
-            proposal_id=result.proposal.proposal.admission.proposal_id,
-            attestation=approval.attestation,
-            authenticated_submitter="owner",
-        )
-        assert (
-            service_activate_playbill_proposal(
-                instance,
-                proposal_id=result.proposal.proposal.admission.proposal_id,
-            ).status
-            == "accepted"
-        )
-
+    identity = ArtifactIdentity(kind="Claim", name=claim_id)
+    retire = ClaimTypeDependentDispositionV2(identity=identity, disposition="retire")
     freshness = ClaimEvidenceFreshnessV1(
         stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
     )
-    migrate_and_activate(
+    _activate_migration(
+        instance,
+        owner,
         _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
             update={"evidence_freshness": freshness}
-        )
-    )
-    v3_coordinate = instance.accepted_coordinate()
-    v3_evidence = _claim_law_evidence(
-        instance,
-        path=claim_path(claim_id),
-        at=v3_coordinate,
-    )
-    policy = ClaimAttestationConsequencePolicyV1(
-        rules=(
-            ClaimAttestationConsequenceRuleV1(
-                rule_id="two-independent-unsure",
-                stance="unsure",
-                minimum_independent_control_components=2,
-            ),
-        )
-    )
-    migrate_and_activate(
-        _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
-            update={"attestation_consequence_policy": policy}
-        )
-    )
-
-    evaluation_time = datetime(2026, 8, 26, 12, tzinfo=UTC)
-    monkeypatch.setattr(
-        "cruxible_core.service.playbill_evidence._claim_law_evidence",
-        lambda *_args, **_kwargs: v3_evidence,
-    )
-    monkeypatch.setattr(
-        "cruxible_core.service.playbill_query._claim_law_evidence_index",
-        lambda *_args, **_kwargs: {claim_path(claim_id): v3_evidence},
-    )
-    service_playbill_next(
-        instance,
-        request=PlaybillNextRequestV1(
-            evaluation_time=evaluation_time,
-            access_profile=CoverageAccessProfileV1(
-                profile_id="migration-test",
-                permitted_access_classes=("instance", "public"),
-            ),
         ),
+        (retire,),
     )
-    service_evaluate_playbill_claim_verdict(
+    before_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    before = parse_claim(before_tree[claim_path(claim_id)], path=claim_path(claim_id))
+    assert before.lifecycle.state == "retired"
+    successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={"attestation_consequence_policy": _policy(2)}
+    )
+    dependent = ClaimTypeDependentDispositionV2(identity=identity, disposition="successor")
+    result = service_migrate_claim_type(
         instance,
-        claim_identity=claim_id,
-        evaluation_time=evaluation_time,
+        request=ClaimTypeMigrationRequestV2(
+            mode="submit",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=AuthenticatedActor(actor_id="owner"),
     )
-    build_accepted_query_facts(
+    assert isinstance(result, ClaimTypeMigrationResultV2)
+    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    candidate_tree = instance.proposal_tree(tree_oid)
+    type_path = claim_type_path(_claim_type().predicate)
+    successor_type = parse_claim_type(candidate_tree[type_path], path=type_path)
+    successor_digest = claim_type_digest(successor_type).tagged
+    expected_pins = tuple(
+        pin.model_copy(update={"artifact_digest": successor_digest})
+        if pin.role == "claim-type" and pin.target == successor_type.identity
+        else pin
+        for pin in before.pins
+    )
+    expected = before.model_copy(
+        update={
+            "statement": before.statement.model_copy(
+                update={"claim_type_digest": successor_digest}
+            ),
+            "authority": successor_type.authority,
+            "pins": expected_pins,
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=claim_artifact_digest(before).tagged,
+            ),
+        }
+    )
+    assert candidate_tree[claim_path(claim_id)] == render_claim(expected)
+    candidate = result.proposal.proposal.candidate
+    assert candidate is not None
+    approval = _sign(
+        owner,
+        candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
         instance,
-        coordinate=instance.accepted_coordinate(),
+        proposal_id=result.proposal.proposal.admission.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
     )
-
-    accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    accepted_type = parse_claim_type(accepted_tree[path], path=path)
-    divergent_type = accepted_type.model_copy(
-        update={"literal_schema": {"type": "string", "enum": ["blocked", "ready", "closed"]}}
-    )
-    divergent_tree = {**accepted_tree, path: render_claim_type(divergent_type)}
-    original_tree_at = instance.tree_at
-
-    def divergent_tree_at(git_oid: str) -> dict[str, bytes]:
-        if git_oid == instance.accepted_coordinate().git_oid:
-            return divergent_tree
-        return cast(dict[str, bytes], original_tree_at(git_oid))
-
-    monkeypatch.setattr(instance, "tree_at", divergent_tree_at)
-    with pytest.raises(ProposalIntegrityError, match="adjudication rule does not reproduce"):
-        service_evaluate_playbill_claim_verdict(
+    assert (
+        service_activate_playbill_proposal(
             instance,
-            claim_identity=claim_id,
-            evaluation_time=evaluation_time,
+            proposal_id=result.proposal.proposal.admission.proposal_id,
+        ).status
+        == "accepted"
+    )
+    _assert_current_adjudication_evidence(instance, claim_id)
+    _next(instance)
+
+
+def test_already_broken_retired_claim_walks_two_policy_only_predecessors(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    dependent = ClaimTypeDependentDispositionV2(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="retire",
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (dependent,),
+    )
+    for threshold in (2, 3):
+        _accept_claim_type_only(
+            instance,
+            owner,
+            _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+                update={"attestation_consequence_policy": _policy(threshold)}
+            ),
+            proposal_name=f"policy-only-{threshold}",
         )
+    _next(instance)
+
+
+def test_retired_claim_rederives_on_freshness_migration(tmp_path: Path) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    identity = ArtifactIdentity(kind="Claim", name=claim_id)
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (ClaimTypeDependentDispositionV2(identity=identity, disposition="retire"),),
+    )
+    freshness = ClaimEvidenceFreshnessV1(
+        stale_after=ClaimFreshnessDurationV1(microseconds=2_592_000_000_000)
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+            update={"evidence_freshness": freshness}
+        ),
+        (ClaimTypeDependentDispositionV2(identity=identity, disposition="successor"),),
+    )
+    _assert_current_adjudication_evidence(instance, claim_id)
+    _next(instance)
+
+
+def test_already_broken_retired_claim_accepts_policy_plus_approval_widen(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    dependent = ClaimTypeDependentDispositionV2(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="retire",
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (dependent,),
+    )
+    current = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[
+            claim_type_path(_claim_type().predicate)
+        ],
+        path=claim_type_path(_claim_type().predicate),
+    )
+    _accept_claim_type_only(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+            update={
+                "attestation_consequence_policy": _policy(2),
+                "authority": ArtifactAuthority(
+                    propose_roles=current.authority.propose_roles,
+                    approve_roles=tuple(sorted((*current.authority.approve_roles, "reviewer"))),
+                ),
+            }
+        ),
+        proposal_name="policy-plus-approval-widen",
+    )
+    _next(instance)
+
+
+def test_already_broken_retired_claim_refuses_schema_divergence(tmp_path: Path) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    dependent = ClaimTypeDependentDispositionV2(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="retire",
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (dependent,),
+    )
+    _accept_claim_type_only(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "closed", "ready"]),
+        proposal_name="schema-divergence",
+    )
+    with pytest.raises(ProposalIntegrityError, match="adjudication rule does not reproduce"):
+        _next(instance)
 
 
 @pytest.mark.parametrize("mode", ["preflight", "submit"])

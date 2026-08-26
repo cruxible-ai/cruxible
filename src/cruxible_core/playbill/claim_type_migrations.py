@@ -252,7 +252,7 @@ def _current_dependents(
         if not path.startswith("claims/"):
             continue
         claim = parse_claim(tree[path], path=path)
-        if claim.lifecycle.state != "live" or claim.statement.claim_type.qualified != identity:
+        if claim.statement.claim_type.qualified != identity:
             continue
         result[claim.identity.name] = (path, claim)
     return result
@@ -288,9 +288,14 @@ def _successor_claim(
     return claim.model_copy(
         update={
             "statement": statement,
+            "authority": successor_type.authority,
             "pins": tuple(pins),
             "lifecycle": ArtifactLifecycle(
-                state="retired" if disposition == "retire" else "live",
+                state=(
+                    "retired"
+                    if claim.lifecycle.state == "retired" or disposition == "retire"
+                    else "live"
+                ),
                 predecessor_digest=claim_artifact_digest(claim).tagged,
             ),
         }
@@ -334,7 +339,7 @@ def _closure_inventory(
     *,
     root: ArtifactIdentity,
 ) -> tuple[ClaimTypeMigrationInventoryItemV1, ...]:
-    """Return the live transitive reverse-pin closure rooted at ``root``."""
+    """Return the complete transitive reverse-pin closure rooted at ``root``."""
 
     index = build_dependency_index(tree)
     pending = [root.qualified]
@@ -345,7 +350,7 @@ def _closure_inventory(
         sources = index.sources_by_pinned_identity.get(triggering, frozenset())
         for path in sorted(sources, key=lambda item: item.encode("utf-8")):
             state = index.states[path]
-            if state.lifecycle.state != "live" or state.identity.qualified in seen_identities:
+            if state.identity.qualified in seen_identities:
                 continue
             roles = tuple(
                 sorted(
@@ -366,7 +371,9 @@ def _closure_inventory(
                 triggering_identity=trigger_identity,
                 dependency_edge_role=roles[0],
                 permitted_dispositions=(
-                    ("successor",) if state.artifact_kind == "document" else ("retire", "successor")
+                    ("successor",)
+                    if state.artifact_kind == "document" or state.lifecycle.state == "retired"
+                    else ("retire", "successor")
                 ),
             )
             seen_identities.add(state.identity.qualified)
@@ -393,6 +400,7 @@ def _canonical_successor_bytes(
     disposition: MigrationResultDisposition,
     replacements: Mapping[str, str],
     supplied: dict[str, object] | None,
+    successor_type: ClaimType,
 ) -> bytes:
     if disposition == "retire" and current.artifact_kind == "document":
         raise ClaimTypeMigrationDependentInvalid(
@@ -414,9 +422,15 @@ def _canonical_successor_bytes(
             payload["predecessor_digest"] = current.artifact_digest
         else:
             payload["lifecycle"] = {
-                "state": "retired" if disposition == "retire" else "live",
+                "state": (
+                    "retired"
+                    if current.lifecycle.state == "retired" or disposition == "retire"
+                    else "live"
+                ),
                 "predecessor_digest": current.artifact_digest,
             }
+        if current.artifact_kind == "claim":
+            payload["authority"] = successor_type.authority.model_dump(mode="json")
         if current.artifact_kind == "procedure":
             try:
                 definition = ProcedureDefinitionV3.model_validate(payload["definition"])
@@ -452,7 +466,9 @@ def _canonical_successor_bytes(
         raise ClaimTypeMigrationDependentInvalid(
             f"{ClaimTypeMigrationDependentInvalid.code}: successor lacks exact predecessor"
         )
-    expected_state = "retired" if disposition == "retire" else "live"
+    expected_state = (
+        "retired" if current.lifecycle.state == "retired" or disposition == "retire" else "live"
+    )
     if parsed.lifecycle.state != expected_state:
         raise ClaimTypeMigrationDependentInvalid(
             f"{ClaimTypeMigrationDependentInvalid.code}: successor lifecycle disagrees "
@@ -538,6 +554,7 @@ def _build_v2_candidate(
                 disposition=disposition,
                 replacements=replacements,
                 supplied=entry.successor,
+                successor_type=successor,
             )
             candidate_tree[row.path] = content
             successor_state = parse_dependency_artifact(row.path, content)

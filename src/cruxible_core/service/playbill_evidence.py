@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
@@ -442,31 +443,6 @@ def service_propose_claim_attestation(
     )
 
 
-def _claim_law_evidence(
-    instance: PlaybillInstance,
-    *,
-    path: str,
-    coordinate: AcceptedProjectionCoordinate,
-) -> ClaimLawEvidenceAny:
-    target_sequence = next(
-        item.sequence for item in instance.accepted_history() if item.oid == coordinate.git_oid
-    )
-    found: ClaimLawEvidenceAny | None = None
-    for generation in instance.accepted_history()[1:]:
-        if generation.sequence > target_sequence:
-            break
-        # The v1 receipt predates structured member law evidence; every later
-        # receipt version carries it in the same shape.
-        if generation.record is None or isinstance(generation.record, ChangeSetRecord):
-            continue
-        for evidence in generation.record.law_evidence:
-            if evidence.path == path and evidence.result.get("claim_evidence") is not None:
-                found = parse_claim_law_evidence(evidence.result["claim_evidence"])
-    if found is None:
-        raise ProposalIntegrityError("accepted Claim has no verdict law evidence")
-    return found
-
-
 def _current_replay_available(
     instance: PlaybillInstance,
     capture_digest_value: str,
@@ -502,29 +478,92 @@ def _without_queue_only_claim_type_fields(claim_type: ClaimType) -> dict[str, ob
     payload = claim_type.model_dump(mode="json")
     for field in (
         "artifact_format",
+        "authority",
         "lifecycle",
         "subject_scope",
         "slot_policy",
         "attestation_consequence_policy",
     ):
         payload.pop(field, None)
+    # The v1 wire omitted the later null placeholder entirely. Normalize that
+    # historical spelling without erasing a real, verdict-bearing horizon.
+    payload["evidence_freshness"] = (
+        None
+        if claim_type.evidence_freshness is None
+        else claim_type.evidence_freshness.model_dump(mode="json")
+    )
     return payload
 
 
-def _reproduced_claim_adjudication_rule(
+@dataclass
+class ClaimReadHistoryIndex:
+    instance: PlaybillInstance
+    generation_oids: tuple[str, ...]
+    law_evidence: dict[str, ClaimLawEvidenceAny]
+    _claim_types: dict[tuple[str, str], ClaimType] | None = None
+
+    def claim_types(self) -> Mapping[tuple[str, str], ClaimType]:
+        """Materialize historical trees once, only when stale evidence needs them."""
+
+        if self._claim_types is None:
+            claim_types: dict[tuple[str, str], ClaimType] = {}
+            for oid in self.generation_oids:
+                tree = self.instance.tree_at(oid)
+                for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+                    if not path.startswith("claim-types/"):
+                        continue
+                    claim_type = parse_claim_type(tree[path], path=path)
+                    digest = claim_type_digest(claim_type).tagged
+                    claim_types[(path, digest)] = claim_type
+            self._claim_types = claim_types
+        return self._claim_types
+
+
+def _claim_read_history_index(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
+) -> ClaimReadHistoryIndex:
+    """Index ClaimTypes and latest Claim evidence with one history traversal."""
+
+    history = instance.accepted_history()
+    found_coordinate = False
+    generation_oids: list[str] = []
+    law_evidence: dict[str, ClaimLawEvidenceAny] = {}
+    for generation in history:
+        generation_oids.append(generation.oid)
+        record = generation.record
+        # The v1 receipt predates structured member law evidence; every later
+        # receipt version carries it in the same shape.
+        if record is not None and not isinstance(record, ChangeSetRecord):
+            for evidence in record.law_evidence:
+                raw = evidence.result.get("claim_evidence")
+                if raw is not None:
+                    law_evidence[evidence.path] = parse_claim_law_evidence(raw)
+        if generation.oid == coordinate.git_oid:
+            found_coordinate = True
+            break
+    if not found_coordinate:
+        raise ProposalIntegrityError("ClaimType history coordinate is not accepted")
+    return ClaimReadHistoryIndex(
+        instance=instance,
+        generation_oids=tuple(generation_oids),
+        law_evidence=law_evidence,
+    )
+
+
+def _reproduced_claim_adjudication_rule(
+    *,
     claim_type: ClaimType,
     evidence_digest: str,
+    history: ClaimReadHistoryIndex,
 ) -> ClaimAdjudicationRuleV1:
     """Return the current rule when accepted evidence proves the same verdict contract.
 
-    ClaimType v4's attestation-consequence policy is queue-only. Its addition
-    therefore cannot invalidate an immediate predecessor's otherwise identical
-    adjudication receipt. The ordinary exact-current digest remains preferred;
-    the predecessor allowance is limited to a byte-equivalent ClaimType after
-    removing version/lifecycle mechanics and the queue-only policy.
+    Queue-only policy changes and legal authority widening cannot invalidate an
+    otherwise identical adjudication receipt. The exact-current digest remains
+    preferred; recovery walks the accepted predecessor chain and requires the
+    reviewed equivalence projection at every hop.
     """
 
     current_digest = claim_type_digest(claim_type).tagged
@@ -534,37 +573,31 @@ def _reproduced_claim_adjudication_rule(
     )
     if claim_adjudication_rule_digest(current_rule) == evidence_digest:
         return current_rule
-    predecessor_digest = claim_type.lifecycle.predecessor_digest
-    if (
-        claim_type.artifact_format != "playbill-claim-type-v4"
-        or claim_type.attestation_consequence_policy is None
-        or predecessor_digest is None
-    ):
-        raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
+    claim_type_versions = history.claim_types()
     path = claim_type_path(claim_type.predicate)
-    target_index = next(
-        index
-        for index, generation in enumerate(instance.accepted_history())
-        if generation.oid == coordinate.git_oid
-    )
-    for generation in reversed(instance.accepted_history()[:target_index]):
-        content = instance.tree_at(generation.oid).get(path)
-        if content is None:
-            continue
-        predecessor = parse_claim_type(content, path=path)
-        if claim_type_digest(predecessor).tagged != predecessor_digest:
-            continue
-        if _without_queue_only_claim_type_fields(
-            predecessor
-        ) != _without_queue_only_claim_type_fields(claim_type):
-            break
+    current = claim_type
+    seen = {current_digest}
+    while current.lifecycle.predecessor_digest is not None:
+        predecessor_digest = current.lifecycle.predecessor_digest
+        if predecessor_digest in seen:
+            raise ProposalIntegrityError("accepted ClaimType predecessor chain contains a cycle")
+        seen.add(predecessor_digest)
+        predecessor = claim_type_versions.get((path, predecessor_digest))
+        if predecessor is None:
+            raise ProposalIntegrityError(
+                "accepted ClaimType predecessor is absent from accepted history"
+            )
+        if _without_queue_only_claim_type_fields(predecessor) != (
+            _without_queue_only_claim_type_fields(current)
+        ):
+            raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
         predecessor_rule = claim_adjudication_rule(
             predecessor,
             claim_type_digest=predecessor_digest,
         )
         if claim_adjudication_rule_digest(predecessor_rule) == evidence_digest:
             return current_rule
-        break
+        current = predecessor
     raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
 
 
@@ -583,14 +616,16 @@ def service_evaluate_playbill_claim_verdict(
     coordinate = _resolve_coordinate(instance, at)
     tree = instance.tree_at(coordinate.git_oid)
     accepted = _accepted_claim(tree, claim_identity)
-    evidence = _claim_law_evidence(instance, path=accepted.path, coordinate=coordinate)
+    history = _claim_read_history_index(instance, coordinate=coordinate)
+    evidence = history.law_evidence.get(accepted.path)
+    if evidence is None:
+        raise ProposalIntegrityError("accepted Claim has no verdict law evidence")
     type_path = claim_type_path(accepted.claim.statement.predicate)
     claim_type = parse_claim_type(tree[type_path], path=type_path)
     rule = _reproduced_claim_adjudication_rule(
-        instance,
-        coordinate=coordinate,
         claim_type=claim_type,
         evidence_digest=evidence.adjudication_rule_digest,
+        history=history,
     )
     readers = external_readers or {}
     captures = tuple(
