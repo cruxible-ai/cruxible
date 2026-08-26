@@ -431,6 +431,9 @@ def service_list_playbill_curation(
     coordinate = AcceptedCoordinate.from_internal(internal_coordinate)
     generation = _generation(instance, coordinate)
     store = instance.review_operational_store()
+    # G9 visibility note: all present curation facts are instance-class.  Until
+    # sub-instance ACLs exist the access decision is intentionally binary and
+    # per-item filtering would be vacuous rather than an additional guarantee.
     if not request.access_profile.permits("instance"):
         head = store.head()
         observation_coverage = PlaybillCurationObservationCoverageV1(

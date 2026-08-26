@@ -378,6 +378,13 @@ def test_overrule_stays_silent_on_redetection_and_detector_identity_is_versioned
         ),
     )
     assert other_version_identity.pattern_id != item.pattern_id
+    versioned_result = _serve_detection(
+        instance,
+        monkeypatch,
+        generation=2,
+        detections=(other_version_identity,),
+    )
+    assert [row.pattern_id for row in versioned_result.items] == [other_version_identity.pattern_id]
 
 
 def test_curation_list_retries_one_same_generation_operational_conflict(
@@ -408,3 +415,27 @@ def test_curation_list_retries_one_same_generation_operational_conflict(
     assert calls == 1
     assert len(result.items) == 1
     assert result.items[0].last_observed_generation == 1
+
+
+def test_curation_list_reraises_second_operational_conflict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _item = _seed_item(tmp_path)
+    store = instance.review_operational_store()
+    original = store.append
+
+    def always_conflicts(*args, **kwargs):  # type: ignore[no-untyped-def]
+        if kwargs.get("family") == "curation":
+            raise ReviewOperationalConcurrentChangeError()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(store, "append", always_conflicts)
+    monkeypatch.setattr(instance, "review_operational_store", lambda: store)
+    with pytest.raises(ReviewOperationalConcurrentChangeError):
+        _serve_detection(
+            instance,
+            monkeypatch,
+            generation=1,
+            detections=(_detection(),),
+        )

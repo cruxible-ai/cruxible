@@ -951,7 +951,8 @@ def _provenance_concentration(
                     artifact_digest=row.accepted.artifact_digest,
                     statement_digest=row.accepted.statement_digest,
                     facts={
-                        "supporting_evidence_digests": list(verdict.supporting_evidence_digests)
+                        "supporting_evidence_digests": list(verdict.supporting_evidence_digests),
+                        "effective_supporting_evidence_digests": sorted(supporting),
                     },
                 )
             )

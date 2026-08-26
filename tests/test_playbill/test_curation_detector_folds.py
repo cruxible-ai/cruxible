@@ -7,6 +7,8 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import get_args
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
@@ -31,6 +33,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     render_claim,
 )
+from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.source_references import (
     EvidenceCommitmentV1,
     ExternalSourceReferenceV1,
@@ -39,6 +42,7 @@ from cruxible_core.playbill.consumption import ConsumptionAggregateV1
 from cruxible_core.playbill.curation import (
     CURATION_PATTERN_KINDS,
     CurationCoverageOmissionReason,
+    CurationDetectorCoverageV1,
     CurationEvidenceKind,
     CurationPatternKind,
 )
@@ -222,6 +226,10 @@ def test_provenance_concentration_uses_effective_supporting_control_components()
     assert len(detected) == 1
     component = next(ref for ref in detected[0].evidence_refs if ref.kind == "control_component")
     assert component.facts["control_domains"] == ["shared-owner"]
+    claim_refs = tuple(ref for ref in detected[0].evidence_refs if ref.kind == "accepted_artifact")
+    assert {tuple(ref.facts["effective_supporting_evidence_digests"]) for ref in claim_refs} == {
+        (row.captures[0].capture_digest,) for row in rows
+    }
 
 
 def test_provenance_concentration_excludes_a_stale_capture_that_bridges_current_components() -> (
@@ -442,3 +450,71 @@ def test_shared_history_index_prevents_per_detector_and_per_claim_rescans() -> N
     )
 
     assert calls == {"history": 1, "tree": 2}
+
+
+def test_run_curation_detectors_builds_shared_history_once_for_all_history_consumers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cruxible_core.playbill.curation_detectors as detector_module
+
+    sentinel = object()
+    calls = 0
+
+    def history(_instance):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        return sentinel
+
+    empty_facts = SimpleNamespace(claims=(), subjects=(), providers=())
+    fake = SimpleNamespace(
+        resolve_accepted_coordinate=lambda **_kwargs: SimpleNamespace(git_oid="tree"),
+        tree_at=lambda _oid: {},
+    )
+    monkeypatch.setattr(detector_module, "_curation_history_index", history)
+    monkeypatch.setattr(
+        detector_module,
+        "build_accepted_query_facts",
+        lambda *_a, **_k: empty_facts,
+    )
+
+    def no_history(*_args, **kwargs):  # type: ignore[no-untyped-def]
+        if "history" in kwargs:
+            assert kwargs["history"] is sentinel
+        kind = kwargs.pop("_kind")
+        return (), CurationDetectorCoverageV1(
+            pattern_kind=kind,
+            status="complete",
+            evaluated_fact_count=0,
+        )
+
+    names = (
+        ("_recurring_conflicts", CURATION_PATTERN_KINDS[0]),
+        ("_admission_failures", CURATION_PATTERN_KINDS[1]),
+        ("_freshness_calibration", CURATION_PATTERN_KINDS[2]),
+        ("_provenance_concentration", CURATION_PATTERN_KINDS[3]),
+        ("_duplicate_statements", CURATION_PATTERN_KINDS[4]),
+        ("_qualifier_crystallization", CURATION_PATTERN_KINDS[5]),
+        ("_block_churn", CURATION_PATTERN_KINDS[6]),
+        ("_dead_vocabulary", CURATION_PATTERN_KINDS[7]),
+    )
+    for name, kind in names:
+        monkeypatch.setattr(
+            detector_module,
+            name,
+            lambda *_a, _kind=kind, **kwargs: no_history(*_a, _kind=_kind, **kwargs),
+        )
+
+    detector_module.run_curation_detectors(
+        fake,  # type: ignore[arg-type]
+        coordinate=AcceptedCoordinate(
+            git_oid="a" * 40,
+            semantic_root="sha256:" + "1" * 64,
+            generation_root="sha256:" + "2" * 64,
+            compiler_digest="sha256:" + "3" * 64,
+        ),
+        generation=1,
+        evaluation_time=NOW,
+        operational_head_digest="sha256:" + "4" * 64,
+    )
+
+    assert calls == 1
