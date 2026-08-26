@@ -28,6 +28,7 @@ from cruxible_client.contracts.claims import (
     LiteralClaimObject,
     SubjectClaimObject,
 )
+from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -147,12 +148,15 @@ AuthoringInputV1: TypeAlias = Annotated[
 ]
 
 
-@dataclass(frozen=True)
-class AuthoringInputError(ValueError):
+@dataclass
+class AuthoringInputError(PlaybillFormatError):
     code: str
     field_path: str
     message: str
     repair: str
+
+    def __post_init__(self) -> None:
+        super().__init__(str(self))
 
     def __str__(self) -> str:
         return f"{self.code} at {self.field_path}: {self.message} Repair: {self.repair}"

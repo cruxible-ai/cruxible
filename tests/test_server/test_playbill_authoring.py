@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
+from cruxible_client.authoring.examples import claim_flow_a_example
 from cruxible_core.playbill.claim_type_inputs import (
     claim_type_input_example,
     lower_claim_type_input,
@@ -135,6 +136,27 @@ def test_http_input_variants_delegate_without_exposing_a_base(
     assert response.status_code == 200, response.text
     assert seen and seen[0][0] == instance_id
     assert "base" not in response.request.content.decode()
+
+
+def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        json={
+            "tag": "playbill-authoring-input-create-request-v1",
+            "input": claim_flow_a_example().model_dump(mode="json"),
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == (
+        "playbill.authoring.working_selection_requires_bind at input.source: "
+        "create and compile cannot observe local working-source bytes. "
+        "Repair: Run playbill authoring bind with this input and the selected local file."
+    )
 
 
 def test_http_authoring_openapi_and_runtime_reject_removed_brief_input(

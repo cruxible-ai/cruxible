@@ -9,10 +9,11 @@ from typing import Any
 
 import pytest
 from click.testing import CliRunner
+from fastapi.testclient import TestClient
 
-from cruxible_client import contracts
+from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.blocks import render_projection_opening
-from cruxible_client.authoring.examples import claim_self_source_example
+from cruxible_client.authoring.examples import claim_flow_a_example, claim_self_source_example
 from cruxible_client.authoring.seed import (
     plan_seed_bundle,
     seed_group_operation_digest,
@@ -26,6 +27,11 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
 from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
+from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.runtime.permissions import reset_permissions
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from cruxible_core.server.app import create_app
+from cruxible_core.server.registry import get_registry, reset_registry
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -393,6 +399,64 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         assert payload["kind"] in {"claim", "procedure"}
         assert "tag" not in result.output
         assert result.stderr == ""
+
+
+def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
+    reset_permissions()
+    reset_registry()
+    get_playbill_manager().clear()
+    registered = get_registry().create_governed_instance_with_id("inst_authoring_refusal")
+    instance_id = registered.record.instance_id
+    managed = Path(registered.record.location) / ".cruxible" / "playbill-v1"
+    owner = generate_client_principal_key(
+        tmp_path / "owner-custody",
+        principal_id="operator",
+        authority_roles=("owner",),
+        forbidden_roots=(managed,),
+    )
+    payload = tmp_path / "claim-flow-a.json"
+    payload.write_text(json.dumps(claim_flow_a_example().model_dump(mode="json")))
+
+    try:
+        with TestClient(create_app()) as transport:
+            initialized = transport.post(
+                f"/api/v1/{instance_id}/playbill/init",
+                json={"principals": [owner.principal.model_dump(mode="json")]},
+            )
+            assert initialized.status_code == 200, initialized.text
+            client = CruxibleClient(base_url="http://cruxible")
+            client._client = transport  # type: ignore[assignment]
+            monkeypatch.setattr(
+                "cruxible_core.cli.commands._common._get_client",
+                lambda: client,
+            )
+            result = CliRunner().invoke(
+                cli,
+                [
+                    "--server-url",
+                    "http://cruxible",
+                    "--instance-id",
+                    instance_id,
+                    "playbill",
+                    "authoring",
+                    "create",
+                    str(payload),
+                ],
+            )
+    finally:
+        get_playbill_manager().clear()
+        reset_registry()
+        reset_permissions()
+
+    assert result.exit_code == 1
+    assert "playbill.authoring.working_selection_requires_bind" in result.stderr
+    assert "Run playbill authoring bind" in result.stderr
+    assert "internal server error" not in result.stderr
 
 
 def test_cli_validation_names_field_path_and_matching_example(tmp_path: Path) -> None:
