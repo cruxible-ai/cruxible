@@ -23,6 +23,23 @@ PlaybillAuthoringExampleName = Literal[
     "claim-self-source",
     "procedure",
 ]
+PlaybillNextReason: TypeAlias = Literal[
+    "claim_conflicted",
+    "claim_uncovered",
+    "claim_stale_evidence",
+    "citation_drifted",
+    "citation_source_unobserved",
+    "evidence_expiring",
+    "floor_missing",
+    "floor_stale",
+    "floor_invalid",
+    "projection_dirty",
+    "projection_backing_stale",
+    "self_published_source_stale",
+    "claim_dependency_stale",
+    "claim_attestation_threshold_met",
+    "document_modified",
+]
 
 
 class PlaybillHostResult(BaseModel):

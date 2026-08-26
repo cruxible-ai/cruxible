@@ -6,10 +6,11 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from cruxible_client.contracts import PlaybillNextReason
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -98,23 +99,7 @@ CitationLineageNote = Literal[
     "predecessor_lineage_limit_exceeded",
     "predecessor_unresolved",
 ]
-NextReason = Literal[
-    "claim_conflicted",
-    "claim_uncovered",
-    "claim_stale_evidence",
-    "citation_drifted",
-    "citation_source_unobserved",
-    "evidence_expiring",
-    "floor_missing",
-    "floor_stale",
-    "floor_invalid",
-    "projection_dirty",
-    "projection_backing_stale",
-    "self_published_source_stale",
-    "claim_dependency_stale",
-    "claim_attestation_threshold_met",
-    "document_modified",
-]
+NextReason: TypeAlias = PlaybillNextReason
 NextRepairOperation = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",

@@ -9,6 +9,7 @@ from typing import get_args
 
 import pytest
 
+from cruxible_client import contracts
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
     FOREIGN_SOURCE_COORDINATE_TYPE,
@@ -93,6 +94,10 @@ def test_next_is_deterministic_and_excludes_the_removed_brief_reason(tmp_path: P
     assert "brief_unhealthy" not in get_args(NextReason)
     assert all(item.reason != "brief_unhealthy" for item in first.items)
     assert first.result_digest.startswith("sha256:")
+
+
+def test_next_reason_uses_the_exact_public_closed_vocabulary() -> None:
+    assert set(get_args(NextReason)) == set(get_args(contracts.PlaybillNextReason))
 
 
 def test_workspace_drift_is_verified_against_the_accepted_citation(
