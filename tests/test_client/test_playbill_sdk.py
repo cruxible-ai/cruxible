@@ -56,6 +56,7 @@ class _Client:
     def __init__(self) -> None:
         self.compiled: dict[str, Any] | None = None
         self.curation_observation: object | None = None
+        self.coverage_observations: object | None = None
         self.curation_actions: list[tuple[str, dict[str, object]]] = []
         self.audit_request: dict[str, object] | None = None
 
@@ -86,6 +87,24 @@ class _Client:
                     "playbill-since-result-v1", result_values
                 ),
             }
+        )
+
+    def resolve_playbill_coverage(
+        self, _instance_id: str, **values: object
+    ) -> api.PlaybillCoverageResult:
+        self.coverage_observations = values["observations"]
+        return api.PlaybillCoverageResult(
+            coordinate=_COORDINATE,
+            result={
+                "at": _COORDINATE.model_dump(mode="json"),
+                "access_profile": {
+                    "tag": "playbill-coverage-access-profile-v1",
+                    "profile_id": "sdk-default",
+                    "permitted_access_classes": ["instance", "public"],
+                    "disclose_restricted_existence": True,
+                },
+                "spans": [],
+            },
         )
 
     def list_playbill_curation(
@@ -244,6 +263,10 @@ def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
     assert result.generation == 4
     assert isinstance(client.curation_observation, dict)
     assert client.curation_observation["tag"] == "playbill-next-workspace-observation-v1"
+    (source_row,) = client.curation_observation["source_observations"]
+    assert source_row["tag"] == "playbill-next-source-observation-v3"
+    assert source_row["source_id"] == "corpus.runbook"
+    assert isinstance(client.coverage_observations, list)
 
 
 def test_sdk_audit_uses_orientation_scope_and_explicit_time(tmp_path: Path) -> None:

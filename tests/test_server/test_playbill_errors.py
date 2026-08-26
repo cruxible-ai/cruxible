@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from fastapi.testclient import TestClient
 
 from cruxible_client import errors as client_errors
 from cruxible_core.errors import (
@@ -131,3 +134,35 @@ def test_server_compat_decoder_re_exports_client_decoder() -> None:
     )
 
     assert type(compat_response_to_error(401, body)) is client_errors.AuthenticationError
+
+
+def test_http_next_maps_raw_source_observation_to_typed_refusal(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/next",
+        json={
+            "tag": "playbill-next-request-v1",
+            "evaluation_time": "2026-08-26T16:00:00+00:00",
+            "access_profile": {
+                "tag": "playbill-coverage-access-profile-v1",
+                "profile_id": "test-next",
+                "permitted_access_classes": ["instance", "public"],
+                "disclose_restricted_existence": True,
+            },
+            "workspace_observation": {
+                "tag": "playbill-next-workspace-observation-v1",
+                "source_observations": [
+                    {
+                        "source_id": "corpus.runbook",
+                        "document_id": "runbook",
+                        "observed_source_digest": "sha256:" + "1" * 64,
+                    }
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error_code"] == "playbill.next.workspace_observation_invalid"

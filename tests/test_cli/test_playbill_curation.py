@@ -19,6 +19,7 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
+from cruxible_core.service.playbill_curation import PlaybillCurationListRequestV1
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -181,6 +182,13 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
             assert source["document_id"] == "runbook"
             assert source["scan_complete"] is True
             assert len(source["marker_summaries"]) == 1
+            PlaybillCurationListRequestV1.model_validate(
+                {
+                    "evaluation_time": evaluation_time,
+                    "access_profile": access_profile,
+                    "workspace_observation": workspace_observation,
+                }
+            )
             seen.append(workspace_observation)
             return contracts.PlaybillCurationListResult(
                 coordinate=COORDINATE,
