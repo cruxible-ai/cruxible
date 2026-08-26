@@ -495,6 +495,21 @@ def _without_queue_only_claim_type_fields(claim_type: ClaimType) -> dict[str, ob
     return payload
 
 
+def _queue_only_claim_type_successor(
+    predecessor: ClaimType,
+    successor: ClaimType,
+) -> bool:
+    """Accept only contract equivalence plus the law's monotonic authority widening."""
+
+    authority_is_legal_widening = (
+        predecessor.authority.propose_roles == successor.authority.propose_roles
+        and set(predecessor.authority.approve_roles).issubset(successor.authority.approve_roles)
+    )
+    return authority_is_legal_widening and _without_queue_only_claim_type_fields(
+        predecessor
+    ) == _without_queue_only_claim_type_fields(successor)
+
+
 @dataclass
 class ClaimReadHistoryIndex:
     instance: PlaybillInstance
@@ -587,9 +602,7 @@ def _reproduced_claim_adjudication_rule(
             raise ProposalIntegrityError(
                 "accepted ClaimType predecessor is absent from accepted history"
             )
-        if _without_queue_only_claim_type_fields(predecessor) != (
-            _without_queue_only_claim_type_fields(current)
-        ):
+        if not _queue_only_claim_type_successor(predecessor, current):
             raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
         predecessor_rule = claim_adjudication_rule(
             predecessor,

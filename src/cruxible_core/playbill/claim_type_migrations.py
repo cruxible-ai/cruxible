@@ -247,12 +247,20 @@ def _current_dependents(
     *,
     identity: str,
 ) -> dict[str, tuple[str, ClaimArtifactAny]]:
+    """Return every live or retired Claim directly governed by one ClaimType."""
+
     result: dict[str, tuple[str, ClaimArtifactAny]] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("claims/"):
             continue
         claim = parse_claim(tree[path], path=path)
-        if claim.statement.claim_type.qualified != identity:
+        if (
+            not _include_migration_dependent(
+                artifact_kind="claim",
+                lifecycle_state=claim.lifecycle.state,
+            )
+            or claim.statement.claim_type.qualified != identity
+        ):
             continue
         result[claim.identity.name] = (path, claim)
     return result
@@ -334,12 +342,22 @@ def _successor_claim_type(
     return path, predecessor, successor
 
 
+def _include_migration_dependent(
+    *,
+    artifact_kind: str,
+    lifecycle_state: str,
+) -> bool:
+    """Include the live closure plus retired Claims whose law evidence is still read."""
+
+    return lifecycle_state == "live" or artifact_kind == "claim"
+
+
 def _closure_inventory(
     tree: Mapping[str, bytes],
     *,
     root: ArtifactIdentity,
 ) -> tuple[ClaimTypeMigrationInventoryItemV1, ...]:
-    """Return the complete transitive reverse-pin closure rooted at ``root``."""
+    """Return the live reverse-pin closure plus its retired Claim members."""
 
     index = build_dependency_index(tree)
     pending = [root.qualified]
@@ -350,7 +368,10 @@ def _closure_inventory(
         sources = index.sources_by_pinned_identity.get(triggering, frozenset())
         for path in sorted(sources, key=lambda item: item.encode("utf-8")):
             state = index.states[path]
-            if state.identity.qualified in seen_identities:
+            if state.identity.qualified in seen_identities or not _include_migration_dependent(
+                artifact_kind=state.artifact_kind,
+                lifecycle_state=state.lifecycle.state,
+            ):
                 continue
             roles = tuple(
                 sorted(

@@ -52,6 +52,7 @@ from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeMigrationDependentSetMismatch,
     ClaimTypeMigrationError,
     ClaimTypeMigrationIncomplete,
+    ClaimTypeMigrationPreflightV1,
     ClaimTypeMigrationRequestV1,
     ClaimTypeMigrationRequestV2,
     ClaimTypeMigrationResultV2,
@@ -64,6 +65,7 @@ from cruxible_core.playbill.service.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.playbill_claims import _claim_law_evidence
+from cruxible_core.service.playbill_evidence import _queue_only_claim_type_successor
 from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
 from tests.test_playbill._adoption_fixture import _query_definition
 from tests.test_playbill._support import initialize_local
@@ -374,6 +376,72 @@ def _assert_current_adjudication_evidence(instance, claim_id: str) -> None:  # t
         claim_type_digest=claim_type_digest(claim_type).tagged,
     )
     assert evidence.adjudication_rule_digest == claim_adjudication_rule_digest(rule)
+
+
+def test_retired_query_definition_does_not_block_later_claim_type_migration(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    type_path = claim_type_path(_claim_type().predicate)
+    query = _query_definition(1, parse_claim_type(tree[type_path], path=type_path))
+    query_path = query_definition_path(query.identity.name)
+    tree[query_path] = render_query_definition(query)
+    _accept_tree(instance, owner, tree, timestamp=TIMESTAMP, proposal_name="seed-query")
+
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (ClaimTypeDependentDispositionV2(identity=query.identity, disposition="retire"),),
+    )
+    retired_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert parse_query_definition(retired_tree[query_path], path=query_path).lifecycle.state == (
+        "retired"
+    )
+
+    successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
+        update={"attestation_consequence_policy": _policy(2)}
+    )
+    preflight = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV2(mode="preflight", successor=successor),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert isinstance(preflight, ClaimTypeMigrationPreflightV1)
+    assert preflight.dependents == ()
+
+    _activate_migration(instance, owner, successor, ())
+    accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    assert parse_query_definition(accepted_tree[query_path], path=query_path) == (
+        parse_query_definition(retired_tree[query_path], path=query_path)
+    )
+    _next(instance)
+
+
+def test_queue_only_equivalence_requires_legal_authority_widening() -> None:
+    predecessor = _claim_type()
+    widened = predecessor.model_copy(
+        update={
+            "authority": ArtifactAuthority(
+                propose_roles=predecessor.authority.propose_roles,
+                approve_roles=tuple(sorted((*predecessor.authority.approve_roles, "reviewer"))),
+            )
+        }
+    )
+    changed_proposer = widened.model_copy(
+        update={
+            "authority": ArtifactAuthority(
+                propose_roles=("reviewer",),
+                approve_roles=widened.authority.approve_roles,
+            )
+        }
+    )
+
+    assert _queue_only_claim_type_successor(predecessor, widened)
+    assert not _queue_only_claim_type_successor(predecessor, changed_proposer)
+    assert not _queue_only_claim_type_successor(widened, predecessor)
 
 
 def test_migration_refuses_hand_authored_predecessor_artifact_pins(tmp_path: Path) -> None:

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **ClaimType migration now carries retired Claim dependents forward.** The
+  shipped request previously omitted retired Claims from the dependent set.
+  Callers must now disposition each retired Claim as `successor` so its stored
+  adjudication evidence is re-derived against the successor ClaimType while its
+  retired lifecycle is preserved. Omitting one refuses with
+  `playbill.claim_type.migration_dependent_set_mismatch` and names the missing
+  Claim; run v2 preflight to obtain the complete required dependent inventory.
+
 - Add `playbill whoami` and a deterministic open/settled proposal inventory
   across HTTP, client, MCP, and CLI so agents can recover their writer identity
   and pending work without reconstructing credential or proposal context.
