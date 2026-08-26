@@ -1150,6 +1150,54 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillCurationListResult)
 
+    def audit_playbill(
+        self,
+        instance_id: str,
+        *,
+        evaluation_time: str,
+        access_profile: Mapping[str, Any],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        claim_type_identities: tuple[str, ...] = (),
+        subject_kinds: tuple[str, ...] = (),
+        max_rows: int = 100,
+        max_bytes: int = 65_536,
+        cursor: contracts.PlaybillAuditCursor | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillAuditResult:
+        payload = {
+            "tag": "playbill-audit-request-v1",
+            "at": (
+                None
+                if at is None
+                else at.model_dump(mode="json")
+                if isinstance(at, contracts.PlaybillAcceptedCoordinate)
+                else dict(at)
+            ),
+            "evaluation_time": evaluation_time,
+            "access_profile": dict(access_profile),
+            "scope": {
+                "tag": "playbill-audit-scope-v1",
+                "claim_type_identities": list(claim_type_identities),
+                "subject_kinds": list(subject_kinds),
+            },
+            "budget": {
+                "tag": "playbill-audit-budget-v1",
+                "max_rows": max_rows,
+                "max_bytes": max_bytes,
+            },
+            "cursor": (
+                None
+                if cursor is None
+                else cursor.model_dump(mode="json")
+                if isinstance(cursor, contracts.PlaybillAuditCursor)
+                else dict(cursor)
+            ),
+        }
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/audit",
+            json={key: value for key, value in payload.items() if value is not None},
+        )
+        return self._parse_model(response, contracts.PlaybillAuditResult)
+
     def overrule_playbill_curation(
         self,
         instance_id: str,

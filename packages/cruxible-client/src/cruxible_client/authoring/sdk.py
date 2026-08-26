@@ -1413,6 +1413,29 @@ class Playbill:
             workspace_observation=observation,
         )
 
+    def audit(
+        self,
+        *,
+        claim_type_identities: tuple[str, ...] = (),
+        subject_kinds: tuple[str, ...] = (),
+        max_rows: int = 100,
+        max_bytes: int = 65_536,
+        cursor: api.PlaybillAuditCursor | Mapping[str, object] | None = None,
+    ) -> api.PlaybillAuditResult:
+        """Rank visible Claim verification work without changing governed state."""
+
+        return self._client.audit_playbill(
+            self._instance_id,
+            evaluation_time=self._evaluation_time(),
+            access_profile=self._access_profile.model_dump(),
+            at=None if cursor is not None else _api_coordinate(self.coordinate),
+            claim_type_identities=claim_type_identities,
+            subject_kinds=subject_kinds,
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            cursor=cursor,
+        )
+
     def curation_overrule(
         self,
         *,

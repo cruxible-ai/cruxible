@@ -39,6 +39,7 @@ playbill authoring rebase
 playbill authoring resume
 playbill authoring status
 playbill authoring submit
+playbill audit
 playbill block repin
 playbill body store
 playbill claim explain
@@ -187,6 +188,7 @@ GET  /api/v1/{instance_id}/playbill/queries
 GET  /api/v1/{instance_id}/playbill/queries/{name}
 POST /api/v1/{instance_id}/playbill/queries/{name}/run
 POST /api/v1/{instance_id}/playbill/next
+POST /api/v1/{instance_id}/playbill/audit
 POST /api/v1/{instance_id}/playbill/curation/list
 POST /api/v1/{instance_id}/playbill/curation/overrule
 POST /api/v1/{instance_id}/playbill/curation/accept-fixed
@@ -281,6 +283,7 @@ cruxible_playbill_seed_apply
 cruxible_playbill_seed_plan
 cruxible_playbill_search
 cruxible_playbill_since
+cruxible_playbill_audit
 cruxible_playbill_curation_list
 cruxible_playbill_curation_overrule
 cruxible_playbill_curation_accept_fixed

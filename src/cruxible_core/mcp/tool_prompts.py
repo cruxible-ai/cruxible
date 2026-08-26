@@ -203,6 +203,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "List mechanically detected curation patterns. Supply an explicit workspace_observation "
         "only when the client has scanned declared blocks; the daemon never reads workspace files."
     ),
+    "cruxible_playbill_audit": (
+        "Rank visible Claim verification work by exact stake, weakness, and recency factors. "
+        "This read records completed coverage but never recommends or executes a repair."
+    ),
     "cruxible_playbill_curation_overrule": (
         "Use when the exact mechanical detector pattern is inapplicable and should be closed."
     ),

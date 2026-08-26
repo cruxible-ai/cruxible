@@ -569,6 +569,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="procedure_group",
             ),
             "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
+            "audit": _command("playbill", "audit", "Read ranked Claim verification work."),
             "curation": _group(
                 "Inspect mechanically detected ontology-maintenance patterns.",
                 {

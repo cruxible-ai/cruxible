@@ -63,6 +63,7 @@ from cruxible_core.playbill.review_operational import (
     ReviewOperationalConcurrentChangeError,
     ReviewOperationalStoreError,
 )
+from cruxible_core.service.playbill_audit import PlaybillAuditError
 from cruxible_core.service.playbill_curation import PlaybillCurationError
 
 STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
@@ -107,6 +108,7 @@ def _status_for_error(exc: CoreError) -> int:
             CanonicalEncodingError,
             DocumentFormatError,
             PlaybillFormatError,
+            PlaybillAuditError,
             PlaybillCurationError,
             ReviewOperationalStoreError,
             ProposalAdmissionError,

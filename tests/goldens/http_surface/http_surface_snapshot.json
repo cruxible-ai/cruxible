@@ -8,6 +8,9 @@
   "/api/v1/server/restart": {
     "POST": "ServerRestartResult"
   },
+  "/api/v1/{instance_id}/playbill/audit": {
+    "POST": "PlaybillAuditResult"
+  },
   "/api/v1/{instance_id}/playbill/authoring/compile": {
     "POST": "PlaybillAuthoringPreflightResult"
   },

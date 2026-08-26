@@ -664,6 +664,29 @@ def register_tools(
         )
 
     @_tool
+    def cruxible_playbill_audit(
+        instance_id: str,
+        evaluation_time: str,
+        access_profile: dict[str, Any] | None = None,
+        claim_type_identities: list[str] | None = None,
+        subject_kinds: list[str] | None = None,
+        max_rows: Annotated[int, Field(ge=1, le=1000)] = 100,
+        max_bytes: Annotated[int, Field(ge=1024, le=4_194_304)] = 65_536,
+        cursor: dict[str, Any] | None = None,
+    ) -> contracts.PlaybillAuditResult:
+        """Read ranked Claim verification work and record completed coverage."""
+        return handlers.handle_playbill_audit(
+            instance_id,
+            evaluation_time=evaluation_time,
+            access_profile=access_profile,
+            claim_type_identities=claim_type_identities or [],
+            subject_kinds=subject_kinds or [],
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            cursor=cursor,
+        )
+
+    @_tool
     def cruxible_playbill_curation_overrule(
         instance_id: str,
         item_id: str,

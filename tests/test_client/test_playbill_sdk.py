@@ -57,6 +57,7 @@ class _Client:
         self.compiled: dict[str, Any] | None = None
         self.curation_observation: object | None = None
         self.curation_actions: list[tuple[str, dict[str, object]]] = []
+        self.audit_request: dict[str, object] | None = None
 
     def search_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSearchResult:
         return api.PlaybillSearchResult(
@@ -105,6 +106,30 @@ class _Client:
                 "omitted_source_count": 0,
                 "omissions": [],
             },
+            result_digest="sha256:" + "7" * 64,
+        )
+
+    def audit_playbill(self, _instance_id: str, **values: object) -> api.PlaybillAuditResult:
+        self.audit_request = values
+        return api.PlaybillAuditResult(
+            coordinate=_COORDINATE,
+            generation=4,
+            evaluation_time=str(values["evaluation_time"]),
+            operational_input_head_digest="sha256:" + "6" * 64,
+            audited_through_generation=4,
+            rows=[],
+            coverage=api.PlaybillAuditCoverage(
+                access_permitted=True,
+                declared_scope=api.PlaybillAuditScope(
+                    claim_type_identities=list(values["claim_type_identities"]),
+                    subject_kinds=list(values["subject_kinds"]),
+                ),
+                covered_claims=[],
+                candidate_claim_count=0,
+                returned_claim_count=0,
+                omitted_claim_count=0,
+                omission_reasons=[],
+            ),
             result_digest="sha256:" + "7" * 64,
         )
 
@@ -219,6 +244,30 @@ def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
     assert result.generation == 4
     assert isinstance(client.curation_observation, dict)
     assert client.curation_observation["tag"] == "playbill-next-workspace-observation-v1"
+
+
+def test_sdk_audit_uses_orientation_scope_and_explicit_time(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+
+    result = pb.audit(
+        claim_type_identities=("ClaimType:status",),
+        subject_kinds=("work_item",),
+        max_rows=9,
+        max_bytes=4096,
+    )
+
+    assert result.audited_through_generation == 4
+    assert client.audit_request is not None
+    assert client.audit_request["at"] == _COORDINATE
+    assert client.audit_request["claim_type_identities"] == ("ClaimType:status",)
+    assert client.audit_request["subject_kinds"] == ("work_item",)
 
 
 def test_sdk_curation_lifecycle_methods_are_thin_typed_delegates(tmp_path: Path) -> None:

@@ -253,6 +253,24 @@ observation produced by the client-side workspace scanner. The daemon does not
 read workspace files. The lifecycle commands append attributed operational
 events; they do not create governed proposals or mutate accepted knowledge.
 
+## playbill audit
+
+~~~text
+cruxible playbill audit [--claim-type ID]... [--subject-kind KIND]...
+  [--max-rows N] [--max-bytes N] [--access-profile FILE]
+  [--cursor FILE] [--json]
+~~~
+
+Returns a deterministic Claim verification patrol ranked by the exact integer
+product of stake, weakness, and verification recency. Every row includes all
+factor values and mechanical evidence references; it never includes a repair
+recommendation and never executes a Procedure. A successful read appends one
+idempotent completed-run record to the daemon-local operational store so
+`audited_through_generation` means completed coverage rather than silence.
+Audit reads do not create qualifying consumption touches or change governed
+state. Follow `next_cursor` only while its accepted coordinate, evaluation time,
+scope, and operational input head remain unchanged.
+
 ## playbill discover
 
 ~~~text

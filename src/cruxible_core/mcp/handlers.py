@@ -1320,6 +1320,59 @@ def handle_playbill_curation_list(
     )
 
 
+def handle_playbill_audit(
+    instance_id: str,
+    *,
+    evaluation_time: str,
+    access_profile: dict[str, Any] | None,
+    claim_type_identities: list[str],
+    subject_kinds: list[str],
+    max_rows: int,
+    max_bytes: int,
+    cursor: dict[str, Any] | None,
+) -> contracts.PlaybillAuditResult:
+    profile = access_profile or {
+        "tag": "playbill-coverage-access-profile-v1",
+        "profile_id": "mcp-audit",
+        "permitted_access_classes": ["instance", "public"],
+        "disclose_restricted_existence": True,
+    }
+    ordered_claim_types = tuple(
+        sorted(set(claim_type_identities), key=lambda item: item.encode("utf-8"))
+    )
+    ordered_subject_kinds = tuple(sorted(set(subject_kinds), key=lambda item: item.encode("utf-8")))
+    request = {
+        "tag": "playbill-audit-request-v1",
+        "evaluation_time": evaluation_time,
+        "access_profile": profile,
+        "scope": {
+            "tag": "playbill-audit-scope-v1",
+            "claim_type_identities": list(ordered_claim_types),
+            "subject_kinds": list(ordered_subject_kinds),
+        },
+        "budget": {
+            "tag": "playbill-audit-budget-v1",
+            "max_rows": max_rows,
+            "max_bytes": max_bytes,
+        },
+        "cursor": cursor,
+    }
+    return _dispatch_remote_or_local(
+        lambda client: client.audit_playbill(
+            instance_id,
+            evaluation_time=evaluation_time,
+            access_profile=profile,
+            claim_type_identities=ordered_claim_types,
+            subject_kinds=ordered_subject_kinds,
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            cursor=cursor,
+        ),
+        lambda: playbill_api.playbill_audit(instance_id, request=request),
+        operation_name="cruxible_playbill_audit",
+    )
+
+
 def handle_playbill_curation_overrule(
     instance_id: str,
     *,

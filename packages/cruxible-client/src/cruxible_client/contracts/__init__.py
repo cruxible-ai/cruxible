@@ -846,6 +846,116 @@ class PlaybillCurationActionResult(BaseModel):
     item: dict[str, Any]
 
 
+class PlaybillAuditFactors(BaseModel):
+    """Exact integer factors behind one audit row's rank."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    unique_dependent_count: int = Field(ge=0)
+    qualifying_consumption_touch_count: int = Field(ge=0)
+    stake: int = Field(ge=1)
+    single_source: bool
+    proposer_observed_only: bool
+    zero_corroboration: bool
+    near_freshness_horizon: bool
+    weakness: int = Field(ge=1, le=5)
+    first_accepted_generation: int = Field(ge=0)
+    last_independent_verification_generation: int = Field(ge=0)
+    never_verified: bool
+    staleness: int = Field(ge=1)
+
+
+class PlaybillAuditEvidenceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal[
+        "accepted_claim",
+        "claim_attestation",
+        "claim_type",
+        "consumption_aggregate",
+        "dependent",
+        "supporting_capture",
+    ]
+    identity: str
+    artifact_digest: str | None = None
+    generation: int | None = Field(default=None, ge=0)
+    facts: dict[str, Any] = Field(default_factory=dict)
+
+
+class PlaybillAuditRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-audit-claim-row-v1"] = "playbill-audit-claim-row-v1"
+    claim_path: str
+    claim_identity: dict[str, Any]
+    claim_artifact_digest: str
+    claim_statement_digest: str
+    subject_identity: dict[str, Any]
+    claim_type_identity: dict[str, Any]
+    verdict: str
+    currency: str
+    factors: PlaybillAuditFactors
+    rank_score: int = Field(ge=1)
+    evidence_refs: list[PlaybillAuditEvidenceRef]
+
+
+class PlaybillAuditScope(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-audit-scope-v1"] = "playbill-audit-scope-v1"
+    claim_type_identities: list[str] = Field(default_factory=list)
+    subject_kinds: list[str] = Field(default_factory=list)
+
+
+class PlaybillAuditCoveredClaim(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    claim_identity: dict[str, Any]
+    artifact_digest: str
+
+
+class PlaybillAuditCoverage(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-audit-coverage-v1"] = "playbill-audit-coverage-v1"
+    access_permitted: bool
+    declared_scope: PlaybillAuditScope
+    covered_claims: list[PlaybillAuditCoveredClaim]
+    candidate_claim_count: int = Field(ge=0)
+    returned_claim_count: int = Field(ge=0)
+    omitted_claim_count: int = Field(ge=0)
+    omission_reasons: list[Literal["byte_budget_exceeded", "row_budget_exceeded"]]
+
+
+class PlaybillAuditCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-audit-cursor-v1"] = "playbill-audit-cursor-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    evaluation_time: str
+    operational_input_head_digest: str
+    scope_digest: str
+    next_offset: int = Field(ge=1)
+    cursor_digest: str
+
+
+class PlaybillAuditResult(BaseModel):
+    """Read-only ranked Claim patrol plus completed-run coverage accounting."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-audit-result-v1"] = "playbill-audit-result-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    generation: int = Field(ge=0)
+    evaluation_time: str
+    operational_input_head_digest: str
+    audited_through_generation: int | None = Field(default=None, ge=0)
+    rows: list[PlaybillAuditRow]
+    coverage: PlaybillAuditCoverage
+    next_cursor: PlaybillAuditCursor | None = None
+    result_digest: str
+
+
 def _since_digest(domain: str, payload: dict[str, Any]) -> str:
     return (
         "sha256:"

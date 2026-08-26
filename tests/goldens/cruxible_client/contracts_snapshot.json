@@ -704,6 +704,1870 @@
         "submitted_by"
       ]
     },
+    "PlaybillAuditCoverage": {
+      "fields": {
+        "access_permitted": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "access_permitted",
+          "required": true,
+          "schema": {
+            "title": "Access Permitted",
+            "type": "boolean"
+          }
+        },
+        "candidate_claim_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate_claim_count",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Candidate Claim Count",
+            "type": "integer"
+          }
+        },
+        "covered_claims": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "covered_claims",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillAuditCoveredClaim"
+            },
+            "title": "Covered Claims",
+            "type": "array"
+          }
+        },
+        "declared_scope": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "declared_scope",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAuditScope"
+          }
+        },
+        "omission_reasons": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "omission_reasons",
+          "required": true,
+          "schema": {
+            "items": {
+              "enum": [
+                "byte_budget_exceeded",
+                "row_budget_exceeded"
+              ],
+              "type": "string"
+            },
+            "title": "Omission Reasons",
+            "type": "array"
+          }
+        },
+        "omitted_claim_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "omitted_claim_count",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Omitted Claim Count",
+            "type": "integer"
+          }
+        },
+        "returned_claim_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "returned_claim_count",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Returned Claim Count",
+            "type": "integer"
+          }
+        },
+        "tag": {
+          "default": "playbill-audit-coverage-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-audit-coverage-v1",
+            "default": "playbill-audit-coverage-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAuditCoveredClaim": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "claim_identity": {
+                "additionalProperties": true,
+                "title": "Claim Identity",
+                "type": "object"
+              }
+            },
+            "required": [
+              "claim_identity",
+              "artifact_digest"
+            ],
+            "title": "PlaybillAuditCoveredClaim",
+            "type": "object"
+          },
+          "PlaybillAuditScope": {
+            "additionalProperties": false,
+            "properties": {
+              "claim_type_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Claim Type Identities",
+                "type": "array"
+              },
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Kinds",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-audit-scope-v1",
+                "default": "playbill-audit-scope-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "PlaybillAuditScope",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "access_permitted": {
+            "title": "Access Permitted",
+            "type": "boolean"
+          },
+          "candidate_claim_count": {
+            "minimum": 0,
+            "title": "Candidate Claim Count",
+            "type": "integer"
+          },
+          "covered_claims": {
+            "items": {
+              "$ref": "#/$defs/PlaybillAuditCoveredClaim"
+            },
+            "title": "Covered Claims",
+            "type": "array"
+          },
+          "declared_scope": {
+            "$ref": "#/$defs/PlaybillAuditScope"
+          },
+          "omission_reasons": {
+            "items": {
+              "enum": [
+                "byte_budget_exceeded",
+                "row_budget_exceeded"
+              ],
+              "type": "string"
+            },
+            "title": "Omission Reasons",
+            "type": "array"
+          },
+          "omitted_claim_count": {
+            "minimum": 0,
+            "title": "Omitted Claim Count",
+            "type": "integer"
+          },
+          "returned_claim_count": {
+            "minimum": 0,
+            "title": "Returned Claim Count",
+            "type": "integer"
+          },
+          "tag": {
+            "const": "playbill-audit-coverage-v1",
+            "default": "playbill-audit-coverage-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "access_permitted",
+          "declared_scope",
+          "covered_claims",
+          "candidate_claim_count",
+          "returned_claim_count",
+          "omitted_claim_count",
+          "omission_reasons"
+        ],
+        "title": "PlaybillAuditCoverage",
+        "type": "object"
+      },
+      "required_fields": [
+        "access_permitted",
+        "candidate_claim_count",
+        "covered_claims",
+        "declared_scope",
+        "omission_reasons",
+        "omitted_claim_count",
+        "returned_claim_count"
+      ]
+    },
+    "PlaybillAuditCoveredClaim": {
+      "fields": {
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Artifact Digest",
+            "type": "string"
+          }
+        },
+        "claim_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_identity",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Claim Identity",
+            "type": "object"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_digest": {
+            "title": "Artifact Digest",
+            "type": "string"
+          },
+          "claim_identity": {
+            "additionalProperties": true,
+            "title": "Claim Identity",
+            "type": "object"
+          }
+        },
+        "required": [
+          "claim_identity",
+          "artifact_digest"
+        ],
+        "title": "PlaybillAuditCoveredClaim",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_digest",
+        "claim_identity"
+      ]
+    },
+    "PlaybillAuditCursor": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "cursor_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "cursor_digest",
+          "required": true,
+          "schema": {
+            "title": "Cursor Digest",
+            "type": "string"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "next_offset": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "next_offset",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Next Offset",
+            "type": "integer"
+          }
+        },
+        "operational_input_head_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operational_input_head_digest",
+          "required": true,
+          "schema": {
+            "title": "Operational Input Head Digest",
+            "type": "string"
+          }
+        },
+        "scope_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "scope_digest",
+          "required": true,
+          "schema": {
+            "title": "Scope Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-audit-cursor-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-audit-cursor-v1",
+            "default": "playbill-audit-cursor-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "cursor_digest": {
+            "title": "Cursor Digest",
+            "type": "string"
+          },
+          "evaluation_time": {
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "next_offset": {
+            "minimum": 1,
+            "title": "Next Offset",
+            "type": "integer"
+          },
+          "operational_input_head_digest": {
+            "title": "Operational Input Head Digest",
+            "type": "string"
+          },
+          "scope_digest": {
+            "title": "Scope Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-audit-cursor-v1",
+            "default": "playbill-audit-cursor-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "evaluation_time",
+          "operational_input_head_digest",
+          "scope_digest",
+          "next_offset",
+          "cursor_digest"
+        ],
+        "title": "PlaybillAuditCursor",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "cursor_digest",
+        "evaluation_time",
+        "next_offset",
+        "operational_input_head_digest",
+        "scope_digest"
+      ]
+    },
+    "PlaybillAuditEvidenceRef": {
+      "fields": {
+        "artifact_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Digest"
+          }
+        },
+        "facts": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "facts",
+          "required": false,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Facts",
+            "type": "object"
+          }
+        },
+        "generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Generation"
+          }
+        },
+        "identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "identity",
+          "required": true,
+          "schema": {
+            "title": "Identity",
+            "type": "string"
+          }
+        },
+        "kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "accepted_claim",
+              "claim_attestation",
+              "claim_type",
+              "consumption_aggregate",
+              "dependent",
+              "supporting_capture"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Digest"
+          },
+          "facts": {
+            "additionalProperties": true,
+            "title": "Facts",
+            "type": "object"
+          },
+          "generation": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Generation"
+          },
+          "identity": {
+            "title": "Identity",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "accepted_claim",
+              "claim_attestation",
+              "claim_type",
+              "consumption_aggregate",
+              "dependent",
+              "supporting_capture"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "identity"
+        ],
+        "title": "PlaybillAuditEvidenceRef",
+        "type": "object"
+      },
+      "required_fields": [
+        "identity",
+        "kind"
+      ]
+    },
+    "PlaybillAuditFactors": {
+      "fields": {
+        "first_accepted_generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "first_accepted_generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "First Accepted Generation",
+            "type": "integer"
+          }
+        },
+        "last_independent_verification_generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "last_independent_verification_generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Last Independent Verification Generation",
+            "type": "integer"
+          }
+        },
+        "near_freshness_horizon": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "near_freshness_horizon",
+          "required": true,
+          "schema": {
+            "title": "Near Freshness Horizon",
+            "type": "boolean"
+          }
+        },
+        "never_verified": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "never_verified",
+          "required": true,
+          "schema": {
+            "title": "Never Verified",
+            "type": "boolean"
+          }
+        },
+        "proposer_observed_only": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "proposer_observed_only",
+          "required": true,
+          "schema": {
+            "title": "Proposer Observed Only",
+            "type": "boolean"
+          }
+        },
+        "qualifying_consumption_touch_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "qualifying_consumption_touch_count",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Qualifying Consumption Touch Count",
+            "type": "integer"
+          }
+        },
+        "single_source": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "single_source",
+          "required": true,
+          "schema": {
+            "title": "Single Source",
+            "type": "boolean"
+          }
+        },
+        "stake": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "stake",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Stake",
+            "type": "integer"
+          }
+        },
+        "staleness": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "staleness",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Staleness",
+            "type": "integer"
+          }
+        },
+        "unique_dependent_count": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "unique_dependent_count",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Unique Dependent Count",
+            "type": "integer"
+          }
+        },
+        "weakness": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "weakness",
+          "required": true,
+          "schema": {
+            "maximum": 5,
+            "minimum": 1,
+            "title": "Weakness",
+            "type": "integer"
+          }
+        },
+        "zero_corroboration": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "zero_corroboration",
+          "required": true,
+          "schema": {
+            "title": "Zero Corroboration",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "description": "Exact integer factors behind one audit row's rank.",
+        "properties": {
+          "first_accepted_generation": {
+            "minimum": 0,
+            "title": "First Accepted Generation",
+            "type": "integer"
+          },
+          "last_independent_verification_generation": {
+            "minimum": 0,
+            "title": "Last Independent Verification Generation",
+            "type": "integer"
+          },
+          "near_freshness_horizon": {
+            "title": "Near Freshness Horizon",
+            "type": "boolean"
+          },
+          "never_verified": {
+            "title": "Never Verified",
+            "type": "boolean"
+          },
+          "proposer_observed_only": {
+            "title": "Proposer Observed Only",
+            "type": "boolean"
+          },
+          "qualifying_consumption_touch_count": {
+            "minimum": 0,
+            "title": "Qualifying Consumption Touch Count",
+            "type": "integer"
+          },
+          "single_source": {
+            "title": "Single Source",
+            "type": "boolean"
+          },
+          "stake": {
+            "minimum": 1,
+            "title": "Stake",
+            "type": "integer"
+          },
+          "staleness": {
+            "minimum": 1,
+            "title": "Staleness",
+            "type": "integer"
+          },
+          "unique_dependent_count": {
+            "minimum": 0,
+            "title": "Unique Dependent Count",
+            "type": "integer"
+          },
+          "weakness": {
+            "maximum": 5,
+            "minimum": 1,
+            "title": "Weakness",
+            "type": "integer"
+          },
+          "zero_corroboration": {
+            "title": "Zero Corroboration",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "unique_dependent_count",
+          "qualifying_consumption_touch_count",
+          "stake",
+          "single_source",
+          "proposer_observed_only",
+          "zero_corroboration",
+          "near_freshness_horizon",
+          "weakness",
+          "first_accepted_generation",
+          "last_independent_verification_generation",
+          "never_verified",
+          "staleness"
+        ],
+        "title": "PlaybillAuditFactors",
+        "type": "object"
+      },
+      "required_fields": [
+        "first_accepted_generation",
+        "last_independent_verification_generation",
+        "near_freshness_horizon",
+        "never_verified",
+        "proposer_observed_only",
+        "qualifying_consumption_touch_count",
+        "single_source",
+        "stake",
+        "staleness",
+        "unique_dependent_count",
+        "weakness",
+        "zero_corroboration"
+      ]
+    },
+    "PlaybillAuditResult": {
+      "fields": {
+        "audited_through_generation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "audited_through_generation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Audited Through Generation"
+          }
+        },
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "coverage": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coverage",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAuditCoverage"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuditCursor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "operational_input_head_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operational_input_head_digest",
+          "required": true,
+          "schema": {
+            "title": "Operational Input Head Digest",
+            "type": "string"
+          }
+        },
+        "result_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "result_digest",
+          "required": true,
+          "schema": {
+            "title": "Result Digest",
+            "type": "string"
+          }
+        },
+        "rows": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rows",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillAuditRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-audit-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-audit-result-v1",
+            "default": "playbill-audit-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillAuditCoverage": {
+            "additionalProperties": false,
+            "properties": {
+              "access_permitted": {
+                "title": "Access Permitted",
+                "type": "boolean"
+              },
+              "candidate_claim_count": {
+                "minimum": 0,
+                "title": "Candidate Claim Count",
+                "type": "integer"
+              },
+              "covered_claims": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillAuditCoveredClaim"
+                },
+                "title": "Covered Claims",
+                "type": "array"
+              },
+              "declared_scope": {
+                "$ref": "#/$defs/PlaybillAuditScope"
+              },
+              "omission_reasons": {
+                "items": {
+                  "enum": [
+                    "byte_budget_exceeded",
+                    "row_budget_exceeded"
+                  ],
+                  "type": "string"
+                },
+                "title": "Omission Reasons",
+                "type": "array"
+              },
+              "omitted_claim_count": {
+                "minimum": 0,
+                "title": "Omitted Claim Count",
+                "type": "integer"
+              },
+              "returned_claim_count": {
+                "minimum": 0,
+                "title": "Returned Claim Count",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-audit-coverage-v1",
+                "default": "playbill-audit-coverage-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "access_permitted",
+              "declared_scope",
+              "covered_claims",
+              "candidate_claim_count",
+              "returned_claim_count",
+              "omitted_claim_count",
+              "omission_reasons"
+            ],
+            "title": "PlaybillAuditCoverage",
+            "type": "object"
+          },
+          "PlaybillAuditCoveredClaim": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "claim_identity": {
+                "additionalProperties": true,
+                "title": "Claim Identity",
+                "type": "object"
+              }
+            },
+            "required": [
+              "claim_identity",
+              "artifact_digest"
+            ],
+            "title": "PlaybillAuditCoveredClaim",
+            "type": "object"
+          },
+          "PlaybillAuditCursor": {
+            "additionalProperties": false,
+            "properties": {
+              "coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "cursor_digest": {
+                "title": "Cursor Digest",
+                "type": "string"
+              },
+              "evaluation_time": {
+                "title": "Evaluation Time",
+                "type": "string"
+              },
+              "next_offset": {
+                "minimum": 1,
+                "title": "Next Offset",
+                "type": "integer"
+              },
+              "operational_input_head_digest": {
+                "title": "Operational Input Head Digest",
+                "type": "string"
+              },
+              "scope_digest": {
+                "title": "Scope Digest",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-audit-cursor-v1",
+                "default": "playbill-audit-cursor-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "coordinate",
+              "evaluation_time",
+              "operational_input_head_digest",
+              "scope_digest",
+              "next_offset",
+              "cursor_digest"
+            ],
+            "title": "PlaybillAuditCursor",
+            "type": "object"
+          },
+          "PlaybillAuditEvidenceRef": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Digest"
+              },
+              "facts": {
+                "additionalProperties": true,
+                "title": "Facts",
+                "type": "object"
+              },
+              "generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Generation"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "accepted_claim",
+                  "claim_attestation",
+                  "claim_type",
+                  "consumption_aggregate",
+                  "dependent",
+                  "supporting_capture"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "identity"
+            ],
+            "title": "PlaybillAuditEvidenceRef",
+            "type": "object"
+          },
+          "PlaybillAuditFactors": {
+            "additionalProperties": false,
+            "description": "Exact integer factors behind one audit row's rank.",
+            "properties": {
+              "first_accepted_generation": {
+                "minimum": 0,
+                "title": "First Accepted Generation",
+                "type": "integer"
+              },
+              "last_independent_verification_generation": {
+                "minimum": 0,
+                "title": "Last Independent Verification Generation",
+                "type": "integer"
+              },
+              "near_freshness_horizon": {
+                "title": "Near Freshness Horizon",
+                "type": "boolean"
+              },
+              "never_verified": {
+                "title": "Never Verified",
+                "type": "boolean"
+              },
+              "proposer_observed_only": {
+                "title": "Proposer Observed Only",
+                "type": "boolean"
+              },
+              "qualifying_consumption_touch_count": {
+                "minimum": 0,
+                "title": "Qualifying Consumption Touch Count",
+                "type": "integer"
+              },
+              "single_source": {
+                "title": "Single Source",
+                "type": "boolean"
+              },
+              "stake": {
+                "minimum": 1,
+                "title": "Stake",
+                "type": "integer"
+              },
+              "staleness": {
+                "minimum": 1,
+                "title": "Staleness",
+                "type": "integer"
+              },
+              "unique_dependent_count": {
+                "minimum": 0,
+                "title": "Unique Dependent Count",
+                "type": "integer"
+              },
+              "weakness": {
+                "maximum": 5,
+                "minimum": 1,
+                "title": "Weakness",
+                "type": "integer"
+              },
+              "zero_corroboration": {
+                "title": "Zero Corroboration",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "unique_dependent_count",
+              "qualifying_consumption_touch_count",
+              "stake",
+              "single_source",
+              "proposer_observed_only",
+              "zero_corroboration",
+              "near_freshness_horizon",
+              "weakness",
+              "first_accepted_generation",
+              "last_independent_verification_generation",
+              "never_verified",
+              "staleness"
+            ],
+            "title": "PlaybillAuditFactors",
+            "type": "object"
+          },
+          "PlaybillAuditRow": {
+            "additionalProperties": false,
+            "properties": {
+              "claim_artifact_digest": {
+                "title": "Claim Artifact Digest",
+                "type": "string"
+              },
+              "claim_identity": {
+                "additionalProperties": true,
+                "title": "Claim Identity",
+                "type": "object"
+              },
+              "claim_path": {
+                "title": "Claim Path",
+                "type": "string"
+              },
+              "claim_statement_digest": {
+                "title": "Claim Statement Digest",
+                "type": "string"
+              },
+              "claim_type_identity": {
+                "additionalProperties": true,
+                "title": "Claim Type Identity",
+                "type": "object"
+              },
+              "currency": {
+                "title": "Currency",
+                "type": "string"
+              },
+              "evidence_refs": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillAuditEvidenceRef"
+                },
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "factors": {
+                "$ref": "#/$defs/PlaybillAuditFactors"
+              },
+              "rank_score": {
+                "minimum": 1,
+                "title": "Rank Score",
+                "type": "integer"
+              },
+              "subject_identity": {
+                "additionalProperties": true,
+                "title": "Subject Identity",
+                "type": "object"
+              },
+              "tag": {
+                "const": "playbill-audit-claim-row-v1",
+                "default": "playbill-audit-claim-row-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "verdict": {
+                "title": "Verdict",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_path",
+              "claim_identity",
+              "claim_artifact_digest",
+              "claim_statement_digest",
+              "subject_identity",
+              "claim_type_identity",
+              "verdict",
+              "currency",
+              "factors",
+              "rank_score",
+              "evidence_refs"
+            ],
+            "title": "PlaybillAuditRow",
+            "type": "object"
+          },
+          "PlaybillAuditScope": {
+            "additionalProperties": false,
+            "properties": {
+              "claim_type_identities": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Claim Type Identities",
+                "type": "array"
+              },
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Kinds",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-audit-scope-v1",
+                "default": "playbill-audit-scope-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "PlaybillAuditScope",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Read-only ranked Claim patrol plus completed-run coverage accounting.",
+        "properties": {
+          "audited_through_generation": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Audited Through Generation"
+          },
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "coverage": {
+            "$ref": "#/$defs/PlaybillAuditCoverage"
+          },
+          "evaluation_time": {
+            "title": "Evaluation Time",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAuditCursor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "operational_input_head_digest": {
+            "title": "Operational Input Head Digest",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/PlaybillAuditRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-audit-result-v1",
+            "default": "playbill-audit-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "generation",
+          "evaluation_time",
+          "operational_input_head_digest",
+          "rows",
+          "coverage",
+          "result_digest"
+        ],
+        "title": "PlaybillAuditResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "coverage",
+        "evaluation_time",
+        "generation",
+        "operational_input_head_digest",
+        "result_digest",
+        "rows"
+      ]
+    },
+    "PlaybillAuditRow": {
+      "fields": {
+        "claim_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Claim Artifact Digest",
+            "type": "string"
+          }
+        },
+        "claim_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_identity",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Claim Identity",
+            "type": "object"
+          }
+        },
+        "claim_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_path",
+          "required": true,
+          "schema": {
+            "title": "Claim Path",
+            "type": "string"
+          }
+        },
+        "claim_statement_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_statement_digest",
+          "required": true,
+          "schema": {
+            "title": "Claim Statement Digest",
+            "type": "string"
+          }
+        },
+        "claim_type_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "claim_type_identity",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Claim Type Identity",
+            "type": "object"
+          }
+        },
+        "currency": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "currency",
+          "required": true,
+          "schema": {
+            "title": "Currency",
+            "type": "string"
+          }
+        },
+        "evidence_refs": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evidence_refs",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillAuditEvidenceRef"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          }
+        },
+        "factors": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "factors",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAuditFactors"
+          }
+        },
+        "rank_score": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rank_score",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Rank Score",
+            "type": "integer"
+          }
+        },
+        "subject_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "subject_identity",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Subject Identity",
+            "type": "object"
+          }
+        },
+        "tag": {
+          "default": "playbill-audit-claim-row-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-audit-claim-row-v1",
+            "default": "playbill-audit-claim-row-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "verdict": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "verdict",
+          "required": true,
+          "schema": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAuditEvidenceRef": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Digest"
+              },
+              "facts": {
+                "additionalProperties": true,
+                "title": "Facts",
+                "type": "object"
+              },
+              "generation": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Generation"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "accepted_claim",
+                  "claim_attestation",
+                  "claim_type",
+                  "consumption_aggregate",
+                  "dependent",
+                  "supporting_capture"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "identity"
+            ],
+            "title": "PlaybillAuditEvidenceRef",
+            "type": "object"
+          },
+          "PlaybillAuditFactors": {
+            "additionalProperties": false,
+            "description": "Exact integer factors behind one audit row's rank.",
+            "properties": {
+              "first_accepted_generation": {
+                "minimum": 0,
+                "title": "First Accepted Generation",
+                "type": "integer"
+              },
+              "last_independent_verification_generation": {
+                "minimum": 0,
+                "title": "Last Independent Verification Generation",
+                "type": "integer"
+              },
+              "near_freshness_horizon": {
+                "title": "Near Freshness Horizon",
+                "type": "boolean"
+              },
+              "never_verified": {
+                "title": "Never Verified",
+                "type": "boolean"
+              },
+              "proposer_observed_only": {
+                "title": "Proposer Observed Only",
+                "type": "boolean"
+              },
+              "qualifying_consumption_touch_count": {
+                "minimum": 0,
+                "title": "Qualifying Consumption Touch Count",
+                "type": "integer"
+              },
+              "single_source": {
+                "title": "Single Source",
+                "type": "boolean"
+              },
+              "stake": {
+                "minimum": 1,
+                "title": "Stake",
+                "type": "integer"
+              },
+              "staleness": {
+                "minimum": 1,
+                "title": "Staleness",
+                "type": "integer"
+              },
+              "unique_dependent_count": {
+                "minimum": 0,
+                "title": "Unique Dependent Count",
+                "type": "integer"
+              },
+              "weakness": {
+                "maximum": 5,
+                "minimum": 1,
+                "title": "Weakness",
+                "type": "integer"
+              },
+              "zero_corroboration": {
+                "title": "Zero Corroboration",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "unique_dependent_count",
+              "qualifying_consumption_touch_count",
+              "stake",
+              "single_source",
+              "proposer_observed_only",
+              "zero_corroboration",
+              "near_freshness_horizon",
+              "weakness",
+              "first_accepted_generation",
+              "last_independent_verification_generation",
+              "never_verified",
+              "staleness"
+            ],
+            "title": "PlaybillAuditFactors",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "claim_artifact_digest": {
+            "title": "Claim Artifact Digest",
+            "type": "string"
+          },
+          "claim_identity": {
+            "additionalProperties": true,
+            "title": "Claim Identity",
+            "type": "object"
+          },
+          "claim_path": {
+            "title": "Claim Path",
+            "type": "string"
+          },
+          "claim_statement_digest": {
+            "title": "Claim Statement Digest",
+            "type": "string"
+          },
+          "claim_type_identity": {
+            "additionalProperties": true,
+            "title": "Claim Type Identity",
+            "type": "object"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/$defs/PlaybillAuditEvidenceRef"
+            },
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "factors": {
+            "$ref": "#/$defs/PlaybillAuditFactors"
+          },
+          "rank_score": {
+            "minimum": 1,
+            "title": "Rank Score",
+            "type": "integer"
+          },
+          "subject_identity": {
+            "additionalProperties": true,
+            "title": "Subject Identity",
+            "type": "object"
+          },
+          "tag": {
+            "const": "playbill-audit-claim-row-v1",
+            "default": "playbill-audit-claim-row-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "verdict": {
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_path",
+          "claim_identity",
+          "claim_artifact_digest",
+          "claim_statement_digest",
+          "subject_identity",
+          "claim_type_identity",
+          "verdict",
+          "currency",
+          "factors",
+          "rank_score",
+          "evidence_refs"
+        ],
+        "title": "PlaybillAuditRow",
+        "type": "object"
+      },
+      "required_fields": [
+        "claim_artifact_digest",
+        "claim_identity",
+        "claim_path",
+        "claim_statement_digest",
+        "claim_type_identity",
+        "currency",
+        "evidence_refs",
+        "factors",
+        "rank_score",
+        "subject_identity",
+        "verdict"
+      ]
+    },
+    "PlaybillAuditScope": {
+      "fields": {
+        "claim_type_identities": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "claim_type_identities",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Claim Type Identities",
+            "type": "array"
+          }
+        },
+        "subject_kinds": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "subject_kinds",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Subject Kinds",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-audit-scope-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-audit-scope-v1",
+            "default": "playbill-audit-scope-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "claim_type_identities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Claim Type Identities",
+            "type": "array"
+          },
+          "subject_kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Subject Kinds",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-audit-scope-v1",
+            "default": "playbill-audit-scope-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "title": "PlaybillAuditScope",
+        "type": "object"
+      },
+      "required_fields": []
+    },
     "PlaybillAuthoredClaim": {
       "fields": {
         "artifact_digest": {

@@ -16,6 +16,7 @@ from cruxible_core.runtime import playbill_api
 from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,
     PlaybillApprovalRequest,
+    PlaybillAuditRequest,
     PlaybillAuthoringCompileRequest,
     PlaybillAuthoringCompileRequestV2,
     PlaybillAuthoringCompileRequestV3,
@@ -1005,6 +1006,20 @@ async def curation_list(
     req: PlaybillCurationListRequest,
 ) -> contracts.PlaybillCurationListResult:
     return playbill_api.playbill_curation_list(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json", exclude_none=True),
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/audit",
+    response_model=contracts.PlaybillAuditResult,
+)
+async def audit(
+    instance_id: str,
+    req: PlaybillAuditRequest,
+) -> contracts.PlaybillAuditResult:
+    return playbill_api.playbill_audit(
         resolve_server_instance_id(instance_id),
         request=req.model_dump(mode="json", exclude_none=True),
     )

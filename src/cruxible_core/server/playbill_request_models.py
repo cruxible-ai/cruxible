@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
@@ -239,6 +239,28 @@ class PlaybillCurationListRequest(_StrictPlaybillRequest):
     evaluation_time: datetime
     access_profile: dict[str, Any]
     workspace_observation: dict[str, Any] | None = None
+
+
+class PlaybillAuditRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-audit-request-v1"] = "playbill-audit-request-v1"
+    at: AcceptedCoordinate | None = None
+    evaluation_time: datetime
+    access_profile: dict[str, Any]
+    scope: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "tag": "playbill-audit-scope-v1",
+            "claim_type_identities": [],
+            "subject_kinds": [],
+        }
+    )
+    budget: dict[str, Any] = Field(
+        default_factory=lambda: {
+            "tag": "playbill-audit-budget-v1",
+            "max_rows": 100,
+            "max_bytes": 65_536,
+        }
+    )
+    cursor: dict[str, Any] | None = None
 
 
 class PlaybillCurationOverruleRequest(_StrictPlaybillRequest):

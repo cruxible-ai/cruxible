@@ -123,6 +123,11 @@ from cruxible_core.server.auth import (
     set_current_operation_id,
 )
 from cruxible_core.server.config import is_server_auth_enabled
+from cruxible_core.service.playbill_audit import (
+    PlaybillAuditRequestV1,
+    service_playbill_audit,
+    validate_playbill_audit_request,
+)
 from cruxible_core.service.playbill_claims import (
     DirectClaimAuthoringV1,
     service_expand_playbill_semantic,
@@ -1314,6 +1319,24 @@ def playbill_curation_list(
         actor_context=actor,
     )
     return contracts.PlaybillCurationListResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_audit(
+    instance_id: str,
+    *,
+    request: PlaybillAuditRequestV1 | Mapping[str, object],
+) -> contracts.PlaybillAuditResult:
+    check_permission("cruxible_playbill_audit", instance_id=instance_id)
+    actor = _actor_context()
+    if actor is None:
+        raise AuthenticationError("Playbill audit reads require an attributed actor")
+    parsed = validate_playbill_audit_request(request)
+    result = service_playbill_audit(
+        get_playbill_manager().get(instance_id),
+        request=parsed,
+        actor_context=actor,
+    )
+    return contracts.PlaybillAuditResult.model_validate(result.model_dump(mode="json"))
 
 
 def _curation_actor() -> GovernedActorContext:
