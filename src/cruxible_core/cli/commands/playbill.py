@@ -1938,13 +1938,26 @@ def curation_list(workspace_root: str, access_profile_path: str | None, output_j
         if access_profile_path is None
         else _read_model(access_profile_path, CoverageAccessProfileV1).model_dump(mode="json")
     )
-    result = _server_call(
-        lambda client, instance_id: client.list_playbill_curation(
+
+    def _curation_at_scanned_coordinate(
+        client: CruxibleClient, instance_id: str
+    ) -> contracts.PlaybillCurationListResult:
+        observed, _coordinate = observe_playbill_next_workspace_with_coverage(
+            client,
+            instance_id,
+            Path(workspace_root),
+            observation=observation,
+            access_profile=profile,
+        )
+        return client.list_playbill_curation(
             instance_id,
             evaluation_time=datetime.now(UTC).isoformat(),
             access_profile=profile,
-            workspace_observation=observation,
-        ),
+            workspace_observation=observed,
+        )
+
+    result = _server_call(
+        _curation_at_scanned_coordinate,
         command_name="playbill curation list",
     )
     if output_json:

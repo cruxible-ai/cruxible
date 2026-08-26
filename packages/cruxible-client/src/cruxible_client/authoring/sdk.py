@@ -1405,11 +1405,18 @@ class Playbill:
     def curation_list(self) -> api.PlaybillCurationListResult:
         """Read the curation queue with one explicit attributed workspace scan."""
 
-        observation = observe_playbill_next_workspace(self._workspace)
+        access_profile = self._access_profile.model_dump()
+        observation, _coordinate = observe_playbill_next_workspace_with_coverage(
+            self._client,
+            self._instance_id,
+            self._workspace,
+            observation=observe_playbill_next_workspace(self._workspace),
+            access_profile=access_profile,
+        )
         return self._client.list_playbill_curation(
             self._instance_id,
             evaluation_time=self._evaluation_time(),
-            access_profile=self._access_profile.model_dump(),
+            access_profile=access_profile,
             workspace_observation=observation,
         )
 
