@@ -35,11 +35,13 @@ from cruxible_core.playbill.audit import (
 )
 from cruxible_core.playbill.consumption import consumption_aggregate
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 from cruxible_core.playbill.query.impact import (
     DependencyImpactRequestV1,
     build_dependency_impact,
 )
 from cruxible_core.service.playbill_audit import (
+    PlaybillAuditCursorInvalid,
     PlaybillAuditRequestV1,
     _AuditHistoryIndex,
     _history_index,
@@ -103,6 +105,72 @@ def test_access_gate_precedes_counts_and_writes(tmp_path: Path) -> None:
     assert result.coverage.covered_claims == ()
     assert result.audited_through_generation is None
     assert instance.review_operational_store().events(family="audit") == ()
+
+
+def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    subjects = tuple(subject("project.work_item", f"wi-{index}") for index in range(3))
+    claims = tuple(
+        claim_fact(
+            index + 10,
+            subject_row=subjects[index],
+            predicate=PREDICATE,
+            value="ready",
+        )
+        for index in range(3)
+    )
+    projected = ClaimQueryFactsV1(
+        coordinate=instance.accepted_coordinate(),
+        subjects=tuple(sorted(subjects, key=lambda item: item.path.encode("utf-8"))),
+        claims=tuple(sorted(claims, key=lambda item: item.accepted.path.encode("utf-8"))),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_audit.build_accepted_query_facts",
+        lambda *_args, **_kwargs: projected,
+    )
+    first_request = PlaybillAuditRequestV1(
+        evaluation_time=NOW,
+        access_profile=CoverageAccessProfileV1(profile_id="test-audit-pages"),
+        budget=AuditBudgetV1(max_rows=2, max_bytes=65_536),
+    )
+    first = service_playbill_audit(instance, request=first_request, actor_context=_actor())
+
+    assert len(first.rows) == 2
+    assert first.coverage.candidate_claim_count == 3
+    assert first.coverage.returned_claim_count == 2
+    assert first.coverage.omitted_claim_count == 1
+    assert first.coverage.omission_reasons == ("row_budget_exceeded",)
+    assert len(first.coverage.covered_claims) == 3
+    assert first.next_cursor is not None
+    second = service_playbill_audit(
+        instance,
+        request=first_request.model_copy(update={"cursor": first.next_cursor}),
+        actor_context=_actor(),
+    )
+    assert len(second.rows) == 1
+    assert second.next_cursor is None
+    assert len(completed_audit_runs(instance)) == 2
+
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    instance.review_operational_store().append(
+        family="block_observation",
+        partition_id="audit-test-drift",
+        event_id="audit-test-drift",
+        payload={"tag": "audit-test-operational-drift-v1", "event_id": "audit-test-drift"},
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+    )
+    with pytest.raises(PlaybillAuditCursorInvalid):
+        service_playbill_audit(
+            instance,
+            request=first_request.model_copy(update={"cursor": first.next_cursor}),
+            actor_context=_actor(),
+        )
 
 
 def test_failed_fold_writes_no_completed_run(

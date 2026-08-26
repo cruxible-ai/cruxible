@@ -587,6 +587,9 @@ def _service_playbill_audit(
     )
     generation = _generation(instance, coordinate)
     input_head = _operational_input_head(instance)
+    # G9 visibility note: all v1 audit facts are instance-class.  Until
+    # sub-instance ACLs exist the gate is deliberately binary; per-item
+    # filtering would be vacuous and must not be advertised as protection.
     if not request.access_profile.permits("instance"):
         coverage = AuditCoverageV1(
             access_permitted=False,

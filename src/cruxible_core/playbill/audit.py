@@ -266,10 +266,12 @@ class AuditDependentRefV1(_StrictAuditModel):
 
 
 def audit_scope_digest(scope: AuditScopeV1) -> str:
+    payload = scope.model_dump(mode="json")
+    payload.pop("tag")
     return typed_digest(
         Sha256Value,
         AUDIT_SCOPE_DIGEST_DOMAIN,
-        scope.model_dump(mode="json"),
+        payload,
     ).tagged
 
 
@@ -309,7 +311,9 @@ def build_audit_cursor(
 
 
 def audit_request_digest(request: Mapping[str, object]) -> str:
-    return typed_digest(Sha256Value, AUDIT_REQUEST_DIGEST_DOMAIN, dict(request)).tagged
+    payload = dict(request)
+    payload.pop("tag", None)
+    return typed_digest(Sha256Value, AUDIT_REQUEST_DIGEST_DOMAIN, payload).tagged
 
 
 def audit_result_digest(result: BaseModel) -> str:
