@@ -1133,18 +1133,91 @@ class CruxibleClient:
         self,
         instance_id: str,
         *,
+        evaluation_time: str,
         workspace_observation: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillCurationListResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/curation/list",
             json={
                 "tag": "playbill-curation-list-request-v1",
+                "evaluation_time": evaluation_time,
                 "workspace_observation": (
                     None if workspace_observation is None else dict(workspace_observation)
                 ),
             },
         )
         return self._parse_model(response, contracts.PlaybillCurationListResult)
+
+    def overrule_playbill_curation(
+        self,
+        instance_id: str,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        attribution_refs: tuple[str, ...] = (),
+    ) -> contracts.PlaybillCurationActionResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/curation/overrule",
+            json={
+                "tag": "playbill-curation-overrule-request-v1",
+                "item_id": item_id,
+                "expected_latest_event_digest": expected_latest_event_digest,
+                "reason": reason,
+                "attribution_refs": list(attribution_refs),
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillCurationActionResult)
+
+    def accept_fixed_playbill_curation(
+        self,
+        instance_id: str,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        accepted_proposal_id: str,
+        accepted_changeset_digest: str,
+        attribution_refs: tuple[str, ...] = (),
+    ) -> contracts.PlaybillCurationActionResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/curation/accept-fixed",
+            json={
+                "tag": "playbill-curation-accept-fixed-request-v1",
+                "item_id": item_id,
+                "expected_latest_event_digest": expected_latest_event_digest,
+                "reason": reason,
+                "accepted_proposal_id": accepted_proposal_id,
+                "accepted_changeset_digest": accepted_changeset_digest,
+                "attribution_refs": list(attribution_refs),
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillCurationActionResult)
+
+    def suppress_playbill_curation(
+        self,
+        instance_id: str,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        scope: Literal["item", "pattern", "instance"],
+        until_generation: int | None = None,
+        attribution_refs: tuple[str, ...] = (),
+    ) -> contracts.PlaybillCurationActionResult:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/curation/suppress",
+            json={
+                "tag": "playbill-curation-suppress-request-v1",
+                "item_id": item_id,
+                "expected_latest_event_digest": expected_latest_event_digest,
+                "reason": reason,
+                "scope": scope,
+                "until_generation": until_generation,
+                "attribution_refs": list(attribution_refs),
+            },
+        )
+        return self._parse_model(response, contracts.PlaybillCurationActionResult)
 
     def discover_playbill(
         self,

@@ -238,11 +238,20 @@ the repair identifies that field.
 
 ~~~text
 cruxible playbill curation list [--workspace-root PATH] [--json]
+cruxible playbill curation overrule ITEM_ID
+  --expected-latest-event-digest DIGEST --reason TEXT [--json]
+cruxible playbill curation accept-fixed ITEM_ID
+  --expected-latest-event-digest DIGEST --reason TEXT
+  --proposal-id DIGEST --changeset-digest DIGEST [--json]
+cruxible playbill curation suppress ITEM_ID
+  --expected-latest-event-digest DIGEST --reason TEXT
+  --scope item|pattern|instance [--until-generation N] [--json]
 ~~~
 
 Lists the mechanical curation queue and explicitly submits the declared-block
 observation produced by the client-side workspace scanner. The daemon does not
-read workspace files.
+read workspace files. The lifecycle commands append attributed operational
+events; they do not create governed proposals or mutate accepted knowledge.
 
 ## playbill discover
 

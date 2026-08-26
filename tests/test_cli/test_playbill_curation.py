@@ -14,13 +14,18 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
         "tag": "playbill-next-workspace-observation-v1",
         "source_observations": [],
     }
-    calls: list[object] = []
+    calls: list[tuple[str, str, object]] = []
 
     class StubClient:
         def list_playbill_curation(
-            self, instance_id: str, *, workspace_observation: object
+            self,
+            instance_id: str,
+            *,
+            evaluation_time: str,
+            workspace_observation: object,
         ) -> contracts.PlaybillCurationListResult:
-            calls.append((instance_id, workspace_observation))
+            calls.append((instance_id, evaluation_time, workspace_observation))
+
             return contracts.PlaybillCurationListResult(
                 coordinate=contracts.PlaybillAcceptedCoordinate(
                     git_oid="1" * 64,
@@ -29,8 +34,10 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
                     compiler_digest="sha256:" + "4" * 64,
                 ),
                 generation=3,
+                evaluation_time=evaluation_time,
                 operational_head_digest="sha256:" + "5" * 64,
                 items=[],
+                detector_coverage=[],
                 observation_coverage={
                     "tag": "playbill-curation-observation-coverage-v1",
                     "source_count": 0,
@@ -38,6 +45,7 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
                     "omitted_source_count": 0,
                     "omissions": [],
                 },
+                result_digest="sha256:" + "6" * 64,
             )
 
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
@@ -60,4 +68,85 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
 
     assert result.exit_code == 0, result.output
     assert "generation 3: 0 item(s)" in result.output
-    assert calls == [("inst", observation)]
+    assert len(calls) == 1
+    assert calls[0][0] == "inst"
+    assert calls[0][2] == observation
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_operation"),
+    (
+        (["overrule"], "overrule"),
+        (
+            [
+                "accept-fixed",
+                "--proposal-id",
+                "sha256:" + "3" * 64,
+                "--changeset-digest",
+                "sha256:" + "4" * 64,
+            ],
+            "accept_fixed",
+        ),
+        (["suppress", "--scope", "pattern", "--until-generation", "9"], "suppress"),
+    ),
+)
+def test_cli_curation_lifecycle_commands_delegate_once(
+    monkeypatch: pytest.MonkeyPatch,
+    command: list[str],
+    expected_operation: str,
+) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class StubClient:
+        def _action(
+            self, operation: str, values: dict[str, object]
+        ) -> contracts.PlaybillCurationActionResult:
+            calls.append((operation, values))
+            return contracts.PlaybillCurationActionResult(
+                coordinate=contracts.PlaybillAcceptedCoordinate(
+                    git_oid="1" * 64,
+                    semantic_root="sha256:" + "2" * 64,
+                    generation_root="sha256:" + "3" * 64,
+                    compiler_digest="sha256:" + "4" * 64,
+                ),
+                generation=3,
+                operational_head_digest="sha256:" + "5" * 64,
+                item={"item_id": values["item_id"], "status": "resolved"},
+            )
+
+        def overrule_playbill_curation(
+            self, _instance_id: str, **values: object
+        ) -> contracts.PlaybillCurationActionResult:
+            return self._action("overrule", values)
+
+        def accept_fixed_playbill_curation(
+            self, _instance_id: str, **values: object
+        ) -> contracts.PlaybillCurationActionResult:
+            return self._action("accept_fixed", values)
+
+        def suppress_playbill_curation(
+            self, _instance_id: str, **values: object
+        ) -> contracts.PlaybillCurationActionResult:
+            return self._action("suppress", values)
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://curation.example.test",
+            "--instance-id",
+            "inst",
+            "playbill",
+            "curation",
+            *command,
+            "sha256:" + "1" * 64,
+            "--expected-latest-event-digest",
+            "sha256:" + "2" * 64,
+            "--reason",
+            "operator-reviewed mechanical facts",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert [name for name, _values in calls] == [expected_operation]

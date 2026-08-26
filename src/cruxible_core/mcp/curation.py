@@ -43,6 +43,9 @@ _DEFAULT_TOOLS = {
     "cruxible_playbill_search",
     "cruxible_playbill_since",
     "cruxible_playbill_curation_list",
+    "cruxible_playbill_curation_overrule",
+    "cruxible_playbill_curation_accept_fixed",
+    "cruxible_playbill_curation_suppress",
     "cruxible_playbill_expand",
     "cruxible_playbill_source_context",
     "cruxible_playbill_resolve_coverage",
@@ -142,6 +145,9 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
             "cruxible_playbill_procedure_run_status",
             "cruxible_playbill_proposal_readmit",
             "cruxible_playbill_seed_apply",
+            "cruxible_playbill_curation_overrule",
+            "cruxible_playbill_curation_accept_fixed",
+            "cruxible_playbill_curation_suppress",
         }
     ),
     PROFILE_REVIEW: frozenset(
@@ -149,6 +155,9 @@ _PROFILE_TOOLS: dict[str, frozenset[str] | None] = {
         | {
             "cruxible_playbill_submit_approval",
             "cruxible_playbill_activate",
+            "cruxible_playbill_curation_overrule",
+            "cruxible_playbill_curation_accept_fixed",
+            "cruxible_playbill_curation_suppress",
         }
     ),
 }

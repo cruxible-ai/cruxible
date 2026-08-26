@@ -571,7 +571,20 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "next": _command("playbill", "next_work", "Read the deterministic repair queue."),
             "curation": _group(
                 "Inspect mechanically detected ontology-maintenance patterns.",
-                {"list": _command("playbill", "curation_list", "Read the curation queue.")},
+                {
+                    "list": _command("playbill", "curation_list", "Read the curation queue."),
+                    "overrule": _command(
+                        "playbill", "curation_overrule", "Overrule one detector item."
+                    ),
+                    "accept-fixed": _command(
+                        "playbill",
+                        "curation_accept_fixed",
+                        "Link an item to an accepted fix.",
+                    ),
+                    "suppress": _command(
+                        "playbill", "curation_suppress", "Suppress open curation work."
+                    ),
+                },
                 module="playbill",
                 attr="curation_group",
             ),

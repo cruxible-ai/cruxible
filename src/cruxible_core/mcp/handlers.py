@@ -1292,19 +1292,124 @@ def handle_playbill_since(
 def handle_playbill_curation_list(
     instance_id: str,
     *,
+    evaluation_time: str,
     workspace_observation: dict[str, Any] | None,
 ) -> contracts.PlaybillCurationListResult:
     request = {
         "tag": "playbill-curation-list-request-v1",
+        "evaluation_time": evaluation_time,
         "workspace_observation": workspace_observation,
     }
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_curation(
             instance_id,
+            evaluation_time=evaluation_time,
             workspace_observation=workspace_observation,
         ),
         lambda: playbill_api.playbill_curation_list(instance_id, request=request),
         operation_name="cruxible_playbill_curation_list",
+    )
+
+
+def handle_playbill_curation_overrule(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    attribution_refs: list[str],
+) -> contracts.PlaybillCurationActionResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.overrule_playbill_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            attribution_refs=tuple(attribution_refs),
+        ),
+        lambda: playbill_api.playbill_curation_overrule(
+            instance_id,
+            request={
+                "tag": "playbill-curation-overrule-request-v1",
+                "item_id": item_id,
+                "expected_latest_event_digest": expected_latest_event_digest,
+                "reason": reason,
+                "attribution_refs": attribution_refs,
+            },
+        ),
+        operation_name="cruxible_playbill_curation_overrule",
+    )
+
+
+def handle_playbill_curation_accept_fixed(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    accepted_proposal_id: str,
+    accepted_changeset_digest: str,
+    attribution_refs: list[str],
+) -> contracts.PlaybillCurationActionResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.accept_fixed_playbill_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            accepted_proposal_id=accepted_proposal_id,
+            accepted_changeset_digest=accepted_changeset_digest,
+            attribution_refs=tuple(attribution_refs),
+        ),
+        lambda: playbill_api.playbill_curation_accept_fixed(
+            instance_id,
+            request={
+                "tag": "playbill-curation-accept-fixed-request-v1",
+                "item_id": item_id,
+                "expected_latest_event_digest": expected_latest_event_digest,
+                "reason": reason,
+                "accepted_proposal_id": accepted_proposal_id,
+                "accepted_changeset_digest": accepted_changeset_digest,
+                "attribution_refs": attribution_refs,
+            },
+        ),
+        operation_name="cruxible_playbill_curation_accept_fixed",
+    )
+
+
+def handle_playbill_curation_suppress(
+    instance_id: str,
+    *,
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    scope: Literal["item", "pattern", "instance"],
+    until_generation: int | None,
+    attribution_refs: list[str],
+) -> contracts.PlaybillCurationActionResult:
+    return _dispatch_remote_or_local(
+        lambda client: client.suppress_playbill_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            scope=scope,
+            until_generation=until_generation,
+            attribution_refs=tuple(attribution_refs),
+        ),
+        lambda: playbill_api.playbill_curation_suppress(
+            instance_id,
+            request={
+                "tag": "playbill-curation-suppress-request-v1",
+                "item_id": item_id,
+                "expected_latest_event_digest": expected_latest_event_digest,
+                "reason": reason,
+                "scope": scope,
+                "until_generation": until_generation,
+                "attribution_refs": attribution_refs,
+            },
+        ),
+        operation_name="cruxible_playbill_curation_suppress",
     )
 
 

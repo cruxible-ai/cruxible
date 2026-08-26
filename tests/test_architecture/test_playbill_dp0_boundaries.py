@@ -431,6 +431,9 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "cruxible_playbill_search",
         "cruxible_playbill_since",
         "cruxible_playbill_curation_list",
+        "cruxible_playbill_curation_overrule",
+        "cruxible_playbill_curation_accept_fixed",
+        "cruxible_playbill_curation_suppress",
         "cruxible_playbill_whoami",
     }
     public_client_methods = {
@@ -514,6 +517,9 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "migrate_playbill_claim_type",
         "next_playbill",
         "list_playbill_curation",
+        "overrule_playbill_curation",
+        "accept_fixed_playbill_curation",
+        "suppress_playbill_curation",
         "search_playbill",
         "since_playbill",
     }

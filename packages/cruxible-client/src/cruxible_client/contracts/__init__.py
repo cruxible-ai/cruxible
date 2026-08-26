@@ -809,9 +809,24 @@ class PlaybillCurationListResult(BaseModel):
     tag: Literal["playbill-curation-list-result-v1"] = "playbill-curation-list-result-v1"
     coordinate: PlaybillAcceptedCoordinate
     generation: int = Field(ge=0)
+    evaluation_time: str
     operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     items: list[dict[str, Any]] = Field(default_factory=list)
+    detector_coverage: list[dict[str, Any]]
     observation_coverage: dict[str, Any]
+    result_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class PlaybillCurationActionResult(BaseModel):
+    """One attributed append-only curation lifecycle transition."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-curation-action-result-v1"] = "playbill-curation-action-result-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    generation: int = Field(ge=0)
+    operational_head_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    item: dict[str, Any]
 
 
 def _since_digest(domain: str, payload: dict[str, Any]) -> str:

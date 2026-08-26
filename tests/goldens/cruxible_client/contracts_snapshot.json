@@ -6575,6 +6575,151 @@
         "result"
       ]
     },
+    "PlaybillCurationActionResult": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "item": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "item",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Item",
+            "type": "object"
+          }
+        },
+        "operational_head_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "operational_head_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Operational Head Digest",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-curation-action-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-curation-action-result-v1",
+            "default": "playbill-curation-action-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "description": "One attributed append-only curation lifecycle transition.",
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "item": {
+            "additionalProperties": true,
+            "title": "Item",
+            "type": "object"
+          },
+          "operational_head_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Operational Head Digest",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-curation-action-result-v1",
+            "default": "playbill-curation-action-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "generation",
+          "operational_head_digest",
+          "item"
+        ],
+        "title": "PlaybillCurationActionResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "generation",
+        "item",
+        "operational_head_digest"
+      ]
+    },
     "PlaybillCurationListResult": {
       "fields": {
         "coordinate": {
@@ -6584,6 +6729,30 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "detector_coverage": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "detector_coverage",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Detector Coverage",
+            "type": "array"
+          }
+        },
+        "evaluation_time": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "evaluation_time",
+          "required": true,
+          "schema": {
+            "title": "Evaluation Time",
+            "type": "string"
           }
         },
         "generation": {
@@ -6630,6 +6799,17 @@
           "schema": {
             "pattern": "^sha256:[0-9a-f]{64}$",
             "title": "Operational Head Digest",
+            "type": "string"
+          }
+        },
+        "result_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "result_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Result Digest",
             "type": "string"
           }
         },
@@ -6696,6 +6876,18 @@
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
+          "detector_coverage": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Detector Coverage",
+            "type": "array"
+          },
+          "evaluation_time": {
+            "title": "Evaluation Time",
+            "type": "string"
+          },
           "generation": {
             "minimum": 0,
             "title": "Generation",
@@ -6719,6 +6911,11 @@
             "title": "Operational Head Digest",
             "type": "string"
           },
+          "result_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Result Digest",
+            "type": "string"
+          },
           "tag": {
             "const": "playbill-curation-list-result-v1",
             "default": "playbill-curation-list-result-v1",
@@ -6729,17 +6926,23 @@
         "required": [
           "coordinate",
           "generation",
+          "evaluation_time",
           "operational_head_digest",
-          "observation_coverage"
+          "detector_coverage",
+          "observation_coverage",
+          "result_digest"
         ],
         "title": "PlaybillCurationListResult",
         "type": "object"
       },
       "required_fields": [
         "coordinate",
+        "detector_coverage",
+        "evaluation_time",
         "generation",
         "observation_coverage",
-        "operational_head_digest"
+        "operational_head_digest",
+        "result_digest"
       ]
     },
     "PlaybillDiscoveryResult": {

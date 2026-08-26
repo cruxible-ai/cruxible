@@ -28,7 +28,10 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillAuthoringRebaseRequest,
     PlaybillAuthoringSubmitRequest,
     PlaybillClaimExplainRequest,
+    PlaybillCurationAcceptFixedRequest,
     PlaybillCurationListRequest,
+    PlaybillCurationOverruleRequest,
+    PlaybillCurationSuppressRequest,
     PlaybillDiscoverRequest,
     PlaybillExpandRequest,
     PlaybillExplainRequest,
@@ -1004,6 +1007,48 @@ async def curation_list(
     return playbill_api.playbill_curation_list(
         resolve_server_instance_id(instance_id),
         request=req.model_dump(mode="json", exclude_none=True),
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/curation/overrule",
+    response_model=contracts.PlaybillCurationActionResult,
+)
+async def curation_overrule(
+    instance_id: str,
+    req: PlaybillCurationOverruleRequest,
+) -> contracts.PlaybillCurationActionResult:
+    return playbill_api.playbill_curation_overrule(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json"),
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/curation/accept-fixed",
+    response_model=contracts.PlaybillCurationActionResult,
+)
+async def curation_accept_fixed(
+    instance_id: str,
+    req: PlaybillCurationAcceptFixedRequest,
+) -> contracts.PlaybillCurationActionResult:
+    return playbill_api.playbill_curation_accept_fixed(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json"),
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/curation/suppress",
+    response_model=contracts.PlaybillCurationActionResult,
+)
+async def curation_suppress(
+    instance_id: str,
+    req: PlaybillCurationSuppressRequest,
+) -> contracts.PlaybillCurationActionResult:
+    return playbill_api.playbill_curation_suppress(
+        resolve_server_instance_id(instance_id),
+        request=req.model_dump(mode="json"),
     )
 
 

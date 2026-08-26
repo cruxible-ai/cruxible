@@ -52,6 +52,7 @@ class _Client:
     def __init__(self) -> None:
         self.compiled: dict[str, Any] | None = None
         self.curation_observation: object | None = None
+        self.curation_actions: list[tuple[str, dict[str, object]]] = []
 
     def search_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSearchResult:
         return api.PlaybillSearchResult(
@@ -89,8 +90,10 @@ class _Client:
         return api.PlaybillCurationListResult(
             coordinate=_COORDINATE,
             generation=4,
+            evaluation_time=str(values["evaluation_time"]),
             operational_head_digest="sha256:" + "6" * 64,
             items=[],
+            detector_coverage=[],
             observation_coverage={
                 "tag": "playbill-curation-observation-coverage-v1",
                 "source_count": 1,
@@ -98,7 +101,34 @@ class _Client:
                 "omitted_source_count": 0,
                 "omissions": [],
             },
+            result_digest="sha256:" + "7" * 64,
         )
+
+    def _curation_action(
+        self, operation: str, values: dict[str, object]
+    ) -> api.PlaybillCurationActionResult:
+        self.curation_actions.append((operation, values))
+        return api.PlaybillCurationActionResult(
+            coordinate=_COORDINATE,
+            generation=4,
+            operational_head_digest="sha256:" + "6" * 64,
+            item={"item_id": values["item_id"], "status": "resolved"},
+        )
+
+    def overrule_playbill_curation(
+        self, _instance_id: str, **values: object
+    ) -> api.PlaybillCurationActionResult:
+        return self._curation_action("overrule", values)
+
+    def accept_fixed_playbill_curation(
+        self, _instance_id: str, **values: object
+    ) -> api.PlaybillCurationActionResult:
+        return self._curation_action("accept_fixed", values)
+
+    def suppress_playbill_curation(
+        self, _instance_id: str, **values: object
+    ) -> api.PlaybillCurationActionResult:
+        return self._curation_action("suppress", values)
 
     def compile_playbill_authoring(
         self, _instance_id: str, **values: object
@@ -185,6 +215,37 @@ def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
     assert result.generation == 4
     assert isinstance(client.curation_observation, dict)
     assert client.curation_observation["tag"] == "playbill-next-workspace-observation-v1"
+
+
+def test_sdk_curation_lifecycle_methods_are_thin_typed_delegates(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+    common = {
+        "item_id": "sha256:" + "1" * 64,
+        "expected_latest_event_digest": "sha256:" + "2" * 64,
+        "reason": "operator-reviewed mechanical facts",
+    }
+
+    pb.curation_overrule(**common)
+    pb.curation_accept_fixed(
+        **common,
+        accepted_proposal_id="sha256:" + "3" * 64,
+        accepted_changeset_digest="sha256:" + "4" * 64,
+    )
+    pb.curation_suppress(**common, scope="item", until_generation=8)
+
+    assert [name for name, _values in client.curation_actions] == [
+        "overrule",
+        "accept_fixed",
+        "suppress",
+    ]
+    assert client.curation_actions[2][1]["scope"] == "item"
 
 
 @pytest.mark.parametrize("window", [False, True])

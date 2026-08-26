@@ -1398,7 +1398,70 @@ class Playbill:
         observation = observe_playbill_next_workspace(self._workspace)
         return self._client.list_playbill_curation(
             self._instance_id,
+            evaluation_time=self._evaluation_time(),
             workspace_observation=observation,
+        )
+
+    def curation_overrule(
+        self,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        attribution_refs: tuple[str, ...] = (),
+    ) -> api.PlaybillCurationActionResult:
+        """Record that a detector pattern is mechanically inapplicable."""
+
+        return self._client.overrule_playbill_curation(
+            self._instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            attribution_refs=attribution_refs,
+        )
+
+    def curation_accept_fixed(
+        self,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        accepted_proposal_id: str,
+        accepted_changeset_digest: str,
+        attribution_refs: tuple[str, ...] = (),
+    ) -> api.PlaybillCurationActionResult:
+        """Link an item to an exact already-accepted resolving ChangeSet."""
+
+        return self._client.accept_fixed_playbill_curation(
+            self._instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            accepted_proposal_id=accepted_proposal_id,
+            accepted_changeset_digest=accepted_changeset_digest,
+            attribution_refs=attribution_refs,
+        )
+
+    def curation_suppress(
+        self,
+        *,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        scope: Literal["item", "pattern", "instance"],
+        until_generation: int | None = None,
+        attribution_refs: tuple[str, ...] = (),
+    ) -> api.PlaybillCurationActionResult:
+        """Hide matching open work without resolving or stopping detection."""
+
+        return self._client.suppress_playbill_curation(
+            self._instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            scope=scope,
+            until_generation=until_generation,
+            attribution_refs=attribution_refs,
         )
 
     def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:

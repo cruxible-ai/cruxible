@@ -1926,6 +1926,7 @@ def curation_list(workspace_root: str, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.list_playbill_curation(
             instance_id,
+            evaluation_time=datetime.now(UTC).isoformat(),
             workspace_observation=observation,
         ),
         command_name="playbill curation list",
@@ -1937,6 +1938,99 @@ def curation_list(workspace_root: str, output_json: bool) -> None:
         f"Curation queue at generation {result.generation}: {len(result.items)} item(s); "
         f"observed {result.observation_coverage['observed_block_count']} declared block(s)."
     )
+
+
+@curation_group.command("overrule")
+@click.argument("item_id")
+@click.option("--expected-latest-event-digest", required=True)
+@click.option("--reason", required=True)
+@json_option
+@handle_errors
+def curation_overrule(
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    output_json: bool,
+) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.overrule_playbill_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+        ),
+        command_name="playbill curation overrule",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Curation item {result.item['item_id']}: {result.item['status']}")
+
+
+@curation_group.command("accept-fixed")
+@click.argument("item_id")
+@click.option("--expected-latest-event-digest", required=True)
+@click.option("--reason", required=True)
+@click.option("--proposal-id", required=True)
+@click.option("--changeset-digest", required=True)
+@json_option
+@handle_errors
+def curation_accept_fixed(
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    proposal_id: str,
+    changeset_digest: str,
+    output_json: bool,
+) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.accept_fixed_playbill_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            accepted_proposal_id=proposal_id,
+            accepted_changeset_digest=changeset_digest,
+        ),
+        command_name="playbill curation accept-fixed",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Curation item {result.item['item_id']}: {result.item['status']}")
+
+
+@curation_group.command("suppress")
+@click.argument("item_id")
+@click.option("--expected-latest-event-digest", required=True)
+@click.option("--reason", required=True)
+@click.option("--scope", type=click.Choice(("item", "pattern", "instance")), required=True)
+@click.option("--until-generation", type=click.IntRange(min=0))
+@json_option
+@handle_errors
+def curation_suppress(
+    item_id: str,
+    expected_latest_event_digest: str,
+    reason: str,
+    scope: str,
+    until_generation: int | None,
+    output_json: bool,
+) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.suppress_playbill_curation(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            scope=cast(Any, scope),
+            until_generation=until_generation,
+        ),
+        command_name="playbill curation suppress",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    click.echo(f"Curation item {result.item['item_id']}: suppressed ({scope})")
 
 
 @playbill_group.command("since")

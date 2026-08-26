@@ -236,7 +236,38 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
 
 class PlaybillCurationListRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
+    evaluation_time: datetime
     workspace_observation: dict[str, Any] | None = None
+
+
+class PlaybillCurationOverruleRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-curation-overrule-request-v1"] = "playbill-curation-overrule-request-v1"
+    item_id: str
+    expected_latest_event_digest: str
+    reason: str
+    attribution_refs: tuple[str, ...] = ()
+
+
+class PlaybillCurationAcceptFixedRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-curation-accept-fixed-request-v1"] = (
+        "playbill-curation-accept-fixed-request-v1"
+    )
+    item_id: str
+    expected_latest_event_digest: str
+    reason: str
+    accepted_proposal_id: str
+    accepted_changeset_digest: str
+    attribution_refs: tuple[str, ...] = ()
+
+
+class PlaybillCurationSuppressRequest(_StrictPlaybillRequest):
+    tag: Literal["playbill-curation-suppress-request-v1"] = "playbill-curation-suppress-request-v1"
+    item_id: str
+    expected_latest_event_digest: str
+    reason: str
+    scope: Literal["item", "pattern", "instance"]
+    until_generation: int | None = None
+    attribution_refs: tuple[str, ...] = ()
 
 
 class PlaybillExpandRequest(_StrictPlaybillRequest):

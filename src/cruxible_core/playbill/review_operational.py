@@ -42,6 +42,10 @@ class ReviewOperationalStoreError(PlaybillError):
 
     code = "playbill.curation.operational_store_invalid"
 
+    @property
+    def error_code(self) -> str:
+        return self.code
+
     def __init__(self, message: str) -> None:
         super().__init__(f"{self.code}: {message}")
 
@@ -50,6 +54,10 @@ class ReviewOperationalConcurrentChangeError(PlaybillError):
     """The caller's expected operational partition head is no longer current."""
 
     code = "playbill.curation.concurrent_change"
+
+    @property
+    def error_code(self) -> str:
+        return self.code
 
     def __init__(self) -> None:
         super().__init__(f"{self.code}: operational partition changed concurrently")

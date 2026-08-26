@@ -203,6 +203,15 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "List mechanically detected curation patterns. Supply an explicit workspace_observation "
         "only when the client has scanned declared blocks; the daemon never reads workspace files."
     ),
+    "cruxible_playbill_curation_overrule": (
+        "Use when the exact mechanical detector pattern is inapplicable and should be closed."
+    ),
+    "cruxible_playbill_curation_accept_fixed": (
+        "Use only after an accepted ChangeSet mechanically intersects the curation evidence."
+    ),
+    "cruxible_playbill_curation_suppress": (
+        "Hide open curation work by item, pattern, or instance without resolving it."
+    ),
     "cruxible_playbill_since": (
         "Use when you need the exact accepted ChangeSet members after a known generation."
     ),

@@ -138,8 +138,14 @@ from cruxible_core.service.playbill_coverage import (
     service_resolve_playbill_coverage,
 )
 from cruxible_core.service.playbill_curation import (
+    PlaybillCurationAcceptFixedRequestV1,
     PlaybillCurationListRequestV1,
+    PlaybillCurationOverruleRequestV1,
+    PlaybillCurationSuppressRequestV1,
+    service_accept_fixed_playbill_curation,
     service_list_playbill_curation,
+    service_overrule_playbill_curation,
+    service_suppress_playbill_curation,
 )
 from cruxible_core.service.playbill_discovery import (
     PlaybillDiscoveryResultV1,
@@ -1308,6 +1314,70 @@ def playbill_curation_list(
         actor_context=actor,
     )
     return contracts.PlaybillCurationListResult.model_validate(result.model_dump(mode="json"))
+
+
+def _curation_actor() -> GovernedActorContext:
+    actor = _actor_context()
+    if actor is None:
+        raise AuthenticationError("Playbill curation actions require an attributed actor")
+    return actor
+
+
+def playbill_curation_overrule(
+    instance_id: str,
+    *,
+    request: PlaybillCurationOverruleRequestV1 | Mapping[str, object],
+) -> contracts.PlaybillCurationActionResult:
+    check_permission("cruxible_playbill_curation_overrule", instance_id=instance_id)
+    parsed = (
+        request
+        if isinstance(request, PlaybillCurationOverruleRequestV1)
+        else PlaybillCurationOverruleRequestV1.model_validate(request)
+    )
+    result = service_overrule_playbill_curation(
+        get_playbill_manager().get(instance_id),
+        request=parsed,
+        actor_context=_curation_actor(),
+    )
+    return contracts.PlaybillCurationActionResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_curation_accept_fixed(
+    instance_id: str,
+    *,
+    request: PlaybillCurationAcceptFixedRequestV1 | Mapping[str, object],
+) -> contracts.PlaybillCurationActionResult:
+    check_permission("cruxible_playbill_curation_accept_fixed", instance_id=instance_id)
+    parsed = (
+        request
+        if isinstance(request, PlaybillCurationAcceptFixedRequestV1)
+        else PlaybillCurationAcceptFixedRequestV1.model_validate(request)
+    )
+    result = service_accept_fixed_playbill_curation(
+        get_playbill_manager().get(instance_id),
+        request=parsed,
+        actor_context=_curation_actor(),
+    )
+    return contracts.PlaybillCurationActionResult.model_validate(result.model_dump(mode="json"))
+
+
+def playbill_curation_suppress(
+    instance_id: str,
+    *,
+    request: PlaybillCurationSuppressRequestV1 | Mapping[str, object],
+) -> contracts.PlaybillCurationActionResult:
+    check_permission("cruxible_playbill_curation_suppress", instance_id=instance_id)
+    parsed = (
+        request
+        if isinstance(request, PlaybillCurationSuppressRequestV1)
+        else PlaybillCurationSuppressRequestV1.model_validate(request)
+    )
+    result = service_suppress_playbill_curation(
+        get_playbill_manager().get(instance_id),
+        request=parsed,
+        actor_context=_curation_actor(),
+    )
+    return contracts.PlaybillCurationActionResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_since(

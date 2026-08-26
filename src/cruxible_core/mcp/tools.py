@@ -651,12 +651,73 @@ def register_tools(
     @_tool
     def cruxible_playbill_curation_list(
         instance_id: str,
+        evaluation_time: str,
         workspace_observation: dict[str, Any] | None = None,
     ) -> contracts.PlaybillCurationListResult:
         """List mechanical curation patterns and explicitly ingest block observations."""
         return handlers.handle_playbill_curation_list(
             instance_id,
+            evaluation_time=evaluation_time,
             workspace_observation=workspace_observation,
+        )
+
+    @_tool
+    def cruxible_playbill_curation_overrule(
+        instance_id: str,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        attribution_refs: list[str] | None = None,
+    ) -> contracts.PlaybillCurationActionResult:
+        """Resolve one detector-version item as mechanically inapplicable."""
+        return handlers.handle_playbill_curation_overrule(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            attribution_refs=attribution_refs or [],
+        )
+
+    @_tool
+    def cruxible_playbill_curation_accept_fixed(
+        instance_id: str,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        accepted_proposal_id: str,
+        accepted_changeset_digest: str,
+        attribution_refs: list[str] | None = None,
+    ) -> contracts.PlaybillCurationActionResult:
+        """Link one curation item to its exact accepted resolving ChangeSet."""
+        return handlers.handle_playbill_curation_accept_fixed(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            accepted_proposal_id=accepted_proposal_id,
+            accepted_changeset_digest=accepted_changeset_digest,
+            attribution_refs=attribution_refs or [],
+        )
+
+    @_tool
+    def cruxible_playbill_curation_suppress(
+        instance_id: str,
+        item_id: str,
+        expected_latest_event_digest: str,
+        reason: str,
+        scope: Literal["item", "pattern", "instance"],
+        until_generation: int | None = None,
+        attribution_refs: list[str] | None = None,
+    ) -> contracts.PlaybillCurationActionResult:
+        """Hide curation work temporarily without resolving its detector facts."""
+        return handlers.handle_playbill_curation_suppress(
+            instance_id,
+            item_id=item_id,
+            expected_latest_event_digest=expected_latest_event_digest,
+            reason=reason,
+            scope=scope,
+            until_generation=until_generation,
+            attribution_refs=attribution_refs or [],
         )
 
     @_tool
