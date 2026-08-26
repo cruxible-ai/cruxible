@@ -8,8 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from fractions import Fraction
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.artifacts import parse_artifact_identity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact_identity
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
