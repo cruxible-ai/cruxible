@@ -151,6 +151,7 @@ def test_http_authoring_openapi_and_runtime_reject_removed_brief_input(
     assert schemas["ClaimType"]["properties"]["artifact_format"]["enum"] == [
         "playbill-claim-type-v1",
         "playbill-claim-type-v3",
+        "playbill-claim-type-v4",
     ]
 
     response = client.post(
