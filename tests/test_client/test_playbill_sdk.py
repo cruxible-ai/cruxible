@@ -64,6 +64,23 @@ class _Client:
             result_digest="sha256:" + "5" * 64,
         )
 
+    def since_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSinceResult:
+        result_values: dict[str, object] = {
+            "coordinate": _COORDINATE.model_dump(mode="json"),
+            "generation": 4,
+            "rows": [],
+            "next_cursor": None,
+            "truncated": False,
+        }
+        return api.PlaybillSinceResult.model_validate(
+            {
+                **result_values,
+                "result_digest": api._since_digest(  # type: ignore[attr-defined]
+                    "playbill-since-result-v1", result_values
+                ),
+            }
+        )
+
     def compile_playbill_authoring(
         self, _instance_id: str, **values: object
     ) -> api.PlaybillAuthoringPreflightResult:
@@ -115,6 +132,21 @@ entries:
     (path / "corpus" / "runbook.md").write_text(
         "Patch KEV systems within 48 hours.\n", encoding="utf-8"
     )
+
+
+def test_sdk_since_uses_its_active_orientation(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        _Client(),
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+
+    result = pb.since(2)
+
+    assert result.generation == 4
+    assert result.rows == []
 
 
 @pytest.mark.parametrize("window", [False, True])

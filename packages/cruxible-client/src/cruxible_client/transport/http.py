@@ -1092,6 +1092,43 @@ class CruxibleClient:
         response = self._client.post(f"/api/v1/{instance_id}/playbill/next", json=payload)
         return self._parse_model(response, contracts.PlaybillNextResult)
 
+    def since_playbill(
+        self,
+        instance_id: str,
+        *,
+        generation: int,
+        access_profile: Mapping[str, Any],
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
+        max_rows: int = 100,
+        max_bytes: int = 65_536,
+        cursor: contracts.PlaybillSinceCursor | Mapping[str, Any] | None = None,
+    ) -> contracts.PlaybillSinceResult:
+        request = contracts.PlaybillSinceRequest(
+            generation=generation,
+            at=(
+                None
+                if at is None
+                else contracts.PlaybillAcceptedCoordinate.model_validate(
+                    self._playbill_coordinate_body(at)
+                )
+            ),
+            access_profile=dict(access_profile),
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            cursor=(
+                cursor
+                if isinstance(cursor, contracts.PlaybillSinceCursor)
+                else None
+                if cursor is None
+                else contracts.PlaybillSinceCursor.model_validate(cursor)
+            ),
+        )
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/since",
+            json=request.model_dump(mode="json"),
+        )
+        return self._parse_model(response, contracts.PlaybillSinceResult)
+
     def discover_playbill(
         self,
         instance_id: str,

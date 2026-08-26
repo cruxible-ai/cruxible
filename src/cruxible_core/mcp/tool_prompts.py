@@ -199,6 +199,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use search mode to find accepted Claims, Procedures, or installed demands; "
         "list mode for deterministic pagination; orient mode for counts and exact follow-ups."
     ),
+    "cruxible_playbill_since": (
+        "Use when you need the exact accepted ChangeSet members after a known generation."
+    ),
     "cruxible_playbill_expand": (
         "Use when you need one address's bounded governance, provenance, and relation context."
     ),

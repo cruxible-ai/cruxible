@@ -164,6 +164,7 @@ def test_protocol_listing_is_static_when_daemon_transport_is_missing(
 
     names, is_error, message = _run(exercise())
     assert "cruxible_playbill_search" in names
+    assert "cruxible_playbill_since" in names
     assert is_error
     assert "CRUXIBLE_SERVER_URL" in message
 

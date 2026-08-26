@@ -1906,6 +1906,65 @@ def next_work(
         click.echo("Unobserved: " + ", ".join(result.unobserved_domains))
 
 
+@playbill_group.command("since")
+@click.argument("generation", type=click.IntRange(min=0))
+@click.option("--max-rows", default=100, show_default=True, type=click.IntRange(1, 1000))
+@click.option("--max-bytes", default=65_536, show_default=True, type=click.IntRange(1, 1_048_576))
+@click.option(
+    "--access-profile",
+    "access_profile_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
+)
+@click.option(
+    "--cursor",
+    "cursor_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="PlaybillSinceCursor JSON/YAML returned by a prior page.",
+)
+@json_option
+@handle_errors
+def since(
+    generation: int,
+    max_rows: int,
+    max_bytes: int,
+    access_profile_path: str | None,
+    cursor_path: str | None,
+    output_json: bool,
+) -> None:
+    profile = (
+        CoverageAccessProfileV1(
+            profile_id="cli-since",
+            permitted_access_classes=("instance", "public"),
+        ).model_dump(mode="json")
+        if access_profile_path is None
+        else _read_model(access_profile_path, CoverageAccessProfileV1).model_dump(mode="json")
+    )
+    cursor = (
+        None if cursor_path is None else _read_model(cursor_path, contracts.PlaybillSinceCursor)
+    )
+    result = _server_call(
+        lambda client, instance_id: client.since_playbill(
+            instance_id,
+            generation=generation,
+            access_profile=profile,
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            cursor=cursor,
+        ),
+        command_name="playbill since",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for row in result.rows:
+        click.echo(f"{row.generation}  {row.disposition}  {row.artifact_kind}  {row.member_path}")
+    if result.next_cursor is not None:
+        click.echo(f"More: {result.next_cursor.cursor_digest}")
+
+
 @playbill_group.command("discover")
 @click.option("--query", "query_text", default=None, help="Exact or lexical match term.")
 @click.option("--entrypoint", default=None, help="Named QueryDefinition entrypoint.")

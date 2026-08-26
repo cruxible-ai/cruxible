@@ -993,6 +993,20 @@ async def next_work(
 
 
 @router.post(
+    "/{instance_id}/playbill/since",
+    response_model=contracts.PlaybillSinceResult,
+)
+async def since(
+    instance_id: str,
+    req: contracts.PlaybillSinceRequest,
+) -> contracts.PlaybillSinceResult:
+    return playbill_api.playbill_since(
+        resolve_server_instance_id(instance_id),
+        request=req,
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/discover",
     response_model=contracts.PlaybillDiscoveryResult | contracts.PlaybillInterfaceInventory,
 )

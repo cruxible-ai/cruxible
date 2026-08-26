@@ -1246,6 +1246,49 @@ def handle_playbill_search(
     )
 
 
+def handle_playbill_since(
+    instance_id: str,
+    *,
+    generation: int,
+    at: dict[str, Any] | None,
+    access_profile: dict[str, Any] | None,
+    max_rows: int,
+    max_bytes: int,
+    cursor: dict[str, Any] | None,
+) -> contracts.PlaybillSinceResult:
+    profile = access_profile or {
+        "tag": "playbill-coverage-access-profile-v1",
+        "profile_id": "mcp-since",
+        "permitted_access_classes": ["instance", "public"],
+        "disclose_restricted_existence": True,
+    }
+    coordinate = None if at is None else contracts.PlaybillAcceptedCoordinate.model_validate(at)
+    parsed_cursor = None if cursor is None else contracts.PlaybillSinceCursor.model_validate(cursor)
+    return _dispatch_remote_or_local(
+        lambda client: client.since_playbill(
+            instance_id,
+            generation=generation,
+            at=coordinate,
+            access_profile=profile,
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            cursor=parsed_cursor,
+        ),
+        lambda: playbill_api.playbill_since(
+            instance_id,
+            request=contracts.PlaybillSinceRequest(
+                generation=generation,
+                at=coordinate,
+                access_profile=profile,
+                max_rows=max_rows,
+                max_bytes=max_bytes,
+                cursor=parsed_cursor,
+            ),
+        ),
+        operation_name="cruxible_playbill_since",
+    )
+
+
 def handle_playbill_expand(
     instance_id: str,
     address: dict[str, Any],

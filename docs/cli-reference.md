@@ -261,6 +261,17 @@ installed demand policies. `orient` returns counts and exact follow-up filters,
 never arbitrary top rows. Until demand policy is installed it explicitly reports
 `demand: not_installed`.
 
+## playbill since
+
+~~~text
+cruxible playbill since GENERATION [--max-rows N] [--max-bytes N]
+  [--access-profile FILE] [--cursor FILE] [--json]
+~~~
+
+Returns signed accepted ChangeSet members in `(GENERATION, pinned head]` order.
+Follow `next_cursor` to continue against the same historical head even if main
+advances; the cursor binds the lower bound, access profile, and page budgets.
+
 ## playbill expand
 
 ~~~text

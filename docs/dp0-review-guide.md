@@ -97,6 +97,7 @@ playbill query propose
 playbill query run
 playbill search
 playbill seed apply
+playbill since
 playbill sources check
 playbill sources compile
 playbill sources propose
@@ -191,6 +192,7 @@ POST /api/v1/{instance_id}/playbill/expand
 POST /api/v1/{instance_id}/playbill/coverage/resolve
 POST /api/v1/{instance_id}/playbill/floor/export
 POST /api/v1/{instance_id}/playbill/search
+POST /api/v1/{instance_id}/playbill/since
 GET  /api/v1/{instance_id}/playbill/whoami
 ```
 
@@ -270,6 +272,7 @@ cruxible_playbill_claim_type_migrate
 cruxible_playbill_seed_apply
 cruxible_playbill_seed_plan
 cruxible_playbill_search
+cruxible_playbill_since
 cruxible_playbill_whoami
 ```
 

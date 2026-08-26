@@ -60,12 +60,13 @@
     "playbill_review_proposal",
     "playbill_run_query",
     "playbill_search",
+    "playbill_since",
     "playbill_source_context",
     "playbill_store_body",
     "playbill_subject_history",
     "playbill_submit_approval",
     "playbill_whoami"
   ],
-  "http_delegate_count": 64,
-  "mcp_delegate_count": 61
+  "http_delegate_count": 65,
+  "mcp_delegate_count": 62
 }

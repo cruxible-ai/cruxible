@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from functools import wraps
-from typing import Any, Callable, Literal
+from typing import Annotated, Any, Callable, Literal
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import Field
 
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
@@ -624,6 +625,27 @@ def register_tools(
             cursor=cursor,
             evaluation_time=evaluation_time,
             budgets=budgets,
+        )
+
+    @_tool
+    def cruxible_playbill_since(
+        instance_id: str,
+        generation: int,
+        at: dict[str, Any] | None = None,
+        access_profile: dict[str, Any] | None = None,
+        max_rows: Annotated[int, Field(ge=1, le=1000)] = 100,
+        max_bytes: Annotated[int, Field(ge=1, le=1_048_576)] = 65_536,
+        cursor: dict[str, Any] | None = None,
+    ) -> contracts.PlaybillSinceResult:
+        """Read accepted ChangeSet members after one generation."""
+        return handlers.handle_playbill_since(
+            instance_id,
+            generation=generation,
+            at=at,
+            access_profile=access_profile,
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            cursor=cursor,
         )
 
     @_tool

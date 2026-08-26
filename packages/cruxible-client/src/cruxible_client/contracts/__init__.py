@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from typing import Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from cruxible_client.contracts.primitives import canonical_json
 
 RuntimeCredentialPermissionMode = Literal[
     "read_only",
@@ -795,6 +799,137 @@ class PlaybillNextResult(BaseModel):
     unobserved_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
     items: list[dict[str, Any]]
     result_digest: str
+
+
+def _since_digest(domain: str, payload: dict[str, Any]) -> str:
+    return (
+        "sha256:"
+        + hashlib.sha256(canonical_json({"tag": domain, **payload}).encode("utf-8")).hexdigest()
+    )
+
+
+def _validate_since_access_profile(value: dict[str, Any]) -> dict[str, Any]:
+    if (
+        set(value)
+        != {
+            "tag",
+            "profile_id",
+            "permitted_access_classes",
+            "disclose_restricted_existence",
+        }
+        or value.get("tag") != "playbill-coverage-access-profile-v1"
+    ):
+        raise ValueError("since access_profile is not a CoverageAccessProfileV1")
+    classes = value.get("permitted_access_classes")
+    if not isinstance(classes, list | tuple) or any(not isinstance(item, str) for item in classes):
+        raise ValueError("since access_profile classes must be strings")
+    if list(classes) != sorted(set(classes)):
+        raise ValueError("since access_profile classes must be sorted and unique")
+    if any(item not in {"public", "instance", "restricted"} for item in classes):
+        raise ValueError("since access_profile contains an unknown access class")
+    profile_id = value.get("profile_id")
+    if (
+        not isinstance(profile_id, str)
+        or re.fullmatch(r"[a-z][a-z0-9_.-]{0,127}", profile_id) is None
+        or not isinstance(value.get("disclose_restricted_existence"), bool)
+    ):
+        raise ValueError("since access_profile is malformed")
+    return value
+
+
+class PlaybillSinceCursor(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-since-cursor-v1"] = "playbill-since-cursor-v1"
+    instance_id: str
+    lower_generation: int = Field(ge=0)
+    head_coordinate: PlaybillAcceptedCoordinate
+    access_profile: dict[str, Any]
+    max_rows: int = Field(ge=1, le=1000)
+    max_bytes: int = Field(ge=1, le=1_048_576)
+    last_generation: int = Field(ge=1)
+    last_member_path: str
+    cursor_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    _profile = field_validator("access_profile")(_validate_since_access_profile)
+
+    @model_validator(mode="after")
+    def _digest(self) -> "PlaybillSinceCursor":
+        payload = self.model_dump(mode="json")
+        payload.pop("tag")
+        payload.pop("cursor_digest")
+        if self.cursor_digest != _since_digest("playbill-since-cursor-v1", payload):
+            raise ValueError("since cursor digest does not reproduce")
+        return self
+
+
+class PlaybillSinceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-since-request-v1"] = "playbill-since-request-v1"
+    generation: int = Field(ge=0)
+    at: PlaybillAcceptedCoordinate | None = None
+    access_profile: dict[str, Any]
+    max_rows: int = Field(default=100, ge=1, le=1000)
+    max_bytes: int = Field(default=65_536, ge=1, le=1_048_576)
+    cursor: PlaybillSinceCursor | None = None
+
+    _profile = field_validator("access_profile")(_validate_since_access_profile)
+
+
+class PlaybillSinceRow(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-since-row-v1"] = "playbill-since-row-v1"
+    generation: int = Field(ge=1)
+    changeset_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    candidate_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    member_path: str
+    artifact_kind: str
+    disposition: Literal[
+        "generated-successor",
+        "hand-authored-successor",
+        "invalidation",
+        "replacement",
+        "create",
+        "replace",
+        "retire",
+        "delete",
+    ]
+    artifact_digest: str | None
+    predecessor_artifact_digest: str | None
+
+    @field_validator("artifact_digest", "predecessor_artifact_digest")
+    @classmethod
+    def _digests(cls, value: str | None) -> str | None:
+        if value is not None and (
+            len(value) != 71
+            or not value.startswith("sha256:")
+            or any(character not in "0123456789abcdef" for character in value[7:])
+        ):
+            raise ValueError("since artifact digest is malformed")
+        return value
+
+
+class PlaybillSinceResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-since-result-v1"] = "playbill-since-result-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    generation: int = Field(ge=0)
+    rows: list[PlaybillSinceRow]
+    next_cursor: PlaybillSinceCursor | None = None
+    truncated: bool
+    result_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def _digest(self) -> "PlaybillSinceResult":
+        payload = self.model_dump(mode="json")
+        payload.pop("tag")
+        payload.pop("result_digest")
+        if self.result_digest != _since_digest("playbill-since-result-v1", payload):
+            raise ValueError("since result digest does not reproduce")
+        return self
 
 
 class PlaybillDiscoveryResult(BaseModel):

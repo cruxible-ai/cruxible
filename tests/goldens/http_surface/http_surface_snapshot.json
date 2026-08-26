@@ -165,6 +165,9 @@
   "/api/v1/{instance_id}/playbill/search": {
     "POST": "PlaybillSearchResult"
   },
+  "/api/v1/{instance_id}/playbill/since": {
+    "POST": "PlaybillSinceResult"
+  },
   "/api/v1/{instance_id}/playbill/sources/check": {
     "POST": "PlaybillSourceCheckResult"
   },

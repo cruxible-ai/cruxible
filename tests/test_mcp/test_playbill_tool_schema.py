@@ -94,3 +94,19 @@ def test_search_schema_exposes_modes_but_not_access_or_digest_plumbing() -> None
     assert kind_schema["items"]["enum"] == ["claim", "procedure", "demand"]
     assert "access_profile" not in schema["properties"]
     assert "selection_basis_digest" not in schema["properties"]
+
+
+def test_since_schema_exposes_the_frozen_history_wire() -> None:
+    schema = _schemas()["cruxible_playbill_since"].inputSchema
+    assert set(schema["properties"]) == {
+        "instance_id",
+        "generation",
+        "at",
+        "access_profile",
+        "max_rows",
+        "max_bytes",
+        "cursor",
+    }
+    assert set(schema["required"]) == {"instance_id", "generation"}
+    assert schema["properties"]["max_rows"]["maximum"] == 1000
+    assert schema["properties"]["max_bytes"]["maximum"] == 1_048_576

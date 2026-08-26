@@ -1372,6 +1372,26 @@ class Playbill:
             unobserved_domains=tuple(result.unobserved_domains),
         )
 
+    def since(
+        self,
+        generation: int,
+        *,
+        max_rows: int = 100,
+        max_bytes: int = 65_536,
+        cursor: api.PlaybillSinceCursor | Mapping[str, object] | None = None,
+    ) -> api.PlaybillSinceResult:
+        """Read accepted ChangeSet members after one generation at this orientation."""
+
+        return self._client.since_playbill(
+            self._instance_id,
+            generation=generation,
+            access_profile=self._access_profile.model_dump(),
+            at=None if cursor is not None else _api_coordinate(self.coordinate),
+            max_rows=max_rows,
+            max_bytes=max_bytes,
+            cursor=cursor,
+        )
+
     def _assert_coordinate(self, coordinate: AcceptedCoordinate) -> None:
         if coordinate != self.coordinate:
             raise ValueError(

@@ -573,6 +573,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 "playbill", "discover", "Find accepted interfaces and Subjects by name."
             ),
             "search": _command("playbill", "search", "Search accepted Claims and Procedures."),
+            "since": _command("playbill", "since", "Read accepted ChangeSet history."),
             "list": _command(
                 "playbill", "search_list", "List accepted state in deterministic pages."
             ),

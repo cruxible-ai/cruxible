@@ -11936,6 +11936,1083 @@
         "truncated"
       ]
     },
+    "PlaybillSinceCursor": {
+      "fields": {
+        "access_profile": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "access_profile",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Access Profile",
+            "type": "object"
+          }
+        },
+        "cursor_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "cursor_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Cursor Digest",
+            "type": "string"
+          }
+        },
+        "head_coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "head_coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "instance_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "instance_id",
+          "required": true,
+          "schema": {
+            "title": "Instance Id",
+            "type": "string"
+          }
+        },
+        "last_generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "last_generation",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Last Generation",
+            "type": "integer"
+          }
+        },
+        "last_member_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "last_member_path",
+          "required": true,
+          "schema": {
+            "title": "Last Member Path",
+            "type": "string"
+          }
+        },
+        "lower_generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "lower_generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Lower Generation",
+            "type": "integer"
+          }
+        },
+        "max_bytes": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "max_bytes",
+          "required": true,
+          "schema": {
+            "maximum": 1048576,
+            "minimum": 1,
+            "title": "Max Bytes",
+            "type": "integer"
+          }
+        },
+        "max_rows": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "max_rows",
+          "required": true,
+          "schema": {
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Max Rows",
+            "type": "integer"
+          }
+        },
+        "tag": {
+          "default": "playbill-since-cursor-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-since-cursor-v1",
+            "default": "playbill-since-cursor-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "access_profile": {
+            "additionalProperties": true,
+            "title": "Access Profile",
+            "type": "object"
+          },
+          "cursor_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Cursor Digest",
+            "type": "string"
+          },
+          "head_coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "last_generation": {
+            "minimum": 1,
+            "title": "Last Generation",
+            "type": "integer"
+          },
+          "last_member_path": {
+            "title": "Last Member Path",
+            "type": "string"
+          },
+          "lower_generation": {
+            "minimum": 0,
+            "title": "Lower Generation",
+            "type": "integer"
+          },
+          "max_bytes": {
+            "maximum": 1048576,
+            "minimum": 1,
+            "title": "Max Bytes",
+            "type": "integer"
+          },
+          "max_rows": {
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Max Rows",
+            "type": "integer"
+          },
+          "tag": {
+            "const": "playbill-since-cursor-v1",
+            "default": "playbill-since-cursor-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "lower_generation",
+          "head_coordinate",
+          "access_profile",
+          "max_rows",
+          "max_bytes",
+          "last_generation",
+          "last_member_path",
+          "cursor_digest"
+        ],
+        "title": "PlaybillSinceCursor",
+        "type": "object"
+      },
+      "required_fields": [
+        "access_profile",
+        "cursor_digest",
+        "head_coordinate",
+        "instance_id",
+        "last_generation",
+        "last_member_path",
+        "lower_generation",
+        "max_bytes",
+        "max_rows"
+      ]
+    },
+    "PlaybillSinceRequest": {
+      "fields": {
+        "access_profile": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "access_profile",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Access Profile",
+            "type": "object"
+          }
+        },
+        "at": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "at",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillSinceCursor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "max_bytes": {
+          "default": 65536,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "max_bytes",
+          "required": false,
+          "schema": {
+            "default": 65536,
+            "maximum": 1048576,
+            "minimum": 1,
+            "title": "Max Bytes",
+            "type": "integer"
+          }
+        },
+        "max_rows": {
+          "default": 100,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "max_rows",
+          "required": false,
+          "schema": {
+            "default": 100,
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Max Rows",
+            "type": "integer"
+          }
+        },
+        "tag": {
+          "default": "playbill-since-request-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-since-request-v1",
+            "default": "playbill-since-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillSinceCursor": {
+            "additionalProperties": false,
+            "properties": {
+              "access_profile": {
+                "additionalProperties": true,
+                "title": "Access Profile",
+                "type": "object"
+              },
+              "cursor_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Cursor Digest",
+                "type": "string"
+              },
+              "head_coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "last_generation": {
+                "minimum": 1,
+                "title": "Last Generation",
+                "type": "integer"
+              },
+              "last_member_path": {
+                "title": "Last Member Path",
+                "type": "string"
+              },
+              "lower_generation": {
+                "minimum": 0,
+                "title": "Lower Generation",
+                "type": "integer"
+              },
+              "max_bytes": {
+                "maximum": 1048576,
+                "minimum": 1,
+                "title": "Max Bytes",
+                "type": "integer"
+              },
+              "max_rows": {
+                "maximum": 1000,
+                "minimum": 1,
+                "title": "Max Rows",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-since-cursor-v1",
+                "default": "playbill-since-cursor-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instance_id",
+              "lower_generation",
+              "head_coordinate",
+              "access_profile",
+              "max_rows",
+              "max_bytes",
+              "last_generation",
+              "last_member_path",
+              "cursor_digest"
+            ],
+            "title": "PlaybillSinceCursor",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "access_profile": {
+            "additionalProperties": true,
+            "title": "Access Profile",
+            "type": "object"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillSinceCursor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "max_bytes": {
+            "default": 65536,
+            "maximum": 1048576,
+            "minimum": 1,
+            "title": "Max Bytes",
+            "type": "integer"
+          },
+          "max_rows": {
+            "default": 100,
+            "maximum": 1000,
+            "minimum": 1,
+            "title": "Max Rows",
+            "type": "integer"
+          },
+          "tag": {
+            "const": "playbill-since-request-v1",
+            "default": "playbill-since-request-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation",
+          "access_profile"
+        ],
+        "title": "PlaybillSinceRequest",
+        "type": "object"
+      },
+      "required_fields": [
+        "access_profile",
+        "generation"
+      ]
+    },
+    "PlaybillSinceResult": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "next_cursor": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "next_cursor",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillSinceCursor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "result_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "result_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Result Digest",
+            "type": "string"
+          }
+        },
+        "rows": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "rows",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSinceRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-since-result-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-since-result-v1",
+            "default": "playbill-since-result-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "truncated": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "truncated",
+          "required": true,
+          "schema": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillSinceCursor": {
+            "additionalProperties": false,
+            "properties": {
+              "access_profile": {
+                "additionalProperties": true,
+                "title": "Access Profile",
+                "type": "object"
+              },
+              "cursor_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Cursor Digest",
+                "type": "string"
+              },
+              "head_coordinate": {
+                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              },
+              "instance_id": {
+                "title": "Instance Id",
+                "type": "string"
+              },
+              "last_generation": {
+                "minimum": 1,
+                "title": "Last Generation",
+                "type": "integer"
+              },
+              "last_member_path": {
+                "title": "Last Member Path",
+                "type": "string"
+              },
+              "lower_generation": {
+                "minimum": 0,
+                "title": "Lower Generation",
+                "type": "integer"
+              },
+              "max_bytes": {
+                "maximum": 1048576,
+                "minimum": 1,
+                "title": "Max Bytes",
+                "type": "integer"
+              },
+              "max_rows": {
+                "maximum": 1000,
+                "minimum": 1,
+                "title": "Max Rows",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-since-cursor-v1",
+                "default": "playbill-since-cursor-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instance_id",
+              "lower_generation",
+              "head_coordinate",
+              "access_profile",
+              "max_rows",
+              "max_bytes",
+              "last_generation",
+              "last_member_path",
+              "cursor_digest"
+            ],
+            "title": "PlaybillSinceCursor",
+            "type": "object"
+          },
+          "PlaybillSinceRow": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Artifact Digest"
+              },
+              "artifact_kind": {
+                "title": "Artifact Kind",
+                "type": "string"
+              },
+              "candidate_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Candidate Digest",
+                "type": "string"
+              },
+              "changeset_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Changeset Digest",
+                "type": "string"
+              },
+              "disposition": {
+                "enum": [
+                  "generated-successor",
+                  "hand-authored-successor",
+                  "invalidation",
+                  "replacement",
+                  "create",
+                  "replace",
+                  "retire",
+                  "delete"
+                ],
+                "title": "Disposition",
+                "type": "string"
+              },
+              "generation": {
+                "minimum": 1,
+                "title": "Generation",
+                "type": "integer"
+              },
+              "member_path": {
+                "title": "Member Path",
+                "type": "string"
+              },
+              "predecessor_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Predecessor Artifact Digest"
+              },
+              "tag": {
+                "const": "playbill-since-row-v1",
+                "default": "playbill-since-row-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "generation",
+              "changeset_digest",
+              "candidate_digest",
+              "member_path",
+              "artifact_kind",
+              "disposition",
+              "artifact_digest",
+              "predecessor_artifact_digest"
+            ],
+            "title": "PlaybillSinceRow",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "generation": {
+            "minimum": 0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PlaybillSinceCursor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "result_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSinceRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-since-result-v1",
+            "default": "playbill-since-result-v1",
+            "title": "Tag",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "coordinate",
+          "generation",
+          "rows",
+          "truncated",
+          "result_digest"
+        ],
+        "title": "PlaybillSinceResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "generation",
+        "result_digest",
+        "rows",
+        "truncated"
+      ]
+    },
+    "PlaybillSinceRow": {
+      "fields": {
+        "artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_digest",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Digest"
+          }
+        },
+        "artifact_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_kind",
+          "required": true,
+          "schema": {
+            "title": "Artifact Kind",
+            "type": "string"
+          }
+        },
+        "candidate_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Candidate Digest",
+            "type": "string"
+          }
+        },
+        "changeset_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "changeset_digest",
+          "required": true,
+          "schema": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Changeset Digest",
+            "type": "string"
+          }
+        },
+        "disposition": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "disposition",
+          "required": true,
+          "schema": {
+            "enum": [
+              "generated-successor",
+              "hand-authored-successor",
+              "invalidation",
+              "replacement",
+              "create",
+              "replace",
+              "retire",
+              "delete"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          }
+        },
+        "generation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "generation",
+          "required": true,
+          "schema": {
+            "minimum": 1,
+            "title": "Generation",
+            "type": "integer"
+          }
+        },
+        "member_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "member_path",
+          "required": true,
+          "schema": {
+            "title": "Member Path",
+            "type": "string"
+          }
+        },
+        "predecessor_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "predecessor_artifact_digest",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predecessor Artifact Digest"
+          }
+        },
+        "tag": {
+          "default": "playbill-since-row-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-since-row-v1",
+            "default": "playbill-since-row-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Digest"
+          },
+          "artifact_kind": {
+            "title": "Artifact Kind",
+            "type": "string"
+          },
+          "candidate_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Candidate Digest",
+            "type": "string"
+          },
+          "changeset_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Changeset Digest",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "generated-successor",
+              "hand-authored-successor",
+              "invalidation",
+              "replacement",
+              "create",
+              "replace",
+              "retire",
+              "delete"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "member_path": {
+            "title": "Member Path",
+            "type": "string"
+          },
+          "predecessor_artifact_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predecessor Artifact Digest"
+          },
+          "tag": {
+            "const": "playbill-since-row-v1",
+            "default": "playbill-since-row-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation",
+          "changeset_digest",
+          "candidate_digest",
+          "member_path",
+          "artifact_kind",
+          "disposition",
+          "artifact_digest",
+          "predecessor_artifact_digest"
+        ],
+        "title": "PlaybillSinceRow",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_digest",
+        "artifact_kind",
+        "candidate_digest",
+        "changeset_digest",
+        "disposition",
+        "generation",
+        "member_path",
+        "predecessor_artifact_digest"
+      ]
+    },
     "PlaybillSourceCheckResult": {
       "fields": {
         "accepted_coordinate": {

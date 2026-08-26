@@ -429,6 +429,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "cruxible_playbill_seed_apply",
         "cruxible_playbill_seed_plan",
         "cruxible_playbill_search",
+        "cruxible_playbill_since",
         "cruxible_playbill_whoami",
     }
     public_client_methods = {
@@ -512,6 +513,7 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "migrate_playbill_claim_type",
         "next_playbill",
         "search_playbill",
+        "since_playbill",
     }
 
 
