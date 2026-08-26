@@ -81,6 +81,10 @@ MAX_DEPENDENCY_LINEAGE_GENERATIONS = 256
 
 NextDomain = Literal["accepted_state", "workspace_floor", "workspace_sources"]
 NextSeverity = Literal["blocking", "repair", "warning"]
+CitationLineageNote = Literal[
+    "predecessor_lineage_limit_exceeded",
+    "predecessor_unresolved",
+]
 NextReason = Literal[
     "claim_conflicted",
     "claim_uncovered",
@@ -729,6 +733,7 @@ class _CitationCommitment:
     source_id: str | None
     source_digest: str | None
     whole_source: bool = False
+    lineage_note: CitationLineageNote | None = None
 
 
 @dataclass(frozen=True)
@@ -775,10 +780,9 @@ def _citation_commitments(
     store = instance.body_store()
     access = BodyAccessContext(principal_id="playbill-next", can_read_body=True)
     result: dict[str, _CitationCommitment] = {}
+    history = instance.accepted_history()
     target_index = next(
-        index
-        for index, generation in enumerate(instance.accepted_history())
-        if generation.oid == coordinate.git_oid
+        index for index, generation in enumerate(history) if generation.oid == coordinate.git_oid
     )
     try:
         for view in listed.claims:
@@ -792,12 +796,14 @@ def _citation_commitments(
             )
             effective_captures = {item.capture_digest for item in evidence.verdict_captures}
             predecessor_digest = claim.lifecycle.predecessor_digest
+            lineage_note: CitationLineageNote | None = None
             if predecessor_digest is not None:
                 path = claim_path(claim.identity.name)
+                first_scanned = max(0, target_index - MAX_DEPENDENCY_LINEAGE_GENERATIONS)
                 predecessor = next(
                     (
                         parsed
-                        for generation in reversed(instance.accepted_history()[:target_index])
+                        for generation in reversed(history[first_scanned:target_index])
                         for content in (instance.tree_at(generation.oid).get(path),)
                         if content is not None
                         for parsed in (parse_claim(content, path=path),)
@@ -806,10 +812,12 @@ def _citation_commitments(
                     None,
                 )
                 if predecessor is None:
-                    raise PlaybillNextAcceptedStateInvalid(
-                        "live Claim predecessor cannot be resolved from accepted history"
+                    lineage_note = (
+                        "predecessor_lineage_limit_exceeded"
+                        if first_scanned > 0
+                        else "predecessor_unresolved"
                     )
-                if claim_statement_digest(predecessor.statement) != claim_statement_digest(
+                elif claim_statement_digest(predecessor.statement) != claim_statement_digest(
                     claim.statement
                 ):
                     effective_captures.difference_update(predecessor.backing.capture_digests)
@@ -841,6 +849,7 @@ def _citation_commitments(
                     source_id=source_id,
                     source_digest=source_digest,
                     whole_source=_whole_source_selection(envelope),
+                    lineage_note=lineage_note,
                 )
     except Exception as exc:
         raise PlaybillNextAcceptedStateInvalid(
@@ -1216,6 +1225,9 @@ def _source_citation_item(
         "citation_id": citation_id,
         "source_id": source_id,
     }
+    lineage_detail = (
+        {} if commitment.lineage_note is None else {"lineage_note": commitment.lineage_note}
+    )
     if unobserved:
         return _item(
             severity="warning",
@@ -1226,6 +1238,7 @@ def _source_citation_item(
                 "citation_id": citation_id,
                 "source_id": source_id,
                 "expected_source_digest": captured_source_digest,
+                **lineage_detail,
             },
             repair=PlaybillNextRepairV1(
                 operation="playbill.authoring.bind",
@@ -1245,6 +1258,7 @@ def _source_citation_item(
             "source_id": source_id,
             "expected_source_digest": captured_source_digest,
             "observed_source_digest": observed.observed_source_digest,
+            **lineage_detail,
         },
         repair=PlaybillNextRepairV1(
             operation="playbill.authoring.bind",
@@ -1327,6 +1341,11 @@ def _workspace_items(
                         "citation_id": drift.citation_id,
                         "expected_commitment_digest": drift.expected_commitment_digest,
                         "observed_commitment_digest": drift.observed_commitment_digest,
+                        **(
+                            {}
+                            if expected.lineage_note is None
+                            else {"lineage_note": expected.lineage_note}
+                        ),
                     },
                     repair=PlaybillNextRepairV1(
                         operation="playbill.authoring.bind",

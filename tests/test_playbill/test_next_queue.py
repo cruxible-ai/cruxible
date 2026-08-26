@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import get_args
 
 import pytest
@@ -15,7 +16,12 @@ from cruxible_client.contracts.captures import (
     CaptureEnvelopeV1,
     parse_capture_envelope,
 )
-from cruxible_client.contracts.claims import claim_citation_references, claim_statement_digest
+from cruxible_client.contracts.claims import (
+    claim_artifact_digest,
+    claim_citation_references,
+    claim_path,
+    claim_statement_digest,
+)
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -26,9 +32,11 @@ from cruxible_client.contracts.source_references import ExternalSourceReferenceV
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
     ExistingStatementHandoffV1,
     _claim_from_view,
+    _claim_law_evidence,
     service_list_playbill_claims,
     service_propose_playbill_claim,
 )
@@ -41,6 +49,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationInvalid,
     PlaybillNextWorkspaceObservationV1,
+    _citation_commitments,
     _qualifier_discriminator,
     service_playbill_next,
     validate_playbill_next_request,
@@ -158,6 +167,123 @@ def test_workspace_drift_is_verified_against_the_accepted_citation(
     )
     with pytest.raises(PlaybillNextWorkspaceObservationInvalid):
         service_playbill_next(instance, request=substituted)
+
+
+def _accept_claim_successor(instance, owner, *, value: str, sequence: int):  # type: ignore[no-untyped-def]
+    current = next(
+        claim
+        for claim in (
+            _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
+        )
+        if claim.statement.subject.artifact_path.endswith("/wi-42.yaml")
+    )
+    proposed = service_propose_playbill_claim(
+        instance,
+        authoring=work_item_authoring("wi-42", value, with_claim_type=False).model_copy(
+            update={
+                "claim_id": current.identity.name,
+                "predecessor_artifact_digest": claim_artifact_digest(current).tagged,
+            }
+        ),
+        actor_id="owner",
+        proposal_name=f"next-successor-{sequence}",
+        timestamp=f"2026-08-24T17:00:{sequence:02d}.000000Z",
+    )
+    activate_work_item_claim(instance, owner, proposed, sequence=sequence)
+    return current
+
+
+@pytest.mark.parametrize(
+    ("synthetic_predecessor_count", "expected_note"),
+    [
+        (257, "predecessor_lineage_limit_exceeded"),
+        (0, "predecessor_unresolved"),
+    ],
+)
+def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    synthetic_predecessor_count: int,
+    expected_note: str,
+) -> None:
+    instance, owner = seed_claims(tmp_path)
+    predecessor = _accept_claim_successor(instance, owner, value="blocked", sequence=3)
+    old_citation = claim_citation_references(predecessor)[0]
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            old_citation.capture_digest,
+            access=BodyAccessContext(principal_id="next-test", can_read_body=True),
+        )
+    )
+    observed = typed_digest(
+        Sha256Value,
+        "playbill-next-cap-degraded-observation-v1",
+        {},
+    ).tagged
+    internal_coordinate = instance.accepted_coordinate()
+    law_evidence = {
+        claim_path(claim.identity.name): _claim_law_evidence(
+            instance,
+            path=claim_path(claim.identity.name),
+            at=internal_coordinate,
+        )
+        for claim in (
+            _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
+        )
+    }
+    current = instance.accepted_history()[-1]
+    synthetic = tuple(
+        SimpleNamespace(oid=f"{index + 1:064x}") for index in range(synthetic_predecessor_count)
+    )
+    original_tree_at = instance.tree_at
+    synthetic_oids = {item.oid for item in synthetic}
+    monkeypatch.setattr(instance, "accepted_history", lambda: (*synthetic, current))
+    monkeypatch.setattr(
+        instance,
+        "tree_at",
+        lambda oid: {} if oid in synthetic_oids else original_tree_at(oid),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next._claim_law_evidence",
+        lambda _instance, *, path, at: law_evidence[path],
+    )
+    monkeypatch.setattr("cruxible_core.service.playbill_next._claim_items", lambda *a, **k: ())
+
+    result = service_playbill_next(
+        instance,
+        request=PlaybillNextRequestV1(
+            evaluation_time=EVALUATION_TIME,
+            access_profile=CoverageAccessProfileV1(
+                profile_id="public-next-test",
+                permitted_access_classes=("public",),
+            ),
+            workspace_observation=PlaybillNextWorkspaceObservationV1(
+                drift_observations=(
+                    PlaybillNextDriftObservationV1(
+                        citation_id=old_citation.citation_id,
+                        expected_commitment_digest=envelope.commitment.digest,
+                        observed_commitment_digest=observed,
+                    ),
+                )
+            ),
+        ),
+    )
+
+    row = next(item for item in result.items if item.reason == "citation_drifted")
+    assert row.detail["lineage_note"] == expected_note  # type: ignore[index]
+
+
+def test_resolvable_citation_predecessor_still_subtracts_dead_spans(tmp_path: Path) -> None:
+    instance, owner = seed_claims(tmp_path)
+    predecessor = _accept_claim_successor(instance, owner, value="blocked", sequence=3)
+    old_citation = claim_citation_references(predecessor)[0]
+
+    commitments = _citation_commitments(
+        instance,
+        coordinate=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    )
+
+    assert old_citation.citation_id not in commitments
 
 
 def test_unknown_access_profile_value_has_the_frozen_refusal() -> None:
