@@ -48,6 +48,7 @@ from cruxible_core.playbill.closure import dependency_artifacts, parse_dependenc
 from cruxible_core.playbill.consumption import consumption_aggregate
 from cruxible_core.playbill.curation import (
     CURATION_PATTERN_KINDS,
+    CurationCoverageOmissionReason,
     CurationDetectionV1,
     CurationDetectorCoverageV1,
     CurationEvidenceRefV1,
@@ -84,9 +85,9 @@ class CurationDetectorResult:
 class _Coverage:
     pattern_kind: CurationPatternKind
     evaluated: int = 0
-    omissions: dict[str, int] | None = None
+    omissions: dict[CurationCoverageOmissionReason, int] | None = None
 
-    def omit(self, reason: str, count: int = 1) -> None:
+    def omit(self, reason: CurationCoverageOmissionReason, count: int = 1) -> None:
         if self.omissions is None:
             self.omissions = {}
         self.omissions[reason] = self.omissions.get(reason, 0) + count
@@ -379,11 +380,14 @@ def _block_churn(
     *,
     instance: PlaybillInstance,
     generation: int,
+    document_association_omissions: int = 0,
 ) -> tuple[tuple[CurationDetectionV1, ...], CurationDetectorCoverageV1]:
     from cruxible_core.service.playbill_curation import BlockObservationV1
 
     kind: CurationPatternKind = "playbill.curation.block_churn.v1"
     coverage = _Coverage(kind)
+    for _ in range(document_association_omissions):
+        coverage.omit("block_document_association_unavailable")
     current_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     state_by_identity = {
         state.identity.qualified: state for state in dependency_artifacts(current_tree)
@@ -990,6 +994,7 @@ def run_curation_detectors(
     generation: int,
     evaluation_time: datetime,
     operational_head_digest: str,
+    block_document_association_omissions: int = 0,
 ) -> CurationDetectorResult:
     """Run every frozen v1 detector at the exact current read coordinate."""
 
@@ -1025,7 +1030,11 @@ def run_curation_detectors(
         ),
         _duplicate_statements(instance=instance, history=history),
         _qualifier_crystallization(rows=rows, generation=generation),
-        _block_churn(instance=instance, generation=generation),
+        _block_churn(
+            instance=instance,
+            generation=generation,
+            document_association_omissions=block_document_association_omissions,
+        ),
         _dead_vocabulary(
             instance=instance,
             tree=tree,

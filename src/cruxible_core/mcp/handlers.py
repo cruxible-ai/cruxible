@@ -1293,17 +1293,26 @@ def handle_playbill_curation_list(
     instance_id: str,
     *,
     evaluation_time: str,
+    access_profile: dict[str, Any] | None,
     workspace_observation: dict[str, Any] | None,
 ) -> contracts.PlaybillCurationListResult:
+    profile = access_profile or {
+        "tag": "playbill-coverage-access-profile-v1",
+        "profile_id": "mcp-curation",
+        "permitted_access_classes": ["instance", "public"],
+        "disclose_restricted_existence": True,
+    }
     request = {
         "tag": "playbill-curation-list-request-v1",
         "evaluation_time": evaluation_time,
+        "access_profile": profile,
         "workspace_observation": workspace_observation,
     }
     return _dispatch_remote_or_local(
         lambda client: client.list_playbill_curation(
             instance_id,
             evaluation_time=evaluation_time,
+            access_profile=profile,
             workspace_observation=workspace_observation,
         ),
         lambda: playbill_api.playbill_curation_list(instance_id, request=request),

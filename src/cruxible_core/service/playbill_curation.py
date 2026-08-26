@@ -19,6 +19,7 @@ from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.closure import dependency_artifacts, parse_dependency_artifact
 from cruxible_core.playbill.consumption import ensure_consumption_epoch
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.curation import (
     CurationAffectedMemberV1,
     CurationDetectorCoverageV1,
@@ -93,6 +94,7 @@ class _StrictCurationModel(BaseModel):
 class PlaybillCurationListRequestV1(_StrictCurationModel):
     tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
     evaluation_time: datetime
+    access_profile: CoverageAccessProfileV1
     workspace_observation: PlaybillNextWorkspaceObservationV1 | None = None
 
     @field_validator("evaluation_time")
@@ -428,6 +430,36 @@ def service_list_playbill_curation(
     internal_coordinate = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(internal_coordinate)
     generation = _generation(instance, coordinate)
+    store = instance.review_operational_store()
+    if not request.access_profile.permits("instance"):
+        head = store.head()
+        observation_coverage = PlaybillCurationObservationCoverageV1(
+            source_count=0,
+            observed_block_count=0,
+            omitted_source_count=0,
+            omissions=(),
+        )
+        provisional = PlaybillCurationListResultV1.model_construct(
+            tag="playbill-curation-list-result-v1",
+            coordinate=coordinate,
+            generation=generation,
+            evaluation_time=request.evaluation_time,
+            operational_head_digest=head.head_digest,
+            items=(),
+            detector_coverage=(),
+            observation_coverage=observation_coverage,
+            result_digest="sha256:" + "0" * 64,
+        )
+        return PlaybillCurationListResultV1(
+            coordinate=coordinate,
+            generation=generation,
+            evaluation_time=request.evaluation_time,
+            operational_head_digest=head.head_digest,
+            items=(),
+            detector_coverage=(),
+            observation_coverage=observation_coverage,
+            result_digest=curation_list_result_digest(provisional),
+        )
     observation_coverage = _record_block_observations(
         instance, request=request, actor_context=actor_context
     )
@@ -437,14 +469,22 @@ def service_list_playbill_curation(
         generation=generation,
         actor_context=actor_context,
     )
-    store = instance.review_operational_store()
     detector_input_head = store.head().head_digest
+    block_association_omissions = next(
+        (
+            item.count
+            for item in observation_coverage.omissions
+            if item.reason == "block_subject_unresolved"
+        ),
+        0,
+    )
     detected = run_curation_detectors(
         instance,
         coordinate=coordinate,
         generation=generation,
         evaluation_time=request.evaluation_time,
         operational_head_digest=detector_input_head,
+        block_document_association_omissions=block_association_omissions,
     )
     existing = _replay_items(instance)
     by_pattern: dict[str, list[CurationItemV1]] = {}
@@ -473,20 +513,51 @@ def service_list_playbill_curation(
             if current is None or current.status == "accepted_fixed"
             else (current.latest_event_digest)
         )
-        try:
-            store.append(
-                family="curation",
-                partition_id=observation.item_id,
-                event_id=observation.event_id,
-                payload=observation,
-                coordinate=coordinate,
-                generation=generation,
-                actor_context=actor_context,
-                recorded_at=request.evaluation_time,
-                expected_latest_event_digest=expected,
-            )
-        except ReviewOperationalConcurrentChangeError:
-            raise
+        for attempt in range(2):
+            try:
+                store.append(
+                    family="curation",
+                    partition_id=observation.item_id,
+                    event_id=observation.event_id,
+                    payload=observation,
+                    coordinate=coordinate,
+                    generation=generation,
+                    actor_context=actor_context,
+                    recorded_at=request.evaluation_time,
+                    expected_latest_event_digest=expected,
+                )
+                break
+            except ReviewOperationalConcurrentChangeError:
+                if attempt == 1:
+                    raise
+                refreshed = tuple(
+                    sorted(
+                        (
+                            item
+                            for item in _replay_items(instance)
+                            if item.pattern_id == detection.pattern_id
+                        ),
+                        key=lambda item: (item.first_proposed_generation, item.item_id),
+                    )
+                )
+                current = None if not refreshed else refreshed[-1]
+                if current is not None and current.status == "overruled":
+                    break
+                predecessor = (
+                    current.item_id
+                    if current is not None and current.status == "accepted_fixed"
+                    else (None if current is None else current.predecessor_item_id)
+                )
+                observation = build_pattern_observation(
+                    detection=detection,
+                    predecessor_item_id=predecessor,
+                    accepted_generation=generation,
+                )
+                expected = (
+                    None
+                    if current is None or current.status == "accepted_fixed"
+                    else current.latest_event_digest
+                )
     all_items = _replay_items(instance)
     items = tuple(
         sorted(

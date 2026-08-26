@@ -139,6 +139,7 @@ def test_accept_fixed_verifies_proposal_changeset_generation_and_member_intersec
     accept_proposal(instance, owner, second, sequence=2)
     record = instance.accepted_history()[-1].record
     assert record is not None
+    accepted_before_action = instance.accepted_coordinate()
     result = service_accept_fixed_playbill_curation(
         instance,
         request=PlaybillCurationAcceptFixedRequestV1(
@@ -154,6 +155,7 @@ def test_accept_fixed_verifies_proposal_changeset_generation_and_member_intersec
     assert result.item.status == "accepted_fixed"
     assert result.item.resolved_at_generation == 2
     assert result.item.accepted_changeset_digest == record.changeset_digest
+    assert instance.accepted_coordinate() == accepted_before_action
 
 
 def test_accept_fixed_refuses_an_unrelated_accepted_changeset(tmp_path: Path) -> None:

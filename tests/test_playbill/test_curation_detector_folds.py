@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import get_args
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
@@ -35,6 +36,12 @@ from cruxible_client.contracts.source_references import (
     ExternalSourceReferenceV1,
 )
 from cruxible_core.playbill.consumption import ConsumptionAggregateV1
+from cruxible_core.playbill.curation import (
+    CURATION_PATTERN_KINDS,
+    CurationCoverageOmissionReason,
+    CurationEvidenceKind,
+    CurationPatternKind,
+)
 from cruxible_core.playbill.curation_detectors import (
     _curation_history_index,
     _CurationHistoryIndex,
@@ -50,6 +57,31 @@ from tests.test_playbill._pc_c_support import capture_contract, digest, provider
 
 NOW = datetime(2026, 8, 16, 12, tzinfo=UTC)
 PREDICATE = "project.work_item.status"
+
+
+def test_curation_detector_vocabularies_are_closed_and_enumerated() -> None:
+    assert set(get_args(CurationPatternKind)) == set(CURATION_PATTERN_KINDS)
+    assert set(get_args(CurationEvidenceKind)) == {
+        "accepted_artifact",
+        "accepted_member",
+        "authoring_attempt",
+        "block_observation",
+        "capture_transition",
+        "consumption_aggregate",
+        "control_component",
+        "proposal_attempt",
+        "slot",
+    }
+    assert set(get_args(CurationCoverageOmissionReason)) == {
+        "admission_record_missing",
+        "admission_subject_unresolved",
+        "admission_tree_unavailable",
+        "block_document_association_unavailable",
+        "block_observation_invalid",
+        "capture_contract_identity_unresolved",
+        "consumption_epoch_uninitialized",
+        "drift_series_unavailable",
+    }
 
 
 def _with_qualifier(row, qualifier: str):  # type: ignore[no-untyped-def]

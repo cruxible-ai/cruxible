@@ -1409,6 +1409,7 @@ class Playbill:
         return self._client.list_playbill_curation(
             self._instance_id,
             evaluation_time=self._evaluation_time(),
+            access_profile=self._access_profile.model_dump(),
             workspace_observation=observation,
         )
 

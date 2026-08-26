@@ -19,6 +19,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.curation_detectors import _block_churn
 from cruxible_core.playbill.service.documents import service_propose_playbill_document
 from cruxible_core.service.playbill_curation import (
@@ -37,6 +38,7 @@ from tests.test_playbill._knowledge_loop_support import accept_proposal
 from tests.test_playbill._support import initialize_local
 
 NOW = datetime(2026, 8, 26, 15, 0, tzinfo=timezone.utc)
+ACCESS = CoverageAccessProfileV1(profile_id="test-curation")
 
 
 def test_observation_omission_reasons_exhaust_the_closed_wire_vocabulary() -> None:
@@ -135,6 +137,7 @@ def test_valid_stamped_v3_observation_persists_once_and_remains_client_observed(
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     request = PlaybillCurationListRequestV1(
         evaluation_time=NOW,
+        access_profile=ACCESS,
         workspace_observation=PlaybillNextWorkspaceObservationV1(
             source_observations=(_v3(coordinate),)
         ),
@@ -177,6 +180,7 @@ def test_incomplete_legacy_and_unresolved_document_sources_are_coverage_omission
     )
     request = PlaybillCurationListRequestV1(
         evaluation_time=NOW,
+        access_profile=ACCESS,
         workspace_observation=PlaybillNextWorkspaceObservationV1(
             source_observations=(
                 legacy,
@@ -197,6 +201,14 @@ def test_incomplete_legacy_and_unresolved_document_sources_are_coverage_omission
         "source_scan_incomplete": 1,
     }
     assert instance.review_operational_store().events(family="block_observation") == ()
+    block_coverage = next(
+        item
+        for item in result.detector_coverage
+        if item.pattern_kind == "playbill.curation.block_churn.v1"
+    )
+    assert [item.model_dump(mode="json") for item in block_coverage.omissions] == [
+        {"reason": "block_document_association_unavailable", "count": 1}
+    ]
 
 
 def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
@@ -218,6 +230,7 @@ def test_bootstrap_and_malformed_markers_are_explicit_coverage_omissions(
         instance,
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
+            access_profile=ACCESS,
             workspace_observation=PlaybillNextWorkspaceObservationV1(source_observations=(source,)),
         ),
         actor_context=_actor(),
@@ -241,6 +254,7 @@ def test_unaccepted_marker_coordinate_is_an_explicit_coverage_omission(
         instance,
         request=PlaybillCurationListRequestV1(
             evaluation_time=NOW,
+            access_profile=ACCESS,
             workspace_observation=PlaybillNextWorkspaceObservationV1(
                 source_observations=(_v3(unaccepted),)
             ),

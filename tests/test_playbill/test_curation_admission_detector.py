@@ -6,11 +6,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.service.playbill_claims import service_propose_playbill_claim
 from cruxible_core.service.playbill_curation import (
     PlaybillCurationListRequestV1,
     service_list_playbill_curation,
 )
+from cruxible_core.service.playbill_next import PlaybillNextWorkspaceObservationV1
 from tests.test_playbill._knowledge_loop_support import TIMESTAMP, authoring, seed_claims
 
 NOW = datetime(2026, 8, 26, 17, tzinfo=UTC)
@@ -39,7 +41,10 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
 
     result = service_list_playbill_curation(
         instance,
-        request=PlaybillCurationListRequestV1(evaluation_time=NOW),
+        request=PlaybillCurationListRequestV1(
+            evaluation_time=NOW,
+            access_profile=CoverageAccessProfileV1(profile_id="test-curation"),
+        ),
         actor_context=GovernedActorContext(
             actor_type="human_user",
             actor_id="curator",
@@ -60,3 +65,48 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
     attempts = [ref for ref in clusters[0].latest_evidence_refs if ref.kind == "proposal_attempt"]
     assert len(attempts) == 2
     assert len({ref.identity for ref in attempts}) == 2
+
+
+def test_restricted_curation_profile_short_circuits_without_count_leakage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    instance, _owner = seed_claims(tmp_path)
+
+    def must_not_run(*args: object, **kwargs: object) -> None:
+        raise AssertionError("restricted curation read reached detectors")
+
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_curation.run_curation_detectors",
+        must_not_run,
+    )
+    result = service_list_playbill_curation(
+        instance,
+        request=PlaybillCurationListRequestV1(
+            evaluation_time=NOW,
+            access_profile=CoverageAccessProfileV1(
+                profile_id="public-only",
+                permitted_access_classes=("public",),
+                disclose_restricted_existence=False,
+            ),
+            workspace_observation=PlaybillNextWorkspaceObservationV1(source_observations=()),
+        ),
+        actor_context=GovernedActorContext(
+            actor_type="human_user",
+            actor_id="curator",
+            org_id="org-test",
+            operation_id="op-restricted-list",
+            timestamp=NOW,
+        ),
+    )
+
+    assert result.items == ()
+    assert result.detector_coverage == ()
+    assert result.observation_coverage.model_dump(mode="json") == {
+        "tag": "playbill-curation-observation-coverage-v1",
+        "source_count": 0,
+        "observed_block_count": 0,
+        "omitted_source_count": 0,
+        "omissions": [],
+    }
+    assert instance.review_operational_store().events() == ()

@@ -22,6 +22,12 @@ def test_http_curation_list_is_read_tier_and_returns_operational_head(
         json={
             "tag": "playbill-curation-list-request-v1",
             "evaluation_time": "2026-08-26T16:00:00+00:00",
+            "access_profile": {
+                "tag": "playbill-coverage-access-profile-v1",
+                "profile_id": "test-curation",
+                "permitted_access_classes": ["instance", "public"],
+                "disclose_restricted_existence": True,
+            },
         },
     )
 
@@ -109,6 +115,12 @@ def test_http_curation_maps_both_operational_store_statuses(
         json={
             "tag": "playbill-curation-list-request-v1",
             "evaluation_time": "2026-08-26T16:00:00+00:00",
+            "access_profile": {
+                "tag": "playbill-coverage-access-profile-v1",
+                "profile_id": "test-curation",
+                "permitted_access_classes": ["instance", "public"],
+                "disclose_restricted_existence": True,
+            },
         },
     )
 

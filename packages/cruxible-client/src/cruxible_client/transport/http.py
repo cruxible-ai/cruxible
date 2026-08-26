@@ -1134,6 +1134,7 @@ class CruxibleClient:
         instance_id: str,
         *,
         evaluation_time: str,
+        access_profile: Mapping[str, Any],
         workspace_observation: Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillCurationListResult:
         response = self._client.post(
@@ -1141,6 +1142,7 @@ class CruxibleClient:
             json={
                 "tag": "playbill-curation-list-request-v1",
                 "evaluation_time": evaluation_time,
+                "access_profile": dict(access_profile),
                 "workspace_observation": (
                     None if workspace_observation is None else dict(workspace_observation)
                 ),

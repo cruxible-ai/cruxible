@@ -237,6 +237,7 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
 class PlaybillCurationListRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
     evaluation_time: datetime
+    access_profile: dict[str, Any]
     workspace_observation: dict[str, Any] | None = None
 
 

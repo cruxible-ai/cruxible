@@ -38,6 +38,29 @@ CurationPatternKind: TypeAlias = Literal[
     "playbill.curation.dead_vocabulary.v1",
 ]
 
+CurationEvidenceKind: TypeAlias = Literal[
+    "accepted_artifact",
+    "accepted_member",
+    "authoring_attempt",
+    "block_observation",
+    "capture_transition",
+    "consumption_aggregate",
+    "control_component",
+    "proposal_attempt",
+    "slot",
+]
+
+CurationCoverageOmissionReason: TypeAlias = Literal[
+    "admission_record_missing",
+    "admission_subject_unresolved",
+    "admission_tree_unavailable",
+    "block_document_association_unavailable",
+    "block_observation_invalid",
+    "capture_contract_identity_unresolved",
+    "consumption_epoch_uninitialized",
+    "drift_series_unavailable",
+]
+
 CURATION_PATTERN_KINDS: tuple[CurationPatternKind, ...] = (
     "playbill.curation.recurring_conflict_per_type.v1",
     "playbill.curation.admission_failure_cluster.v1",
@@ -95,7 +118,7 @@ class _StrictCurationModel(BaseModel):
 
 
 class CurationCoverageOmissionV1(_StrictCurationModel):
-    reason: str = Field(min_length=1)
+    reason: CurationCoverageOmissionReason
     count: int = Field(ge=1)
 
 
@@ -128,17 +151,7 @@ class CurationDetectorCoverageV1(_StrictCurationModel):
 class CurationEvidenceRefV1(_StrictCurationModel):
     """One exact mechanically relevant record or artifact reference."""
 
-    kind: Literal[
-        "accepted_artifact",
-        "accepted_member",
-        "authoring_attempt",
-        "block_observation",
-        "capture_transition",
-        "consumption_aggregate",
-        "control_component",
-        "proposal_attempt",
-        "slot",
-    ]
+    kind: CurationEvidenceKind
     identity: str = Field(min_length=1)
     path: str | None = None
     generation: int | None = Field(default=None, ge=0)
@@ -847,11 +860,13 @@ __all__ = [
     "CURATION_OBSERVATION_ID_DOMAIN",
     "CURATION_PATTERN_ID_DOMAIN",
     "CURATION_PATTERN_KINDS",
+    "CurationCoverageOmissionReason",
     "CurationAcceptedFixedV1",
     "CurationAffectedMemberV1",
     "CurationDetectionV1",
     "CurationDetectorCoverageV1",
     "CurationEvidenceRefV1",
+    "CurationEvidenceKind",
     "CurationItemV1",
     "CurationOperationalPayload",
     "CurationOverruledV1",

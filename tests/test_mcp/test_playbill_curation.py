@@ -58,6 +58,7 @@ def test_mcp_curation_list_is_one_thin_read_delegate(monkeypatch) -> None:  # ty
     result = handlers.handle_playbill_curation_list(
         "inst",
         evaluation_time="2026-08-26T16:00:00+00:00",
+        access_profile=None,
         workspace_observation=observation,
     )
 
@@ -67,6 +68,12 @@ def test_mcp_curation_list_is_one_thin_read_delegate(monkeypatch) -> None:  # ty
         "request": {
             "tag": "playbill-curation-list-request-v1",
             "evaluation_time": "2026-08-26T16:00:00+00:00",
+            "access_profile": {
+                "tag": "playbill-coverage-access-profile-v1",
+                "profile_id": "mcp-curation",
+                "permitted_access_classes": ["instance", "public"],
+                "disclose_restricted_existence": True,
+            },
             "workspace_observation": observation,
         },
     }

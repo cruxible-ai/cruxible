@@ -1919,14 +1919,30 @@ def curation_group() -> None:
     type=click.Path(file_okay=False),
     help="Workspace scanned explicitly for declared-block observations.",
 )
+@click.option(
+    "--access-profile",
+    "access_profile_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="CoverageAccessProfile JSON/YAML; defaults to public and instance access.",
+)
 @json_option
 @handle_errors
-def curation_list(workspace_root: str, output_json: bool) -> None:
+def curation_list(workspace_root: str, access_profile_path: str | None, output_json: bool) -> None:
     observation = observe_playbill_next_workspace(Path(workspace_root))
+    profile = (
+        CoverageAccessProfileV1(
+            profile_id="cli-curation",
+            permitted_access_classes=("instance", "public"),
+        ).model_dump(mode="json")
+        if access_profile_path is None
+        else _read_model(access_profile_path, CoverageAccessProfileV1).model_dump(mode="json")
+    )
     result = _server_call(
         lambda client, instance_id: client.list_playbill_curation(
             instance_id,
             evaluation_time=datetime.now(UTC).isoformat(),
+            access_profile=profile,
             workspace_observation=observation,
         ),
         command_name="playbill curation list",

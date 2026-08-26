@@ -14,7 +14,7 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
         "tag": "playbill-next-workspace-observation-v1",
         "source_observations": [],
     }
-    calls: list[tuple[str, str, object]] = []
+    calls: list[tuple[str, str, object, object]] = []
 
     class StubClient:
         def list_playbill_curation(
@@ -22,9 +22,10 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
             instance_id: str,
             *,
             evaluation_time: str,
+            access_profile: object,
             workspace_observation: object,
         ) -> contracts.PlaybillCurationListResult:
-            calls.append((instance_id, evaluation_time, workspace_observation))
+            calls.append((instance_id, evaluation_time, access_profile, workspace_observation))
 
             return contracts.PlaybillCurationListResult(
                 coordinate=contracts.PlaybillAcceptedCoordinate(
@@ -70,7 +71,9 @@ def test_cli_curation_list_scans_then_calls_one_route(monkeypatch: pytest.Monkey
     assert "generation 3: 0 item(s)" in result.output
     assert len(calls) == 1
     assert calls[0][0] == "inst"
-    assert calls[0][2] == observation
+    assert isinstance(calls[0][2], dict)
+    assert calls[0][2]["profile_id"] == "cli-curation"
+    assert calls[0][3] == observation
 
 
 @pytest.mark.parametrize(

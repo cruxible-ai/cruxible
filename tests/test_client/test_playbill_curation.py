@@ -49,6 +49,12 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
     result = client.list_playbill_curation(
         "inst",
         evaluation_time="2026-08-26T16:00:00+00:00",
+        access_profile={
+            "tag": "playbill-coverage-access-profile-v1",
+            "profile_id": "test-curation",
+            "permitted_access_classes": ["instance", "public"],
+            "disclose_restricted_existence": True,
+        },
         workspace_observation={
             "tag": "playbill-next-workspace-observation-v1",
             "source_observations": [],
@@ -60,6 +66,7 @@ def test_client_sends_explicit_workspace_observation_to_curation_list() -> None:
     payload = json.loads(captured[0].content)
     assert payload["tag"] == "playbill-curation-list-request-v1"
     assert payload["evaluation_time"] == "2026-08-26T16:00:00+00:00"
+    assert payload["access_profile"]["profile_id"] == "test-curation"
     assert payload["workspace_observation"]["source_observations"] == []
 
 
