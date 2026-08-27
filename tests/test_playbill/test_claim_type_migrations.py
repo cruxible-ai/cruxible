@@ -853,6 +853,7 @@ def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
     )
     before_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     before = parse_claim(before_tree[claim_path(claim_id)], path=claim_path(claim_id))
+    assert isinstance(before, ClaimArtifactV3)
     assert before.lifecycle.state == "retired"
     successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={"attestation_consequence_policy": _policy(2)}

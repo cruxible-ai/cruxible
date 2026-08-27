@@ -42,7 +42,6 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactAny,
-    ClaimArtifactV2,
     ClaimArtifactV3,
     ClaimBacking,
     ClaimBackingV2,
@@ -373,11 +372,13 @@ def service_propose_claim_attestation(
     new_capture_digests = set(attestation.capture_digests) - set(
         accepted.claim.backing.capture_digests
     )
-    if isinstance(accepted.claim, ClaimArtifactV2) and new_capture_digests:
+    if isinstance(accepted.claim.backing, ClaimBackingV2) and new_capture_digests:
         raise ProposalIntegrityError(
             "a v2 Claim must attach new attestation Captures through explicit citations"
         )
-    backing_type = ClaimBackingV2 if isinstance(accepted.claim, ClaimArtifactV2) else ClaimBacking
+    backing_type = (
+        ClaimBackingV2 if isinstance(accepted.claim.backing, ClaimBackingV2) else ClaimBacking
+    )
     backing_payload = {
         "referent_context": accepted.claim.backing.referent_context.model_copy(
             update={"observed_at": attestation.observed_at}
@@ -402,7 +403,7 @@ def service_propose_claim_attestation(
         "reducer_digest": accepted.claim.backing.reducer_digest,
         "source_mappings": accepted.claim.backing.source_mappings,
     }
-    if isinstance(accepted.claim, ClaimArtifactV2):
+    if isinstance(accepted.claim.backing, ClaimBackingV2):
         backing_payload["citations"] = accepted.claim.backing.citations
     successor = accepted.claim.model_copy(
         update={
