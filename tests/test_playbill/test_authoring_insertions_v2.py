@@ -21,6 +21,7 @@ from cruxible_client.contracts.authoring.models import (
     publication_block_id,
     publication_source_observation_v2_digest,
 )
+from cruxible_client.contracts.claims import ClaimArtifactV2, claim_path, parse_claim
 from cruxible_client.contracts.declared_blocks import frame_projection_block
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
@@ -299,6 +300,11 @@ def test_pin_15_prepared_status_never_passively_terminalizes_and_exact_confirm_r
     assert bound.outcome == "bound"
     assert bound.expectation.state == "bound"
     assert instance.accepted_coordinate().git_oid == preparation.accepted_coordinate.git_oid
+    accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    path = claim_path(bound.intent.semantic_identity)
+    accepted_claim = parse_claim(accepted_tree[path], path=path)
+    assert isinstance(accepted_claim, ClaimArtifactV2)
+    assert all(citation.origin != "self_published" for citation in accepted_claim.backing.citations)
 
 
 # Kept here so the frozen test module owns one absolute instant used by the
