@@ -248,3 +248,21 @@ def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> N
         timestamp=FIXED_TIMESTAMP,
     )
     assert instance.inspect().recovery_posture == "recovery-configured"
+
+
+def test_bootstrap_without_an_owner_refuses_typed(tmp_path: Path) -> None:
+    managed = tmp_path / "managed-no-owner"
+    reviewer_a = generate_client(
+        tmp_path, managed_root=managed, principal_id="reviewer-a", roles=("reviewer",)
+    )
+    reviewer_b = generate_client(
+        tmp_path, managed_root=managed, principal_id="reviewer-b", roles=("reviewer",)
+    )
+    with pytest.raises(PlaybillBootstrapError, match="at least one owner"):
+        PlaybillInstance.initialize(
+            managed,
+            instance_id="inst_no_owner",
+            client_principals=(reviewer_a.principal, reviewer_b.principal),
+            workspace_roots=(tmp_path / "workspace",),
+            timestamp=FIXED_TIMESTAMP,
+        )

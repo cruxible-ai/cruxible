@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Governance: role gates leave the hot path (PC-G12e).** Ordinary governed
+  artifacts are now admitted by credential tier, principal identity, and
+  semantic law — role labels no longer gate proposal, approval, settlement,
+  or recovery, and every acceptance-law and compiler coordinate was re-pinned
+  in place (pre-release: existing ledgers do not replay across this change;
+  rebuild from fixtures). Every candidate now requires its creator plus
+  exactly one independent active principal's approval: creator self-approval
+  refuses `playbill.approval.creator_forbidden`, and genesis requires two
+  ordinary-approval-capable client principals — `playbill init` gains
+  `--reviewer-key-dir` to bootstrap the second, and single-key init now
+  refuses with a typed error. Attestation-consequence thresholds lose their
+  hard-coded minimum (declared `>=0`); threshold counting uses distinct
+  principal identities in the queue fold only. Revoked keys can never be
+  re-armed with the same material, and dormant role bytes are immutable
+  pending a future governance redesign.
+
 - **Playbill citation liveness now fails closed at every observation boundary.**
   Source-local scan proofs are withheld whenever the matching occurrence cards
   are clipped or rejected, partial scan budgets can no longer assert factual
