@@ -131,3 +131,10 @@ def test_client_reconstructs_the_typed_http_refusal() -> None:
 
     assert raised.value.error_code == "playbill.since.request_invalid"
     assert raised.value.field_path == "$.cursor"
+
+
+def test_client_since_rejects_non_mapping_access_profile_with_typed_refusal() -> None:
+    client = CruxibleClient(base_url="https://since.invalid", token="crt_x")
+    with pytest.raises(PlaybillSinceRequestInvalid) as excinfo:
+        client.since_playbill("inst_x", generation=0, access_profile=["not", "a", "mapping"])  # type: ignore[arg-type]
+    assert excinfo.value.field_path.startswith("$.access_profile")

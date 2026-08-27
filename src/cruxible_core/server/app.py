@@ -86,10 +86,9 @@ def create_app() -> FastAPI:
             typed = PlaybillSinceRequestInvalid.from_validation_errors(exc.errors())
             request.state.error_type = typed.__class__.__name__
             status_code, body = error_to_response(typed)
-            return JSONResponse(
-                status_code=status_code,
-                content=body.model_dump(mode="json"),
-            )
+            content = body.model_dump(mode="json")
+            content["errors"] = [_format_request_validation_error(err) for err in exc.errors()]
+            return JSONResponse(status_code=status_code, content=content)
         errors = [_format_request_validation_error(err) for err in exc.errors()]
         body = ErrorResponse(
             error_type="RequestValidationError",

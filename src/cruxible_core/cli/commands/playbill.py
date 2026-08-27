@@ -44,7 +44,7 @@ from cruxible_client.authoring.workspace import observe_playbill_next_workspace_
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.errors import CanonicalEncodingError
+from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillSinceRequestInvalid
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -176,6 +176,24 @@ def _read_model(path: str, model: type[ResultT]) -> ResultT:
         raise click.ClickException(f"{source} must contain one mapping")
     validator = getattr(model, "model_validate")
     return cast(ResultT, validator(payload))
+
+
+def _read_since_access_profile(path: str) -> dict[str, Any]:
+    """Read a CoverageAccessProfileV1 file for since, filling model defaults.
+
+    A file that is not a valid profile surfaces the same typed since refusal
+    the daemon would give, before any request is built.
+    """
+    payload = _read_mapping(path)
+    try:
+        return CoverageAccessProfileV1.model_validate(payload).model_dump(mode="json")
+    except ValidationError as exc:
+        raise PlaybillSinceRequestInvalid.from_validation_errors(
+            [
+                {**err, "loc": ("access_profile", *err.get("loc", ()))}
+                for err in exc.errors(include_url=False)
+            ]
+        ) from exc
 
 
 def _read_mapping(path: str) -> dict[str, Any]:
@@ -2169,7 +2187,7 @@ def since(
             permitted_access_classes=("instance", "public"),
         ).model_dump(mode="json")
         if access_profile_path is None
-        else _read_mapping(access_profile_path)
+        else _read_since_access_profile(access_profile_path)
     )
     cursor = None if cursor_path is None else _read_mapping(cursor_path)
     result = _server_call(

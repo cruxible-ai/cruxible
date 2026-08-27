@@ -1108,8 +1108,15 @@ class CruxibleClient:
             request = contracts.PlaybillSinceRequest.model_validate(
                 {
                     "generation": generation,
-                    "at": None if at is None else self._playbill_coordinate_body(at),
-                    "access_profile": dict(access_profile),
+                    "at": None
+                    if at is None
+                    else (
+                        at
+                        if isinstance(at, Mapping)
+                        and not isinstance(at, contracts.PlaybillAcceptedCoordinate)
+                        else self._playbill_coordinate_body(at)
+                    ),
+                    "access_profile": access_profile,
                     "max_rows": max_rows,
                     "max_bytes": max_bytes,
                     "cursor": cursor,

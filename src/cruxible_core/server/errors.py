@@ -67,6 +67,7 @@ from cruxible_core.playbill.review_operational import (
 from cruxible_core.service.playbill_audit import PlaybillAuditError
 from cruxible_core.service.playbill_curation import PlaybillCurationError
 from cruxible_core.service.playbill_next import PlaybillNextError
+from cruxible_core.service.playbill_since import PlaybillSinceError
 
 STANDARD_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorResponse, "description": "Bad request error envelope"},
@@ -113,6 +114,7 @@ def _status_for_error(exc: CoreError) -> int:
             PlaybillAuditError,
             PlaybillCurationError,
             PlaybillNextError,
+            PlaybillSinceError,
             ReviewOperationalStoreError,
             ProposalAdmissionError,
         ),

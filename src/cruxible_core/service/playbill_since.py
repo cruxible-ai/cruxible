@@ -26,6 +26,10 @@ from cruxible_core.playbill.settlement import (
 class PlaybillSinceError(PlaybillError):
     code = "playbill.since.refused"
 
+    @property
+    def error_code(self) -> str:
+        return self.code
+
 
 class PlaybillSinceGenerationUnknown(PlaybillSinceError):
     code = "playbill.since.generation_unknown"

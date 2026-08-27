@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
@@ -92,7 +93,104 @@ def test_http_since_refuses_oversized_limits(
             "Input should be less than or equal to 1000"
         ),
         "error_code": "playbill.since.request_invalid",
-        "errors": [],
+        "errors": ["body.max_rows: Input should be less than or equal to 1000"],
         "context": {"field_path": "$.max_rows"},
         "mutation_receipt_id": None,
     }
+
+
+VALID_PROFILE = {
+    "tag": "playbill-coverage-access-profile-v1",
+    "profile_id": "http-since",
+    "permitted_access_classes": ["instance"],
+    "disclose_restricted_existence": False,
+}
+
+
+def test_http_since_reports_every_invalid_field(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/since",
+        json={
+            "generation": -1,
+            "access_profile": VALID_PROFILE,
+            "max_rows": 1001,
+            "max_bytes": 0,
+        },
+    )
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["error_code"] == "playbill.since.request_invalid"
+    assert payload["context"]["field_path"] == "$.generation"
+    assert len(payload["errors"]) == 3
+    assert any("max_rows" in item for item in payload["errors"])
+    assert any("max_bytes" in item for item in payload["errors"])
+
+
+def test_http_since_unknown_generation_is_a_typed_400(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/since",
+        json={"generation": 999999, "access_profile": VALID_PROFILE},
+    )
+    assert response.status_code == 400, response.text
+    payload = response.json()
+    assert payload["error_type"] == "PlaybillSinceGenerationUnknown"
+    assert payload["error_code"] == "playbill.since.generation_unknown"
+
+
+@pytest.mark.parametrize(
+    ("body", "expected_path_prefix"),
+    (
+        ({"generation": 0, "access_profile": VALID_PROFILE, "extra": 1}, "$.extra"),
+        (
+            {
+                "tag": "playbill-wrong-tag",
+                "generation": 0,
+                "access_profile": VALID_PROFILE,
+            },
+            "$.tag",
+        ),
+        (
+            {"generation": 0, "access_profile": VALID_PROFILE, "cursor": "garbage"},
+            "$.cursor",
+        ),
+        ({"generation": 0, "access_profile": {"bogus": True}}, "$.access_profile"),
+        ({"access_profile": VALID_PROFILE}, "$.generation"),
+        (
+            {
+                "generation": 0,
+                "access_profile": VALID_PROFILE,
+                "at": {"git_oid": "zz"},
+            },
+            "$.at.",
+        ),
+    ),
+)
+def test_http_since_adversarial_bodies_are_typed_400(
+    playbill_http: tuple[TestClient, str, Path],
+    body: dict,
+    expected_path_prefix: str,
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    response = client.post(f"/api/v1/{instance_id}/playbill/since", json=body)
+    assert response.status_code == 400, response.text
+    payload = response.json()
+    assert payload["error_code"] == "playbill.since.request_invalid"
+    assert payload["context"]["field_path"].startswith(expected_path_prefix)
+    assert "Traceback" not in response.text
+
+
+@pytest.mark.parametrize("body", ([1, 2], "string-body", None))
+def test_http_since_non_object_bodies_are_typed_400(
+    playbill_http: tuple[TestClient, str, Path],
+    body: object,
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    response = client.post(f"/api/v1/{instance_id}/playbill/since", json=body)
+    assert response.status_code == 400, response.text
+    assert response.json()["error_code"] == "playbill.since.request_invalid"
