@@ -10,6 +10,7 @@ from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
     PrincipalIntegrityError,
     ProposalAdmissionError,
+    SettlementIntegrityError,
 )
 from cruxible_client.contracts.principals import principal_registry_from_tree
 from cruxible_client.contracts.types import PrincipalRecord
@@ -162,12 +163,33 @@ def _settle_transition(
         "revoke",
         "recover",
     }
+    with pytest.raises(SettlementIntegrityError, match="cryptographically approve"):
+        prepare_generation(
+            instance._ledger,
+            base=base,
+            candidate_tree=tree,
+            candidate=candidate,
+            approval_submissions=(_sign(approver, candidate.candidate_digest, base.semantic_root),),
+            bodies=instance.body_store(),
+            actor_binding=ChangeActorBinding(actor_id=actor.principal.principal_id),
+            proposal_actor_id=actor.principal.principal_id,
+            sequence=instance._recovered.head.sequence + 1,
+        )
+    approvals = tuple(
+        sorted(
+            (
+                _sign(actor, candidate.candidate_digest, base.semantic_root),
+                _sign(approver, candidate.candidate_digest, base.semantic_root),
+            ),
+            key=lambda item: item.attestation.signer_id,
+        )
+    )
     bundle = prepare_generation(
         instance._ledger,
         base=base,
         candidate_tree=tree,
         candidate=candidate,
-        approval_submissions=(_sign(approver, candidate.candidate_digest, base.semantic_root),),
+        approval_submissions=approvals,
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id=actor.principal.principal_id),
         proposal_actor_id=actor.principal.principal_id,

@@ -353,6 +353,7 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         service_activate_playbill_proposal(
             instance,
             proposal_id=initial.admission.proposal_id,
+            activated_by="owner",
         ).status
         == "accepted"
     )

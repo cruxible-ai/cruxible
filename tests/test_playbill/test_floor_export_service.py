@@ -93,7 +93,11 @@ def _instance_with_procedure(tmp_path: Path):
         attestation=approval.attestation,
         authenticated_submitter="reviewer",
     )
-    service_activate_playbill_proposal(instance, proposal_id=submitted.status.proposal_id)
+    service_activate_playbill_proposal(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        activated_by="owner",
+    )
     return instance
 
 

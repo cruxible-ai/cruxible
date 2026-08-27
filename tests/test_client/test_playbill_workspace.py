@@ -198,6 +198,7 @@ def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
         ) -> contracts.PlaybillActivationReceipt:
             return contracts.PlaybillActivationReceipt(
                 proposal_id=proposal_id,
+                activated_by="owner",
                 status="accepted",
                 accepted_coordinate=_coordinate(),
             )

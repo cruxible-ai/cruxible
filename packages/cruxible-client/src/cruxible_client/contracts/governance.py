@@ -19,7 +19,6 @@ MutationDisposition = Literal[
 ]
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
-PLAYBILL_FIXED_INDEPENDENT_APPROVALS: Final = 1
 PLAYBILL_INDEPENDENT_APPROVAL_ROLE: Final = "independent-principal"
 
 
@@ -69,7 +68,6 @@ __all__ = [
     "ApprovalRequirement",
     "MutationDisposition",
     "PermissionTier",
-    "PLAYBILL_FIXED_INDEPENDENT_APPROVALS",
     "PLAYBILL_INDEPENDENT_APPROVAL_ROLE",
     "governance_identifier",
 ]

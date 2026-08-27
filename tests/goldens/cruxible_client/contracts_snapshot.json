@@ -169,6 +169,16 @@
             ]
           }
         },
+        "activated_by": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "activated_by",
+          "required": true,
+          "schema": {
+            "title": "Activated By",
+            "type": "string"
+          }
+        },
         "proposal_id": {
           "has_default": false,
           "has_default_factory": false,
@@ -262,6 +272,10 @@
               }
             ]
           },
+          "activated_by": {
+            "title": "Activated By",
+            "type": "string"
+          },
           "proposal_id": {
             "title": "Proposal Id",
             "type": "string"
@@ -283,6 +297,7 @@
         },
         "required": [
           "proposal_id",
+          "activated_by",
           "status",
           "accepted_coordinate"
         ],
@@ -291,6 +306,7 @@
       },
       "required_fields": [
         "accepted_coordinate",
+        "activated_by",
         "proposal_id",
         "status"
       ]
@@ -16129,6 +16145,16 @@
             ]
           }
         },
+        "activated_by": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "activated_by",
+          "required": true,
+          "schema": {
+            "title": "Activated By",
+            "type": "string"
+          }
+        },
         "floor_refresh": {
           "has_default": false,
           "has_default_factory": false,
@@ -16306,6 +16332,10 @@
               }
             ]
           },
+          "activated_by": {
+            "title": "Activated By",
+            "type": "string"
+          },
           "floor_refresh": {
             "$ref": "#/$defs/PlaybillFloorRefreshResult"
           },
@@ -16330,6 +16360,7 @@
         },
         "required": [
           "proposal_id",
+          "activated_by",
           "status",
           "accepted_coordinate",
           "floor_refresh"
@@ -16339,6 +16370,7 @@
       },
       "required_fields": [
         "accepted_coordinate",
+        "activated_by",
         "floor_refresh",
         "proposal_id",
         "status"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -14,6 +15,11 @@ import structlog
 from fastapi import Request
 from fastapi.testclient import TestClient
 
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+)
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import PermissionMode
@@ -218,6 +224,94 @@ def test_playbill_write_logs_credential_actor_and_operation(
     assert event["principal_id"] == credential_id
     assert event["principal_label"] == "admin_credential"
     assert str(event["operation_id"]).startswith("op_")
+
+
+def test_activation_receipt_and_request_log_name_the_credential_actor(
+    app_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request_log_buffer: io.StringIO,
+) -> None:
+    instance_id = _create_host(app_client, "inst_request_log_activation")
+    headers, credential_id = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
+    )
+    managed_root = Path(get_registry().get(instance_id).location) / ".cruxible" / "playbill-v1"
+    owner = generate_client_principal_key(
+        tmp_path / "request-log-activation-owner",
+        principal_id="admin_credential",
+        authority_roles=("owner",),
+        forbidden_roots=(managed_root,),
+    )
+    initialized = app_client.post(
+        f"/api/v1/{instance_id}/playbill/init",
+        json={"principals": [owner.principal.model_dump(mode="json")]},
+        headers=headers,
+    )
+    assert initialized.status_code == 200, initialized.text
+    stored = app_client.post(
+        f"/api/v1/{instance_id}/playbill/bodies",
+        json={"content_base64": base64.b64encode(b"activation actor\n").decode("ascii")},
+        headers=headers,
+    )
+    assert stored.status_code == 200, stored.text
+    shell = DocumentShell(
+        identity="document:activation-actor",
+        document_kind="design",
+        title="Activation actor",
+        media_type="text/plain",
+        body_digest=stored.json()["digest"],
+        authority=DocumentAuthority(
+            required_tier="graph_write",
+            approval_roles=("owner",),
+        ),
+        governance_scope=("project:playbill",),
+        lifecycle=DocumentLifecycle(revision=1),
+    )
+    proposed = app_client.post(
+        f"/api/v1/{instance_id}/playbill/documents/proposals",
+        json={"shell": shell.model_dump(mode="json"), "proposal_name": "activation-actor"},
+        headers=headers,
+    )
+    assert proposed.status_code == 200, proposed.text
+    proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
+
+    _clear_buffer(request_log_buffer)
+    activated = app_client.post(
+        f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate",
+        headers=headers,
+    )
+
+    assert activated.status_code == 200, activated.text
+    assert activated.json()["activated_by"] == "admin_credential"
+    event = _runtime_request_events(request_log_buffer)[-1]
+    assert event["route"] == "/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate"
+    assert event["principal_id"] == credential_id
+    assert event["principal_label"] == "admin_credential"
+    assert str(event["operation_id"]).startswith("op_")
+
+
+def test_empty_playbill_init_reaches_the_typed_bootstrap_refusal(
+    app_client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance_id = _create_host(app_client, "inst_empty_principals")
+    headers, _credential_id = _runtime_credential_headers(
+        monkeypatch,
+        instance_id=instance_id,
+        permission_mode=PermissionMode.ADMIN,
+    )
+
+    response = app_client.post(
+        f"/api/v1/{instance_id}/playbill/init",
+        json={"principals": []},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error_type"] == "PlaybillBootstrapError"
 
 
 def test_bootstrap_secret_runtime_request_log_does_not_include_secret(

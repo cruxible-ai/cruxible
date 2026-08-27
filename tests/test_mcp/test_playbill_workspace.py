@@ -67,6 +67,7 @@ class _StubClient:
     ) -> contracts.PlaybillActivationReceipt:
         return contracts.PlaybillActivationReceipt(
             proposal_id=proposal_id,
+            activated_by="owner",
             status="accepted",
             accepted_coordinate=_coordinate(),
         )

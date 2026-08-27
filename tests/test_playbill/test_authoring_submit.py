@@ -88,6 +88,7 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     activated = service_activate_playbill_proposal(
         instance,
         proposal_id=first.status.proposal_id,
+        activated_by="owner",
     )
     assert activated.status == "accepted"
     accepted = coordinator.status(intent.intent_id, actor=actor)

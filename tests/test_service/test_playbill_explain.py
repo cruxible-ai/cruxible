@@ -54,6 +54,7 @@ def _accepted(tmp_path: Path):
     service_activate_playbill_proposal(
         instance,
         proposal_id=proposal.admission.proposal_id,
+        activated_by="owner",
     )
     return instance, proposal
 

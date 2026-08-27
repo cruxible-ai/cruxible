@@ -225,23 +225,47 @@ def verify_candidate_approvals(
         for submission in submissions
     )
     creator_present = any(item.signer_id == creator_principal_id for item in verified)
-    if creator_present:
+    if purpose == "ordinary-artifact" and creator_present:
         raise ApprovalIntegrityError(
             "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve"
         )
 
+    counts = candidate_approval_requirement_counts(
+        candidate,
+        verified,
+        creator_principal_id=creator_principal_id,
+    )
+    if any(
+        count < requirement.minimum_distinct_signers
+        for requirement, count in zip(candidate.approval_requirements, counts, strict=True)
+    ):
+        raise ApprovalIntegrityError(
+            "verified approvals do not satisfy every independent candidate requirement"
+        )
+    return verified
+
+
+def candidate_approval_requirement_counts(
+    candidate: CandidateRecordAnyVersion,
+    verified: tuple[VerifiedApproval, ...],
+    *,
+    creator_principal_id: str,
+) -> tuple[int, ...]:
+    """Match non-creator signers to committed requirement slots exactly once."""
+
     slots = tuple(
-        role
-        for requirement in candidate.approval_requirements
-        for role in (requirement.role,) * requirement.minimum_distinct_signers
+        (requirement_index, requirement.role)
+        for requirement_index, requirement in enumerate(candidate.approval_requirements)
+        for _ in range(requirement.minimum_distinct_signers)
     )
     eligible = {
         role: tuple(
             index
             for index, approval in enumerate(verified)
-            if role == PLAYBILL_INDEPENDENT_APPROVAL_ROLE or role in approval.signer_roles
+            if approval.signer_id != creator_principal_id
+            and (role == PLAYBILL_INDEPENDENT_APPROVAL_ROLE or role in approval.signer_roles)
         )
-        for role in dict.fromkeys(slots)
+        for role in dict.fromkeys(role for _requirement_index, role in slots)
     }
     slot_to_signer: list[int | None] = [None] * len(slots)
     signer_to_slot: list[int | None] = [None] * len(verified)
@@ -256,7 +280,7 @@ def verify_candidate_approvals(
         while cursor < len(queued_slots):
             slot = queued_slots[cursor]
             cursor += 1
-            for signer in eligible.get(slots[slot], ()):
+            for signer in eligible.get(slots[slot][1], ()):
                 if signer in seen_signers:
                     continue
                 seen_signers.add(signer)
@@ -277,11 +301,15 @@ def verify_candidate_approvals(
                     queued_slots.append(matched_slot)
         return False
 
-    if len(slots) > len(verified) or any(not augment(slot) for slot in range(len(slots))):
-        raise ApprovalIntegrityError(
-            "verified approvals do not satisfy every independent candidate requirement"
+    for slot in range(len(slots)):
+        augment(slot)
+    return tuple(
+        sum(
+            slots[slot][0] == requirement_index and signer is not None
+            for slot, signer in enumerate(slot_to_signer)
         )
-    return verified
+        for requirement_index in range(len(candidate.approval_requirements))
+    )
 
 
 __all__ = [
@@ -292,6 +320,7 @@ __all__ = [
     "VerifiedApproval",
     "approval_digest",
     "approval_statement_bytes",
+    "candidate_approval_requirement_counts",
     "verify_approval",
     "verify_candidate_approvals",
 ]

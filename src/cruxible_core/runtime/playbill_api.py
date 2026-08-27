@@ -35,6 +35,7 @@ from cruxible_client.contracts.discovery import (
     ExpansionBudgetV1,
 )
 from cruxible_client.contracts.documents import DocumentShell
+from cruxible_client.contracts.errors import PlaybillBootstrapError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.procedures.artifacts import procedure_path
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -303,6 +304,8 @@ def playbill_init(
 ) -> contracts.PlaybillInitResult:
     check_permission("cruxible_playbill_init", instance_id=instance_id)
     actor_id = _actor_id()
+    if not principals:
+        raise PlaybillBootstrapError("bootstrap requires at least one client principal")
     owners = {
         item.principal_id
         for item in principals
@@ -510,9 +513,11 @@ def playbill_activate(
     proposal_id: str,
 ) -> contracts.PlaybillActivationReceipt:
     check_permission("cruxible_playbill_activate", instance_id=instance_id)
-    _actor_id()
+    activated_by = _actor_id()
     result = service_activate_playbill_proposal(
-        get_playbill_manager().get(instance_id), proposal_id=proposal_id
+        get_playbill_manager().get(instance_id),
+        proposal_id=proposal_id,
+        activated_by=activated_by,
     )
     return contracts.PlaybillActivationReceipt.model_validate(result.model_dump(mode="json"))
 

@@ -36,8 +36,7 @@ def _update_changeset() -> None:
     # The fixture deliberately retains an explicit nondefault requirement to
     # prove the dormant matcher and wire remain readable. Newly compiled
     # candidates emit no requirements by default.
-    updated = record
-    updated = updated.model_copy(update={"changeset_digest": change_set_digest(updated).tagged})
+    updated = record.model_copy(update={"changeset_digest": change_set_digest(record).tagged})
     canonical = render_change_set(updated)
     reparsed = parse_change_set_record(canonical, path="changesets/golden.json")
     if reparsed != updated:

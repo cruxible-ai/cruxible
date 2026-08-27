@@ -1053,6 +1053,8 @@ class _AcceptedMember:
     predecessor_artifact_digest: str | None
     candidate_artifact_digest: str
     required_tier: PermissionTier
+    # Historical law output retained for canonical compatibility. G12e demoted
+    # role-based approval scope, so candidate construction deliberately ignores it.
     approval_scope: tuple[str, ...]
     activation_policy: ActivationPolicy
     law_identifier: str

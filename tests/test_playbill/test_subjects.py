@@ -86,6 +86,7 @@ def _accept(instance, approver, shell: SubjectShell, *, name: str = "subject"):
     activated = service_activate_playbill_proposal(
         instance,
         proposal_id=inspection.proposal.admission.proposal_id,
+        activated_by="owner",
     )
     assert activated.status == "accepted"
     return inspection

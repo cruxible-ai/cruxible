@@ -60,7 +60,11 @@ def _activate(instance, owner, proposal_id: str, candidate_digest: str) -> None:
         attestation=approval.attestation,
         authenticated_submitter=reviewer.principal.principal_id,
     )
-    activated = service_activate_playbill_proposal(instance, proposal_id=proposal_id)
+    activated = service_activate_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        activated_by="owner",
+    )
     assert activated.status == "accepted"
 
 

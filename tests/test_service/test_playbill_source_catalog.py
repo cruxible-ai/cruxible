@@ -113,6 +113,7 @@ def test_compile_is_read_only_and_propose_uses_frozen_bytes(tmp_path: Path) -> N
     service_activate_playbill_proposal(
         instance,
         proposal_id=proposed.admission.proposal_id,
+        activated_by="owner",
     )
     assert (
         service_check_playbill_source_bundle(
@@ -159,6 +160,7 @@ def test_compile_is_read_only_and_propose_uses_frozen_bytes(tmp_path: Path) -> N
     service_activate_playbill_proposal(
         instance,
         proposal_id=second.admission.proposal_id,
+        activated_by="owner",
     )
     assert (
         service_check_playbill_source_bundle(instance, bundle=bundle).alignments[0].state

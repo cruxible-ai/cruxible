@@ -7,7 +7,11 @@ from datetime import datetime, timedelta
 from typing import Callable, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
-from cruxible_client.contracts.attestations import verify_approval
+from cruxible_client.contracts.attestations import (
+    VerifiedApproval,
+    candidate_approval_requirement_counts,
+    verify_approval,
+)
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1, lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
@@ -1412,7 +1416,7 @@ class AuthoringIntentCoordinator:
             member.artifact_kind == "principal-lifecycle" for member in candidate.members
         )
         invalid_approval = False
-        verified_signers: dict[str, set[str]] = {}
+        verified_approvals: list[VerifiedApproval] = []
         for submission in approvals:
             try:
                 verified = verify_approval(
@@ -1424,16 +1428,21 @@ class AuthoringIntentCoordinator:
             except ApprovalIntegrityError:
                 invalid_approval = True
             else:
-                if verified.signer_id == admission.actor_id:
+                if not principal_lifecycle and verified.signer_id == admission.actor_id:
                     invalid_approval = True
-                verified_signers[verified.signer_id] = set(verified.signer_roles)
+                verified_approvals.append(verified)
         conditions: list[AcceptanceConditionV1] = []
         approvals_complete = True
-        for requirement in candidate.approval_requirements:
-            count = sum(
-                requirement.role == "independent-principal" or requirement.role in roles
-                for roles in verified_signers.values()
-            )
+        requirement_counts = candidate_approval_requirement_counts(
+            candidate,
+            tuple(verified_approvals),
+            creator_principal_id=admission.actor_id,
+        )
+        for requirement, count in zip(
+            candidate.approval_requirements,
+            requirement_counts,
+            strict=True,
+        ):
             satisfied = count >= requirement.minimum_distinct_signers
             approvals_complete = approvals_complete and satisfied
             conditions.append(
@@ -1448,6 +1457,19 @@ class AuthoringIntentCoordinator:
                         f"{requirement.role} signer(s)."
                     ),
                     satisfied=satisfied,
+                )
+            )
+        if principal_lifecycle:
+            actor_binding_satisfied = any(
+                approval.signer_id == admission.actor_id for approval in verified_approvals
+            )
+            approvals_complete = approvals_complete and actor_binding_satisfied
+            conditions.append(
+                AcceptanceConditionV1(
+                    condition="principal-lifecycle-actor-binding",
+                    owner="approver",
+                    action="The lifecycle actor must sign the exact candidate.",
+                    satisfied=actor_binding_satisfied,
                 )
             )
         conditions.append(

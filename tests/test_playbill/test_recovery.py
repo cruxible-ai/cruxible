@@ -299,6 +299,7 @@ def _accept_document_revision(instance, owner, reviewer, *, revision: int, prede
     activated = service_activate_playbill_proposal(
         instance,
         proposal_id=proposal.admission.proposal_id,
+        activated_by="owner",
     )
     assert activated.status == "accepted"
     return shell

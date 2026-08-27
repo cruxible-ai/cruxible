@@ -80,6 +80,7 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
     activated = service_activate_playbill_proposal(
         instance,
         proposal_id=proposed.admission.proposal_id,
+        activated_by="owner",
     )
     assert activated.status == "accepted"
 

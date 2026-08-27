@@ -344,7 +344,7 @@ def service_prepare_playbill_approval(
         member.artifact_kind == "principal-lifecycle" for member in review.complete_members
     )
     creator_principal_id = str(review.provenance["actor_id"])
-    if signer_id == creator_principal_id:
+    if not principal_lifecycle and signer_id == creator_principal_id:
         raise ApprovalIntegrityError(
             "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve"
         )

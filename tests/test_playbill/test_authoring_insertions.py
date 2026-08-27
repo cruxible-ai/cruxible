@@ -169,7 +169,11 @@ def _activate(
         attestation=approval.attestation,
         authenticated_submitter=approver.principal.principal_id,
     )
-    activated = service_activate_playbill_proposal(instance, proposal_id=proposal_id)
+    activated = service_activate_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        activated_by="owner",
+    )
     assert activated.status == "accepted"
 
 

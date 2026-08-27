@@ -43,9 +43,9 @@ store body -> propose envelope -> inspect/review -> prepare challenge
 -> sign locally -> submit public attestation -> activate
 ~~~
 
-Do not combine stages. A proposal can be refused. An approval may become stale.
-Activation can lose a compare-and-set race. Handle each typed result rather than
-assuming success.
+Do not combine stages. A proposal can be refused. Optional or candidate-required
+approvals may become stale. Activation can lose a compare-and-set race. Handle
+each typed result rather than assuming success.
 
 ## Source alignment
 
@@ -55,7 +55,7 @@ writing. sources compile emits a frozen path-free bundle. sources propose
 submits that exact bundle.
 
 CI may run check/compile as a lint, but acceptance still requires an explicit
-proposal, approval, and activation.
+proposal and activation, plus any candidate-committed approval requirements.
 
 ## MCP and CLI
 
@@ -82,7 +82,8 @@ Stop and surface the typed refusal when:
 
 - the accepted parent changed;
 - the candidate digest or compiler digest differs;
-- approval roles are insufficient;
+- a candidate-committed approval requirement is unsatisfied;
+- a principal-lifecycle transition lacks the lifecycle actor's own signature;
 - a principal is revoked or outside its authority;
 - a source file escapes its declared root or is a symlink;
 - a requested proof detail is not implemented;

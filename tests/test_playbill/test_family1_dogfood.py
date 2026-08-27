@@ -92,6 +92,7 @@ def _accept(instance, owner, shell: DocumentShell, *, name: str):
     activated = service_activate_playbill_proposal(
         instance,
         proposal_id=proposed.admission.proposal_id,
+        activated_by="owner",
     )
     assert activated.status == "accepted"
     return proposed
@@ -161,6 +162,7 @@ def test_ratified_specs_survive_supersession_and_projection_rebuild(tmp_path: Pa
     service_activate_playbill_proposal(
         instance,
         proposal_id=proposed.admission.proposal_id,
+        activated_by="owner",
     )
     accepted = instance.accepted_coordinate()
 

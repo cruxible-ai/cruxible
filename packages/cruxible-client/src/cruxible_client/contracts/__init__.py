@@ -234,6 +234,7 @@ class PlaybillActivationReceipt(BaseModel):
 
     tag: Literal["playbill-activation-receipt-v1"] = "playbill-activation-receipt-v1"
     proposal_id: str
+    activated_by: str
     status: Literal["accepted", "lost_cas"]
     accepted_coordinate: PlaybillAcceptedCoordinate | None
 

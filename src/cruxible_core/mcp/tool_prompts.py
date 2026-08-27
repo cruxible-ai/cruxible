@@ -43,7 +43,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_submit_approval": (
         "Use when you have a public approval attestation produced outside the daemon."
     ),
-    "cruxible_playbill_activate": ("Use when an approved Playbill candidate is ready to settle."),
+    "cruxible_playbill_activate": (
+        "Use when an admitted Playbill candidate has satisfied any committed requirements and "
+        "is ready to settle."
+    ),
     "cruxible_playbill_whoami": (
         "Use when you need the credential-derived writer identity, permission mode, and "
         "accepted principal status."

@@ -110,6 +110,7 @@ def _accepted_claim_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         service_activate_playbill_proposal(
             instance,
             proposal_id=submitted.status.proposal_id,
+            activated_by="owner",
         ).status
         == "accepted"
     )
@@ -416,6 +417,7 @@ def _activate_migration(instance, owner, successor, dependents):  # type: ignore
         service_activate_playbill_proposal(
             instance,
             proposal_id=result.proposal.proposal.admission.proposal_id,
+            activated_by="owner",
         ).status
         == "accepted"
     )
@@ -621,6 +623,7 @@ def test_decision_only_claim_type_completes_two_successions_without_predecessor_
             service_activate_playbill_proposal(
                 instance,
                 proposal_id=result.proposal.proposal.admission.proposal_id,
+                activated_by="owner",
             ).status
             == "accepted"
         )
@@ -715,6 +718,7 @@ def test_claim_type_v3_to_v4_migration_preserves_freshness_and_accepts_policy(
         service_activate_playbill_proposal(
             instance,
             proposal_id=v3_result.proposal.proposal.admission.proposal_id,
+            activated_by="owner",
         ).status
         == "accepted"
     )
@@ -758,6 +762,7 @@ def test_claim_type_v3_to_v4_migration_preserves_freshness_and_accepts_policy(
         service_activate_playbill_proposal(
             instance,
             proposal_id=v4_result.proposal.proposal.admission.proposal_id,
+            activated_by="owner",
         ).status
         == "accepted"
     )
@@ -847,6 +852,7 @@ def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
         service_activate_playbill_proposal(
             instance,
             proposal_id=result.proposal.proposal.admission.proposal_id,
+            activated_by="owner",
         ).status
         == "accepted"
     )

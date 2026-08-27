@@ -950,7 +950,7 @@ def _principal_successor(
 def rotate_principal(
     principal_id: str, key_dir: str, proposal_name: str, output_json: bool
 ) -> None:
-    """Self-rotate a principal key; the acceptance law verifies the actor."""
+    """Propose a self-rotation; activation requires the actor's key signature."""
 
     result = _principal_successor(
         target_id=principal_id,

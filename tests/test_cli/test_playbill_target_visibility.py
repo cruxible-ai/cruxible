@@ -125,6 +125,7 @@ def test_remembered_playbill_write_marks_remembered_target(
             assert (instance_id, proposal_id) == ("inst_remembered", "proposal-1")
             return contracts.PlaybillActivationReceipt(
                 proposal_id=proposal_id,
+                activated_by="owner",
                 status="lost_cas",
                 accepted_coordinate=None,
             )

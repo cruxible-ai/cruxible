@@ -97,6 +97,7 @@ def _install_client(
             assert (instance_id, proposal_id) == ("inst_test", "proposal-1")
             return contracts.PlaybillActivationReceipt(
                 proposal_id=proposal_id,
+                activated_by="owner",
                 status=status,
                 accepted_coordinate=_coordinate() if status == "accepted" else None,
             )

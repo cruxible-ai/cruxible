@@ -117,6 +117,7 @@ class PlaybillApprovalReceipt(_StrictServiceModel):
 class PlaybillActivationReceipt(_StrictServiceModel):
     tag: Literal["playbill-activation-receipt-v1"] = "playbill-activation-receipt-v1"
     proposal_id: str
+    activated_by: str
     status: Literal["accepted", "lost_cas"]
     accepted_coordinate: PlaybillAcceptedCoordinate | None
 
@@ -302,7 +303,7 @@ def service_submit_playbill_approval(
     principal_lifecycle = all(
         member.artifact_kind == "principal-lifecycle" for member in candidate.members
     )
-    if attestation.signer_id == proposal.admission.actor_id:
+    if not principal_lifecycle and attestation.signer_id == proposal.admission.actor_id:
         raise ApprovalIntegrityError(
             "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve"
         )
@@ -336,6 +337,7 @@ def service_activate_playbill_proposal(
     instance: PlaybillInstance,
     *,
     proposal_id: str,
+    activated_by: str,
 ) -> PlaybillActivationReceipt:
     """Settle, prebuild, and atomically activate one admitted candidate."""
 
@@ -368,6 +370,7 @@ def service_activate_playbill_proposal(
     instance.refresh()
     return PlaybillActivationReceipt(
         proposal_id=proposal_id,
+        activated_by=activated_by,
         status=status,
         accepted_coordinate=(
             PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())

@@ -84,6 +84,7 @@ def test_http_document_lifecycle_and_explanation(
     assert approved.json()["submitted_by"] == "operator"
     activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
+    assert activated.json()["activated_by"] == "operator"
     coordinate = activated.json()["accepted_coordinate"]
 
     listed = client.get(f"/api/v1/{instance_id}/playbill/documents")

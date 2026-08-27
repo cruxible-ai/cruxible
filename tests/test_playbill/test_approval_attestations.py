@@ -217,28 +217,31 @@ def test_creator_cannot_submit_or_join_voluntary_approvals() -> None:
         )
 
 
-def test_principal_lifecycle_refuses_creator_but_accepts_noncreator_approval() -> None:
+def test_principal_lifecycle_allows_creator_key_binding_without_a_quorum() -> None:
     owner_private, owner = _key("owner", ("owner",))
     reviewer_private, reviewer = _key("reviewer", ("reviewer",))
     candidate = _candidate()
     creator = _submission(owner_private, candidate, signer_id="owner")
-    with pytest.raises(ApprovalIntegrityError, match="creator_forbidden"):
-        verify_candidate_approvals(
-            candidate,
-            (creator,),
-            principals=_registry(owner, reviewer),
-            creator_principal_id="owner",
-            purpose="principal-lifecycle",
-        )
-    approvals = (_submission(reviewer_private, candidate, signer_id="reviewer"),)
     verified = verify_candidate_approvals(
         candidate,
-        approvals,
+        (creator,),
         principals=_registry(owner, reviewer),
         creator_principal_id="owner",
         purpose="principal-lifecycle",
     )
-    assert tuple(item.signer_id for item in verified) == ("reviewer",)
+    assert tuple(item.signer_id for item in verified) == ("owner",)
+
+    voluntary = (_submission(reviewer_private, candidate, signer_id="reviewer"),)
+    assert tuple(
+        item.signer_id
+        for item in verify_candidate_approvals(
+            candidate,
+            voluntary,
+            principals=_registry(owner, reviewer),
+            creator_principal_id="owner",
+            purpose="principal-lifecycle",
+        )
+    ) == ("reviewer",)
 
 
 def test_nondefault_committed_requirement_uses_dormant_matcher() -> None:
@@ -261,6 +264,49 @@ def test_nondefault_committed_requirement_uses_dormant_matcher() -> None:
         creator_principal_id="owner",
     )
     assert tuple(item.signer_id for item in verified) == ("reviewer",)
+
+
+def test_dormant_matcher_never_counts_one_signer_for_two_role_slots() -> None:
+    owner_private, owner = _key("owner", ("owner",))
+    multi_private, multi = _key("multi", ("owner", "reviewer"))
+    owner_only_private, owner_only = _key("owner-only", ("owner",))
+    del owner_private
+    candidate = _candidate(
+        approval_requirements=(
+            ApprovalRequirement(role="owner"),
+            ApprovalRequirement(role="reviewer"),
+        )
+    )
+    multi_submission = _submission(multi_private, candidate, signer_id="multi")
+    principals = _registry(owner, multi, owner_only)
+    with pytest.raises(ApprovalIntegrityError, match="independent candidate requirement"):
+        verify_candidate_approvals(
+            candidate,
+            (multi_submission,),
+            principals=principals,
+            creator_principal_id="owner",
+        )
+
+    submissions = tuple(
+        sorted(
+            (
+                multi_submission,
+                _submission(owner_only_private, candidate, signer_id="owner-only"),
+            ),
+            key=lambda item: item.attestation.signer_id,
+        )
+    )
+    assert (
+        len(
+            verify_candidate_approvals(
+                candidate,
+                submissions,
+                principals=principals,
+                creator_principal_id="owner",
+            )
+        )
+        == 2
+    )
 
 
 def test_principal_role_model_prevents_recovery_or_daemon_authority_expansion() -> None:

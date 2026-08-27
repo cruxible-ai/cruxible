@@ -17,6 +17,7 @@ from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
     PlaybillCasError,
     PlaybillFormatError,
+    SettlementIntegrityError,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -140,6 +141,7 @@ def test_service_document_lifecycle_keeps_state_boundaries_explicit(tmp_path: Pa
     activated = service_activate_playbill_proposal(
         instance,
         proposal_id=proposal.admission.proposal_id,
+        activated_by="owner",
     )
     assert activated.status == "accepted"
     assert activated.accepted_coordinate is not None
@@ -203,10 +205,10 @@ def test_service_refusal_and_coordinate_mixing_are_typed(tmp_path: Path) -> None
         )
 
 
-def test_service_owner_rotation_and_recovery_accept_optional_noncreator_approval(
+def test_service_owner_rotation_and_recovery_require_lifecycle_actor_key_binding(
     tmp_path: Path,
 ) -> None:
-    instance, _owner, recovery = _cloud_instance(tmp_path)
+    instance, owner, recovery = _cloud_instance(tmp_path)
     rotated_owner = _replacement_key(
         tmp_path,
         instance,
@@ -222,21 +224,20 @@ def test_service_owner_rotation_and_recovery_accept_optional_noncreator_approval
         timestamp="2026-08-13T12:01:00.000000Z",
     ).proposal
     assert rotated.candidate is not None
-    with pytest.raises(ApprovalIntegrityError, match="creator_forbidden"):
-        service_prepare_playbill_approval(
+    with pytest.raises(SettlementIntegrityError, match="cryptographically approve"):
+        service_activate_playbill_proposal(
             instance,
             proposal_id=rotated.admission.proposal_id,
-            signer_id="owner",
-            access=BodyAccessContext(principal_id="owner"),
+            activated_by="owner",
         )
     rotation_challenge = service_prepare_playbill_approval(
         instance,
         proposal_id=rotated.admission.proposal_id,
-        signer_id="recovery",
-        access=BodyAccessContext(principal_id="recovery"),
+        signer_id="owner",
+        access=BodyAccessContext(principal_id="owner"),
     )
     rotation_signature = _sign(
-        recovery,
+        owner,
         rotation_challenge.statement.payload_digest,
         rotation_challenge.statement.signing_semantic_root,
     )
@@ -244,9 +245,13 @@ def test_service_owner_rotation_and_recovery_accept_optional_noncreator_approval
         instance,
         proposal_id=rotated.admission.proposal_id,
         attestation=rotation_signature.attestation,
-        authenticated_submitter="recovery",
+        authenticated_submitter="owner",
     )
-    service_activate_playbill_proposal(instance, proposal_id=rotated.admission.proposal_id)
+    service_activate_playbill_proposal(
+        instance,
+        proposal_id=rotated.admission.proposal_id,
+        activated_by="owner",
+    )
     assert (
         next(
             item
@@ -271,14 +276,20 @@ def test_service_owner_rotation_and_recovery_accept_optional_noncreator_approval
         timestamp="2026-08-13T12:02:00.000000Z",
     ).proposal
     assert recovered.candidate is not None
+    with pytest.raises(SettlementIntegrityError, match="cryptographically approve"):
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=recovered.admission.proposal_id,
+            activated_by="recovery",
+        )
     recovery_challenge = service_prepare_playbill_approval(
         instance,
         proposal_id=recovered.admission.proposal_id,
-        signer_id="owner",
-        access=BodyAccessContext(principal_id="owner"),
+        signer_id="recovery",
+        access=BodyAccessContext(principal_id="recovery"),
     )
     recovery_signature = _sign(
-        rotated_owner,
+        recovery,
         recovery_challenge.statement.payload_digest,
         recovery_challenge.statement.signing_semantic_root,
     )
@@ -286,9 +297,13 @@ def test_service_owner_rotation_and_recovery_accept_optional_noncreator_approval
         instance,
         proposal_id=recovered.admission.proposal_id,
         attestation=recovery_signature.attestation,
-        authenticated_submitter="owner",
+        authenticated_submitter="recovery",
     )
-    service_activate_playbill_proposal(instance, proposal_id=recovered.admission.proposal_id)
+    service_activate_playbill_proposal(
+        instance,
+        proposal_id=recovered.admission.proposal_id,
+        activated_by="recovery",
+    )
     assert (
         next(
             item

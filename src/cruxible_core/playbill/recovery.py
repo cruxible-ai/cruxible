@@ -441,6 +441,12 @@ def _verify_successor(
         creator_principal_id=record.actor_binding.actor_id,
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
+    if principal_lifecycle and record.actor_binding.actor_id not in {
+        approval.signer_id for approval in verified_approvals
+    }:
+        raise SettlementIntegrityError(
+            "principal lifecycle actor did not cryptographically approve the transition"
+        )
     approval_digests = tuple(sorted(item.digest.tagged for item in verified_approvals))
     semantic_root = semantic_root_for_record(
         record,
