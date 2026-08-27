@@ -133,7 +133,7 @@ uv run cruxible server start \
 ~~~
 
 In another shell, authorize the bootstrap session, allocate a host, and create
-client-held owner keys outside the workspace:
+client-held owner and independent-reviewer keys outside the workspace:
 
 ~~~bash
 export CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
@@ -142,12 +142,13 @@ export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat /tmp/cruxible-playbill-bootstrap)"
 uv run cruxible playbill host create --instance-id playbill-demo
 uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
-  --principal-id bootstrap-admin
+  --principal-id bootstrap-admin \
+  --reviewer-key-dir /tmp/cruxible-playbill-reviewer
 uv run cruxible playbill document list
 ~~~
 
-The init command prints the owner private-key path. The daemon receives the
-public key only. See the [Quickstart](docs/quickstart.md) for a complete
+The init command prints both private-key paths. The daemon receives the public
+keys only. See the [Quickstart](docs/quickstart.md) for a complete
 Document proposal and activation.
 
 ## Security boundaries

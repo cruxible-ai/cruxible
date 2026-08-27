@@ -36,16 +36,20 @@ instance:
 uv run cruxible playbill host create --instance-id playbill-demo
 ~~~
 
-Initialize Playbill and generate the owner key outside the repository:
+Initialize Playbill and generate independent owner and reviewer keys outside
+the repository:
 
 ~~~bash
 uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
-  --principal-id bootstrap-admin
+  --principal-id bootstrap-admin \
+  --reviewer-key-dir /tmp/cruxible-playbill-reviewer
 ~~~
 
-The private key remains in the client directory. The daemon receives only the
-public principal record.
+The private keys remain in their client custody directories. The daemon receives
+only the public principal records. Two ordinary-approval-capable Principals are
+present at genesis, so the creator can obtain the required independent approval
+without a principal-lifecycle bootstrap dance.
 
 ## Govern a Document
 
@@ -85,8 +89,8 @@ Copy the proposal ID from the response, then review, approve, and activate:
 ~~~bash
 uv run cruxible playbill proposal review PROPOSAL_ID
 uv run cruxible playbill proposal approve PROPOSAL_ID \
-  --signer-id bootstrap-admin \
-  --key /tmp/cruxible-playbill-owner/bootstrap-admin.ed25519 \
+  --signer-id reviewer \
+  --key /tmp/cruxible-playbill-reviewer/reviewer.ed25519 \
   --yes
 uv run cruxible playbill proposal activate PROPOSAL_ID
 ~~~

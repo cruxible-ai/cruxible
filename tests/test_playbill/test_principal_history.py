@@ -84,10 +84,27 @@ def _cloud_instance(tmp_path: Path):
         principal_id="recovery",
         roles=("recovery",),
     )
+    reviewer = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
+    backup = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="backup-reviewer",
+        roles=("reviewer",),
+    )
     instance = PlaybillInstance.initialize(
         managed,
         instance_id="inst_principal_history",
-        client_principals=(owner.principal, recovery.principal),
+        client_principals=(
+            owner.principal,
+            reviewer.principal,
+            backup.principal,
+            recovery.principal,
+        ),
         workspace_roots=(tmp_path / "workspace",),
         operating_profile="cloud",
         timestamp=FIXED_TIMESTAMP,

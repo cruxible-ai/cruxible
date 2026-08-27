@@ -83,7 +83,7 @@ class _Cli:
         return activated
 
     def bootstrap(self, tmp_path: Path) -> dict[str, Any]:
-        """Bootstrap a constructible world and register an ordinary approver."""
+        """Bootstrap the documented owner/reviewer/recovery custody shape."""
 
         custody = tmp_path / "custody"
         recovery_custody = tmp_path / "recovery-custody"
@@ -94,43 +94,14 @@ class _Cli:
             str(custody),
             "--principal-id",
             CREATOR_ID,
+            "--reviewer-key-dir",
+            str(custody),
             "--recovery-key-dir",
             str(recovery_custody),
             "--recovery-principal-id",
             RECOVERY_ID,
         )
         self.recovery_private_key = recovery_custody / f"{RECOVERY_ID}.ed25519"
-        reviewer = self.json(
-            "playbill",
-            "principal",
-            "add",
-            SIGNER_ID,
-            "--role",
-            "reviewer",
-            "--key-dir",
-            str(custody),
-            "--name",
-            "bootstrap-reviewer",
-        )
-        proposal_id = _proposal_id(reviewer)
-        for signer_id, key_path in (
-            (CREATOR_ID, self.creator_private_key),
-            (RECOVERY_ID, self.recovery_private_key),
-        ):
-            self.run(
-                "playbill",
-                "proposal",
-                "approve",
-                proposal_id,
-                "--signer-id",
-                signer_id,
-                "--key",
-                str(key_path),
-                "--yes",
-                "--json",
-            )
-        activated = self.json("playbill", "proposal", "activate", proposal_id)
-        assert activated["status"] == "accepted", activated
         return initialized
 
 
@@ -439,4 +410,4 @@ def test_cli_batch_propose_settles_every_claim_in_one_generation(
     }
     for authored in batch["claims"]:
         history = cruxible.json("playbill", "claim", "history", str(authored["claim_identity"]))
-        assert [entry["sequence"] for entry in history["entries"]] == [3]
+        assert [entry["sequence"] for entry in history["entries"]] == [2]

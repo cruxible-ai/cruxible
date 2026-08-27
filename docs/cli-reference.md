@@ -64,15 +64,16 @@ Allocates an empty daemon-owned host and remembers it.
 ## playbill init
 
 ~~~text
-cruxible playbill init --key-dir DIR
+cruxible playbill init --key-dir DIR --reviewer-key-dir DIR
   [--principal-id ID]
   [--recovery-key-dir DIR]
   [--recovery-principal-id ID]
   [--profile local|cloud]
 ~~~
 
-Generates client-held principal keys outside the workspace and bootstraps the
-ledger with public principal records.
+Generates client-held owner and independent-reviewer principal keys outside the
+workspace and bootstraps the ledger with public principal records. The optional
+recovery key is lifecycle-only and does not replace the independent reviewer.
 
 ## playbill body
 

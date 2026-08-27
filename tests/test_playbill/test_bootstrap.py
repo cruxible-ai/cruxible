@@ -167,7 +167,9 @@ def test_workspace_edits_cannot_move_ledger_or_verified_coordinates(tmp_path: Pa
     assert after.generation_root == before.generation_root
 
 
-def test_bootstrap_requires_two_distinct_active_client_principals(tmp_path: Path) -> None:
+def test_bootstrap_requires_two_distinct_ordinary_approval_principals(
+    tmp_path: Path,
+) -> None:
     managed = tmp_path / "managed-single-client"
     owner = generate_client(
         tmp_path,
@@ -176,11 +178,32 @@ def test_bootstrap_requires_two_distinct_active_client_principals(tmp_path: Path
         roles=("owner",),
     )
 
-    with pytest.raises(PlaybillBootstrapError, match="at least two distinct active"):
+    with pytest.raises(
+        PlaybillBootstrapError,
+        match="playbill.bootstrap.independent_quorum_unconstructible",
+    ):
         PlaybillInstance.initialize(
             managed,
             instance_id="inst_single_client",
             client_principals=(owner.principal,),
+            workspace_roots=(tmp_path / "workspace",),
+            timestamp=FIXED_TIMESTAMP,
+        )
+
+    recovery = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="recovery",
+        roles=("recovery",),
+    )
+    with pytest.raises(
+        PlaybillBootstrapError,
+        match="ordinary-approval-capable.*recovery and daemon principals do not count",
+    ):
+        PlaybillInstance.initialize(
+            managed,
+            instance_id="inst_owner_recovery_deadlock",
+            client_principals=(owner.principal, recovery.principal),
             workspace_roots=(tmp_path / "workspace",),
             timestamp=FIXED_TIMESTAMP,
         )
@@ -219,7 +242,7 @@ def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> N
     instance = PlaybillInstance.initialize(
         managed,
         instance_id="inst_cloud",
-        client_principals=(owner.principal, recovery.principal),
+        client_principals=(owner.principal, reviewer.principal, recovery.principal),
         workspace_roots=(tmp_path / "workspace",),
         operating_profile="cloud",
         timestamp=FIXED_TIMESTAMP,
