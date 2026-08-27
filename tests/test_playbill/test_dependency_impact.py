@@ -37,11 +37,16 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     render_claim,
 )
-from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
+from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedureV1,
+    ProcedureArtifactV1,
+    procedure_artifact_digest,
+)
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
     LineSpecV1,
     line_spec_digest,
+    line_spec_path,
 )
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
@@ -66,19 +71,13 @@ from cruxible_core.service.playbill_next import (
     _bounded_claim_lineages,
     _claim_dependency_items,
 )
-from tests.test_playbill._line_runtime_support import (
-    accepted_line,
-    accepted_procedure,
-)
-from tests.test_playbill._line_runtime_support import (
-    acquisition_policy as line_acquisition_policy,
-)
 from tests.test_playbill.test_claim_query_engine import (
     NOW,
     coordinate,
     rule_for,
     subject,
 )
+from tests.test_playbill.test_line_specs import _accepted_procedure, _line
 from tests.test_playbill.test_query_definitions import (
     OWNER_AUTHORITY,
     STATUS_PREDICATE,
@@ -205,24 +204,51 @@ def _pinning_query(row: ClaimFactRowV1) -> AcceptedQueryDefinitionV1:
 
 
 def _pinning_procedure(row: ClaimFactRowV1) -> AcceptedProcedureV1:
-    return accepted_procedure(extra_pins=(_claim_pin(row),))
+    accepted, _, _ = _accepted_procedure()
+    payload = accepted.procedure.model_dump(mode="json")
+    payload["pins"] = [
+        pin.model_dump(mode="json")
+        for pin in sorted(
+            (*accepted.procedure.pins, _claim_pin(row)),
+            key=lambda item: (
+                item.role.encode("utf-8"),
+                item.target.qualified.encode("utf-8"),
+            ),
+        )
+    ]
+    procedure = ProcedureArtifactV1.model_validate(payload)
+    return AcceptedProcedureV1(
+        path=accepted.path,
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
 
 
 def _pinning_line(procedure: AcceptedProcedureV1, row: ClaimFactRowV1) -> AcceptedLineSpecV1:
-    base = accepted_line(procedure, line_acquisition_policy())
+    line, _, _ = _line()
+    procedure_pin = ArtifactPin(
+        role="procedure",
+        target=procedure.procedure.identity,
+        artifact_digest=procedure.artifact_digest,
+    )
     pins = tuple(
         sorted(
-            (*base.line.pins, _claim_pin(row)),
+            (
+                *(pin for pin in line.pins if pin.role != "procedure"),
+                procedure_pin,
+                _claim_pin(row),
+            ),
             key=lambda item: (item.role.encode("utf-8"), item.target.qualified.encode("utf-8")),
         )
     )
-    payload = base.line.model_dump(mode="json")
+    payload = line.model_dump(mode="json")
+    payload["procedure"] = procedure_pin.model_dump(mode="json")
     payload["pins"] = [item.model_dump(mode="json") for item in pins]
-    line = LineSpecV1.model_validate(payload)
+    pinned = LineSpecV1.model_validate(payload)
     return AcceptedLineSpecV1(
-        path=base.path,
-        line=line,
-        artifact_digest=line_spec_digest(line).tagged,
+        path=line_spec_path(pinned.identity.name),
+        line=pinned,
+        artifact_digest=line_spec_digest(pinned).tagged,
     )
 
 
