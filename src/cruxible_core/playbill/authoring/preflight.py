@@ -24,6 +24,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
     DiagnosticFrontierLimitsV1,
     DiagnosticFrontierV1,
+    InsertionTargetV1,
     PreflightResultV1,
     RepairAlternativeV1,
     SelfSourceBodyV1,
@@ -456,7 +457,7 @@ def compute_preflight(
                         ),
                     )
                 )
-            else:
+            elif isinstance(payload.insertion_target, InsertionTargetV1):
                 target = payload.insertion_target
                 removed = (
                     target.selector.end_byte - target.selector.start_byte

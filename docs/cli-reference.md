@@ -162,6 +162,7 @@ cruxible playbill authoring preflight INTENT_ID
 cruxible playbill authoring rebase INTENT_ID
 cruxible playbill authoring submit INTENT_ID
 cruxible playbill authoring status INTENT_ID
+cruxible playbill authoring prepare-publication INTENT_ID OBSERVATION
 cruxible playbill authoring confirm-insertion INTENT_ID OBSERVATION
 cruxible playbill authoring abandon-insertion INTENT_ID
 ~~~
@@ -171,8 +172,11 @@ references. `compile` creates or updates an intent and performs a binding prefli
 `rebase` advances an unsubmitted refused intent to the current accepted coordinate;
 `submit` is idempotent and never supplies approvals. `status` reports the remaining
 approval or activation conditions without impersonating the actors who own them.
-Insertion confirmation verifies a client observation and opens an ordinary
-backing-only successor candidate; abandon closes only that publication expectation.
+V2 publication preparation commits a deterministic Claim-backed block against fresh
+whole-source bytes before the client applies it. Insertion confirmation verifies the
+exact client observation; legacy v1 opens an ordinary backing-only successor candidate,
+while v2 binds the stamped block without a copy citation. Abandon closes only an
+unprepared publication expectation.
 
 ## playbill query
 

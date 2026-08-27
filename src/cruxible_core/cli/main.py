@@ -527,6 +527,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                         "confirm_authoring_insertion",
                         "Confirm a client-applied publication copy.",
                     ),
+                    "prepare-publication": _command(
+                        "playbill",
+                        "prepare_authoring_publication",
+                        "Prepare a Claim-backed publication against fresh source bytes.",
+                    ),
                     "abandon-insertion": _command(
                         "playbill",
                         "abandon_authoring_insertion",

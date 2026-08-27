@@ -24,7 +24,9 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringReferenceExpectationV1,
     ClaimAuthoringPayloadV2,
     InsertionConfirmationObservationV1,
+    InsertionConfirmationObservationV2,
     PreflightResultV1,
+    PublicationSourceObservationV2,
     WorkingSelectionObservationV1,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
@@ -1079,12 +1081,29 @@ def playbill_authoring_confirm_insertion(
     instance_id: str,
     intent_id: str,
     *,
-    observation: InsertionConfirmationObservationV1,
-) -> contracts.PlaybillInsertionConfirmResult:
+    observation: InsertionConfirmationObservationV1 | InsertionConfirmationObservationV2,
+) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
     check_permission("cruxible_playbill_authoring_confirm_insertion", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.confirm_insertion(intent_id, actor=actor, observation=observation)
-    return contracts.PlaybillInsertionConfirmResult.model_validate(result.model_dump(mode="json"))
+    payload = result.model_dump(mode="json")
+    return (
+        contracts.PlaybillInsertionConfirmResultV2.model_validate(payload)
+        if isinstance(observation, InsertionConfirmationObservationV2)
+        else contracts.PlaybillInsertionConfirmResult.model_validate(payload)
+    )
+
+
+def playbill_authoring_prepare_publication(
+    instance_id: str,
+    intent_id: str,
+    *,
+    observation: PublicationSourceObservationV2,
+) -> contracts.PlaybillInsertionPrepareResult:
+    check_permission("cruxible_playbill_authoring_prepare_publication", instance_id=instance_id)
+    coordinator, actor = _authoring_coordinator(instance_id)
+    result = coordinator.prepare_publication(intent_id, actor=actor, observation=observation)
+    return contracts.PlaybillInsertionPrepareResult.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_authoring_abandon_insertion(

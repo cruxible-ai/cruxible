@@ -59,6 +59,7 @@ def test_admin_default_profile_is_exactly_the_writer_path(
         "cruxible_playbill_authoring_preflight",
         "cruxible_playbill_authoring_submit",
         "cruxible_playbill_authoring_status",
+        "cruxible_playbill_authoring_prepare_publication",
         "cruxible_playbill_authoring_confirm_insertion",
         "cruxible_playbill_authoring_abandon_insertion",
         "cruxible_playbill_discover",

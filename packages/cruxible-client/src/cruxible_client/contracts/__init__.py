@@ -761,6 +761,31 @@ class PlaybillInsertionConfirmResult(BaseModel):
     successor_status: PlaybillCandidateStatus | None = None
 
 
+class PlaybillInsertionPrepareResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-insertion-prepare-result-v2"]
+    outcome: Literal[
+        "prepared",
+        "already_prepared",
+        "bound",
+        "expired",
+        "claim_currency_changed",
+    ]
+    intent: dict[str, Any]
+    expectation: dict[str, Any]
+    preparation: dict[str, Any] | None = None
+
+
+class PlaybillInsertionConfirmResultV2(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-insertion-confirm-result-v2"]
+    outcome: Literal["bound", "already_bound", "expired", "claim_currency_changed"]
+    intent: dict[str, Any]
+    expectation: dict[str, Any]
+
+
 class PlaybillInsertionAbandonResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

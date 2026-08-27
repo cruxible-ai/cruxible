@@ -1493,6 +1493,27 @@ def confirm_authoring_insertion(
     _emit_json(result.model_dump(mode="json"))
 
 
+@authoring_group.command("prepare-publication")
+@click.argument("intent_id")
+@click.argument("observation", type=click.Path(exists=True, dir_okay=False))
+@json_option
+@handle_errors
+def prepare_authoring_publication(
+    intent_id: str,
+    observation: str,
+    output_json: bool,
+) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.prepare_playbill_authoring_publication(
+            instance_id,
+            intent_id,
+            observation=_read_mapping(observation),
+        ),
+        command_name="playbill authoring prepare-publication",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
 @authoring_group.command("abandon-insertion")
 @click.argument("intent_id")
 @json_option

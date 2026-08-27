@@ -117,8 +117,9 @@ from accepted law evidence, never carried forward from acceptance.
 | `cruxible_playbill_authoring_preflight` | Produce a binding certificate and repair frontier | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_submit` | Idempotently submit a passing intent | `GOVERNED_WRITE` |
 | `cruxible_playbill_authoring_status` | Read the causal path to acceptance | `READ_ONLY` |
-| `cruxible_playbill_authoring_confirm_insertion` | Confirm a client-applied publication copy | `GOVERNED_WRITE` |
-| `cruxible_playbill_authoring_abandon_insertion` | Abandon a pending publication copy | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_prepare_publication` | Commit a deterministic Claim-backed block against fresh source bytes | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_confirm_insertion` | Confirm an exact client-applied insertion or stamped publication | `GOVERNED_WRITE` |
+| `cruxible_playbill_authoring_abandon_insertion` | Abandon an unprepared publication expectation | `GOVERNED_WRITE` |
 
 The coordinator mints every identity, digest, base, timestamp, and proposal reference.
 It reports approval conditions but never obtains or impersonates an approval.

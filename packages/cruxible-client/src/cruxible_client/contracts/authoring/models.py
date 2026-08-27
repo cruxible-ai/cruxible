@@ -29,6 +29,10 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.claim_type_structure import ClaimRole
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import LiteralClaimObject, SubjectClaimObject, claim_path
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBlockStampV1,
+    ProjectionMarkerSummaryV1,
+)
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalReceiveLimits
@@ -57,7 +61,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.4.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:ec047925b58984b7dfc6d45ee16888ea05669d456571b76818c1da17f946cd2e"
+    "sha256:5b899488f8e824985f008c2fca0a31a348c4189ea1ecd38d49ca15ac8b587db5"
 )
 INSERTION_TARGET_DIGEST_DOMAIN = "playbill-insertion-target-v1"
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
@@ -67,6 +71,19 @@ INSERTION_CONFIRMATION_OBSERVATION_DIGEST_DOMAIN = "playbill-insertion-confirmat
 INSERTION_CONFIRM_OPERATION_DOMAIN = "playbill-insertion-confirm-operation-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
 INSERTION_TERMINAL_TOMBSTONE_DIGEST_DOMAIN = "playbill-insertion-terminal-tombstone-v1"
+INSERTION_TARGET_V2_DIGEST_DOMAIN = "playbill-insertion-target-v2"
+INSERTION_EXPECTATION_V2_DIGEST_DOMAIN = "playbill-insertion-expectation-v2"
+INSERTION_PREPARATION_V2_DIGEST_DOMAIN = "playbill-publication-preparation-v2"
+INSERTION_SOURCE_OBSERVATION_V2_DIGEST_DOMAIN = "playbill-publication-source-observation-v2"
+INSERTION_CONFIRMATION_OBSERVATION_V2_DIGEST_DOMAIN = (
+    "playbill-insertion-confirmation-observation-v2"
+)
+INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN = "playbill-insertion-terminal-tombstone-v2"
+INSERTION_PREPARE_OPERATION_V2_DOMAIN = "playbill-insertion-prepare-operation-v2"
+_INSERTION_PREPARE_TERMINAL_OPERATION_V2_DOMAIN = "playbill-insertion-prepare-terminal-operation-v2"
+INSERTION_CONFIRM_OPERATION_V2_DOMAIN = "playbill-insertion-confirm-operation-v2"
+PUBLICATION_BLOCK_ID_DOMAIN = "playbill-publication-block-id-v1"
+MAX_PUBLICATION_SOURCE_BYTES = 4 * 1024 * 1024
 
 MAX_DIAGNOSTICS = 128
 MAX_BLOCKED_CHECKS = 128
@@ -547,6 +564,108 @@ def insertion_target_digest(target: InsertionTargetV1) -> str:
     return typed_digest(Sha256Value, INSERTION_TARGET_DIGEST_DOMAIN, payload).tagged
 
 
+class InsertionTargetV2(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-target-v2"] = "playbill-insertion-target-v2"
+    source_id: str
+    coordinate: WorkingSelectionCoordinateV1
+    initial_preimage_digest: str
+    initial_preimage_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    selector: InsertionAnchorWindowV1
+    operation: InsertionOperation
+
+    @field_validator("source_id")
+    @classmethod
+    def _source_id(cls, value: str) -> str:
+        return InsertionTargetV1._source_id(value)
+
+    @field_validator("initial_preimage_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _sha256(value, label="insertion initial whole-source digest")
+
+    @model_validator(mode="after")
+    def _target_shape(self) -> "InsertionTargetV2":
+        if self.coordinate.source_byte_length != self.initial_preimage_byte_length:
+            raise ValueError("insertion initial preimage length differs from its coordinate")
+        if isinstance(self.coordinate, WorkingDigestCoordinateV1) and (
+            self.coordinate.source_content_digest != self.initial_preimage_digest
+        ):
+            raise ValueError("insertion initial preimage differs from its coordinate")
+        # Reuse v1's offset/occurrence laws without its obsolete postimage arithmetic.
+        source_length = self.coordinate.source_byte_length
+        selector = self.selector
+        if selector.end_byte > source_length or selector.insertion_offset > source_length:
+            raise ValueError("insertion target exceeds the proposer-observed source")
+        if selector.observed_occurrence_count != 1:
+            raise ValueError("insertion anchor must have exactly one observed occurrence")
+        if self.operation == "insert_before" and selector.insertion_offset != selector.start_byte:
+            raise ValueError("insert_before offset must equal the anchor start")
+        if self.operation == "insert_after" and selector.insertion_offset != selector.end_byte:
+            raise ValueError("insert_after offset must equal the anchor end")
+        if self.operation == "replace_window" and selector.insertion_offset != selector.start_byte:
+            raise ValueError("replace_window offset must equal the window start")
+        if self.operation == "append" and selector.insertion_offset != source_length:
+            raise ValueError("append offset must equal the observed source length")
+        return self
+
+
+def insertion_target_v2_digest(target: InsertionTargetV2) -> str:
+    payload = target.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(Sha256Value, INSERTION_TARGET_V2_DIGEST_DOMAIN, payload).tagged
+
+
+class PublicationSourceObservationV2(_StrictAuthoringModel):
+    tag: Literal["playbill-publication-source-observation-v2"] = (
+        "playbill-publication-source-observation-v2"
+    )
+    source_id: str
+    content_base64: str
+    content_digest: str
+    byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+
+    @field_validator("source_id")
+    @classmethod
+    def _source_id(cls, value: str) -> str:
+        return InsertionTargetV1._source_id(value)
+
+    @field_validator("content_base64")
+    @classmethod
+    def _content(cls, value: str) -> str:
+        content = _canonical_base64(value, label="publication source content")
+        if len(content) > MAX_PUBLICATION_SOURCE_BYTES:
+            raise ValueError("publication source exceeds its 4 MiB byte ceiling")
+        return value
+
+    @field_validator("content_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return _sha256(value, label="publication source digest")
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> "PublicationSourceObservationV2":
+        content = self.content
+        if len(content) != self.byte_length:
+            raise ValueError("publication source length does not reproduce")
+        if "sha256:" + hashlib.sha256(content).hexdigest() != self.content_digest:
+            raise ValueError("publication source digest does not reproduce")
+        return self
+
+    @property
+    def content(self) -> bytes:
+        return _canonical_base64(self.content_base64, label="publication source content")
+
+
+def publication_source_observation_v2_digest(value: PublicationSourceObservationV2) -> str:
+    payload = value.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        INSERTION_SOURCE_OBSERVATION_V2_DIGEST_DOMAIN,
+        payload,
+    ).tagged
+
+
 def insertion_expectation_id(
     *,
     instance_id: str,
@@ -593,7 +712,13 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
     citation_role: Literal["evidence", "copy"] | None = None
     claim_ref: str | None = None
     existing_claim_dispositions: tuple[AuthoringExistingClaimDispositionV1, ...] = ()
-    insertion_target: InsertionTargetV1 | None = None
+    insertion_target: (
+        Annotated[
+            InsertionTargetV1 | InsertionTargetV2,
+            Field(discriminator="tag"),
+        ]
+        | None
+    ) = None
 
     @field_validator("rationale")
     @classmethod
@@ -1226,6 +1351,403 @@ def insertion_confirmation_operation_key(
     ).tagged
 
 
+InsertionExpectationStateV2: TypeAlias = Literal[
+    "awaiting_claim_acceptance",
+    "pending",
+    "prepared",
+    "bound",
+    "expired",
+    "abandoned",
+    "claim_currency_changed",
+]
+
+
+def publication_block_id(expectation_id: str) -> str:
+    _sha256(expectation_id, label="publication expectation ID")
+    digest = typed_digest(
+        Sha256Value,
+        PUBLICATION_BLOCK_ID_DOMAIN,
+        {"expectation_id": expectation_id},
+    ).tagged.removeprefix("sha256:")
+    return "pub-" + digest[:32]
+
+
+class PublicationPreparationV2(_StrictAuthoringModel):
+    tag: Literal["playbill-publication-preparation-v2"] = "playbill-publication-preparation-v2"
+    expectation_id: str
+    revision: int = Field(ge=1)
+    accepted_coordinate: AcceptedCoordinate
+    accepted_generation: int = Field(ge=0)
+    source_id: str
+    preimage_digest: str
+    preimage_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    rebased_selector: InsertionAnchorWindowV1
+    operation: InsertionOperation
+    body_digest: str
+    body_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    block_id: str
+    stamp: ProjectionBlockStampV1
+    inserted_block_digest: str
+    inserted_block_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    final_postimage_digest: str
+    final_postimage_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    block_start_byte: int = Field(ge=0)
+    block_end_byte: int = Field(ge=0)
+    body_start_byte: int = Field(ge=0)
+    body_end_byte: int = Field(ge=0)
+    target_digest: str
+    expires_at: datetime
+    preparation_digest: str
+
+    @field_validator(
+        "expectation_id",
+        "preimage_digest",
+        "body_digest",
+        "inserted_block_digest",
+        "final_postimage_digest",
+        "target_digest",
+        "preparation_digest",
+    )
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        return _sha256(value, label="publication preparation digest")
+
+    @field_validator("source_id")
+    @classmethod
+    def _source_id(cls, value: str) -> str:
+        return InsertionTargetV1._source_id(value)
+
+    @field_validator("expires_at")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_serializer("expires_at", when_used="json")
+    def _serialize_time(self, value: datetime) -> str:
+        rendered = format_datetime(value)
+        assert rendered is not None
+        return rendered
+
+    @model_validator(mode="after")
+    def _shape(self) -> "PublicationPreparationV2":
+        if self.block_id != publication_block_id(self.expectation_id):
+            raise ValueError("publication block ID does not reproduce")
+        if self.stamp.source_id != self.source_id or self.stamp.block_id != self.block_id:
+            raise ValueError("publication stamp differs from its source or block")
+        if not (
+            self.block_start_byte
+            <= self.body_start_byte
+            <= self.body_end_byte
+            <= self.block_end_byte
+            <= self.final_postimage_byte_length
+        ):
+            raise ValueError("publication block/body spans are malformed")
+        if self.body_end_byte - self.body_start_byte != self.body_byte_length:
+            raise ValueError("publication body span length does not reproduce")
+        if self.block_end_byte - self.block_start_byte != self.inserted_block_byte_length:
+            raise ValueError("publication block span length does not reproduce")
+        if self.preparation_digest != publication_preparation_v2_digest(self):
+            raise ValueError("publication preparation digest does not reproduce")
+        return self
+
+
+def publication_preparation_v2_digest(value: PublicationPreparationV2) -> str:
+    payload = value.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("preparation_digest")
+    return typed_digest(Sha256Value, INSERTION_PREPARATION_V2_DIGEST_DOMAIN, payload).tagged
+
+
+def build_publication_preparation_v2(**values: object) -> PublicationPreparationV2:
+    provisional = PublicationPreparationV2.model_construct(
+        **cast(dict[str, Any], values),
+        preparation_digest="sha256:" + "0" * 64,
+    )
+    return PublicationPreparationV2.model_validate(
+        {
+            **values,
+            "preparation_digest": publication_preparation_v2_digest(provisional),
+        }
+    )
+
+
+class InsertionConfirmationObservationV2(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-confirmation-observation-v2"] = (
+        "playbill-insertion-confirmation-observation-v2"
+    )
+    intent_id: str
+    expectation_id: str
+    preparation_digest: str
+    source_id: str
+    final_postimage_digest: str
+    final_postimage_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
+    marker_summary: ProjectionMarkerSummaryV1
+    observed_occurrence_count: int = Field(ge=0)
+
+    @field_validator("expectation_id", "preparation_digest", "final_postimage_digest")
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        return _sha256(value, label="publication confirmation digest")
+
+    @field_validator("source_id")
+    @classmethod
+    def _source_id(cls, value: str) -> str:
+        return InsertionTargetV1._source_id(value)
+
+
+def insertion_confirmation_observation_v2_digest(
+    value: InsertionConfirmationObservationV2,
+) -> str:
+    payload = value.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        INSERTION_CONFIRMATION_OBSERVATION_V2_DIGEST_DOMAIN,
+        payload,
+    ).tagged
+
+
+class InsertionTerminalTombstoneV2(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-terminal-tombstone-v2"] = (
+        "playbill-insertion-terminal-tombstone-v2"
+    )
+    result_key: str
+    intent_id: str
+    expectation_id: str
+    final_state: Literal["bound", "expired", "abandoned", "claim_currency_changed"]
+    preparation_digest: str | None = None
+    source_id: str | None = None
+    block_id: str | None = None
+    final_postimage_digest: str | None = None
+    final_postimage_byte_length: int | None = Field(default=None, ge=0)
+    accepted_claim_identity: str
+    accepted_claim_artifact_digest: str
+    accepted_claim_coordinate: AcceptedCoordinate | None = None
+    finalized_at: datetime
+    retain_until: datetime
+    tombstone_digest: str
+
+    @field_validator(
+        "result_key",
+        "expectation_id",
+        "preparation_digest",
+        "final_postimage_digest",
+        "accepted_claim_artifact_digest",
+        "tombstone_digest",
+    )
+    @classmethod
+    def _digests(cls, value: str | None) -> str | None:
+        if value is not None:
+            _sha256(value, label="publication tombstone digest")
+        return value
+
+    @field_validator("finalized_at", "retain_until")
+    @classmethod
+    def _times(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_serializer("finalized_at", "retain_until", when_used="json")
+    def _serialize_times(self, value: datetime) -> str:
+        rendered = format_datetime(value)
+        assert rendered is not None
+        return rendered
+
+    @model_validator(mode="after")
+    def _shape(self) -> "InsertionTerminalTombstoneV2":
+        if self.retain_until < self.finalized_at:
+            raise ValueError("publication tombstone retention precedes finalization")
+        commitments = (
+            self.preparation_digest,
+            self.source_id,
+            self.block_id,
+            self.final_postimage_digest,
+            self.final_postimage_byte_length,
+        )
+        if self.final_state == "bound" and not all(item is not None for item in commitments):
+            raise ValueError("bound publication tombstone requires exact source commitments")
+        if self.final_state != "bound" and any(item is not None for item in commitments):
+            raise ValueError("unbound publication tombstone cannot claim applied source bytes")
+        if self.final_state == "bound" and self.accepted_claim_coordinate is None:
+            raise ValueError("bound publication tombstone requires its accepted Claim coordinate")
+        if self.tombstone_digest != insertion_terminal_tombstone_v2_digest(self):
+            raise ValueError("publication tombstone digest does not reproduce")
+        return self
+
+
+def insertion_terminal_tombstone_v2_digest(value: InsertionTerminalTombstoneV2) -> str:
+    payload = value.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("tombstone_digest")
+    return typed_digest(
+        Sha256Value,
+        INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN,
+        payload,
+    ).tagged
+
+
+def build_insertion_terminal_tombstone_v2(**values: object) -> InsertionTerminalTombstoneV2:
+    provisional = InsertionTerminalTombstoneV2.model_construct(
+        **cast(dict[str, Any], values),
+        tombstone_digest="sha256:" + "0" * 64,
+    )
+    return InsertionTerminalTombstoneV2.model_validate(
+        {
+            **values,
+            "tombstone_digest": insertion_terminal_tombstone_v2_digest(provisional),
+        }
+    )
+
+
+class InsertionExpectationV2(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-expectation-v2"] = "playbill-insertion-expectation-v2"
+    expectation_id: str
+    state: InsertionExpectationStateV2
+    claim_identity: str
+    original_claim_artifact_digest: str
+    claim_statement_digest: str
+    accepted_claim_coordinate: AcceptedCoordinate | None = None
+    target: InsertionTargetV2
+    preparation: PublicationPreparationV2 | None = None
+    expires_at: datetime
+    terminal_tombstone: InsertionTerminalTombstoneV2 | None = None
+    expectation_digest: str
+
+    @field_validator(
+        "expectation_id",
+        "original_claim_artifact_digest",
+        "claim_statement_digest",
+        "expectation_digest",
+    )
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        return _sha256(value, label="publication expectation digest")
+
+    @field_validator("expires_at")
+    @classmethod
+    def _time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_serializer("expires_at", when_used="json")
+    def _serialize_time(self, value: datetime) -> str:
+        rendered = format_datetime(value)
+        assert rendered is not None
+        return rendered
+
+    @model_validator(mode="after")
+    def _shape(self) -> "InsertionExpectationV2":
+        if self.state == "awaiting_claim_acceptance" and self.accepted_claim_coordinate is not None:
+            raise ValueError("awaiting publication cannot claim an accepted Claim coordinate")
+        if self.state in {"pending", "prepared", "bound"} and (
+            self.accepted_claim_coordinate is None
+        ):
+            raise ValueError("accepted publication state requires its Claim coordinate")
+        if self.state == "prepared" and self.preparation is None:
+            raise ValueError("prepared publication state requires exact preparation")
+        terminal = self.state in {
+            "bound",
+            "expired",
+            "abandoned",
+            "claim_currency_changed",
+        }
+        if terminal != (self.terminal_tombstone is not None):
+            raise ValueError("terminal publication state requires exactly one tombstone")
+        if self.state == "bound" and self.preparation is None:
+            raise ValueError("bound publication state requires its preparation")
+        if self.preparation is not None:
+            if self.accepted_claim_coordinate != self.preparation.accepted_coordinate:
+                raise ValueError("publication preparation names another accepted Claim coordinate")
+            if self.preparation.expires_at != self.expires_at:
+                raise ValueError("publication preparation changes the expectation expiry")
+        if self.terminal_tombstone is not None:
+            if self.terminal_tombstone.expectation_id != self.expectation_id:
+                raise ValueError("publication tombstone names another expectation")
+            if self.terminal_tombstone.final_state != self.state:
+                raise ValueError("publication tombstone disagrees with its terminal state")
+            if self.terminal_tombstone.accepted_claim_coordinate != self.accepted_claim_coordinate:
+                raise ValueError("publication tombstone changes the accepted Claim coordinate")
+        if self.expectation_digest != insertion_expectation_v2_digest(self):
+            raise ValueError("publication expectation digest does not reproduce")
+        return self
+
+
+def insertion_expectation_v2_digest(value: InsertionExpectationV2) -> str:
+    payload = value.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("expectation_digest")
+    return typed_digest(Sha256Value, INSERTION_EXPECTATION_V2_DIGEST_DOMAIN, payload).tagged
+
+
+def build_insertion_expectation_v2(**values: object) -> InsertionExpectationV2:
+    provisional = InsertionExpectationV2.model_construct(
+        **cast(dict[str, Any], values),
+        expectation_digest="sha256:" + "0" * 64,
+    )
+    return InsertionExpectationV2.model_validate(
+        {**values, "expectation_digest": insertion_expectation_v2_digest(provisional)}
+    )
+
+
+def update_insertion_expectation_v2(
+    expectation: InsertionExpectationV2,
+    **changes: object,
+) -> InsertionExpectationV2:
+    values = {
+        name: getattr(expectation, name)
+        for name in type(expectation).model_fields
+        if name not in {"tag", "expectation_digest"}
+    }
+    values.update(changes)
+    return build_insertion_expectation_v2(**values)
+
+
+def insertion_prepare_operation_v2_key(
+    expectation_id: str,
+    observation: PublicationSourceObservationV2,
+    *,
+    live_expectation_digest: str,
+) -> str:
+    _sha256(live_expectation_digest, label="live publication expectation digest")
+    return typed_digest(
+        Sha256Value,
+        INSERTION_PREPARE_OPERATION_V2_DOMAIN,
+        {
+            "expectation_id": expectation_id,
+            "live_expectation_digest": live_expectation_digest,
+            "observation_digest": publication_source_observation_v2_digest(observation),
+        },
+    ).tagged
+
+
+def _insertion_prepare_terminal_operation_v2_key(
+    expectation_id: str,
+    observation: PublicationSourceObservationV2,
+) -> str:
+    """Key one terminal prepare attempt independently of the state it terminalizes."""
+
+    return typed_digest(
+        Sha256Value,
+        _INSERTION_PREPARE_TERMINAL_OPERATION_V2_DOMAIN,
+        {
+            "expectation_id": expectation_id,
+            "observation_digest": publication_source_observation_v2_digest(observation),
+        },
+    ).tagged
+
+
+def insertion_confirm_operation_v2_key(
+    expectation_id: str,
+    observation: InsertionConfirmationObservationV2,
+) -> str:
+    return typed_digest(
+        Sha256Value,
+        INSERTION_CONFIRM_OPERATION_V2_DOMAIN,
+        {
+            "expectation_id": expectation_id,
+            "observation_digest": insertion_confirmation_observation_v2_digest(observation),
+        },
+    ).tagged
+
+
 class PreflightCertificateV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-preflight-certificate-v1"] = (
         "playbill-authoring-preflight-certificate-v1"
@@ -1344,7 +1866,13 @@ class AuthoringIntentV1(_StrictAuthoringModel):
     intent_revision: int = Field(default=0, ge=0)
     last_preflight: PreflightResultV1 | None = None
     candidate_status: CandidateStatusV1
-    insertion_expectation: InsertionExpectationV1 | None = None
+    insertion_expectation: (
+        Annotated[
+            InsertionExpectationV1 | InsertionExpectationV2,
+            Field(discriminator="tag"),
+        ]
+        | None
+    ) = None
 
     @field_validator("intent_id")
     @classmethod
@@ -1388,6 +1916,16 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                 )
                 if self.insertion_expectation.expectation_id != expected_id:
                     raise ValueError("insertion expectation ID does not reproduce")
+                target = self.payload.insertion_target
+                expectation = self.insertion_expectation
+                if isinstance(target, InsertionTargetV1) != isinstance(
+                    expectation, InsertionExpectationV1
+                ):
+                    raise ValueError("insertion expectation version differs from its target")
+                if isinstance(expectation, InsertionExpectationV2) and (
+                    expectation.target != target
+                ):
+                    raise ValueError("publication expectation changes its frozen target")
         elif self.semantic_identity != f"Procedure:{self.payload.definition['name']}":
             raise ValueError("Procedure AuthoringIntent identity differs from its definition")
         elif self.insertion_expectation is not None:
@@ -1544,6 +2082,43 @@ class InsertionConfirmResultV1(_StrictAuthoringModel):
         return self
 
 
+class InsertionPrepareRequestV2(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-prepare-request-v2"] = "playbill-insertion-prepare-request-v2"
+    observation: PublicationSourceObservationV2
+
+
+class InsertionPrepareResultV2(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-prepare-result-v2"] = "playbill-insertion-prepare-result-v2"
+    outcome: Literal[
+        "prepared",
+        "already_prepared",
+        "bound",
+        "expired",
+        "claim_currency_changed",
+    ]
+    intent: AuthoringIntentV1
+    expectation: InsertionExpectationV2
+    preparation: PublicationPreparationV2 | None = None
+
+    @model_validator(mode="after")
+    def _preparation_shape(self) -> "InsertionPrepareResultV2":
+        if self.outcome in {"prepared", "already_prepared", "bound"} and (self.preparation is None):
+            raise ValueError("successful publication preparation requires exact preparation")
+        return self
+
+
+class InsertionConfirmRequestV2(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-confirm-request-v2"] = "playbill-insertion-confirm-request-v2"
+    observation: InsertionConfirmationObservationV2
+
+
+class InsertionConfirmResultV2(_StrictAuthoringModel):
+    tag: Literal["playbill-insertion-confirm-result-v2"] = "playbill-insertion-confirm-result-v2"
+    outcome: Literal["bound", "already_bound", "expired", "claim_currency_changed"]
+    intent: AuthoringIntentV1
+    expectation: InsertionExpectationV2
+
+
 class InsertionAbandonRequestV1(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-abandon-request-v1"] = "playbill-insertion-abandon-request-v1"
 
@@ -1551,7 +2126,10 @@ class InsertionAbandonRequestV1(_StrictAuthoringModel):
 class InsertionAbandonResultV1(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
     intent: AuthoringIntentV1
-    expectation: InsertionExpectationV1
+    expectation: Annotated[
+        InsertionExpectationV1 | InsertionExpectationV2,
+        Field(discriminator="tag"),
+    ]
 
 
 __all__ = [
@@ -1576,6 +2154,16 @@ __all__ = [
     "INSERTION_RESULT_KEY_DOMAIN",
     "INSERTION_TARGET_DIGEST_DOMAIN",
     "INSERTION_TERMINAL_TOMBSTONE_DIGEST_DOMAIN",
+    "INSERTION_CONFIRMATION_OBSERVATION_V2_DIGEST_DOMAIN",
+    "INSERTION_CONFIRM_OPERATION_V2_DOMAIN",
+    "INSERTION_EXPECTATION_V2_DIGEST_DOMAIN",
+    "INSERTION_PREPARATION_V2_DIGEST_DOMAIN",
+    "INSERTION_PREPARE_OPERATION_V2_DOMAIN",
+    "INSERTION_SOURCE_OBSERVATION_V2_DIGEST_DOMAIN",
+    "INSERTION_TARGET_V2_DIGEST_DOMAIN",
+    "INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN",
+    "MAX_PUBLICATION_SOURCE_BYTES",
+    "PUBLICATION_BLOCK_ID_DOMAIN",
     "AcceptanceConditionV1",
     "AuthoringArtifactReferenceV1",
     "AuthoringClaimStatementV1",
@@ -1612,15 +2200,26 @@ __all__ = [
     "InsertionAbandonResultV1",
     "InsertionAnchorWindowV1",
     "InsertionConfirmationObservationV1",
+    "InsertionConfirmationObservationV2",
     "InsertionConfirmOutcome",
     "InsertionConfirmRequestV1",
     "InsertionConfirmResultV1",
+    "InsertionConfirmRequestV2",
+    "InsertionConfirmResultV2",
     "InsertionExpectationState",
     "InsertionExpectationV1",
+    "InsertionExpectationStateV2",
+    "InsertionExpectationV2",
     "InsertionOperation",
     "InsertionPatchEnvelopeV1",
     "InsertionTargetV1",
+    "InsertionTargetV2",
     "InsertionTerminalTombstoneV1",
+    "InsertionTerminalTombstoneV2",
+    "InsertionPrepareRequestV2",
+    "InsertionPrepareResultV2",
+    "PublicationPreparationV2",
+    "PublicationSourceObservationV2",
     "PreflightCertificateV1",
     "PreflightResultV1",
     "ProcedureAuthoringPayloadV1",
@@ -1637,18 +2236,31 @@ __all__ = [
     "authoring_program_stamp_operation_key",
     "canonical_reference_expectations",
     "build_insertion_expectation",
+    "build_insertion_expectation_v2",
     "build_insertion_patch_envelope",
     "build_insertion_terminal_tombstone",
+    "build_insertion_terminal_tombstone_v2",
+    "build_publication_preparation_v2",
     "build_preflight_certificate",
     "insertion_confirmation_observation_digest",
     "insertion_confirmation_operation_key",
+    "insertion_confirmation_observation_v2_digest",
+    "insertion_confirm_operation_v2_key",
     "insertion_expectation_digest",
     "insertion_expectation_id",
+    "insertion_expectation_v2_digest",
     "insertion_patch_envelope_digest",
     "insertion_result_key",
     "insertion_target_digest",
+    "insertion_target_v2_digest",
     "insertion_terminal_tombstone_digest",
+    "insertion_terminal_tombstone_v2_digest",
+    "insertion_prepare_operation_v2_key",
+    "publication_block_id",
+    "publication_preparation_v2_digest",
+    "publication_source_observation_v2_digest",
     "preflight_certificate_digest",
     "reference_expectations_digest",
     "update_insertion_expectation",
+    "update_insertion_expectation_v2",
 ]

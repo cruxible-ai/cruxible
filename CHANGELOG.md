@@ -19,6 +19,22 @@
   self-approval remains refused for record honesty. Single-key `playbill init`
   is restored and `--reviewer-key-dir` is optional.
 
+- **Playbill publication prepare retries now distinguish live persistence from
+  terminal replay (pre-release compatibility note).** The exported
+  `insertion_prepare_operation_v2_key` helper now requires the live expectation
+  digest, preventing a stale source replay from serving a superseded preparation.
+  Terminalizing prepare attempts retain a digest-free expectation-plus-observation
+  identity so a lost prepared-to-expired or prepared-to-currency-changed response
+  replays byte-identically after the terminal state change. Prepare events written
+  by intermediate pre-release builds under the former preimage do not cache-hit;
+  recreate any in-flight authoring intent carried across such an upgrade.
+
+- **Playbill publication confirmations now require their discriminating wire tag.**
+  The confirmation endpoint accepts the explicit v1 or v2 request variants; a
+  legacy v1-shaped body that omits `tag` now receives a typed request refusal
+  instead of being inferred. This is an intentional pre-release behavior change
+  needed to keep the two confirmation protocols unambiguous.
+
 - **Governance: role gates leave the hot path (PC-G12e).** Ordinary governed
   artifacts are now admitted by credential tier, principal identity, and
   semantic law — role labels no longer gate proposal, approval, settlement,

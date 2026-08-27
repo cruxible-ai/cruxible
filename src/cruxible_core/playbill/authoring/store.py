@@ -26,7 +26,9 @@ AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
 AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
 AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN = "playbill-authoring-intent-event-v3"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})
-_LIVE_INSERTION_STATES = frozenset({"awaiting_claim_acceptance", "pending", "confirming"})
+_LIVE_INSERTION_STATES = frozenset(
+    {"awaiting_claim_acceptance", "pending", "prepared", "confirming"}
+)
 
 
 def _intent_is_pending(intent: AuthoringIntentV1) -> bool:
@@ -383,6 +385,24 @@ class AuthoringIntentStore:
                 raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
             predecessor = None if len(events) == 1 else events[-2].intent
             return predecessor, latest
+
+    def operation_result(
+        self,
+        intent_id: str,
+        *,
+        actor_id: str,
+        operation_key: str,
+    ) -> AuthoringIntentV1 | None:
+        """Return a previously committed operation result without appending an event."""
+
+        with self._locked():
+            events = self._load_events(self.root / intent_id)
+            if events[-1].intent.actor_id != actor_id:
+                raise AuthoringIntentStoreError("AuthoringIntent belongs to another actor")
+            return next(
+                (event.intent for event in events if event.operation_key == operation_key),
+                None,
+            )
 
     def transition(
         self,

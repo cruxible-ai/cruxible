@@ -12,6 +12,7 @@
     "playbill_authoring_get",
     "playbill_authoring_list_pending",
     "playbill_authoring_preflight",
+    "playbill_authoring_prepare_publication",
     "playbill_authoring_rebase",
     "playbill_authoring_resume",
     "playbill_authoring_status",

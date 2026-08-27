@@ -11636,6 +11636,236 @@
         "outcome"
       ]
     },
+    "PlaybillInsertionConfirmResultV2": {
+      "fields": {
+        "expectation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "expectation",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Expectation",
+            "type": "object"
+          }
+        },
+        "intent": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "intent",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          }
+        },
+        "outcome": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "outcome",
+          "required": true,
+          "schema": {
+            "enum": [
+              "bound",
+              "already_bound",
+              "expired",
+              "claim_currency_changed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-insertion-confirm-result-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "expectation": {
+            "additionalProperties": true,
+            "title": "Expectation",
+            "type": "object"
+          },
+          "intent": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          },
+          "outcome": {
+            "enum": [
+              "bound",
+              "already_bound",
+              "expired",
+              "claim_currency_changed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-insertion-confirm-result-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "outcome",
+          "intent",
+          "expectation"
+        ],
+        "title": "PlaybillInsertionConfirmResultV2",
+        "type": "object"
+      },
+      "required_fields": [
+        "expectation",
+        "intent",
+        "outcome",
+        "tag"
+      ]
+    },
+    "PlaybillInsertionPrepareResult": {
+      "fields": {
+        "expectation": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "expectation",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Expectation",
+            "type": "object"
+          }
+        },
+        "intent": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "intent",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          }
+        },
+        "outcome": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "outcome",
+          "required": true,
+          "schema": {
+            "enum": [
+              "prepared",
+              "already_prepared",
+              "bound",
+              "expired",
+              "claim_currency_changed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "preparation": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "preparation",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preparation"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-insertion-prepare-result-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "expectation": {
+            "additionalProperties": true,
+            "title": "Expectation",
+            "type": "object"
+          },
+          "intent": {
+            "additionalProperties": true,
+            "title": "Intent",
+            "type": "object"
+          },
+          "outcome": {
+            "enum": [
+              "prepared",
+              "already_prepared",
+              "bound",
+              "expired",
+              "claim_currency_changed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "preparation": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Preparation"
+          },
+          "tag": {
+            "const": "playbill-insertion-prepare-result-v2",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "outcome",
+          "intent",
+          "expectation"
+        ],
+        "title": "PlaybillInsertionPrepareResult",
+        "type": "object"
+      },
+      "required_fields": [
+        "expectation",
+        "intent",
+        "outcome",
+        "tag"
+      ]
+    },
     "PlaybillInterfaceInventory": {
       "fields": {
         "coordinate": {
