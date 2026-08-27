@@ -34,6 +34,7 @@ from cruxible_core.service.playbill_curation import (
     PlaybillCurationAcceptFixedRequestV1,
     PlaybillCurationListRequestV1,
     PlaybillCurationResolvingChangeUnrelated,
+    _accepted_retirements_for_items,
     service_accept_fixed_playbill_curation,
     service_list_playbill_curation,
 )
@@ -301,7 +302,92 @@ def test_dead_vocabulary_auto_resolves_to_the_accepted_retirement_changeset(
     accepted_event = CurationAcceptedFixedV1.model_validate(
         instance.review_operational_store().events(family="curation")[-1][1]
     )
+    assert accepted_event.reason == "accepted change retired the artifact"
     assert any(
         member.path == path and member.disposition == "retire"
         for member in accepted_event.affected_members
     )
+
+
+def test_dead_vocabulary_retirement_scan_loads_each_generation_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    initial = subject_shell("wi-dead")
+    first = service_propose_playbill_subject(
+        instance,
+        shell=initial,
+        actor_id="owner",
+        proposal_name="dead-subject-initial",
+        timestamp="2026-08-26T18:00:00.000000Z",
+    )
+    accept_proposal(instance, owner, first, sequence=1)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    path = subject_path(initial.subject_kind, initial.subject_id)
+    detection = build_curation_detection(
+        pattern_kind="playbill.curation.dead_vocabulary.v1",
+        subject=initial.identity,
+        detail={"artifact_family": "Subject"},
+        coverage=CurationDetectorCoverageV1(
+            pattern_kind="playbill.curation.dead_vocabulary.v1",
+            status="complete",
+            evaluated_fact_count=1,
+        ),
+        evidence_refs=(
+            CurationEvidenceRefV1(
+                kind="accepted_artifact",
+                identity=initial.identity.qualified,
+                path=path,
+                generation=1,
+                artifact_digest=subject_digest(initial).tagged,
+            ),
+        ),
+    )
+    observation = build_pattern_observation(
+        detection=detection,
+        predecessor_item_id=None,
+        accepted_generation=1,
+    )
+    instance.review_operational_store().append(
+        family="curation",
+        partition_id=observation.item_id,
+        event_id=observation.event_id,
+        payload=observation,
+        coordinate=coordinate,
+        generation=1,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=None,
+    )
+    item = replay_curation_items(instance.review_operational_store().events(family="curation"))[0]
+    second_item = item.model_copy(update={"item_id": "sha256:" + "d" * 64})
+    retired = initial.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=subject_digest(initial).tagged,
+            )
+        }
+    )
+    retirement = service_propose_playbill_subject(
+        instance,
+        shell=retired,
+        actor_id="owner",
+        proposal_name="dead-subject-retirement",
+        timestamp="2026-08-26T18:01:00.000000Z",
+    )
+    accept_proposal(instance, owner, retirement, sequence=2)
+    original_tree_at = instance.tree_at
+    loaded_oids: list[str] = []
+
+    def counted_tree_at(oid: str) -> dict[str, bytes]:
+        loaded_oids.append(oid)
+        return original_tree_at(oid)
+
+    monkeypatch.setattr(instance, "tree_at", counted_tree_at)
+
+    resolutions = _accepted_retirements_for_items(instance, (item, second_item))
+
+    assert set(resolutions) == {item.item_id, second_item.item_id}
+    assert len(loaded_oids) == 2

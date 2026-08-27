@@ -441,20 +441,14 @@ def _replay_items(instance: PlaybillInstance) -> tuple[CurationItemV1, ...]:
         raise ReviewOperationalStoreError("curation event replay is invalid") from exc
 
 
-def _accepted_retirement_for_item(
+def _accepted_retirements_for_items(
     instance: PlaybillInstance,
-    item: CurationItemV1,
-) -> (
-    tuple[
-        int,
-        str,
-        ChangeSetRecordAnyVersion,
-        dict[str, bytes],
-        dict[str, bytes],
-    ]
-    | None
-):
-    """Find the first accepted proposal/ChangeSet that retires this exact subject."""
+    items: tuple[CurationItemV1, ...],
+) -> dict[
+    str,
+    tuple[int, str, ChangeSetRecordAnyVersion, tuple[CurationAffectedMemberV1, ...]],
+]:
+    """Find first exact retirements in one bounded history/tree traversal."""
 
     history = instance.accepted_history()
     evaluations_by_candidate: dict[str, list[str]] = {}
@@ -463,20 +457,20 @@ def _accepted_retirement_for_item(
             evaluations_by_candidate.setdefault(evaluation.candidate_digest, []).append(
                 evaluation.proposal_id
             )
+    unresolved = {item.item_id: item for item in items}
+    resolved: dict[
+        str,
+        tuple[int, str, ChangeSetRecordAnyVersion, tuple[CurationAffectedMemberV1, ...]],
+    ] = {}
     for index, accepted in enumerate(history[1:], start=1):
-        if accepted.sequence < item.first_proposed_generation or accepted.record is None:
+        if not unresolved or accepted.record is None:
             continue
-        parent_tree = instance.tree_at(history[index - 1].oid)
-        candidate_tree = instance.tree_at(accepted.oid)
-        affected = _affected_members(
-            accepted.record,
-            parent_tree=parent_tree,
-            candidate_tree=candidate_tree,
+        eligible = tuple(
+            item
+            for item in unresolved.values()
+            if accepted.sequence > item.first_proposed_generation
         )
-        related = _related_paths(item, tree=parent_tree) | _related_paths(item, tree=candidate_tree)
-        if not any(
-            member.disposition == "retire" and member.path in related for member in affected
-        ):
+        if not eligible:
             continue
         proposal_ids = tuple(
             sorted(
@@ -488,14 +482,36 @@ def _accepted_retirement_for_item(
             # Imported ledgers can preserve the accepted receipt without local
             # proposal exhaust.  Do not invent a resolving proposal identity.
             continue
-        return (
-            accepted.sequence,
-            proposal_ids[0],
+        parent_tree = instance.tree_at(history[index - 1].oid)
+        candidate_tree = instance.tree_at(accepted.oid)
+        affected = _affected_members(
             accepted.record,
-            parent_tree,
-            candidate_tree,
+            parent_tree=parent_tree,
+            candidate_tree=candidate_tree,
         )
-    return None
+        retired_paths = {member.path for member in affected if member.disposition == "retire"}
+        if not retired_paths:
+            continue
+        parent_paths: dict[ArtifactIdentity, set[str]] = {}
+        candidate_paths: dict[ArtifactIdentity, set[str]] = {}
+        for state in dependency_artifacts(parent_tree):
+            parent_paths.setdefault(state.identity, set()).add(state.path)
+        for state in dependency_artifacts(candidate_tree):
+            candidate_paths.setdefault(state.identity, set()).add(state.path)
+        for item in eligible:
+            related = {ref.path for ref in item.latest_evidence_refs if ref.path is not None}
+            related.update(parent_paths.get(item.subject, ()))
+            related.update(candidate_paths.get(item.subject, ()))
+            if retired_paths.isdisjoint(related):
+                continue
+            resolved[item.item_id] = (
+                accepted.sequence,
+                proposal_ids[0],
+                accepted.record,
+                affected,
+            )
+            unresolved.pop(item.item_id)
+    return resolved
 
 
 def _auto_resolve_retired_dead_vocabulary(
@@ -514,23 +530,19 @@ def _auto_resolve_retired_dead_vocabulary(
         for item in _replay_items(instance)
         if item.status == "open" and item.pattern_kind == "playbill.curation.dead_vocabulary.v1"
     )
+    resolutions = _accepted_retirements_for_items(instance, candidates)
     for candidate in candidates:
-        resolution = _accepted_retirement_for_item(instance, candidate)
+        resolution = resolutions.get(candidate.item_id)
         if resolution is None:
             continue
-        resolved_generation, proposal_id, record, parent_tree, candidate_tree = resolution
-        affected = _affected_members(
-            record,
-            parent_tree=parent_tree,
-            candidate_tree=candidate_tree,
-        )
+        resolved_generation, proposal_id, record, affected = resolution
         current = candidate
         for attempt in range(2):
             payload = build_curation_accepted_fixed(
                 item_id=current.item_id,
                 expected_latest_event_digest=current.latest_event_digest,
                 actor_principal_id=record.actor_binding.actor_id,
-                reason="accepted succession retired the dead-vocabulary artifact",
+                reason="accepted change retired the artifact",
                 accepted_proposal_id=proposal_id,
                 accepted_changeset_digest=record.changeset_digest,
                 resolved_generation=resolved_generation,
