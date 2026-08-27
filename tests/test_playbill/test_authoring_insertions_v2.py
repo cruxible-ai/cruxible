@@ -35,6 +35,7 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationBodyNotMarkerCompatible,
     PublicationClaimNotAccepted,
     PublicationPrepareOrConfirmRequired,
+    PublicationSourceHasUnrepinnedBlock,
     PublicationTerminalStateRefused,
     build_publication_preparation,
     mark_publication_prepared,
@@ -268,6 +269,17 @@ def test_prepare_refuses_stale_ambiguous_and_marker_incompatible_bodies() -> Non
             expectation,
             observation=_observation(b"status: \n"),
             body=b"ready without terminal LF",
+            accepted_coordinate=COORDINATE,
+            accepted_generation=7,
+        )
+    bootstrap = (
+        b"<!-- playbill:block:draft -->\nunstamped\n<!-- /playbill:block:draft -->\nstatus: \n"
+    )
+    with pytest.raises(PublicationSourceHasUnrepinnedBlock, match="block repin"):
+        build_publication_preparation(
+            expectation,
+            observation=_observation(bootstrap),
+            body=b"ready\n",
             accepted_coordinate=COORDINATE,
             accepted_generation=7,
         )

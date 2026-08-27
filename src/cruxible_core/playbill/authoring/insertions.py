@@ -78,6 +78,10 @@ class PublicationBodyNotMarkerCompatible(InsertionProtocolError):
     code = "playbill.authoring.publication_body_not_marker_compatible"
 
 
+class PublicationSourceHasUnrepinnedBlock(InsertionProtocolError):
+    code = "playbill.authoring.source_has_unrepinned_block"
+
+
 class PublicationConfirmationMismatch(InsertionProtocolError):
     code = "playbill.authoring.publication_confirmation_mismatch"
 
@@ -92,6 +96,17 @@ class PublicationPrepareOrConfirmRequired(InsertionProtocolError):
 
 def _raise(error: type[InsertionProtocolError], message: str) -> None:
     raise error(f"{error.code}: {message}")
+
+
+def _raise_marker_refusal(exc: ProjectionMarkerError) -> None:
+    if "unstamped bootstrap block" in str(exc):
+        raise PublicationSourceHasUnrepinnedBlock(
+            f"{PublicationSourceHasUnrepinnedBlock.code}: run playbill block repin before "
+            "publishing into this source"
+        ) from exc
+    raise PublicationBodyNotMarkerCompatible(
+        f"{PublicationBodyNotMarkerCompatible.code}: {exc}"
+    ) from exc
 
 
 def mint_insertion_expectation(
@@ -290,9 +305,7 @@ def build_publication_preparation(
     try:
         framed = frame_projection_block(stamp=stamp, body=body)
     except ProjectionMarkerError as exc:
-        raise PublicationBodyNotMarkerCompatible(
-            f"{PublicationBodyNotMarkerCompatible.code}: {exc}"
-        ) from exc
+        _raise_marker_refusal(exc)
     if target.operation == "replace_window":
         final = observation.content[:start] + framed + observation.content[end:]
         block_start = start
@@ -302,9 +315,7 @@ def build_publication_preparation(
     try:
         blocks = parse_projection_blocks(final, source_id=target.source_id)
     except ProjectionMarkerError as exc:
-        raise PublicationBodyNotMarkerCompatible(
-            f"{PublicationBodyNotMarkerCompatible.code}: {exc}"
-        ) from exc
+        _raise_marker_refusal(exc)
     matches = tuple(block for block in blocks if block.block_id == block_id)
     if len(matches) != 1 or matches[0].stamp != stamp or matches[0].body_digest != body_digest:
         _raise(
@@ -664,6 +675,7 @@ __all__ = [
     "PublicationNotPrepared",
     "PublicationPrepareOrConfirmRequired",
     "PublicationPreparationStale",
+    "PublicationSourceHasUnrepinnedBlock",
     "PublicationTerminalStateRefused",
     "build_publication_preparation",
     "mark_abandoned",
