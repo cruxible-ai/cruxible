@@ -26,7 +26,9 @@ AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
 AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
 AUTHORING_INTENT_EVENT_V3_DIGEST_DOMAIN = "playbill-authoring-intent-event-v3"
 _TERMINAL_STATES = frozenset({"accepted", "superseded", "terminal"})
-_LIVE_INSERTION_STATES = frozenset({"awaiting_claim_acceptance", "pending", "confirming"})
+_LIVE_INSERTION_STATES = frozenset(
+    {"awaiting_claim_acceptance", "pending", "prepared", "confirming"}
+)
 
 
 def _intent_is_pending(intent: AuthoringIntentV1) -> bool:

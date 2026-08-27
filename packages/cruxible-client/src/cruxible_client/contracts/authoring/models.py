@@ -2068,10 +2068,22 @@ class InsertionPrepareRequestV2(_StrictAuthoringModel):
 
 class InsertionPrepareResultV2(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-prepare-result-v2"] = "playbill-insertion-prepare-result-v2"
-    outcome: Literal["prepared", "already_prepared"]
+    outcome: Literal[
+        "prepared",
+        "already_prepared",
+        "bound",
+        "expired",
+        "claim_currency_changed",
+    ]
     intent: AuthoringIntentV1
     expectation: InsertionExpectationV2
-    preparation: PublicationPreparationV2
+    preparation: PublicationPreparationV2 | None = None
+
+    @model_validator(mode="after")
+    def _preparation_shape(self) -> "InsertionPrepareResultV2":
+        if self.outcome in {"prepared", "already_prepared", "bound"} and (self.preparation is None):
+            raise ValueError("successful publication preparation requires exact preparation")
+        return self
 
 
 class InsertionConfirmRequestV2(_StrictAuthoringModel):
@@ -2081,7 +2093,7 @@ class InsertionConfirmRequestV2(_StrictAuthoringModel):
 
 class InsertionConfirmResultV2(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-confirm-result-v2"] = "playbill-insertion-confirm-result-v2"
-    outcome: Literal["bound", "already_bound"]
+    outcome: Literal["bound", "already_bound", "expired", "claim_currency_changed"]
     intent: AuthoringIntentV1
     expectation: InsertionExpectationV2
 

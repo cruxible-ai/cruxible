@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -13,10 +14,41 @@ from cruxible_client.contracts.authoring.models import (
     InsertionAnchorWindowV1,
     InsertionTargetV2,
     PublicationSourceObservationV2,
+    SelfSourceBodyV1,
     WorkingDigestCoordinateV1,
+    build_insertion_expectation_v2,
     insertion_target_v2_digest,
     publication_block_id,
     publication_source_observation_v2_digest,
+)
+from cruxible_client.contracts.declared_blocks import frame_projection_block
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.insertions import (
+    PublicationAnchorAmbiguous,
+    PublicationAnchorStale,
+    PublicationBodyNotMarkerCompatible,
+    PublicationPrepareOrConfirmRequired,
+    build_publication_preparation,
+    mark_publication_prepared,
+    publication_confirmation_from_source,
+    publication_confirmation_matches,
+)
+from cruxible_core.playbill.authoring.store import AuthoringIntentStore
+from cruxible_core.playbill.proposals import AuthenticatedActor
+from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_authoring_insertions import _activate
+from tests.test_playbill.test_authoring_preflight import (
+    TIMESTAMP,
+    _seed_claim_surface,
+    _self_source_payload,
+)
+
+COORDINATE = AcceptedCoordinate(
+    git_oid="1" * 64,
+    semantic_root="sha256:" + "2" * 64,
+    generation_root="sha256:" + "3" * 64,
+    compiler_digest="sha256:" + "4" * 64,
 )
 
 
@@ -24,7 +56,7 @@ def _digest(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
 
 
-def _target(content: bytes = b"status: ") -> InsertionTargetV2:
+def _target(content: bytes = b"status: \n") -> InsertionTargetV2:
     return InsertionTargetV2(
         source_id="repo.work-items",
         coordinate=WorkingDigestCoordinateV1(
@@ -43,6 +75,70 @@ def _target(content: bytes = b"status: ") -> InsertionTargetV2:
         ),
         operation="insert_after",
     )
+
+
+def _observation(content: bytes) -> PublicationSourceObservationV2:
+    return PublicationSourceObservationV2(
+        source_id="repo.work-items",
+        content_base64=base64.b64encode(content).decode("ascii"),
+        content_digest=_digest(content),
+        byte_length=len(content),
+    )
+
+
+def _expectation():
+    return build_insertion_expectation_v2(
+        expectation_id=_digest(b"expectation"),
+        state="pending",
+        claim_identity="CLM-" + "a" * 32,
+        original_claim_artifact_digest=_digest(b"claim"),
+        claim_statement_digest=_digest(b"statement"),
+        accepted_claim_coordinate=COORDINATE,
+        target=_target(),
+        expires_at=datetime(2026, 8, 28, 12, tzinfo=UTC),
+    )
+
+
+def _submitted_publication(tmp_path: Path):
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    clock = [datetime(2026, 8, 22, 12, tzinfo=UTC)]
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(
+            instance.root / instance.descriptor.storage.exhaust,
+            token_factory=lambda: "1" * 32,
+        ),
+        claim_id_factory=lambda: "CLM-" + "2" * 32,
+        clock=lambda: clock[0],
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    preimage = b"# work item\n"
+    payload = _self_source_payload(insertion_target=_target(preimage)).model_copy(
+        update={
+            "source": SelfSourceBodyV1(
+                content_base64=base64.b64encode(b"status: ready\n").decode("ascii")
+            )
+        }
+    )
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=submitted.status.proposal_id,
+        candidate_digest=submitted.status.candidate_digest,
+    )
+    resumed = coordinator.resume(intent.intent_id, actor=actor).intent
+    assert resumed.insertion_expectation is not None
+    assert resumed.insertion_expectation.state == "pending"
+    return instance, coordinator, actor, intent.intent_id, preimage, clock
 
 
 def test_v2_target_and_source_observation_digest_exact_bytes() -> None:
@@ -83,6 +179,126 @@ def test_publication_block_id_is_deterministic_and_parser_safe() -> None:
     assert first == publication_block_id(expectation_id)
     assert first.startswith("pub-")
     assert len(first) == 36
+
+
+def test_prepare_frames_the_accepted_body_and_exact_source_reproduces_confirmation() -> None:
+    expectation = _expectation()
+    preparation = build_publication_preparation(
+        expectation,
+        observation=_observation(b"status: \n"),
+        body=b"ready\n",
+        accepted_coordinate=COORDINATE,
+        accepted_generation=7,
+    )
+    prepared = mark_publication_prepared(expectation, preparation=preparation)
+    opening = preparation.block_start_byte
+    final = (
+        b"status: \n"[: preparation.rebased_selector.insertion_offset]
+        + frame_projection_block(stamp=preparation.stamp, body=b"ready\n")
+        + b"status: \n"[preparation.rebased_selector.insertion_offset :]
+    )
+    confirmation = publication_confirmation_from_source(
+        intent_id="AIT-" + "b" * 32,
+        expectation=prepared,
+        observation=_observation(final),
+    )
+
+    assert preparation.revision == 1
+    assert preparation.block_start_byte == opening == len(b"status: \n")
+    assert confirmation is not None
+    assert publication_confirmation_matches(prepared, confirmation)
+
+
+def test_prepare_refuses_stale_ambiguous_and_marker_incompatible_bodies() -> None:
+    expectation = _expectation()
+    with pytest.raises(PublicationAnchorStale):
+        build_publication_preparation(
+            expectation,
+            observation=_observation(b"state: "),
+            body=b"ready\n",
+            accepted_coordinate=COORDINATE,
+            accepted_generation=7,
+        )
+    with pytest.raises(PublicationAnchorAmbiguous):
+        build_publication_preparation(
+            expectation,
+            observation=_observation(b"status: \nstatus: \n"),
+            body=b"ready\n",
+            accepted_coordinate=COORDINATE,
+            accepted_generation=7,
+        )
+    with pytest.raises(PublicationBodyNotMarkerCompatible):
+        build_publication_preparation(
+            expectation,
+            observation=_observation(b"status: \n"),
+            body=b"ready without terminal LF",
+            accepted_coordinate=COORDINATE,
+            accepted_generation=7,
+        )
+
+
+def test_reprepare_is_deterministic_and_increments_only_for_a_new_clean_preimage() -> None:
+    expectation = _expectation()
+    first = build_publication_preparation(
+        expectation,
+        observation=_observation(b"status: \n"),
+        body=b"ready\n",
+        accepted_coordinate=COORDINATE,
+        accepted_generation=7,
+    )
+    prepared = mark_publication_prepared(expectation, preparation=first)
+    retry = build_publication_preparation(
+        prepared,
+        observation=_observation(b"status: \n"),
+        body=b"ready\n",
+        accepted_coordinate=COORDINATE,
+        accepted_generation=7,
+    )
+    revised = build_publication_preparation(
+        prepared,
+        observation=_observation(b"prefix\nstatus: \n"),
+        body=b"ready\n",
+        accepted_coordinate=COORDINATE,
+        accepted_generation=7,
+    )
+
+    assert retry == first
+    assert revised.revision == 2
+    assert revised.preparation_digest != first.preparation_digest
+
+
+def test_pin_15_prepared_status_never_passively_terminalizes_and_exact_confirm_rescues(
+    tmp_path: Path,
+) -> None:
+    instance, coordinator, actor, intent_id, preimage, clock = _submitted_publication(tmp_path)
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    preparation = prepared.preparation
+    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
+    offset = preparation.rebased_selector.insertion_offset
+    final = preimage[:offset] + framed + preimage[offset:]
+    exact = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(final),
+    )
+    assert exact is not None
+
+    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
+    resumed = coordinator.resume(intent_id, actor=actor).intent
+    assert resumed.insertion_expectation is not None
+    assert resumed.insertion_expectation.state == "prepared"
+    with pytest.raises(PublicationPrepareOrConfirmRequired):
+        coordinator.abandon_insertion(intent_id, actor=actor)
+    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=exact)
+
+    assert bound.outcome == "bound"
+    assert bound.expectation.state == "bound"
+    assert instance.accepted_coordinate().git_oid == preparation.accepted_coordinate.git_oid
 
 
 # Kept here so the frozen test module owns one absolute instant used by the
