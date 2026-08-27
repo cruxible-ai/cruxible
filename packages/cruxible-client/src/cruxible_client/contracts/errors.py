@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+from typing import Any, Self
+
 from cruxible_client._error_base import CoreError
 
 
@@ -19,6 +22,48 @@ class MerkleIntegrityError(PlaybillError):
 
 class PlaybillFormatError(PlaybillError):
     """A descriptor or stored artifact declares an unsupported format."""
+
+
+class PlaybillSinceRequestInvalid(PlaybillFormatError):
+    """A ``playbill since`` request failed its frozen model boundary."""
+
+    error_code = "playbill.since.request_invalid"
+
+    def __init__(
+        self,
+        *,
+        field_path: str,
+        detail: str = "invalid value",
+        message: str | None = None,
+    ) -> None:
+        self.field_path = field_path
+        self.detail = detail
+        super().__init__(
+            message or f"{self.error_code}: request field {field_path} is invalid: {detail}"
+        )
+
+    @classmethod
+    def from_validation_errors(
+        cls,
+        errors: Iterable[Mapping[str, Any]],
+    ) -> Self:
+        """Build one stable refusal from Pydantic's ordered error details."""
+
+        first = next(iter(errors), {})
+        location = first.get("loc", ())
+        parts = list(location) if isinstance(location, list | tuple) else []
+        if parts and parts[0] == "body":
+            parts.pop(0)
+        field_path = "$"
+        for part in parts:
+            if isinstance(part, int):
+                field_path += f"[{part}]"
+            else:
+                field_path += f".{part}"
+        return cls(
+            field_path=field_path,
+            detail=str(first.get("msg", "invalid value")),
+        )
 
 
 class PlaybillInstanceIncompatiblePrereleaseContent(PlaybillFormatError):
@@ -137,6 +182,7 @@ __all__ = [
     "PlaybillInstanceIncompatiblePrereleaseContent",
     "PlaybillJournalError",
     "PlaybillKeyError",
+    "PlaybillSinceRequestInvalid",
     "PrincipalIntegrityError",
     "ProposalAdmissionError",
     "ProposalIntegrityError",

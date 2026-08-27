@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from pydantic import ValidationError
+
 from cruxible_client import contracts
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
     CandidateMemberLawEvidenceV2,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import PlaybillError, PlaybillSinceRequestInvalid
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
@@ -39,6 +41,21 @@ class PlaybillSinceRowExceedsBudget(PlaybillSinceError):
 
 class PlaybillSinceAcceptedStateInvalid(PlaybillSinceError):
     code = "playbill.since.accepted_state_invalid"
+
+
+def validate_playbill_since_request(
+    value: contracts.PlaybillSinceRequest | Mapping[str, object],
+) -> contracts.PlaybillSinceRequest:
+    """Validate the frozen request and expose one typed refusal family."""
+
+    if isinstance(value, contracts.PlaybillSinceRequest):
+        return value
+    try:
+        return contracts.PlaybillSinceRequest.model_validate(value)
+    except ValidationError as exc:
+        raise PlaybillSinceRequestInvalid.from_validation_errors(
+            exc.errors(include_url=False)
+        ) from exc
 
 
 def _digest(domain: str, values: Mapping[str, object]) -> str:
@@ -284,4 +301,5 @@ __all__ = [
     "PlaybillSinceGenerationUnknown",
     "PlaybillSinceRowExceedsBudget",
     "service_playbill_since",
+    "validate_playbill_since_request",
 ]

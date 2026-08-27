@@ -2169,11 +2169,9 @@ def since(
             permitted_access_classes=("instance", "public"),
         ).model_dump(mode="json")
         if access_profile_path is None
-        else _read_model(access_profile_path, CoverageAccessProfileV1).model_dump(mode="json")
+        else _read_mapping(access_profile_path)
     )
-    cursor = (
-        None if cursor_path is None else _read_model(cursor_path, contracts.PlaybillSinceCursor)
-    )
+    cursor = None if cursor_path is None else _read_mapping(cursor_path)
     result = _server_call(
         lambda client, instance_id: client.since_playbill(
             instance_id,

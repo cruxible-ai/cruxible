@@ -72,6 +72,7 @@ from cruxible_core.service.playbill_procedure_runs import (
     ProcedureReadinessRequestV1,
     ProcedureRunRequestV1,
 )
+from cruxible_core.service.playbill_since import validate_playbill_since_request
 
 _client_cache: CruxibleClient | None = None
 _client_cache_key: tuple[str | None, str | None, str | None] | None = None
@@ -1262,28 +1263,29 @@ def handle_playbill_since(
         "permitted_access_classes": ["instance", "public"],
         "disclose_restricted_existence": True,
     }
-    coordinate = None if at is None else contracts.PlaybillAcceptedCoordinate.model_validate(at)
-    parsed_cursor = None if cursor is None else contracts.PlaybillSinceCursor.model_validate(cursor)
+    request = validate_playbill_since_request(
+        {
+            "generation": generation,
+            "at": at,
+            "access_profile": profile,
+            "max_rows": max_rows,
+            "max_bytes": max_bytes,
+            "cursor": cursor,
+        }
+    )
     return _dispatch_remote_or_local(
         lambda client: client.since_playbill(
             instance_id,
-            generation=generation,
-            at=coordinate,
-            access_profile=profile,
-            max_rows=max_rows,
-            max_bytes=max_bytes,
-            cursor=parsed_cursor,
+            generation=request.generation,
+            at=request.at,
+            access_profile=request.access_profile,
+            max_rows=request.max_rows,
+            max_bytes=request.max_bytes,
+            cursor=request.cursor,
         ),
         lambda: playbill_api.playbill_since(
             instance_id,
-            request=contracts.PlaybillSinceRequest(
-                generation=generation,
-                at=coordinate,
-                access_profile=profile,
-                max_rows=max_rows,
-                max_bytes=max_bytes,
-                cursor=parsed_cursor,
-            ),
+            request=request,
         ),
         operation_name="cruxible_playbill_since",
     )

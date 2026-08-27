@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from cruxible_client import contracts
+from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
 from cruxible_core.mcp import handlers
 
 
@@ -56,3 +59,24 @@ def test_mcp_since_delegates_the_frozen_request(monkeypatch) -> None:  # type: i
     assert seen["at"] == coordinate.model_dump(mode="json")
     assert seen["max_rows"] == 7
     assert seen["max_bytes"] == 4096
+
+
+def test_mcp_since_maps_request_validation_to_the_typed_refusal() -> None:
+    with pytest.raises(PlaybillSinceRequestInvalid) as raised:
+        handlers.handle_playbill_since(
+            "inst_since",
+            generation=2,
+            at=None,
+            access_profile={
+                "tag": "playbill-coverage-access-profile-v1",
+                "profile_id": "mcp-test",
+                "permitted_access_classes": ["unknown"],
+                "disclose_restricted_existence": False,
+            },
+            max_rows=7,
+            max_bytes=4096,
+            cursor=None,
+        )
+
+    assert raised.value.error_code == "playbill.since.request_invalid"
+    assert raised.value.field_path == "$.access_profile"

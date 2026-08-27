@@ -181,7 +181,10 @@ from cruxible_core.service.playbill_proposals import (
 )
 from cruxible_core.service.playbill_query import service_run_playbill_query
 from cruxible_core.service.playbill_search import service_search_playbill
-from cruxible_core.service.playbill_since import service_playbill_since
+from cruxible_core.service.playbill_since import (
+    service_playbill_since,
+    validate_playbill_since_request,
+)
 
 _ProposalResultT = TypeVar("_ProposalResultT")
 _CurationRequestT = TypeVar("_CurationRequestT")
@@ -1427,11 +1430,7 @@ def playbill_since(
     request: contracts.PlaybillSinceRequest | Mapping[str, object],
 ) -> contracts.PlaybillSinceResult:
     check_permission("cruxible_playbill_since", instance_id=instance_id)
-    parsed = (
-        request
-        if isinstance(request, contracts.PlaybillSinceRequest)
-        else contracts.PlaybillSinceRequest.model_validate(request)
-    )
+    parsed = validate_playbill_since_request(request)
     return service_playbill_since(get_playbill_manager().get(instance_id), request=parsed)
 
 

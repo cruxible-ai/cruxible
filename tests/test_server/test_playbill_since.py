@@ -61,6 +61,7 @@ def test_http_since_delegates_the_exact_request(
     )
 
     assert response.status_code == 200, response.text
+    assert response.json() == result.model_dump(mode="json")
     assert seen["generation"] == 2
     assert seen["max_rows"] == 10
     assert seen["max_bytes"] == 4096
@@ -83,4 +84,15 @@ def test_http_since_refuses_oversized_limits(
             "max_rows": 1001,
         },
     )
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert response.json() == {
+        "error_type": "PlaybillSinceRequestInvalid",
+        "message": (
+            "playbill.since.request_invalid: request field $.max_rows is invalid: "
+            "Input should be less than or equal to 1000"
+        ),
+        "error_code": "playbill.since.request_invalid",
+        "errors": [],
+        "context": {"field_path": "$.max_rows"},
+        "mutation_receipt_id": None,
+    }

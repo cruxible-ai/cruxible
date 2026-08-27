@@ -6,8 +6,10 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 
 from cruxible_client import CruxibleClient, contracts
+from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -71,3 +73,61 @@ def test_client_sends_the_frozen_since_request() -> None:
         "max_bytes": 12_345,
         "cursor": None,
     }
+
+
+def test_client_refuses_an_invalid_request_before_transport() -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(500)
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible", transport=httpx.MockTransport(handler)
+    )
+
+    with pytest.raises(PlaybillSinceRequestInvalid) as raised:
+        client.since_playbill(
+            "inst",
+            generation=3,
+            access_profile=PROFILE,
+            max_rows=1001,
+        )
+
+    assert raised.value.error_code == "playbill.since.request_invalid"
+    assert raised.value.field_path == "$.max_rows"
+    assert calls == []
+
+
+def test_client_reconstructs_the_typed_http_refusal() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error_type": "PlaybillSinceRequestInvalid",
+                "message": (
+                    "playbill.since.request_invalid: request field $.cursor is invalid: "
+                    "Input should be a valid dictionary or instance of PlaybillSinceCursor"
+                ),
+                "error_code": "playbill.since.request_invalid",
+                "errors": [],
+                "context": {"field_path": "$.cursor"},
+                "mutation_receipt_id": None,
+            },
+        )
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible", transport=httpx.MockTransport(handler)
+    )
+
+    with pytest.raises(PlaybillSinceRequestInvalid) as raised:
+        client.since_playbill(
+            "inst",
+            generation=3,
+            access_profile=PROFILE,
+        )
+
+    assert raised.value.error_code == "playbill.since.request_invalid"
+    assert raised.value.field_path == "$.cursor"

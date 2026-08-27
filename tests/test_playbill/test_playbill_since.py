@@ -14,9 +14,11 @@ from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
     CandidateMemberLawEvidenceV2,
 )
+from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
+from cruxible_core.runtime import playbill_api
 from cruxible_core.service.playbill_since import (
     PlaybillSinceAcceptedStateInvalid,
     PlaybillSinceCursorCoordinateMismatch,
@@ -57,6 +59,43 @@ def _request(**values: object) -> contracts.PlaybillSinceRequest:
     return contracts.PlaybillSinceRequest(
         **request_values,
     )
+
+
+@pytest.mark.parametrize(
+    ("override", "field_path"),
+    [
+        ({"max_rows": 0}, "$.max_rows"),
+        (
+            {
+                "access_profile": {
+                    **_profile("instance"),
+                    "permitted_access_classes": ["unknown"],
+                }
+            },
+            "$.access_profile",
+        ),
+        ({"cursor": "not-a-cursor"}, "$.cursor"),
+        ({"unexpected": True}, "$.unexpected"),
+    ],
+)
+def test_runtime_since_maps_request_validation_to_one_typed_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+    override: dict[str, object],
+    field_path: str,
+) -> None:
+    monkeypatch.setattr(playbill_api, "check_permission", lambda *_args, **_kwargs: None)
+    request = {
+        "generation": 0,
+        "access_profile": _profile("instance", "public"),
+        **override,
+    }
+
+    with pytest.raises(PlaybillSinceRequestInvalid) as raised:
+        playbill_api.playbill_since("inst_since", request=request)
+
+    assert raised.value.error_code == "playbill.since.request_invalid"
+    assert raised.value.field_path == field_path
+    assert isinstance(raised.value.__cause__, ValidationError)
 
 
 def test_mixed_signed_v1_v2_v3_history_preserves_each_member_wire(

@@ -11,6 +11,7 @@ from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
     PlaybillBootstrapError,
     PlaybillFormatError,
+    PlaybillSinceRequestInvalid,
     PrincipalIntegrityError,
     ProjectionCoordinateError,
     ProposalAdmissionError,
@@ -292,6 +293,8 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
         context["handle"] = exc.handle
         context["failure_kind"] = exc.failure_kind
         context["detail"] = exc.detail
+    if isinstance(exc, PlaybillSinceRequestInvalid):
+        context["field_path"] = exc.field_path
     if isinstance(exc, RuntimeCredentialNotFoundError):
         context["credential_id"] = exc.credential_id
     if isinstance(exc, InvalidContinuationError):

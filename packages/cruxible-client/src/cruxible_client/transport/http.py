@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeVar
 
 import httpx
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from cruxible_client import contracts
 from cruxible_client.contracts.authoring.models import (
@@ -18,6 +18,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCreateRequestV2,
     AuthoringIntentCreateRequestV3,
 )
+from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
 from cruxible_client.errors import (
     ConfigError,
     CoreError,
@@ -1103,26 +1104,21 @@ class CruxibleClient:
         max_bytes: int = 65_536,
         cursor: contracts.PlaybillSinceCursor | Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillSinceResult:
-        request = contracts.PlaybillSinceRequest(
-            generation=generation,
-            at=(
-                None
-                if at is None
-                else contracts.PlaybillAcceptedCoordinate.model_validate(
-                    self._playbill_coordinate_body(at)
-                )
-            ),
-            access_profile=dict(access_profile),
-            max_rows=max_rows,
-            max_bytes=max_bytes,
-            cursor=(
-                cursor
-                if isinstance(cursor, contracts.PlaybillSinceCursor)
-                else None
-                if cursor is None
-                else contracts.PlaybillSinceCursor.model_validate(cursor)
-            ),
-        )
+        try:
+            request = contracts.PlaybillSinceRequest.model_validate(
+                {
+                    "generation": generation,
+                    "at": None if at is None else self._playbill_coordinate_body(at),
+                    "access_profile": dict(access_profile),
+                    "max_rows": max_rows,
+                    "max_bytes": max_bytes,
+                    "cursor": cursor,
+                }
+            )
+        except ValidationError as exc:
+            raise PlaybillSinceRequestInvalid.from_validation_errors(
+                exc.errors(include_url=False)
+            ) from exc
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/since",
             json=request.model_dump(mode="json"),
