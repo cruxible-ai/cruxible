@@ -44,7 +44,11 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
 )
 from cruxible_client.contracts.errors import PlaybillCasError, ProposalIntegrityError
-from cruxible_client.contracts.source_references import LedgerSourceReferenceV1, SourceAccessClass
+from cruxible_client.contracts.source_references import (
+    ExternalSourceReferenceV1,
+    LedgerSourceReferenceV1,
+    SourceAccessClass,
+)
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
@@ -56,8 +60,9 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageCardBudgetV1,
     CoverageCommitmentMaterializationCorrupt,
     CoverageRequestV1,
-    CoverageResultV2,
+    CoverageResultV3,
     LogicalSourceIdentityV1,
+    PlaybillCitationWindowObservationV1,
 )
 from cruxible_core.playbill.coverage.indexes import (
     CaptureCitationInputV1,
@@ -81,7 +86,7 @@ from cruxible_core.playbill.coverage.manifest import (
     write_coverage_manifest,
     write_coverage_manifest_v2,
 )
-from cruxible_core.playbill.coverage.resolver import resolve_coverage_v2
+from cruxible_core.playbill.coverage.resolver import resolve_coverage_v3
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
@@ -317,6 +322,64 @@ def _materialized_wanted_selections(
     return tuple(materialized)
 
 
+def _citation_window_observations(
+    instance: PlaybillInstance,
+    *,
+    index: EvidenceCitationIndexV2,
+    observations: Sequence[WorkingSourceObservationV1],
+) -> tuple[PlaybillCitationWindowObservationV1, ...]:
+    """Observe each accepted citation's original window in its named working source."""
+
+    by_source = {item.source.sort_key: item for item in observations}
+    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
+    store = instance.body_store()
+    envelopes = {
+        digest: parse_capture_envelope(store.read(digest, access=access))
+        for digest in sorted(
+            {capture for citation in index.citations for capture in citation.capture_digests}
+        )
+    }
+    windows: dict[tuple[bytes, bytes, int, int], PlaybillCitationWindowObservationV1] = {}
+    for citation in index.citations:
+        if citation.accepted_source is None or citation.byte_length is None:
+            continue
+        observed = by_source.get(citation.accepted_source.sort_key)
+        for association in citation.citation_associations:
+            envelope = envelopes[association.capture_digest]
+            start = 0
+            end = citation.byte_length
+            if isinstance(envelope.source, ExternalSourceReferenceV1):
+                selector = envelope.source.selector
+                if isinstance(selector, dict):
+                    raw_start = selector.get("start_byte")
+                    raw_end = selector.get("end_byte")
+                    if isinstance(raw_start, int) and isinstance(raw_end, int):
+                        start, end = raw_start, raw_end
+            addressable = observed is not None and end <= observed.byte_length
+            observed_digest = None
+            if addressable and observed is not None:
+                observed_digest = (
+                    f"sha256:{hashlib.sha256(observed.content[start:end]).hexdigest()}"
+                )
+            item = PlaybillCitationWindowObservationV1(
+                source=citation.accepted_source,
+                citation_id=association.reference.citation_id,
+                commitment_digest=citation.commitment_digest,
+                original_start=start,
+                original_end=end,
+                addressable=addressable,
+                observed_window_digest=observed_digest,
+            )
+            key = (
+                item.source.sort_key,
+                item.citation_id.encode("ascii"),
+                item.original_start,
+                item.original_end,
+            )
+            windows[key] = item
+    return tuple(windows[key] for key in sorted(windows))
+
+
 def _publish_manifest(
     instance: PlaybillInstance,
     *,
@@ -401,7 +464,7 @@ def service_resolve_playbill_coverage(
     at: PlaybillAcceptedCoordinate | None = None,
     budget: CoverageCardBudgetV1 | None = None,
     scan_budget: CoverageScanBudgetV1 | None = None,
-) -> CoverageResultV2:
+) -> CoverageResultV3:
     """Resolve one batch of working-set observations against accepted state.
 
     The whole operation is: rebuild the index, hash the observed snapshot into
@@ -435,12 +498,17 @@ def service_resolve_playbill_coverage(
         spans=coverage_span_requests(observations),
         budget=budget or CoverageCardBudgetV1(),
     )
-    return resolve_coverage_v2(
+    return resolve_coverage_v3(
         request,
         index=index,
         overlay=overlay,
         access=access_profile,
         manifest=manifest,
+        window_observations=_citation_window_observations(
+            instance,
+            index=index,
+            observations=observations,
+        ),
     )
 
 

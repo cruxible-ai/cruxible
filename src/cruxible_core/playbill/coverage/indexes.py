@@ -734,10 +734,10 @@ def build_working_occurrence_overlay(
                 raise CoverageError("a verified needle must have the committed byte length")
             if Sha256Value(hashlib.sha256(verified_needle).hexdigest()).tagged != digest:
                 raise CoverageError("a verified needle must reproduce the accepted commitment")
-        key = (digest, byte_length)
-        if key in wanted_values and wanted_values[key] != verified_needle:
+        selection_key = (digest, byte_length)
+        if selection_key in wanted_values and wanted_values[selection_key] != verified_needle:
             raise CoverageError("a wanted commitment has conflicting materializations")
-        wanted_values[key] = verified_needle
+        wanted_values[selection_key] = verified_needle
 
     wanted_by_length: dict[int, tuple[tuple[str, bytes | None], ...]] = {}
     for byte_length in sorted({item[1] for item in wanted_values}):
@@ -756,8 +756,8 @@ def build_working_occurrence_overlay(
 
     for material in materials:
         content = material.content
-        key = material.source.sort_key
-        line_starts[key] = _line_starts(content)
+        source_key = material.source.sort_key
+        line_starts[source_key] = _line_starts(content)
         whole = Sha256Value(hashlib.sha256(content).hexdigest()).tagged
         commitments.append(
             WorkingSourceCommitmentV1(
@@ -766,7 +766,7 @@ def build_working_occurrence_overlay(
                 byte_length=len(content),
             )
         )
-        found.setdefault((key, whole), []).append((0, len(content)))
+        found.setdefault((source_key, whole), []).append((0, len(content)))
 
     for material in materials:
         source_key = material.source.sort_key
@@ -824,17 +824,17 @@ def build_working_occurrence_overlay(
             if debit > remaining:
                 reasons.add("scan_budget_exceeded")
                 continue
-            candidate_spans: dict[str, list[tuple[int, int]]] = {
+            fallback_spans: dict[str, list[tuple[int, int]]] = {
                 digest: [] for digest in fallback_digests
             }
             for offset in range(windows):
                 window = content[offset : offset + byte_length]
                 observed = Sha256Value(hashlib.sha256(window).hexdigest()).tagged
                 if observed in fallback_digests:
-                    candidate_spans[observed].append((offset, offset + byte_length))
+                    fallback_spans[observed].append((offset, offset + byte_length))
             remaining -= debit
             for digest in sorted(fallback_digests):
-                found.setdefault((source_key, digest), []).extend(candidate_spans[digest])
+                found.setdefault((source_key, digest), []).extend(fallback_spans[digest])
                 proofs.append(
                     CoverageCommitmentScanProofV1(
                         source=material.source,
@@ -845,8 +845,8 @@ def build_working_occurrence_overlay(
 
     by_key = {item.source.sort_key: item.source for item in materials}
     occurrences: list[WorkingOccurrenceV1] = []
-    for (key, digest), spans in found.items():
-        source = by_key[key]
+    for (source_key, digest), spans in found.items():
+        source = by_key[source_key]
         for ordinal, (start_byte, end_byte) in enumerate(sorted(set(spans))):
             occurrences.append(
                 WorkingOccurrenceV1(
@@ -860,7 +860,7 @@ def build_working_occurrence_overlay(
                         ordinal=ordinal,
                     ),
                     line_overlay=_overlay(
-                        line_starts[key], start_byte=start_byte, end_byte=end_byte
+                        line_starts[source_key], start_byte=start_byte, end_byte=end_byte
                     ),
                 )
             )
