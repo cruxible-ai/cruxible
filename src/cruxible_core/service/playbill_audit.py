@@ -218,17 +218,16 @@ def _resolve_coordinate(
 
 
 def _operational_input_head(instance: PlaybillInstance) -> ReviewOperationalHeadV1:
-    """Commit patrol inputs while excluding audit outputs and demand receipts.
+    """Commit every patrol input while excluding only audit outputs.
 
-    Consumption is a demand signal for ranking future patrols.  It is not a
-    cursor invalidator for an in-flight patrol because serving that patrol can
-    itself append qualifying consumption receipts.
+    Consumption is a ranking input, so a cursor must bind it even though reads
+    can append receipts between pages.  Such a receipt invalidates the cursor
+    rather than letting an offset address a newly reordered worklist.  Audit
+    completion records remain excluded because they are outputs of this fold.
     """
 
     head = instance.review_operational_store().head()
-    partitions = tuple(
-        item for item in head.partitions if item.family not in {"audit", "consumption"}
-    )
+    partitions = tuple(item for item in head.partitions if item.family != "audit")
     return build_review_operational_head(
         initialized_coordinate=(head.initialized_coordinate if partitions else None),
         initialized_generation=(head.initialized_generation if partitions else None),
