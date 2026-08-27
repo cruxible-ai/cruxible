@@ -163,6 +163,109 @@ def test_migration_updates_type_and_dependent_in_one_idempotent_candidate(
     assert claim.lifecycle.predecessor_digest is not None
 
 
+@pytest.mark.parametrize("request_version", ["v1", "v2"])
+@pytest.mark.parametrize("successor_state", ["live", "retired"])
+def test_migration_claim_successor_bytes_use_successor_claim_type_authority(
+    tmp_path: Path,
+    request_version: str,
+    successor_state: str,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    if successor_state == "retired":
+        _activate_migration(
+            instance,
+            owner,
+            _decision_only_successor(instance, enum=["blocked", "ready"]),
+            (
+                ClaimTypeDependentDispositionV2(
+                    identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                    disposition="retire",
+                ),
+            ),
+        )
+    accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    current_claim = parse_claim(
+        accepted_tree[claim_path(claim_id)],
+        path=claim_path(claim_id),
+    )
+    assert current_claim.lifecycle.state == successor_state
+    base_successor = _successor(instance)
+    successor = base_successor.model_copy(
+        update={
+            "authority": ArtifactAuthority(
+                propose_roles=base_successor.authority.propose_roles,
+                approve_roles=tuple(
+                    sorted(set((*base_successor.authority.approve_roles, "reviewer")))
+                ),
+            )
+        }
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    if request_version == "v1":
+        result = service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequestV1(
+                successor=successor,
+                dependents=(
+                    ClaimTypeDependentDispositionV1(
+                        claim_id=claim_id,
+                        disposition="successor",
+                    ),
+                ),
+            ),
+            actor=actor,
+        )
+    else:
+        result = service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequestV2(
+                mode="submit",
+                successor=successor,
+                dependents=(
+                    ClaimTypeDependentDispositionV2(
+                        identity=current_claim.identity,
+                        disposition="successor",
+                    ),
+                ),
+            ),
+            actor=actor,
+        )
+
+    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    candidate_tree = instance.proposal_tree(tree_oid)
+    type_path = claim_type_path(_claim_type().predicate)
+    successor_type = parse_claim_type(candidate_tree[type_path], path=type_path)
+    successor_digest = claim_type_digest(successor_type).tagged
+    expected_pins = tuple(
+        sorted(
+            (
+                pin.model_copy(update={"artifact_digest": successor_digest})
+                if pin.role == "claim-type" and pin.target == successor_type.identity
+                else pin
+                for pin in current_claim.pins
+            ),
+            key=lambda pin: (pin.role.encode("utf-8"), pin.target.qualified.encode("utf-8")),
+        )
+    )
+    expected = current_claim.model_copy(
+        update={
+            "statement": current_claim.statement.model_copy(
+                update={"claim_type_digest": successor_digest}
+            ),
+            "authority": successor_type.authority,
+            "pins": expected_pins,
+            "lifecycle": ArtifactLifecycle(
+                state=successor_state,  # type: ignore[arg-type]
+                predecessor_digest=claim_artifact_digest(current_claim).tagged,
+            ),
+        }
+    )
+
+    assert successor_type.authority != current_claim.authority
+    assert candidate_tree[claim_path(claim_id)] == render_claim(expected)
+
+
 def test_migration_refuses_an_omitted_current_dependent(tmp_path: Path) -> None:
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
 
