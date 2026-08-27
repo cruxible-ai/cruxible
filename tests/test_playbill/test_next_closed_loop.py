@@ -411,6 +411,7 @@ def _claim_uncovered(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     before = _request(instance)
     row = _row(instance, "claim_uncovered", before)
     assert row.repair.operation == EXPECTED_OPERATIONS["claim_uncovered"]
+    assert "evidence_admission_policy" in row.detail["policy_hint"]
 
     current = _current_claim(instance)
     successor = service_propose_playbill_claim(

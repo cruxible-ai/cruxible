@@ -227,7 +227,8 @@ def verify_candidate_approvals(
     creator_present = any(item.signer_id == creator_principal_id for item in verified)
     if purpose == "ordinary-artifact" and creator_present:
         raise ApprovalIntegrityError(
-            "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve"
+            "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve; "
+            "after an eligible signer approves, run playbill proposal activate"
         )
 
     counts = candidate_approval_requirement_counts(

@@ -892,6 +892,10 @@ def _claim_items(
                         "currency": verdict.currency,
                         "predicate": claim.statement.predicate,
                         "verdict": verdict.verdict,
+                        "policy_hint": (
+                            "Review the ClaimType evidence_admission_policy; empty or "
+                            "mismatched rules commonly leave a Claim uncovered."
+                        ),
                     },
                     repair=PlaybillNextRepairV1(
                         operation="playbill.authoring.bind",

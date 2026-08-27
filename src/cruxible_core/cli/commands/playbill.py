@@ -43,6 +43,10 @@ from cruxible_client.authoring.sources import (
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    foreign_source_capture_contract,
+)
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillSinceRequestInvalid
@@ -213,6 +217,49 @@ _CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdap
     ClaimTypeMigrationRequest
 )
 _CLAIM_RETIRE_ADAPTER = TypeAdapter(ClaimRetireRequestV1)
+
+
+def _cli_claim_type_input_example() -> ClaimTypeInputV1:
+    """Give CLI authors the same supported-by-default source rule as the SDK."""
+
+    example = claim_type_input_example()
+    source_id = "corpus.replace_me"
+    contract_digest = capture_contract_digest(
+        foreign_source_capture_contract(source_id)
+    ).tagged
+    return example.model_copy(
+        update={
+            "anticipated_source_ids": (source_id,),
+            "evidence_admission_policy": {
+                "rules": [
+                    {
+                        "rule_id": f"source-{source_id}",
+                        "claim_roles": sorted(example.permitted_roles),
+                        "capture_contract_digests": [contract_digest],
+                        "evidence_kinds": ["self_asserted"],
+                        "admission": "direct",
+                        "subject_binding": "exact_claim_subject",
+                    }
+                ]
+            },
+        }
+    )
+
+
+def _claim_retire_example() -> ClaimRetireRequestV1:
+    return ClaimRetireRequestV1(
+        mode="preflight",
+        claim_ref="Claim:CLM-0123456789abcdef0123456789abcdef",
+        reason="was-wrong",
+        effective_until=None,
+        expected_coordinate=AcceptedCoordinate(
+            git_oid="0" * 40,
+            semantic_root="sha256:" + "0" * 64,
+            generation_root="sha256:" + "0" * 64,
+            compiler_digest="sha256:" + "0" * 64,
+        ),
+        dependents=(),
+    )
 
 
 def _authoring_examples_for(payload: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1097,22 +1144,31 @@ def propose_claim_type(
         raise click.UsageError("provide exactly one of --input or --example")
     if example:
         click.echo(
+            "# Edit evidence_admission_policy.rules for the source contracts this type "
+            "admits.",
+            err=True,
+        )
+        click.echo(
             json.dumps(
-                claim_type_input_example().model_dump(mode="json"),
+                _cli_claim_type_input_example().model_dump(mode="json"),
                 ensure_ascii=False,
                 indent=2,
                 sort_keys=True,
             )
         )
         return
-    if proposal_name is None:
-        raise click.UsageError("--name is required when proposing")
     if envelope is not None:
+        envelope_payload = _read_mapping(envelope)
+        resolved_name = proposal_name or envelope_payload.get("predicate")
+        if not isinstance(resolved_name, str) or not resolved_name:
+            raise click.UsageError(
+                "--name is required when the ClaimType payload has no predicate"
+            )
         envelope_result = _server_call(
             lambda client, instance_id: client.propose_playbill_claim_type(
                 instance_id,
-                claim_type=_read_mapping(envelope),
-                proposal_name=proposal_name,
+                claim_type=envelope_payload,
+                proposal_name=resolved_name,
             ),
             command_name="playbill claim-type propose",
         )
@@ -1134,7 +1190,7 @@ def propose_claim_type(
         lambda client, instance_id: client.propose_playbill_claim_type_input(
             instance_id,
             input=claim_type_input.model_dump(mode="json"),
-            proposal_name=proposal_name,
+            proposal_name=proposal_name or claim_type_input.predicate,
         ),
         command_name="playbill claim-type propose",
     )
@@ -1245,13 +1301,33 @@ def propose_claims(authorings: tuple[str, ...], proposal_name: str, output_json:
 
 
 @claim_group.command("retire")
-@click.argument("claim_id")
-@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@click.argument("claim_id", required=False)
+@click.argument("request_file", required=False, type=click.Path(exists=True, dir_okay=False))
+@click.option("--example", is_flag=True, help="Print a valid retirement request file.")
 @json_option
 @handle_errors
-def retire_claim(claim_id: str, request_file: str, output_json: bool) -> None:
+def retire_claim(
+    claim_id: str | None,
+    request_file: str | None,
+    example: bool,
+    output_json: bool,
+) -> None:
     """Preflight or submit one attributed Claim retirement closure."""
 
+    if example:
+        if claim_id is not None or request_file is not None:
+            raise click.UsageError("--example does not accept CLAIM_ID or REQUEST_FILE")
+        click.echo(
+            json.dumps(
+                _claim_retire_example().model_dump(mode="json"),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+    if claim_id is None or request_file is None:
+        raise click.UsageError("provide CLAIM_ID REQUEST_FILE or --example")
     try:
         request = _CLAIM_RETIRE_ADAPTER.validate_python(_read_mapping(request_file))
     except ValidationError as exc:
@@ -1273,7 +1349,12 @@ def authoring_group() -> None:
 
 
 @authoring_group.command("create")
-@click.argument("payload", required=False, type=click.Path(exists=True, dir_okay=False))
+@click.argument(
+    "payload",
+    required=False,
+    metavar="PAYLOAD_FILE",
+    type=click.Path(exists=True, dir_okay=False),
+)
 @click.option(
     "--example",
     "example_name",
@@ -1432,6 +1513,19 @@ def preflight_authoring_intent(intent_id: str, output_json: bool) -> None:
         command_name="playbill authoring preflight",
     )
     _emit_json(result.model_dump(mode="json"))
+    if result.verdict == "refused":
+        intent = _server_call(
+            lambda client, instance_id: client.get_playbill_authoring_intent(
+                instance_id, intent_id
+            ),
+            command_name="playbill authoring preflight",
+        ).intent
+        if intent.get("base_coordinate") != result.certificate.get("accepted_coordinate"):
+            click.echo(
+                f"Hint: run playbill authoring rebase {intent_id}; resume does not advance "
+                "a stale intent coordinate.",
+                err=True,
+            )
 
 
 @authoring_group.command("rebase")
