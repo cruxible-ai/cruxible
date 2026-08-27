@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Activation attribution + lifecycle key-possession (PC-G12q fix round).**
+  Activation mutation receipts now carry a required `activated_by` naming the
+  governed actor (public client contract re-pinned); the HTTP request log
+  independently records the credential for the same request. Principal
+  lifecycle transitions require the affected principal's own cryptographic
+  approval with its current key — the one case where a creator's
+  self-signature is mandatory rather than refused; ordinary candidates keep
+  creator-refusal and need no approvals.
+
 - **Playbill delegates authorization to repository ref governance (PC-G12q).**
   The in-daemon approval quorum is withdrawn: candidates require no approval by
   default, creator-suffices activation remains a separate attributed act, and

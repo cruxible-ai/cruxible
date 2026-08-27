@@ -75,9 +75,10 @@ cannot satisfy human/agent approval roles.
 
 Principal changes are governed proposals. Add a second principal with
 `cruxible playbill principal add ID --role reviewer --key-dir DIR --name NAME`;
-the key is generated in client custody, and the proposal must be activated
-before the new reviewer enters accepted state. A non-creator may record a
-voluntary approval first. Rotation introduces a new public key
+the key is generated in client custody, and the affected principal must approve
+its own lifecycle proposal with its current key (the key-possession proof), and
+the proposal must then be activated before the change enters accepted state.
+Other principals may record additional voluntary approvals. Rotation introduces a new public key
 while retaining history needed to verify old approvals. Revocation prevents new
 authority from the revoked principal without making historical signatures
 unverifiable.

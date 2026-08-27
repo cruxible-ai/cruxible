@@ -380,7 +380,15 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
                 f"{item.minimum_distinct_signers} {item.role}"
                 for item in review.candidate.approval_requirements
             )
-            or "none"
+            or (
+                "the affected principal's own signature (lifecycle actor binding)"
+                if all(
+                    member.artifact_kind == "principal-lifecycle"
+                    for member in review.complete_members
+                )
+                and review.complete_members
+                else "none"
+            )
         ),
     ]
     for document in review.documents:
