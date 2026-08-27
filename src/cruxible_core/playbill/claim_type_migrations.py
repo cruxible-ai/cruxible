@@ -12,7 +12,6 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
-    parse_artifact_identity,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.claim_types import (
@@ -39,8 +38,8 @@ from cruxible_core.playbill.claim_type_inputs import (
 )
 from cruxible_core.playbill.closure import (
     ArtifactDependencyStateV1,
-    build_dependency_index,
     parse_dependency_artifact,
+    reverse_pin_closure,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -359,48 +358,32 @@ def _closure_inventory(
 ) -> tuple[ClaimTypeMigrationInventoryItemV1, ...]:
     """Return the live reverse-pin closure plus its retired Claim members."""
 
-    index = build_dependency_index(tree)
-    pending = [root.qualified]
-    seen_identities = {root.qualified}
-    inventory: dict[str, ClaimTypeMigrationInventoryItemV1] = {}
-    while pending:
-        triggering = pending.pop(0)
-        sources = index.sources_by_pinned_identity.get(triggering, frozenset())
-        for path in sorted(sources, key=lambda item: item.encode("utf-8")):
-            state = index.states[path]
-            if state.identity.qualified in seen_identities or not _include_migration_dependent(
+    try:
+        closure = reverse_pin_closure(
+            tree,
+            root=root,
+            include=lambda state: _include_migration_dependent(
                 artifact_kind=state.artifact_kind,
                 lifecycle_state=state.lifecycle.state,
-            ):
-                continue
-            roles = tuple(
-                sorted(
-                    {pin.role for pin in state.pins if pin.target.qualified == triggering},
-                    key=lambda item: item.encode("utf-8"),
-                )
-            )
-            if not roles:
-                raise ClaimTypeMigrationIncomplete(
-                    f"{ClaimTypeMigrationIncomplete.code}: reverse-pin index lacks an exact edge"
-                )
-            trigger_identity = parse_artifact_identity(triggering)
-            inventory[state.identity.qualified] = ClaimTypeMigrationInventoryItemV1(
-                identity=state.identity,
-                path=path,
-                artifact_kind=state.artifact_kind,
-                current_artifact_digest=state.artifact_digest,
-                triggering_identity=trigger_identity,
-                dependency_edge_role=roles[0],
-                permitted_dispositions=(
-                    ("successor",)
-                    if state.artifact_kind == "document" or state.lifecycle.state == "retired"
-                    else ("retire", "successor")
-                ),
-            )
-            seen_identities.add(state.identity.qualified)
-            pending.append(state.identity.qualified)
+            ),
+        )
+    except ValueError as exc:
+        raise ClaimTypeMigrationIncomplete(f"{ClaimTypeMigrationIncomplete.code}: {exc}") from exc
     return tuple(
-        inventory[identity] for identity in sorted(inventory, key=lambda item: item.encode("utf-8"))
+        ClaimTypeMigrationInventoryItemV1(
+            identity=item.state.identity,
+            path=item.state.path,
+            artifact_kind=item.state.artifact_kind,
+            current_artifact_digest=item.state.artifact_digest,
+            triggering_identity=item.triggering_identity,
+            dependency_edge_role=item.dependency_edge_roles[0],
+            permitted_dispositions=(
+                ("successor",)
+                if item.state.artifact_kind == "document" or item.state.lifecycle.state == "retired"
+                else ("retire", "successor")
+            ),
+        )
+        for item in closure
     )
 
 

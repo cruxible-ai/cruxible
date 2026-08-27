@@ -13,7 +13,7 @@ maintenance is tested against, and stays the only path a cold start can take.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Final, Literal
@@ -29,6 +29,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
+    parse_artifact_identity,
 )
 from cruxible_client.contracts.candidates import DependencyProofReferenceV1
 from cruxible_client.contracts.canonical import (
@@ -681,6 +682,62 @@ class DependencyIndexV1:
         return (*self.edges_by_source.get(path, ()), *self.edges_by_target.get(path, ()))
 
 
+@dataclass(frozen=True)
+class ReversePinClosureItem:
+    """One member reached by a complete deterministic reverse-pin walk."""
+
+    state: ArtifactDependencyStateV1
+    triggering_identity: ArtifactIdentity
+    dependency_edge_roles: tuple[str, ...]
+
+
+def reverse_pin_closure(
+    tree: Mapping[str, bytes],
+    *,
+    root: ArtifactIdentity,
+    include: Callable[[ArtifactDependencyStateV1], bool],
+) -> tuple[ReversePinClosureItem, ...]:
+    """Return the complete included reverse-pin closure of ``root``.
+
+    Inclusion controls both membership and traversal. That is deliberate: a
+    mutation operation may only walk through artifact families it can
+    disposition, and must refuse an included unsupported family rather than
+    silently discover dependencies beyond an excluded member.
+    """
+
+    index = build_dependency_index(tree)
+    pending = [root.qualified]
+    seen_identities = {root.qualified}
+    inventory: dict[str, ReversePinClosureItem] = {}
+    while pending:
+        triggering = pending.pop(0)
+        for path in sorted(
+            index.sources_by_pinned_identity.get(triggering, frozenset()),
+            key=lambda item: item.encode("utf-8"),
+        ):
+            state = index.states[path]
+            if state.identity.qualified in seen_identities or not include(state):
+                continue
+            roles = tuple(
+                sorted(
+                    {pin.role for pin in state.pins if pin.target.qualified == triggering},
+                    key=lambda item: item.encode("utf-8"),
+                )
+            )
+            if not roles:
+                raise ValueError("reverse-pin index lacks an exact dependency edge")
+            inventory[state.identity.qualified] = ReversePinClosureItem(
+                state=state,
+                triggering_identity=parse_artifact_identity(triggering),
+                dependency_edge_roles=roles,
+            )
+            seen_identities.add(state.identity.qualified)
+            pending.append(state.identity.qualified)
+    return tuple(
+        inventory[identity] for identity in sorted(inventory, key=lambda item: item.encode("utf-8"))
+    )
+
+
 def _pin_sources(
     artifacts: Iterable[ArtifactDependencyStateV1],
 ) -> dict[str, set[str]]:
@@ -1031,6 +1088,7 @@ __all__ = [
     "DependencyIndexV1",
     "IncompleteClosureItemV1",
     "MemberDependencyProofsV1",
+    "ReversePinClosureItem",
     "UnresolvedArtifactPinV1",
     "build_dependency_edge_tree",
     "build_dependency_index",
@@ -1043,6 +1101,7 @@ __all__ = [
     "evaluate_dependency_closure_v3",
     "judge_dependency_closure",
     "parse_dependency_artifact",
+    "reverse_pin_closure",
     "update_dependency_edge_tree",
     "update_dependency_index",
     "verify_dependency_edge_root",
