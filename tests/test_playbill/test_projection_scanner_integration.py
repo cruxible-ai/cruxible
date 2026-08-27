@@ -154,8 +154,9 @@ def test_one_existing_scanner_handles_relocation_duplicate_and_genuine_span_drif
     source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, NEEDLE + NEEDLE))
     duplicated, ambiguous = _result(instance, client, workspace)
     assert "coverage_occurrence_ambiguous" in duplicated["source_observations"][0]["scan_notes"]
-    assert any(item.reason == "citation_source_unobserved" for item in ambiguous.items)
-    assert all(item.reason != "citation_drifted" for item in ambiguous.items)
+    ambiguous_row = next(item for item in ambiguous.items if item.reason == "citation_drifted")
+    assert ambiguous_row.detail["drift_state"] == "ambiguous"  # type: ignore[index]
+    assert ambiguous_row.repair.required_change == "adjudicate_citation_drift"
 
     source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, b"status: blocked\n"))
     changed, drifted = _result(instance, client, workspace)
@@ -164,11 +165,11 @@ def test_one_existing_scanner_handles_relocation_duplicate_and_genuine_span_drif
     assert invocations == client.calls == 4
 
 
-def test_whole_file_citation_drifts_when_any_uncited_prefix_changes(tmp_path: Path) -> None:
+def test_whole_file_citation_stays_current_when_its_exact_bytes_move_once(tmp_path: Path) -> None:
     instance, source, workspace = _foreign_world(tmp_path, whole_source=True)
     client = _DirectCoverageClient(instance)
     source.write_bytes(b"Unrelated heading\n" + SOURCE_CONTENT)
 
     _observed, result = _result(instance, client, workspace)
 
-    assert any(item.reason == "citation_drifted" for item in result.items)
+    assert all(item.reason != "citation_drifted" for item in result.items)

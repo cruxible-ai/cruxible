@@ -55,6 +55,7 @@ from cruxible_core.service.playbill_next import (
     service_playbill_next,
     validate_playbill_next_request,
 )
+from cruxible_core.service.playbill_query import build_accepted_query_facts
 from tests.test_playbill._adoption_fixture import _Builder
 from tests.test_playbill._knowledge_loop_support import (
     activate as activate_work_item_claim,
@@ -226,6 +227,10 @@ def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
         {},
     ).tagged
     internal_coordinate = instance.accepted_coordinate()
+    query_facts = build_accepted_query_facts(
+        instance,
+        coordinate=internal_coordinate,
+    )
     law_evidence = {
         claim_path(claim.identity.name): _claim_law_evidence(
             instance,
@@ -251,6 +256,10 @@ def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next._claim_law_evidence",
         lambda _instance, *, path, at: law_evidence[path],
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next.build_accepted_query_facts",
+        lambda _instance, *, coordinate: query_facts,
     )
     monkeypatch.setattr("cruxible_core.service.playbill_next._claim_items", lambda *a, **k: ())
 
@@ -286,6 +295,7 @@ def test_resolvable_citation_predecessor_still_subtracts_dead_spans(tmp_path: Pa
     commitments = _citation_commitments(
         instance,
         coordinate=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
     )
 
     assert old_citation.citation_id not in commitments
@@ -329,7 +339,8 @@ def test_backing_only_successor_keeps_edited_predecessor_span_in_drift_queue(
     row = next(item for item in result.items if item.reason == "citation_drifted")
     assert row.related_identities == (old_citation.citation_id,)
     assert row.detail["expected_commitment_digest"] == envelope.commitment.digest  # type: ignore[index]
-    assert row.detail["observed_commitment_digest"] == observed  # type: ignore[index]
+    assert row.detail["observed_window_digest"] == observed  # type: ignore[index]
+    assert row.detail["drift_state"] == "changed"  # type: ignore[index]
     assert "lineage_note" not in row.detail  # type: ignore[operator]
 
 
@@ -469,7 +480,7 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
 
     assert "workspace_sources" in result.observed_domains
     drift = next(item for item in result.items if item.reason == "citation_drifted")
-    assert drift.detail["source_id"] == "corpus.healthy"
+    assert drift.detail["logical_source"]["identity"] == "corpus.healthy"  # type: ignore[index]
 
 
 def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: Path) -> None:
