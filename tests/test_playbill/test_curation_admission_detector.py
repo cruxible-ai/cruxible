@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.curation_detectors import _attempt_subject_from_path
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.service.playbill_claims import service_propose_playbill_claim
 from cruxible_core.service.playbill_curation import (
@@ -20,6 +25,51 @@ from cruxible_core.service.playbill_next import PlaybillNextWorkspaceObservation
 from tests.test_playbill._knowledge_loop_support import TIMESTAMP, authoring, seed_claims
 
 NOW = datetime(2026, 8, 26, 17, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("artifact_kind", "identity_kind", "expected_direction"),
+    (
+        ("claim", "Claim", "payload_side"),
+        ("document", "Document", "payload_side"),
+        ("subject", "Subject", "payload_side"),
+        ("claim-type", "ClaimType", "schema_side"),
+        ("procedure", "Procedure", "schema_side"),
+        ("query-definition", "QueryDefinition", "schema_side"),
+        ("capture-contract", "CaptureContract", "schema_side"),
+        ("standing-mandate", "StandingMandate", "schema_side"),
+        ("source-acquisition-policy", "SourceAcquisitionPolicy", "schema_side"),
+        ("provider", "Provider", "schema_side"),
+        ("line", "Line", "unclassified"),
+        ("exhaust-promotion", "ExhaustPromotion", "unclassified"),
+    ),
+)
+def test_attempt_subject_direction_is_honest_for_every_closure_kind(
+    artifact_kind: str,
+    identity_kind: str,
+    expected_direction: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = ArtifactIdentity(kind=identity_kind, name="example")  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        "cruxible_core.playbill.curation_detectors.parse_dependency_artifact",
+        lambda _path, _content: SimpleNamespace(
+            artifact_kind=artifact_kind,
+            identity=identity,
+        ),
+    )
+    claim_type = ArtifactIdentity(kind="ClaimType", name="project.work_item.status")
+    monkeypatch.setattr(
+        "cruxible_core.playbill.curation_detectors.parse_claim",
+        lambda _content, *, path: SimpleNamespace(statement=SimpleNamespace(claim_type=claim_type)),
+    )
+
+    result = _attempt_subject_from_path(tree={"example": b"{}"}, path="example")
+
+    assert result == (
+        claim_type if artifact_kind == "claim" else identity,
+        expected_direction,
+    )
 
 
 def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(

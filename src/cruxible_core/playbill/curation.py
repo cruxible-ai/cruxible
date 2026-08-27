@@ -214,7 +214,7 @@ def _validate_pattern_detail(pattern_kind: CurationPatternKind, detail: dict[str
         if (
             keys != {"diagnostic_code", "refusal_direction"}
             or not isinstance(detail["diagnostic_code"], str)
-            or detail["refusal_direction"] not in {"payload_side", "schema_side"}
+            or detail["refusal_direction"] not in {"payload_side", "schema_side", "unclassified"}
         ):
             raise ValueError(
                 "admission-failure pattern detail requires diagnostic_code and refusal_direction"

@@ -12,6 +12,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, parse_artifact
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
+    ProcedureAuthoringPayloadV2,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.captures import (
@@ -87,6 +88,19 @@ _CURATION_VISIBILITY_POLICY = QueryEvaluationPolicyV1(
     visible_currency=_ALL_CURRENCY,
     conflict_behavior="surface_conflicts",
 )
+
+_SCHEMA_DEFINING_ARTIFACT_KINDS = frozenset(
+    {
+        "claim-type",
+        "procedure",
+        "query-definition",
+        "capture-contract",
+        "standing-mandate",
+        "source-acquisition-policy",
+        "provider",
+    }
+)
+_PAYLOAD_BEARING_ARTIFACT_KINDS = frozenset({"claim", "document", "subject"})
 
 
 @dataclass(frozen=True)
@@ -603,9 +617,11 @@ def _attempt_subject_from_path(
     if parsed.artifact_kind == "claim":
         claim = parse_claim(content, path=path)
         return claim.statement.claim_type, "payload_side"
-    if parsed.artifact_kind == "claim-type":
+    if parsed.artifact_kind in _SCHEMA_DEFINING_ARTIFACT_KINDS:
         return parsed.identity, "schema_side"
-    return parsed.identity, "payload_side"
+    if parsed.artifact_kind in _PAYLOAD_BEARING_ARTIFACT_KINDS:
+        return parsed.identity, "payload_side"
+    return parsed.identity, "unclassified"
 
 
 def _admission_failures(
@@ -671,22 +687,26 @@ def _admission_failures(
             continue
         payload = event.intent.payload
         authoring_subject: ArtifactIdentity | None
+        authoring_direction: str
         if isinstance(payload, ClaimAuthoringPayloadV1):
             authoring_subject = ArtifactIdentity(kind="ClaimType", name=payload.statement.predicate)
-        elif isinstance(payload, ProcedureAuthoringPayloadV1):
+            authoring_direction = "payload_side"
+        elif isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
             name = payload.definition.get("name")
             authoring_subject = (
                 ArtifactIdentity(kind="Procedure", name=name) if isinstance(name, str) else None
             )
+            authoring_direction = "schema_side"
         else:  # pragma: no cover - frozen authoring payload union
             authoring_subject = None
+            authoring_direction = "unclassified"
         for authoring_diagnostic in preflight.frontier.diagnostics:
             coverage.evaluated += 1
             if authoring_subject is None:
                 coverage.omit("admission_subject_unresolved")
                 continue
             attempt_id = preflight.certificate.certificate_digest
-            attempts[(authoring_subject.qualified, authoring_diagnostic.code, "payload_side")][
+            attempts[(authoring_subject.qualified, authoring_diagnostic.code, authoring_direction)][
                 attempt_id
             ] = CurationEvidenceRefV1(
                 kind="authoring_attempt",
@@ -694,7 +714,7 @@ def _admission_failures(
                 event_digest=event.event_digest,
                 facts={
                     "diagnostic_code": authoring_diagnostic.code,
-                    "refusal_direction": "payload_side",
+                    "refusal_direction": authoring_direction,
                     "frontier_digest": preflight.frontier.digest,
                     "intent_id": event.intent.intent_id,
                 },
