@@ -970,9 +970,7 @@ def replay_curation_items(
                 status = "overruled"
                 resolved_at = event.accepted_generation
             else:
-                if status == "quarantined":
-                    raise ValueError("quarantined curation item cannot be accepted fixed")
-                if status != "open":
+                if status not in {"open", "quarantined"}:
                     raise ValueError("curation item was resolved more than once")
                 status = "accepted_fixed"
                 resolved_at = payload.resolved_generation
@@ -1012,7 +1010,7 @@ def replay_curation_items(
         if (
             predecessor is None
             or predecessor.pattern_id != item.pattern_id
-            or predecessor.status != "accepted_fixed"
+            or predecessor.status not in {"accepted_fixed", "overruled", "quarantined"}
         ):
             raise ValueError("curation recurrence predecessor is invalid")
     return tuple(projected)

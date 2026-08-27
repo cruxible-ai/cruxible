@@ -468,6 +468,8 @@ def _accepted_retirements_for_items(
         eligible = tuple(
             item
             for item in unresolved.values()
+            # An operational item is created after its accepted coordinate is
+            # observed, so a same-generation change cannot have fixed it.
             if accepted.sequence > item.first_proposed_generation
         )
         if not eligible:
@@ -653,11 +655,10 @@ def service_list_playbill_curation(
             key=lambda item: (item.first_proposed_generation, item.item_id),
         )
         current = None if not lineage else lineage[-1]
-        if current is not None and current.status in {"overruled", "quarantined"}:
-            continue
+        starts_successor = current is not None and current.status != "open"
         predecessor = (
             current.item_id
-            if current is not None and current.status == "accepted_fixed"
+            if current is not None and starts_successor
             else (None if current is None else current.predecessor_item_id)
         )
         observation = build_pattern_observation(
@@ -665,11 +666,7 @@ def service_list_playbill_curation(
             predecessor_item_id=predecessor,
             accepted_generation=generation,
         )
-        expected = (
-            None
-            if current is None or current.status == "accepted_fixed"
-            else (current.latest_event_digest)
-        )
+        expected = None if current is None or starts_successor else (current.latest_event_digest)
         for attempt in range(2):
             try:
                 store.append(
@@ -698,11 +695,10 @@ def service_list_playbill_curation(
                     )
                 )
                 current = None if not refreshed else refreshed[-1]
-                if current is not None and current.status in {"overruled", "quarantined"}:
-                    break
+                starts_successor = current is not None and current.status != "open"
                 predecessor = (
                     current.item_id
-                    if current is not None and current.status == "accepted_fixed"
+                    if current is not None and starts_successor
                     else (None if current is None else current.predecessor_item_id)
                 )
                 observation = build_pattern_observation(
@@ -711,9 +707,7 @@ def service_list_playbill_curation(
                     accepted_generation=generation,
                 )
                 expected = (
-                    None
-                    if current is None or current.status == "accepted_fixed"
-                    else current.latest_event_digest
+                    None if current is None or starts_successor else current.latest_event_digest
                 )
     _auto_resolve_retired_dead_vocabulary(
         instance,
@@ -963,9 +957,11 @@ def service_accept_fixed_playbill_curation(
         proposal_id=request.accepted_proposal_id,
         changeset_digest=request.accepted_changeset_digest,
     )
-    if resolved_generation < item.first_proposed_generation:
+    # The item is proposed only after its accepted coordinate is observed; a
+    # resolving ChangeSet must therefore postdate, not merely equal, that generation.
+    if resolved_generation <= item.first_proposed_generation:
         raise PlaybillCurationResolvingProposalInvalid(
-            "curation resolving generation predates the item"
+            "curation resolving generation does not postdate the item"
         )
     affected = _affected_members(record, parent_tree=parent_tree, candidate_tree=candidate_tree)
     related = _related_paths(item, tree=parent_tree) | _related_paths(item, tree=candidate_tree)
