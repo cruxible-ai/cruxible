@@ -167,6 +167,25 @@ def test_workspace_edits_cannot_move_ledger_or_verified_coordinates(tmp_path: Pa
     assert after.generation_root == before.generation_root
 
 
+def test_bootstrap_requires_two_distinct_active_client_principals(tmp_path: Path) -> None:
+    managed = tmp_path / "managed-single-client"
+    owner = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="owner",
+        roles=("owner",),
+    )
+
+    with pytest.raises(PlaybillBootstrapError, match="at least two distinct active"):
+        PlaybillInstance.initialize(
+            managed,
+            instance_id="inst_single_client",
+            client_principals=(owner.principal,),
+            workspace_roots=(tmp_path / "workspace",),
+            timestamp=FIXED_TIMESTAMP,
+        )
+
+
 def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> None:
     managed = tmp_path / "managed-cloud"
     owner = generate_client(
@@ -175,11 +194,17 @@ def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> N
         principal_id="owner",
         roles=("owner",),
     )
+    reviewer = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
     with pytest.raises(PlaybillBootstrapError, match="recovery"):
         PlaybillInstance.initialize(
             managed,
             instance_id="inst_cloud",
-            client_principals=(owner.principal,),
+            client_principals=(owner.principal, reviewer.principal),
             workspace_roots=(tmp_path / "workspace",),
             operating_profile="cloud",
             timestamp=FIXED_TIMESTAMP,

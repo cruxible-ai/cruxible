@@ -40,10 +40,16 @@ def initialize_local(
         principal_id="owner",
         roles=("owner",),
     )
+    reviewer = generate_client(
+        tmp_path,
+        managed_root=managed_root,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
     instance = PlaybillInstance.initialize(
         managed_root,
         instance_id="inst_playbill_test",
-        client_principals=(owner.principal,),
+        client_principals=(owner.principal, reviewer.principal),
         workspace_roots=(tmp_path / "workspace",),
         git_object_format=object_format,
         timestamp=FIXED_TIMESTAMP,

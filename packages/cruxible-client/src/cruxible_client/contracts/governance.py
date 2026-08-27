@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -19,6 +19,8 @@ MutationDisposition = Literal[
 ]
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
+PLAYBILL_FIXED_INDEPENDENT_APPROVALS: Final = 1
+PLAYBILL_INDEPENDENT_APPROVAL_ROLE: Final = "independent-principal"
 
 
 class _StrictGovernanceModel(BaseModel):
@@ -67,5 +69,7 @@ __all__ = [
     "ApprovalRequirement",
     "MutationDisposition",
     "PermissionTier",
+    "PLAYBILL_FIXED_INDEPENDENT_APPROVALS",
+    "PLAYBILL_INDEPENDENT_APPROVAL_ROLE",
     "governance_identifier",
 ]

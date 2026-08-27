@@ -120,6 +120,7 @@ from cruxible_client.contracts.errors import (
     DocumentFormatError,
     ProposalAdmissionError,
     ProposalIntegrityError,
+    PrincipalIntegrityError,
     SubjectFormatError,
 )
 from cruxible_client.contracts.governance import (
@@ -127,6 +128,8 @@ from cruxible_client.contracts.governance import (
     ApprovalRequirement,
     MutationDisposition,
     PermissionTier,
+    PLAYBILL_FIXED_INDEPENDENT_APPROVALS,
+    PLAYBILL_INDEPENDENT_APPROVAL_ROLE,
 )
 from cruxible_client.contracts.laws import (
     PLAYBILL_ACCEPTANCE_LAWS,
@@ -2286,12 +2289,13 @@ def _multi_member_evidence(
 
 
 def _approval_requirements(accepted: list[_AcceptedMember]) -> tuple[ApprovalRequirement, ...]:
-    return tuple(
-        ApprovalRequirement(role=role)
-        for role in sorted(
-            {role for item in accepted for role in item.approval_scope},
-            key=lambda value: value.encode("utf-8"),
-        )
+    if not accepted:
+        raise ProposalIntegrityError("a candidate approval requirement needs one member")
+    return (
+        ApprovalRequirement(
+            role=PLAYBILL_INDEPENDENT_APPROVAL_ROLE,
+            minimum_distinct_signers=PLAYBILL_FIXED_INDEPENDENT_APPROVALS,
+        ),
     )
 
 
@@ -2657,6 +2661,17 @@ class ProposalService:
             raise ProposalAdmissionError("current coordinate contradicts the verified base")
         if self.transport.read_main() != current.git_oid:
             raise ProposalAdmissionError("current coordinate is not the accepted main ref")
+        current_tree = self.transport.read_tree(current.git_oid)
+        try:
+            principal_registry_from_tree(
+                current_tree,
+                semantic_root=current.semantic_root,
+            ).require_active(actor.actor_id)
+        except PrincipalIntegrityError as exc:
+            raise ProposalAdmissionError(
+                "playbill.proposal.creator_principal_invalid: authenticated actor does not "
+                "resolve to an active Principal at the accepted coordinate"
+            ) from exc
 
         base_tree = self.transport.read_tree(request.proposed_base_oid)
         validated_tree = validate_proposal_tree(
@@ -2695,7 +2710,6 @@ class ProposalService:
         )
         self.evidence.write_admission(admission)
 
-        current_tree = self.transport.read_tree(current.git_oid)
         is_rebase = current.git_oid != request.proposed_base_oid
         outcome = evaluate_proposal_tree(
             base_tree=base_tree,
