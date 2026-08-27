@@ -24,13 +24,13 @@ sources is at most a labeled `content_equivalent` candidate.
 
 The scan, and why truncation is honest
 --------------------------------------
-Finding a cited selection that moved means finding a window whose SHA-256 equals
-an accepted commitment, and a commitment is a digest, not a needle: no rolling
-search can be seeded from it, so every window of the committed length has to be
-hashed. That is affordable at working-set scale and unaffordable without a
-bound, so the builder takes an explicit scan budget in hashed bytes. Skipping a
-pass is never silent -- the overlay records the truncation, health falls to
-`partial`, and an absence stops being factual. Recall shrinks; nothing lies.
+The accepted-state caller may supply exact selected bytes after verifying them
+against an accepted commitment. Those bytes are only a search needle: every
+candidate occurrence is still digest-verified. When retained bytes are not
+available, commitments of one length share one exhaustive window-hashing pass.
+Both routes are bounded explicitly and admit each source/commitment proof only
+after its full debit fits. Skipping work is never silent -- the overlay records
+the truncation and withholds the affected proof. Recall shrinks; nothing lies.
 """
 
 from __future__ import annotations
@@ -64,6 +64,7 @@ from cruxible_client.contracts.source_references import (
 )
 from cruxible_core.playbill.coverage.contracts import (
     CoverageClaimCitationV2,
+    CoverageCommitmentScanProofV1,
     CoverageError,
     CoverageLineOverlayV1,
     LogicalSourceIdentityV1,
@@ -75,6 +76,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 EVIDENCE_INDEX_DIGEST_DOMAIN = "playbill-coverage-evidence-index-v1"
 EVIDENCE_INDEX_V2_DIGEST_DOMAIN = "playbill-coverage-evidence-index-v2"
 OCCURRENCE_OVERLAY_DIGEST_DOMAIN = "playbill-coverage-occurrence-overlay-v1"
+OCCURRENCE_OVERLAY_V2_DIGEST_DOMAIN = "playbill-coverage-occurrence-overlay-v2"
 
 DEFAULT_MAX_SCANNED_BYTES = 32 * 1024 * 1024
 
@@ -592,6 +594,86 @@ class WorkingOccurrenceOverlayV1(_StrictCoverageIndexModel):
         return logical_sources_sorted(tuple(item.source for item in self.sources))
 
 
+class WorkingOccurrenceOverlayV2(_StrictCoverageIndexModel):
+    """Per-source complete scan proofs beside disposable source occurrences."""
+
+    tag: Literal["playbill-coverage-occurrence-overlay-v2"] = (
+        "playbill-coverage-occurrence-overlay-v2"
+    )
+    sources: tuple[WorkingSourceCommitmentV1, ...] = ()
+    occurrences: tuple[WorkingOccurrenceV1, ...] = ()
+    source_scan_proofs: tuple[CoverageCommitmentScanProofV1, ...] = ()
+    truncated: bool = False
+    truncation_reason_codes: tuple[str, ...] = ()
+
+    @field_validator("sources")
+    @classmethod
+    def _sources(
+        cls, value: tuple[WorkingSourceCommitmentV1, ...]
+    ) -> tuple[WorkingSourceCommitmentV1, ...]:
+        keys = tuple(item.source.sort_key for item in value)
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError("overlay sources must be sorted and unique by logical source")
+        return value
+
+    @field_validator("occurrences")
+    @classmethod
+    def _occurrences(
+        cls, value: tuple[WorkingOccurrenceV1, ...]
+    ) -> tuple[WorkingOccurrenceV1, ...]:
+        keys = tuple(item.sort_key for item in value)
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError("overlay occurrences must be sorted and unique by occurrence identity")
+        return value
+
+    @field_validator("source_scan_proofs")
+    @classmethod
+    def _source_scan_proofs(
+        cls, value: tuple[CoverageCommitmentScanProofV1, ...]
+    ) -> tuple[CoverageCommitmentScanProofV1, ...]:
+        keys = tuple(item.sort_key for item in value)
+        if keys != tuple(sorted(set(keys))):
+            raise ValueError("source scan proofs must be sorted and unique")
+        return value
+
+    @field_validator("truncation_reason_codes")
+    @classmethod
+    def _reasons(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != byte_sorted(value):
+            raise ValueError("overlay truncation reasons must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _truncation_is_explained(self) -> "WorkingOccurrenceOverlayV2":
+        if self.truncated != bool(self.truncation_reason_codes):
+            raise ValueError("overlay truncation must be stated with its reason codes")
+        return self
+
+    def commitment_for(self, source: LogicalSourceIdentityV1) -> WorkingSourceCommitmentV1 | None:
+        key = source.sort_key
+        for item in self.sources:
+            if item.source.sort_key == key:
+                return item
+        return None
+
+    def occurrences_for(self, source: LogicalSourceIdentityV1) -> tuple[WorkingOccurrenceV1, ...]:
+        key = source.sort_key
+        return tuple(item for item in self.occurrences if item.source.sort_key == key)
+
+    def scanned(
+        self,
+        source: LogicalSourceIdentityV1,
+        commitment_digest: str,
+        byte_length: int,
+    ) -> bool:
+        key = (source.sort_key, commitment_digest.encode("ascii"), byte_length)
+        return any(item.sort_key == key for item in self.source_scan_proofs)
+
+    @property
+    def scope(self) -> tuple[LogicalSourceIdentityV1, ...]:
+        return logical_sources_sorted(tuple(item.source for item in self.sources))
+
+
 def _line_starts(content: bytes) -> Sequence[int]:
     starts = [0]
     offset = content.find(b"\n")
@@ -616,9 +698,9 @@ def _overlay(starts: Sequence[int], *, start_byte: int, end_byte: int) -> Covera
 def build_working_occurrence_overlay(
     sources: Iterable[WorkingSourceContent],
     *,
-    wanted: Iterable[tuple[str, int]] = (),
+    wanted: Iterable[tuple[str, int, bytes | None]] = (),
     budget: CoverageScanBudgetV1 = CoverageScanBudgetV1(),
-) -> WorkingOccurrenceOverlayV1:
+) -> WorkingOccurrenceOverlayV2:
     """Observe the working snapshot: whole-source content, then cited selections.
 
     Two passes, both deterministic and both free of a clock:
@@ -626,9 +708,10 @@ def build_working_occurrence_overlay(
     1. every working source contributes its whole observed content as one
        occurrence, which is what makes a whole-file citation resolvable and what
        the manifest binds its per-source commitments to;
-    2. every wanted `(digest, byte_length)` drawn from the evidence index is
-       looked for at every offset of every source long enough to hold it, which
-       is what makes relocated cited content stay `exact` after it moves.
+    2. every wanted `(digest, byte_length, verified_needle)` drawn from accepted
+       evidence is exhaustively searched in every named source, by overlapping
+       needle search when retained bytes are available and by one length-shared
+       digest pass otherwise.
 
     Ordinals are assigned per `(source, observed digest)` in byte order, so an
     occurrence that is unique in its source keeps ordinal 0 no matter where it
@@ -636,22 +719,38 @@ def build_working_occurrence_overlay(
     resolver needs in order to refuse to bind one of them.
     """
 
-    materials = tuple(sources)
+    materials = tuple(sorted(sources, key=lambda item: item.source.sort_key))
     keys = [item.source.sort_key for item in materials]
     if len(set(keys)) != len(keys):
         raise CoverageError("a working snapshot names each logical source at most once")
 
-    wanted_by_length: dict[int, set[str]] = {}
-    for digest, byte_length in wanted:
+    wanted_values: dict[tuple[str, int], bytes | None] = {}
+    for digest, byte_length, verified_needle in wanted:
         Sha256Value.from_tagged(digest)
-        if byte_length <= 0:
-            continue
-        wanted_by_length.setdefault(byte_length, set()).add(digest)
+        if byte_length < 0:
+            raise CoverageError("a wanted selection length must be non-negative")
+        if verified_needle is not None:
+            if len(verified_needle) != byte_length:
+                raise CoverageError("a verified needle must have the committed byte length")
+            if Sha256Value(hashlib.sha256(verified_needle).hexdigest()).tagged != digest:
+                raise CoverageError("a verified needle must reproduce the accepted commitment")
+        key = (digest, byte_length)
+        if key in wanted_values and wanted_values[key] != verified_needle:
+            raise CoverageError("a wanted commitment has conflicting materializations")
+        wanted_values[key] = verified_needle
+
+    wanted_by_length: dict[int, tuple[tuple[str, bytes | None], ...]] = {}
+    for byte_length in sorted({item[1] for item in wanted_values}):
+        wanted_by_length[byte_length] = tuple(
+            (digest, wanted_values[(digest, byte_length)])
+            for digest, length in sorted(wanted_values)
+            if length == byte_length
+        )
 
     commitments: list[WorkingSourceCommitmentV1] = []
     found: dict[tuple[bytes, str], list[tuple[int, int]]] = {}
     line_starts: dict[bytes, Sequence[int]] = {}
-    scanned: set[str] = set()
+    proofs: list[CoverageCommitmentScanProofV1] = []
     reasons: set[str] = set()
     remaining = budget.max_scanned_bytes
 
@@ -669,32 +768,80 @@ def build_working_occurrence_overlay(
         )
         found.setdefault((key, whole), []).append((0, len(content)))
 
-    for byte_length in sorted(wanted_by_length):
-        digests = wanted_by_length[byte_length]
-        complete = True
-        for material in materials:
-            content = material.content
+    for material in materials:
+        source_key = material.source.sort_key
+        content = material.content
+        for byte_length in sorted(wanted_by_length):
+            selections = wanted_by_length[byte_length]
             if len(content) < byte_length:
+                proofs.extend(
+                    CoverageCommitmentScanProofV1(
+                        source=material.source,
+                        commitment_digest=digest,
+                        byte_length=byte_length,
+                    )
+                    for digest, _ in selections
+                )
+                continue
+
+            for digest, needle in selections:
+                if needle is None:
+                    continue
+                offsets: list[int] = []
+                start = 0
+                while True:
+                    offset = content.find(needle, start)
+                    if offset < 0:
+                        break
+                    offsets.append(offset)
+                    start = offset + 1
+                debit = len(content) + len(needle) + len(offsets) * byte_length
+                if debit > remaining:
+                    reasons.add("scan_budget_exceeded")
+                    continue
+                candidate_spans: list[tuple[int, int]] = []
+                for offset in offsets:
+                    window = content[offset : offset + byte_length]
+                    observed = Sha256Value(hashlib.sha256(window).hexdigest()).tagged
+                    if observed != digest:  # pragma: no cover - digest equality follows bytes
+                        raise CoverageError("needle occurrence failed commitment verification")
+                    candidate_spans.append((offset, offset + byte_length))
+                remaining -= debit
+                found.setdefault((source_key, digest), []).extend(candidate_spans)
+                proofs.append(
+                    CoverageCommitmentScanProofV1(
+                        source=material.source,
+                        commitment_digest=digest,
+                        byte_length=byte_length,
+                    )
+                )
+
+            fallback_digests = {digest for digest, needle in selections if needle is None}
+            if not fallback_digests:
                 continue
             windows = len(content) - byte_length + 1
-            cost = windows * byte_length
-            if cost > remaining:
+            debit = windows * byte_length
+            if debit > remaining:
                 reasons.add("scan_budget_exceeded")
-                complete = False
                 continue
-            remaining -= cost
-            key = material.source.sort_key
+            candidate_spans: dict[str, list[tuple[int, int]]] = {
+                digest: [] for digest in fallback_digests
+            }
             for offset in range(windows):
-                observed = Sha256Value(
-                    hashlib.sha256(content[offset : offset + byte_length]).hexdigest()
-                ).tagged
-                if observed in digests:
-                    found.setdefault((key, observed), []).append((offset, offset + byte_length))
-        if complete:
-            # Absence of these commitments was genuinely looked for everywhere in
-            # scope, so the resolver may read "not here" as drift rather than as
-            # an unexamined gap.
-            scanned.update(digests)
+                window = content[offset : offset + byte_length]
+                observed = Sha256Value(hashlib.sha256(window).hexdigest()).tagged
+                if observed in fallback_digests:
+                    candidate_spans[observed].append((offset, offset + byte_length))
+            remaining -= debit
+            for digest in sorted(fallback_digests):
+                found.setdefault((source_key, digest), []).extend(candidate_spans[digest])
+                proofs.append(
+                    CoverageCommitmentScanProofV1(
+                        source=material.source,
+                        commitment_digest=digest,
+                        byte_length=byte_length,
+                    )
+                )
 
     by_key = {item.source.sort_key: item.source for item in materials}
     occurrences: list[WorkingOccurrenceV1] = []
@@ -718,21 +865,28 @@ def build_working_occurrence_overlay(
                 )
             )
 
-    return WorkingOccurrenceOverlayV1(
+    return WorkingOccurrenceOverlayV2(
         sources=tuple(sorted(commitments, key=lambda item: item.source.sort_key)),
         occurrences=tuple(sorted(occurrences, key=lambda item: item.sort_key)),
-        scanned_selections=byte_sorted(tuple(scanned)),
+        source_scan_proofs=tuple(sorted(proofs, key=lambda item: item.sort_key)),
         truncated=bool(reasons),
         truncation_reason_codes=byte_sorted(tuple(reasons)),
     )
 
 
-def working_occurrence_overlay_digest(overlay: WorkingOccurrenceOverlayV1) -> str:
+def working_occurrence_overlay_digest(
+    overlay: WorkingOccurrenceOverlayV1 | WorkingOccurrenceOverlayV2,
+) -> str:
     """Digest the overlay so a manifest binds the exact snapshot it observed."""
 
     payload = overlay.model_dump(mode="json")
     payload.pop("tag")
-    return typed_digest(Sha256Value, OCCURRENCE_OVERLAY_DIGEST_DOMAIN, payload).tagged
+    domain = (
+        OCCURRENCE_OVERLAY_V2_DIGEST_DOMAIN
+        if isinstance(overlay, WorkingOccurrenceOverlayV2)
+        else OCCURRENCE_OVERLAY_DIGEST_DOMAIN
+    )
+    return typed_digest(Sha256Value, domain, payload).tagged
 
 
 __all__ = [
@@ -740,6 +894,7 @@ __all__ = [
     "EVIDENCE_INDEX_DIGEST_DOMAIN",
     "EVIDENCE_INDEX_V2_DIGEST_DOMAIN",
     "OCCURRENCE_OVERLAY_DIGEST_DOMAIN",
+    "OCCURRENCE_OVERLAY_V2_DIGEST_DOMAIN",
     "CaptureCitationInputV1",
     "CaptureCitationInputV2",
     "CoverageScanBudgetV1",
@@ -748,6 +903,7 @@ __all__ = [
     "EvidenceCitationV1",
     "EvidenceCitationV2",
     "WorkingOccurrenceOverlayV1",
+    "WorkingOccurrenceOverlayV2",
     "WorkingOccurrenceV1",
     "WorkingSourceCommitmentV1",
     "WorkingSourceContent",

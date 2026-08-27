@@ -69,6 +69,7 @@ from cruxible_core.playbill.coverage.indexes import (
     EvidenceCitationV1,
     EvidenceCitationV2,
     WorkingOccurrenceOverlayV1,
+    WorkingOccurrenceOverlayV2,
     WorkingOccurrenceV1,
     evidence_citation_index_digest,
     working_occurrence_overlay_digest,
@@ -89,6 +90,7 @@ CoverageCardAny: TypeAlias = CoverageCardV1 | CoverageCardV2
 CoverageManifestAny: TypeAlias = CoverageManifestBodyV1 | CoverageManifestBodyV2
 CoverageSpanResultAny: TypeAlias = CoverageSpanResultV1 | CoverageSpanResultV2
 CoverageResultAny: TypeAlias = CoverageResultV1 | CoverageResultV2
+CoverageOverlayAny: TypeAlias = WorkingOccurrenceOverlayV1 | WorkingOccurrenceOverlayV2
 
 
 def _manifest_floor(
@@ -124,7 +126,7 @@ def _source_floor(
     span: CoverageSpanRequestV1,
     *,
     manifest: CoverageManifestAny | None,
-    overlay: WorkingOccurrenceOverlayV1,
+    overlay: CoverageOverlayAny,
 ) -> tuple[CoverageHealthV1, tuple[str, ...]]:
     """The freshness floor for exactly one working source."""
 
@@ -196,7 +198,7 @@ def _resolve_span(
     *,
     request: CoverageRequestV1,
     index: CoverageIndexAny,
-    overlay: WorkingOccurrenceOverlayV1,
+    overlay: CoverageOverlayAny,
     access: CoverageAccessProfileV1,
     batch_floor: CoverageHealthV1,
     batch_reasons: tuple[str, ...],
@@ -279,7 +281,16 @@ def _resolve_span(
                 continue
             if citation.commitment_digest in observed_digests:
                 continue
-            if not overlay.scanned(citation.commitment_digest):
+            scanned = (
+                overlay.scanned(
+                    span.source,
+                    citation.commitment_digest,
+                    citation.byte_length or 0,
+                )
+                if isinstance(overlay, WorkingOccurrenceOverlayV2)
+                else overlay.scanned(citation.commitment_digest)
+            )
+            if not scanned:
                 # Absence was never looked for, so it is a gap in the boundary
                 # rather than evidence that the cited content changed.
                 health = weakest_health(health, "partial")
@@ -405,7 +416,7 @@ def _resolve_coverage_any(
     request: CoverageRequestV1,
     *,
     index: CoverageIndexAny,
-    overlay: WorkingOccurrenceOverlayV1,
+    overlay: CoverageOverlayAny,
     access: CoverageAccessProfileV1,
     manifest: CoverageManifestAny | None = None,
 ) -> CoverageResultAny:
@@ -496,7 +507,7 @@ def resolve_coverage(
     request: CoverageRequestV1,
     *,
     index: EvidenceCitationIndexV1,
-    overlay: WorkingOccurrenceOverlayV1,
+    overlay: CoverageOverlayAny,
     access: CoverageAccessProfileV1,
     manifest: CoverageManifestBodyV1 | None = None,
 ) -> CoverageResultV1:
@@ -519,7 +530,7 @@ def resolve_coverage_v2(
     request: CoverageRequestV1,
     *,
     index: EvidenceCitationIndexV2,
-    overlay: WorkingOccurrenceOverlayV1,
+    overlay: CoverageOverlayAny,
     access: CoverageAccessProfileV1,
     manifest: CoverageManifestBodyV2 | None = None,
 ) -> CoverageResultV2:

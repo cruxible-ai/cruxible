@@ -132,6 +132,12 @@ class CoverageError(PlaybillError):
     """A coverage answer could not be produced deterministically."""
 
 
+class CoverageCommitmentMaterializationCorrupt(CoverageError):
+    """Retained exact bytes exist but do not reproduce their commitment."""
+
+    error_code = "playbill.coverage.commitment_materialization_corrupt"
+
+
 class _StrictCoverageModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -177,6 +183,65 @@ class LogicalSourceIdentityV1(_StrictCoverageModel):
     @property
     def sort_key(self) -> bytes:
         return f"{self.plane}\x00{self.identity}".encode()
+
+
+class CoverageCommitmentScanProofV1(_StrictCoverageModel):
+    """Complete local scan proof for one source/commitment/length tuple."""
+
+    tag: Literal["playbill-coverage-commitment-scan-proof-v1"] = (
+        "playbill-coverage-commitment-scan-proof-v1"
+    )
+    source: LogicalSourceIdentityV1
+    commitment_digest: str
+    byte_length: int = Field(ge=0)
+    complete: Literal[True] = True
+
+    @field_validator("commitment_digest")
+    @classmethod
+    def _commitment_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @property
+    def sort_key(self) -> tuple[bytes, bytes, int]:
+        return (
+            self.source.sort_key,
+            self.commitment_digest.encode("ascii"),
+            self.byte_length,
+        )
+
+
+class PlaybillCitationWindowObservationV1(_StrictCoverageModel):
+    """Observed bytes at one accepted citation's original source window."""
+
+    tag: Literal["playbill-citation-window-observation-v1"] = (
+        "playbill-citation-window-observation-v1"
+    )
+    source: LogicalSourceIdentityV1
+    citation_id: str
+    commitment_digest: str
+    original_start: int = Field(ge=0)
+    original_end: int = Field(ge=0)
+    addressable: bool
+    observed_window_digest: str | None = None
+
+    @field_validator("citation_id", "commitment_digest", "observed_window_digest")
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _window_shape(self) -> "PlaybillCitationWindowObservationV1":
+        if self.original_end < self.original_start:
+            raise ValueError("citation window end must not precede its start")
+        if self.addressable != (self.observed_window_digest is not None):
+            raise ValueError(
+                "an addressable citation window requires its observed digest; "
+                "an unaddressable window forbids one"
+            )
+        return self
 
 
 def logical_sources_sorted(
@@ -753,6 +818,8 @@ __all__ = [
     "CoverageCardV1",
     "CoverageCardV2",
     "CoverageClaimCitationV2",
+    "CoverageCommitmentMaterializationCorrupt",
+    "CoverageCommitmentScanProofV1",
     "CoverageError",
     "CoverageHealthV1",
     "CoverageLineOverlayV1",
@@ -769,6 +836,7 @@ __all__ = [
     "CoverageSpanResultV2",
     "CoverageWatcherHealthV1",
     "LogicalSourceIdentityV1",
+    "PlaybillCitationWindowObservationV1",
     "logical_sources_sorted",
     "strongest_match_state",
     "occurrence_identity_digest",

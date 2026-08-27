@@ -54,6 +54,7 @@ from tests.test_playbill._coverage_support import (
     overlay,
     profile,
     request,
+    unmaterialized_wanted,
     working,
 )
 
@@ -226,7 +227,7 @@ def test_a_truncated_scan_makes_the_manifest_partial(tmp_path: Path) -> None:
     citations, _ = _built()
     starved = build_working_occurrence_overlay(
         (working(HANDBOOK, HANDBOOK_BODY),),
-        wanted=citations.wanted_selections(),
+        wanted=unmaterialized_wanted(citations),
         budget=CoverageScanBudgetV1(max_scanned_bytes=0),
     )
     body = coverage_manifest_body(

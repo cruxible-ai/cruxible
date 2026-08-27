@@ -24,6 +24,7 @@ access classes would be a request that could widen its own disclosure, and
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Sequence
 
 from cruxible_client.contracts.captures import (
@@ -42,8 +43,8 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_statement_digest,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
-from cruxible_client.contracts.source_references import SourceAccessClass
+from cruxible_client.contracts.errors import PlaybillCasError, ProposalIntegrityError
+from cruxible_client.contracts.source_references import LedgerSourceReferenceV1, SourceAccessClass
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
@@ -53,6 +54,7 @@ from cruxible_core.playbill.coverage.adapter import (
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageCardBudgetV1,
+    CoverageCommitmentMaterializationCorrupt,
     CoverageRequestV1,
     CoverageResultV2,
     LogicalSourceIdentityV1,
@@ -64,6 +66,7 @@ from cruxible_core.playbill.coverage.indexes import (
     EvidenceCitationIndexV1,
     EvidenceCitationIndexV2,
     WorkingOccurrenceOverlayV1,
+    WorkingOccurrenceOverlayV2,
     build_evidence_citation_index,
     build_evidence_citation_index_v2,
 )
@@ -246,6 +249,74 @@ def accepted_evidence_sources(
     return tuple(seen[key] for key in sorted(seen))
 
 
+def _materialized_wanted_selections(
+    instance: PlaybillInstance,
+    *,
+    index: EvidenceCitationIndexV2,
+) -> tuple[tuple[str, int, bytes | None], ...]:
+    """Resolve retained exact bytes before entering the pure occurrence scanner.
+
+    A missing retained body is an availability condition and selects the
+    exhaustive fallback. A present CAS object that fails its content address is
+    an integrity failure and must never be laundered into that fallback.
+    """
+
+    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
+    store = instance.body_store()
+    materialized: list[tuple[str, int, bytes | None]] = []
+    for digest, byte_length in index.wanted_selections():
+        needle: bytes | None = None
+        citations = index.by_commitment(digest)
+        capture_digests = sorted(
+            {capture for citation in citations for capture in citation.capture_digests}
+        )
+        for capture_digest in capture_digests:
+            envelope = parse_capture_envelope(store.read(capture_digest, access=access))
+            if (
+                envelope.commitment.digest != digest
+                or envelope.commitment.byte_length != byte_length
+            ):
+                raise ProposalIntegrityError(
+                    "coverage index and retained Capture commitment disagree"
+                )
+            content: bytes | None = None
+            if envelope.commitment.materialization == "cas":
+                try:
+                    metadata = store.metadata(digest, access=access)
+                    if not metadata.present:
+                        continue
+                    content = store.read(digest, access=access)
+                except PlaybillCasError as exc:
+                    raise CoverageCommitmentMaterializationCorrupt(
+                        "retained commitment bytes failed CAS verification"
+                    ) from exc
+            elif isinstance(envelope.source, LedgerSourceReferenceV1):
+                content = instance.tree_at(envelope.source.coordinate.git_oid).get(
+                    envelope.source.address.artifact_path
+                )
+                # A ledger address may select a region whose materializer is not
+                # retained independently. Only an exact whole-body reproduction
+                # is a usable needle; otherwise the exhaustive route remains sound.
+                if content is not None and (
+                    len(content) != byte_length
+                    or hashlib.sha256(content).hexdigest() != digest.removeprefix("sha256:")
+                ):
+                    content = None
+            if content is None:
+                continue
+            observed = f"sha256:{hashlib.sha256(content).hexdigest()}"
+            if len(content) != byte_length or observed != digest:
+                if envelope.commitment.materialization == "cas":
+                    raise CoverageCommitmentMaterializationCorrupt(
+                        "retained commitment bytes do not reproduce their digest and length"
+                    )
+                continue
+            needle = content
+            break
+        materialized.append((digest, byte_length, needle))
+    return tuple(materialized)
+
+
 def _publish_manifest(
     instance: PlaybillInstance,
     *,
@@ -293,7 +364,7 @@ def _publish_manifest_v2(
     *,
     instance_id: str,
     index: EvidenceCitationIndexV2,
-    overlay: WorkingOccurrenceOverlayV1,
+    overlay: WorkingOccurrenceOverlayV1 | WorkingOccurrenceOverlayV2,
     access_profile: CoverageAccessProfileV1,
 ) -> CoverageManifestBodyV2:
     directory = instance.root / COVERAGE_DIRECTORY
@@ -347,7 +418,7 @@ def service_resolve_playbill_coverage(
     index = build_accepted_evidence_index_v2(instance, at=coordinate)
     overlay = build_overlay(
         observations,
-        wanted=index.wanted_selections(),
+        wanted=_materialized_wanted_selections(instance, index=index),
         budget=scan_budget,
     )
     access_profile = coverage_access_profile()
