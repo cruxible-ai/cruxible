@@ -263,7 +263,8 @@ def build_publication_preparation(
     if prior is not None and prior.revision >= MAX_PUBLICATION_PREPARATION_REVISIONS:
         _raise(
             PublicationRevisionLimitExceeded,
-            f"publication reached its {MAX_PUBLICATION_PREPARATION_REVISIONS}-revision limit",
+            f"publication reached its {MAX_PUBLICATION_PREPARATION_REVISIONS}-revision limit; "
+            "confirm the revision-16 postimage or wait for the expectation's 7-day expiry",
         )
 
     block_id = (

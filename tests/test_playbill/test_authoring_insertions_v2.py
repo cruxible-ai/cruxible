@@ -354,7 +354,10 @@ def test_reprepare_has_a_fixed_revision_cap_with_exact_retry_still_allowed() -> 
         )
         == expectation.preparation
     )
-    with pytest.raises(PublicationRevisionLimitExceeded, match="16-revision limit"):
+    with pytest.raises(
+        PublicationRevisionLimitExceeded,
+        match="16-revision limit; confirm the revision-16 postimage.*7-day expiry",
+    ):
         build_publication_preparation(
             expectation,
             observation=_observation(b"one more prefix\nstatus: \n"),
