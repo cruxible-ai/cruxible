@@ -458,3 +458,13 @@ def test_removed_brief_has_no_sdk_export_builder_or_authoring_union_arm() -> Non
     assert not hasattr(Playbill, "brief")
     with pytest.raises(ValidationError):
         TypeAdapter(AuthoringInputV1).validate_python({"kind": "brief"})
+
+
+def test_publication_warning_client_mirror_refuses_non_sha256_citation_ids() -> None:
+    with pytest.raises(ValidationError, match="sha256"):
+        cruxible_client.contracts.PlaybillPublicationPrepareWarning(
+            tag="playbill-publication-prepare-warning-v1",
+            code="playbill.authoring.publication_citation_anchor_collision",
+            source_id="repo.work-items",
+            citation_ids=["not-a-digest"],
+        )
