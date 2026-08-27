@@ -36,7 +36,14 @@ from cruxible_core.playbill.claim_retirement import (
     ClaimRetireStale,
     service_retire_claim,
 )
-from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.playbill.claim_type_migrations import (
+    ClaimTypeDependentDispositionV3,
+    ClaimTypeMigrationRequestV3,
+    ClaimTypeMigrationResultV3,
+    service_migrate_claim_type,
+)
+from cruxible_core.playbill.proposals import AuthenticatedActor, evaluate_proposal_tree
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
@@ -523,6 +530,85 @@ def test_terminal_replay_uses_only_the_original_retirement_changeset(
     assert replayed.outcome == "already_retired"
     assert replayed.operation_digest == middle_result.operation_digest
     assert replayed.retirements == middle_result.retirements
+
+
+def test_migration_can_succeed_one_claim_and_retire_its_dependent(tmp_path: Path) -> None:
+    instance, _owner, _root_id, middle_id, leaf_id = _accepted_dependency_world(tmp_path)
+    actor = AuthenticatedActor(actor_id="owner")
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    middle_before = parse_claim(tree[claim_path(middle_id)], path=claim_path(middle_id))
+    type_path = claim_type_path(middle_before.statement.predicate)
+    current_type = parse_claim_type(tree[type_path], path=type_path)
+    successor_values = current_type.model_dump(mode="json")
+    for mechanical in (
+        "artifact_format",
+        "identity",
+        "lifecycle",
+        "subject_scope",
+        "slot_policy",
+    ):
+        successor_values.pop(mechanical, None)
+    successor_values["literal_schema"] = {"type": "string", "minLength": 1}
+    successor = ClaimTypeInputV1.model_validate(successor_values)
+    dispositions = (
+        ClaimTypeDependentDispositionV3(
+            identity=middle_before.identity,
+            disposition="successor",
+        ),
+        ClaimTypeDependentDispositionV3(
+            identity=ArtifactIdentity(kind="Claim", name=leaf_id),
+            disposition="retire",
+            claim_retirement_reason="was-rescinded",
+        ),
+    )
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV3(
+            mode="submit",
+            successor=successor,
+            dependents=dispositions,
+        ),
+        actor=actor,
+    )
+    assert isinstance(result, ClaimTypeMigrationResultV3)
+    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    candidate_tree = instance.proposal_tree(tree_oid)
+    middle = parse_claim(candidate_tree[claim_path(middle_id)], path=claim_path(middle_id))
+    leaf = parse_claim(candidate_tree[claim_path(leaf_id)], path=claim_path(leaf_id))
+    assert middle.lifecycle.state == "live"
+    assert isinstance(leaf, ClaimArtifactV3)
+    assert leaf.lifecycle.state == "retired"
+    middle_pin = next(pin for pin in leaf.pins if pin.target == middle.identity)
+    assert middle_pin.artifact_digest == claim_artifact_digest(middle).tagged
+
+    bad_digest_leaf = leaf.model_copy(
+        update={
+            "pins": tuple(
+                pin.model_copy(update={"artifact_digest": "sha256:" + "f" * 64})
+                if pin.target == middle.identity
+                else pin
+                for pin in leaf.pins
+            )
+        }
+    )
+    invalid_digest_tree = dict(candidate_tree)
+    invalid_digest_tree[claim_path(leaf_id)] = render_claim(bad_digest_leaf)
+    missing_target_change_tree = dict(candidate_tree)
+    missing_target_change_tree[claim_path(middle_id)] = tree[claim_path(middle_id)]
+    for proposed_tree in (invalid_digest_tree, missing_target_change_tree):
+        evaluation = evaluate_proposal_tree(
+            base_tree=tree,
+            current_tree=tree,
+            proposed_tree=proposed_tree,
+            current=instance.accepted_coordinate(),
+            bodies=instance.body_store(),
+            timestamp=TIMESTAMP,
+            rebased=False,
+            actor_id="owner",
+            promotion_verifier=instance.proposal_service().promotion_verifier,
+        )
+        assert evaluation.candidate is None
 
 
 def test_retire_refuses_stale_coordinate_and_extra_dependent(tmp_path: Path) -> None:
