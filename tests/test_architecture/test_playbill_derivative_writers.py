@@ -1,4 +1,9 @@
-"""Freeze the complete sanctioned persistent derivative-text writer inventory."""
+"""Freeze the complete sanctioned persistent derivative-text writer inventory.
+
+Door A guarantees that every persistent derivative-text writer routes through a
+shared framing primitive. It does not require each caller to invoke the lower-level
+frame assertion directly; the shared primitive owns that verification boundary.
+"""
 
 from __future__ import annotations
 
@@ -101,6 +106,8 @@ def _assert_only_sanctioned_callers(callers: set[str]) -> None:
 
 
 def test_sanctioned_writer_inventory_matches_primitive_callers() -> None:
+    """Anchor Door A at shared framing primitives, not direct assertion spelling."""
+
     expected_callers = set().union(*SANCTIONED_CALLERS.values())
 
     assert set(SANCTIONED_WRITERS) == expected_callers
