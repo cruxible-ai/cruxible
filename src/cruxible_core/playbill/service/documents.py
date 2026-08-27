@@ -14,6 +14,7 @@ from cruxible_client.contracts.attestations import (
     verify_approval,
 )
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
+from cruxible_client.contracts.canonical import ProposalDigest
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.documents import (
     DocumentShell,
@@ -25,6 +26,7 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import (
     ApprovalIntegrityError,
     DocumentNotFoundError,
+    ProposalActivationRequestInvalid,
     ProposalIntegrityError,
     SettlementIntegrityError,
 )
@@ -341,6 +343,13 @@ def service_activate_playbill_proposal(
 ) -> PlaybillActivationReceipt:
     """Settle, prebuild, and atomically activate one admitted candidate."""
 
+    try:
+        ProposalDigest.from_tagged(proposal_id)
+    except ValueError as exc:
+        raise ProposalActivationRequestInvalid(
+            f"{ProposalActivationRequestInvalid.error_code}: proposal_id must be a "
+            "canonical sha256 digest"
+        ) from exc
     proposal, candidate = _candidate_for_proposal(instance, proposal_id)
     evaluation = proposal.evaluation
     if evaluation.evaluated_tree_oid is None:

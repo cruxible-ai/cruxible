@@ -7,8 +7,10 @@ import json
 from typing import Any
 
 import httpx
+import pytest
 
 from cruxible_client import CruxibleClient
+from cruxible_client.contracts.errors import ProposalActivationRequestInvalid
 
 COORDINATE = {
     "tag": "playbill-accepted-coordinate-v1",
@@ -64,6 +66,28 @@ def _review() -> dict[str, Any]:
         "documents": [],
         "redactions": [],
     }
+
+
+def test_client_preserves_typed_malformed_activation_refusal() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={
+                "error_type": "ProposalActivationRequestInvalid",
+                "message": (
+                    "playbill.proposal.activation_request_invalid: proposal_id must be "
+                    "a canonical sha256 digest"
+                ),
+                "error_code": "playbill.proposal.activation_request_invalid",
+                "errors": [],
+                "context": {},
+            },
+        )
+
+    client = _client(handler)
+
+    with pytest.raises(ProposalActivationRequestInvalid, match="canonical sha256"):
+        client.activate_playbill_proposal("inst_test", "bogus-no-prefix")
 
 
 def test_client_signer_callback_submits_only_public_attestation() -> None:

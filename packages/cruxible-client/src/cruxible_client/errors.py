@@ -18,7 +18,10 @@ from cruxible_client._error_base import (
 from cruxible_client._error_base import (
     StaleContinuationError as StaleContinuationError,
 )
-from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
+from cruxible_client.contracts.errors import (
+    PlaybillSinceRequestInvalid,
+    ProposalActivationRequestInvalid,
+)
 
 _MAX_DISPLAY_ERRORS = 10
 
@@ -417,6 +420,8 @@ def response_to_error(_status: int, body: ErrorResponse) -> CoreError:
             field_path=str(context.get("field_path", "$")),
             message=body.message,
         )
+    elif body.error_type == "ProposalActivationRequestInvalid":
+        exc = ProposalActivationRequestInvalid(body.message)
     elif body.error_type == "ConstraintViolationError":
         exc = ConstraintViolationError(body.message, violations=context.get("violations", []))
     elif body.error_type == "OwnershipError":

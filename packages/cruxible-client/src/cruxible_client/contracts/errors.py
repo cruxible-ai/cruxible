@@ -127,6 +127,12 @@ class ProposalAdmissionError(PlaybillError):
     """An unauthenticated, mis-scoped, oversized, or malformed proposal was refused."""
 
 
+class ProposalActivationRequestInvalid(PlaybillFormatError):
+    """A proposal activation route received a malformed proposal digest."""
+
+    error_code = "playbill.proposal.activation_request_invalid"
+
+
 class ProposalIntegrityError(PlaybillError):
     """Persisted proposal or candidate evidence failed deterministic verification."""
 
@@ -184,6 +190,7 @@ __all__ = [
     "PlaybillKeyError",
     "PlaybillSinceRequestInvalid",
     "PrincipalIntegrityError",
+    "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",
     "ProposalIntegrityError",
     "ProjectionCoordinateError",
