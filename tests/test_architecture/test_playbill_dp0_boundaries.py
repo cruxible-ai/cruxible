@@ -166,6 +166,7 @@ def test_playbill_served_dependency_closure_excludes_legacy_core() -> None:
     )
     assert violations == []
 
+
 def test_importing_playbill_http_surface_does_not_initialize_legacy_core() -> None:
     check = (
         "import sys; import cruxible_core.server.routes.playbill; "

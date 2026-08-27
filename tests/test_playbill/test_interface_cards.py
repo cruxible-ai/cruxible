@@ -150,6 +150,7 @@ def _addressed_claim(
         resolved_authority_basis=("authority:owner",),
     )
 
+
 def _subjects(items: tuple[str, ...]) -> tuple[AcceptedSubject, ...]:
     return tuple(
         sorted(

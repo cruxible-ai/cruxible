@@ -708,7 +708,6 @@ def test_the_view_carries_no_evaluation_time_verdict_or_conflict() -> None:
 # -- backend contract conformance -----------------------------------------
 
 
-
 def test_the_evaluator_reads_state_only_through_the_frozen_backend_surface() -> None:
     fact_rows = all_reviewers_facts()
     factory = RecordingFactory()

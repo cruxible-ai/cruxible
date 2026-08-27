@@ -764,7 +764,6 @@ def test_expand_generalizes_to_a_named_query_definition_handle(tmp_path: Path) -
         )
 
 
-
 def test_a_discovery_entry_kind_outside_the_closed_set_is_refused() -> None:
     from cruxible_core.playbill.query.semantic_discovery import DiscoveryEntryV1
 
