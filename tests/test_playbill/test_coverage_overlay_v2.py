@@ -81,6 +81,59 @@ def test_route_budget_admission_is_atomic_and_shared_fallback_is_not_k_fold() ->
     assert refused.truncation_reason_codes == ("scan_budget_exceeded",)
 
 
+def test_needle_route_debits_the_whole_pair_before_admitting_its_proof() -> None:
+    content = b"ababa"
+    needle = b"aba"
+    pair_debit = len(content) + len(needle) + 2 * len(needle)
+
+    admitted = build_working_occurrence_overlay(
+        (_source(HANDBOOK, content),),
+        wanted=((sha256(needle), len(needle), needle),),
+        budget=CoverageScanBudgetV1(max_scanned_bytes=pair_debit),
+    )
+    refused = build_working_occurrence_overlay(
+        (_source(HANDBOOK, content),),
+        wanted=((sha256(needle), len(needle), needle),),
+        budget=CoverageScanBudgetV1(max_scanned_bytes=pair_debit - 1),
+    )
+
+    assert len(admitted.source_scan_proofs) == 1
+    assert len(admitted.occurrences) == 3  # whole source plus two overlapping needles
+    assert refused.source_scan_proofs == ()
+    assert len(refused.occurrences) == 1
+
+
+def test_one_commitment_can_be_proven_while_another_stays_unobserved_in_one_source() -> None:
+    content = b"abc---xyz"
+    selections = sorted(((sha256(b"abc"), 3, b"abc"), (sha256(b"xyz"), 3, b"xyz")))
+    one_pair_debit = len(content) + 3 + 3
+
+    overlay = build_working_occurrence_overlay(
+        (_source(HANDBOOK, content),),
+        wanted=selections,
+        budget=CoverageScanBudgetV1(max_scanned_bytes=one_pair_debit),
+    )
+
+    first_digest, first_length, _ = selections[0]
+    second_digest, second_length, _ = selections[1]
+    assert overlay.scanned(HANDBOOK, first_digest, first_length) is True
+    assert overlay.scanned(HANDBOOK, second_digest, second_length) is False
+    assert overlay.truncation_reason_codes == ("scan_budget_exceeded",)
+
+
+def test_zero_length_commitments_never_bypass_the_bounded_scanner() -> None:
+    empty = sha256(b"")
+
+    overlay = build_working_occurrence_overlay(
+        (_source(HANDBOOK, b"six boundaries"),),
+        wanted=((empty, 0, b""),),
+        budget=CoverageScanBudgetV1(max_scanned_bytes=0),
+    )
+
+    assert overlay.scanned(HANDBOOK, empty, 0) is False
+    assert all(item.observed_commitment_digest != empty for item in overlay.occurrences)
+
+
 def test_one_source_completion_survives_another_source_truncation() -> None:
     digest = sha256(b"abc")
     overlay = build_working_occurrence_overlay(

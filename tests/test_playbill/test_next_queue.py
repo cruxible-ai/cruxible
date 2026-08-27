@@ -259,7 +259,7 @@ def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
     )
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next.build_accepted_query_facts",
-        lambda _instance, *, coordinate: query_facts,
+        lambda _instance, *, coordinate, **_kwargs: query_facts,
     )
     monkeypatch.setattr("cruxible_core.service.playbill_next._claim_items", lambda *a, **k: ())
 
@@ -269,7 +269,7 @@ def test_unresolved_citation_predecessor_degrades_to_a_row_with_a_typed_note(
             evaluation_time=EVALUATION_TIME,
             access_profile=CoverageAccessProfileV1(
                 profile_id="public-next-test",
-                permitted_access_classes=("public",),
+                permitted_access_classes=("instance", "public"),
             ),
             workspace_observation=PlaybillNextWorkspaceObservationV1(
                 drift_observations=(

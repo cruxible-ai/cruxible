@@ -110,6 +110,15 @@ class _CoverageClient:
         elif self.mode == "omitted":
             span["omitted_card_count"] = 1
             span["cards"] = []
+            span["commitment_scan_proofs"] = []
+        elif self.mode == "invalid_card":
+            span["cards"] = [None]
+        elif self.mode == "observed_source_mismatch":
+            card["observed_source"] = {**SOURCE, "identity": "corpus.other"}
+        elif self.mode == "accepted_source_mismatch":
+            card["accepted_source"] = {**SOURCE, "identity": "corpus.other"}
+        elif self.mode == "invalid_expected_digest":
+            card["expected_commitment_digest"] = "not-a-digest"
         elif self.mode == "bad_overlay":
             overlay["start_byte"] = start + 1
         elif self.mode == "bad_identity":
@@ -203,6 +212,10 @@ def test_relocated_unique_citation_keeps_identity_while_presentation_offsets_mov
         ("omitted", "coverage_cards_omitted"),
         ("bad_overlay", "coverage_occurrence_invalid"),
         ("bad_identity", "coverage_occurrence_ambiguous"),
+        ("invalid_card", "coverage_card_invalid"),
+        ("observed_source_mismatch", "coverage_source_mismatch"),
+        ("accepted_source_mismatch", "coverage_source_mismatch"),
+        ("invalid_expected_digest", "coverage_card_invalid"),
         ("denied", "coverage_access_mismatch"),
         ("mismatched_coordinate", "coverage_coordinate_mismatch"),
         ("missing_span", "coverage_span_missing"),
@@ -224,6 +237,15 @@ def test_partial_ambiguous_denied_or_unverified_coverage_is_explicitly_unobserve
     else:
         assert source["occurrences"] == []
     if mode == "partial":
+        assert source["commitment_scan_proofs"] == []
+    if mode in {
+        "bad_overlay",
+        "bad_identity",
+        "invalid_card",
+        "observed_source_mismatch",
+        "accepted_source_mismatch",
+        "invalid_expected_digest",
+    }:
         assert source["commitment_scan_proofs"] == []
     if mode == "mismatched_coordinate":
         assert coordinate is None

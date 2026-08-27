@@ -729,6 +729,10 @@ def build_working_occurrence_overlay(
         Sha256Value.from_tagged(digest)
         if byte_length < 0:
             raise CoverageError("a wanted selection length must be non-negative")
+        if byte_length == 0:
+            # The empty string has an occurrence at every byte boundary and
+            # therefore cannot be enumerated soundly under the bounded scanner.
+            continue
         if verified_needle is not None:
             if len(verified_needle) != byte_length:
                 raise CoverageError("a verified needle must have the committed byte length")

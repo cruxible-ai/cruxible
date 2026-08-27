@@ -379,6 +379,24 @@ def _resolve_span_v3(
         health = weakest_health(health, "partial")
         reasons.add("evidence_index_truncated")
 
+    # A source-local absence is factual only when this source was searched for
+    # every visible accepted selection.  The card fold below is citation-local,
+    # so it cannot by itself notice a wanted selection omitted by the scanner's
+    # global budget.
+    visible_wanted = {
+        (citation.commitment_digest, citation.byte_length or 0)
+        for citation in index.citations
+        if isinstance(citation, EvidenceCitationV2)
+        and citation.digest_kind == "exact_bytes"
+        and access.permits(citation.access_class)
+    }
+    if any(
+        not overlay.scanned(span.source, commitment_digest, byte_length)
+        for commitment_digest, byte_length in visible_wanted
+    ):
+        health = weakest_health(health, "partial")
+        reasons.add("unscanned_selection")
+
     occurrences = overlay.occurrences_for(span.source)
     duplicates: dict[str, int] = {}
     for item in occurrences:
@@ -502,15 +520,34 @@ def _resolve_span_v3(
         for citation in visible_local
         for association in citation.citation_associations
     }
+    overlay_occurrences: dict[tuple[str, int], set[str]] = {}
+    for occurrence in occurrences:
+        overlay_occurrences.setdefault(
+            (occurrence.observed_commitment_digest, occurrence.byte_length), set()
+        ).add(occurrence.identity_digest)
+    kept_occurrences: dict[tuple[str, int], set[str]] = {}
+    for card in kept:
+        if card.match_state not in {"exact", "candidate"}:
+            continue
+        identity = card.occurrence_identity_digest
+        overlay_value = card.line_overlay
+        observed_digest = card.observed_commitment_digest
+        if identity is None or overlay_value is None or observed_digest is None:
+            continue
+        kept_occurrences.setdefault(
+            (
+                observed_digest,
+                overlay_value.end_byte - overlay_value.start_byte,
+            ),
+            set(),
+        ).add(identity)
     proofs = tuple(
         proof
         for proof in overlay.source_scan_proofs
         if proof.source == span.source
-        and any(
-            citation.commitment_digest == proof.commitment_digest
-            and citation.byte_length == proof.byte_length
-            for citation in visible_local
-        )
+        and (proof.commitment_digest, proof.byte_length) in visible_wanted
+        and overlay_occurrences.get((proof.commitment_digest, proof.byte_length), set())
+        == kept_occurrences.get((proof.commitment_digest, proof.byte_length), set())
     )
     windows = tuple(
         item

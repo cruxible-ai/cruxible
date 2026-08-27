@@ -29,6 +29,7 @@ from collections.abc import Mapping, Sequence
 
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
+    CaptureEnvelopeV1,
     capture_contract_digest,
     capture_contract_is_self_asserted,
     parse_capture_contract,
@@ -258,6 +259,7 @@ def _materialized_wanted_selections(
     instance: PlaybillInstance,
     *,
     index: EvidenceCitationIndexV2,
+    envelopes: Mapping[str, CaptureEnvelopeV1] | None = None,
 ) -> tuple[tuple[str, int, bytes | None], ...]:
     """Resolve retained exact bytes before entering the pure occurrence scanner.
 
@@ -268,6 +270,9 @@ def _materialized_wanted_selections(
 
     access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
     store = instance.body_store()
+    resolved_envelopes = (
+        _capture_envelopes(instance, index=index) if envelopes is None else envelopes
+    )
     materialized: list[tuple[str, int, bytes | None]] = []
     for digest, byte_length in index.wanted_selections():
         needle: bytes | None = None
@@ -276,7 +281,7 @@ def _materialized_wanted_selections(
             {capture for citation in citations for capture in citation.capture_digests}
         )
         for capture_digest in capture_digests:
-            envelope = parse_capture_envelope(store.read(capture_digest, access=access))
+            envelope = resolved_envelopes[capture_digest]
             if (
                 envelope.commitment.digest != digest
                 or envelope.commitment.byte_length != byte_length
@@ -323,22 +328,14 @@ def _materialized_wanted_selections(
 
 
 def _citation_window_observations(
-    instance: PlaybillInstance,
     *,
     index: EvidenceCitationIndexV2,
     observations: Sequence[WorkingSourceObservationV1],
+    envelopes: Mapping[str, CaptureEnvelopeV1],
 ) -> tuple[PlaybillCitationWindowObservationV1, ...]:
     """Observe each accepted citation's original window in its named working source."""
 
     by_source = {item.source.sort_key: item for item in observations}
-    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
-    store = instance.body_store()
-    envelopes = {
-        digest: parse_capture_envelope(store.read(digest, access=access))
-        for digest in sorted(
-            {capture for citation in index.citations for capture in citation.capture_digests}
-        )
-    }
     windows: dict[tuple[bytes, bytes, int, int], PlaybillCitationWindowObservationV1] = {}
     for citation in index.citations:
         if citation.accepted_source is None or citation.byte_length is None:
@@ -346,16 +343,23 @@ def _citation_window_observations(
         observed = by_source.get(citation.accepted_source.sort_key)
         for association in citation.citation_associations:
             envelope = envelopes[association.capture_digest]
-            start = 0
-            end = citation.byte_length
-            if isinstance(envelope.source, ExternalSourceReferenceV1):
-                selector = envelope.source.selector
-                if isinstance(selector, Mapping):
-                    window = selector.get("working_selection", selector)
-                    raw_start = window.get("start_byte") if isinstance(window, Mapping) else None
-                    raw_end = window.get("end_byte") if isinstance(window, Mapping) else None
-                    if isinstance(raw_start, int) and isinstance(raw_end, int):
-                        start, end = raw_start, raw_end
+            if not isinstance(envelope.source, ExternalSourceReferenceV1):
+                continue
+            selector = envelope.source.selector
+            if not isinstance(selector, Mapping):
+                continue
+            window = selector.get("working_selection", selector)
+            raw_start = window.get("start_byte") if isinstance(window, Mapping) else None
+            raw_end = window.get("end_byte") if isinstance(window, Mapping) else None
+            if (
+                not isinstance(raw_start, int)
+                or isinstance(raw_start, bool)
+                or not isinstance(raw_end, int)
+                or isinstance(raw_end, bool)
+                or not 0 <= raw_start <= raw_end
+            ):
+                continue
+            start, end = raw_start, raw_end
             addressable = observed is not None and end <= observed.byte_length
             observed_digest = None
             if addressable and observed is not None:
@@ -379,6 +383,23 @@ def _citation_window_observations(
             )
             windows[key] = item
     return tuple(windows[key] for key in sorted(windows))
+
+
+def _capture_envelopes(
+    instance: PlaybillInstance,
+    *,
+    index: EvidenceCitationIndexV2,
+) -> dict[str, CaptureEnvelopeV1]:
+    """Read each retained capture envelope once for both coverage consumers."""
+
+    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
+    store = instance.body_store()
+    return {
+        digest: parse_capture_envelope(store.read(digest, access=access))
+        for digest in sorted(
+            {capture for citation in index.citations for capture in citation.capture_digests}
+        )
+    }
 
 
 def _publish_manifest(
@@ -480,9 +501,10 @@ def service_resolve_playbill_coverage(
 
     coordinate = _resolve_coordinate(instance, at)
     index = build_accepted_evidence_index_v2(instance, at=coordinate)
+    envelopes = _capture_envelopes(instance, index=index)
     overlay = build_overlay(
         observations,
-        wanted=_materialized_wanted_selections(instance, index=index),
+        wanted=_materialized_wanted_selections(instance, index=index, envelopes=envelopes),
         budget=scan_budget,
     )
     access_profile = coverage_access_profile()
@@ -506,9 +528,9 @@ def service_resolve_playbill_coverage(
         access=access_profile,
         manifest=manifest,
         window_observations=_citation_window_observations(
-            instance,
             index=index,
             observations=observations,
+            envelopes=envelopes,
         ),
     )
 

@@ -511,8 +511,12 @@ def _coverage_v3_fields(
         notes.add("coverage_occurrence_ambiguous")
     if span.get("omitted_card_count", 0):
         notes.add("coverage_cards_omitted")
-    cards = span.get("cards", [])
-    if not isinstance(cards, list) or len(cards) > MAX_PROJECTION_CARDS_PER_SOURCE:
+    raw_cards = span.get("cards", [])
+    cards_clipped = not isinstance(raw_cards, list) or (
+        len(raw_cards) > MAX_PROJECTION_CARDS_PER_SOURCE
+    )
+    cards = raw_cards
+    if cards_clipped:
         notes.add("coverage_card_limit_exceeded")
         cards = []
 
@@ -550,6 +554,56 @@ def _coverage_v3_fields(
         proof_previous = proofs.setdefault((digest, length), proof_value)
         if proof_previous != proof_value:
             notes.add("coverage_proof_invalid")
+    if cards_clipped:
+        proofs.clear()
+
+    skipped_occurrences: dict[tuple[str, int], set[str]] = {}
+    forced_drops: set[tuple[str, int]] = set()
+
+    def discard_proof_for_skipped_card(
+        card: Mapping[str, object] | None,
+        *,
+        force: bool = False,
+    ) -> None:
+        """A proof may survive only beside a complete occurrence enumeration."""
+
+        if card is None:
+            proofs.clear()
+            return
+        match_state = card.get("match_state")
+        if match_state not in {"exact", "candidate"}:
+            return
+        digest = card.get("expected_commitment_digest")
+        overlay = card.get("line_overlay")
+        if not isinstance(digest, str) or not isinstance(overlay, Mapping):
+            proofs.clear()
+            return
+        try:
+            Sha256Value.from_tagged(digest)
+        except ValueError:
+            proofs.clear()
+            return
+        start, end = overlay.get("start_byte"), overlay.get("end_byte")
+        observed_digest = card.get("observed_commitment_digest")
+        identity = card.get("occurrence_identity_digest")
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or not 0 <= start <= end <= len(content)
+            or not isinstance(observed_digest, str)
+            or observed_digest != "sha256:" + hashlib.sha256(content[start:end]).hexdigest()
+            or not isinstance(identity, str)
+        ):
+            for key in tuple(proofs):
+                if key[0] == digest:
+                    proofs.pop(key)
+            return
+        pair = (digest, end - start)
+        skipped_occurrences.setdefault(pair, set()).add(identity)
+        if force:
+            forced_drops.add(pair)
 
     windows: dict[tuple[str, int, int], dict[str, object]] = {}
     raw_windows = span.get("citation_window_observations", [])
@@ -606,23 +660,28 @@ def _coverage_v3_fields(
     for card in cards:
         if not isinstance(card, Mapping):
             notes.add("coverage_card_invalid")
+            discard_proof_for_skipped_card(None)
             continue
         observed_source = card.get("observed_source")
         accepted_source = card.get("accepted_source")
         if observed_source != expected_source:
             notes.add("coverage_source_mismatch")
+            discard_proof_for_skipped_card(card)
             continue
         if accepted_source != expected_source:
             notes.add("coverage_source_mismatch")
+            discard_proof_for_skipped_card(card)
             continue
         expected_digest = card.get("expected_commitment_digest")
         if not isinstance(expected_digest, str):
             notes.add("coverage_card_invalid")
+            discard_proof_for_skipped_card(card)
             continue
         try:
             Sha256Value.from_tagged(expected_digest)
         except ValueError:
             notes.add("coverage_card_invalid")
+            discard_proof_for_skipped_card(card)
             continue
         if card.get("match_state") not in {"exact", "candidate"}:
             continue
@@ -635,6 +694,7 @@ def _coverage_v3_fields(
             or not isinstance(identity, str)
         ):
             notes.add("coverage_occurrence_invalid")
+            discard_proof_for_skipped_card(card)
             continue
         start, end = overlay.get("start_byte"), overlay.get("end_byte")
         if (
@@ -646,6 +706,7 @@ def _coverage_v3_fields(
             or observed_digest != "sha256:" + hashlib.sha256(content[start:end]).hexdigest()
         ):
             notes.add("coverage_occurrence_invalid")
+            discard_proof_for_skipped_card(card)
             continue
         ordinal = next(
             (
@@ -666,6 +727,7 @@ def _coverage_v3_fields(
         )
         if ordinal is None:
             notes.add("coverage_occurrence_ambiguous")
+            discard_proof_for_skipped_card(card)
             continue
         if (observed_digest, end - start) not in proofs:
             notes.add(
@@ -686,8 +748,21 @@ def _coverage_v3_fields(
         occurrence_previous = occurrences.get(identity)
         if occurrence_previous is not None and occurrence_previous != occurrence:
             notes.add("coverage_occurrence_ambiguous")
+            discard_proof_for_skipped_card(card, force=True)
             continue
         occurrences[identity] = occurrence
+    for pair, identities in skipped_occurrences.items():
+        if pair in forced_drops or not identities.issubset(occurrences):
+            proofs.pop(pair, None)
+    occurrences = {
+        identity: occurrence
+        for identity, occurrence in occurrences.items()
+        if (
+            cast(str, occurrence["observed_commitment_digest"]),
+            cast(int, occurrence["byte_length"]),
+        )
+        in proofs
+    }
     return (
         sorted(
             occurrences.values(),

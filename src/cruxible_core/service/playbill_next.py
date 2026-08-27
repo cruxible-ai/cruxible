@@ -975,8 +975,7 @@ def _source_selection_span(envelope: object) -> tuple[int, int] | None:
 
     source = getattr(envelope, "source", None)
     if not isinstance(source, ExternalSourceReferenceV1):
-        byte_length = getattr(getattr(envelope, "commitment", None), "byte_length", None)
-        return (0, byte_length) if isinstance(byte_length, int) else None
+        return None
     selector = source.selector
     if not isinstance(selector, Mapping):
         return None
@@ -1695,7 +1694,7 @@ def _workspace_items(
                     ),
                 )
             )
-    if observation.drift_observations is not None:
+    if observation.drift_observations is not None and access_profile.permits("instance"):
         domains.append("workspace_sources")
         commitments = _citation_commitments(
             instance,
@@ -1719,7 +1718,7 @@ def _workspace_items(
                     observed_window_digest=drift.observed_commitment_digest,
                 )
             )
-    elif observation.source_observations is not None:
+    elif observation.source_observations is not None and access_profile.permits("instance"):
         domains.append("workspace_sources")
         observed = {source.source_id: source for source in observation.source_observations}
         commitments = _citation_commitments(
