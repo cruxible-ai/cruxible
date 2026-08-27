@@ -484,7 +484,10 @@ def _row(
         AuditEvidenceRefV1(
             kind="consumption_aggregate",
             identity=row.accepted.claim.identity.qualified,
-            facts={"qualifying_touch_count": qualifying_consumption_touch_count},
+            facts={
+                "qualifying_touch_count": qualifying_consumption_touch_count,
+                "fold": "audit_reader_capped_v1",
+            },
         ),
     ]
     refs.extend(

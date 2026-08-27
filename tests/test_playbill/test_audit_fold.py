@@ -314,6 +314,16 @@ def test_audit_caps_self_heating_without_changing_receipts_or_other_consumers(
     first = service_playbill_audit(instance, request=_request(), actor_context=_actor())
     second = service_playbill_audit(instance, request=_request(), actor_context=_actor())
 
+    consumption_refs = [
+        ref
+        for row in first.rows
+        for ref in row.evidence_refs
+        if ref.kind == "consumption_aggregate"
+    ]
+    assert consumption_refs, "audit rows must carry the consumption evidence ref"
+    for ref in consumption_refs:
+        assert ref.facts["fold"] == "audit_reader_capped_v1"
+
     row = next(item for item in first.rows if item.claim_identity == claim.claim.identity)
     assert row.factors.qualifying_consumption_touch_count == 4
     assert first.model_dump(mode="json") == second.model_dump(mode="json")
