@@ -72,7 +72,7 @@ class ClaimAttestationConsequenceRuleV1(_StrictClaimTypeModel):
     )
     rule_id: str
     stance: Literal["unsure", "contradict"]
-    minimum_independent_control_components: int = Field(ge=2)
+    minimum_independent_control_components: int = Field(ge=0)
     consequence: Literal["next_claim_attestation_threshold"] = "next_claim_attestation_threshold"
     require_current: Literal[True] = True
 

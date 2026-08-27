@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -57,6 +58,8 @@ def _verified(
     *,
     suffix: str,
     control_domain: str,
+    principal_name: str | None = None,
+    signer_kind: Literal["Principal", "Provider"] = "Principal",
     observed_at: datetime = EVALUATION_TIME - timedelta(minutes=5),
     valid_until: datetime | None = None,
     subject_content_digest: str | None = None,
@@ -73,7 +76,10 @@ def _verified(
         object_content_digest=claim.backing.referent_context.object_content_digest,
         claim_statement_digest=claim_statement_digest(claim.statement).tagged,
         stance="unsure",
-        provider_or_principal=ArtifactIdentity(kind="Principal", name=f"reviewer-{suffix}"),
+        provider_or_principal=ArtifactIdentity(
+            kind=signer_kind,
+            name=principal_name or f"reviewer-{suffix}",
+        ),
         signing_key_id="sha256:" + suffix * 64,
         capture_digests=(),
         observed_at=observed_at,
@@ -82,7 +88,9 @@ def _verified(
     return VerifiedClaimAttestationV1(
         attestation_digest="sha256:" + suffix * 64,
         statement=statement,
-        attestation_grade="verified_principal",
+        attestation_grade=(
+            "verified_principal" if signer_kind == "Principal" else "verified_provider"
+        ),
         control_domain=control_domain,
         coverage="exact_subject",
         current=True,
@@ -93,6 +101,7 @@ def threshold_world(
     root: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
+    minimum: int = 2,
     attestation_mutator=None,  # type: ignore[no-untyped-def]
 ):
     instance, owner = initialize_local(root)
@@ -105,7 +114,7 @@ def threshold_world(
                     ClaimAttestationConsequenceRuleV1(
                         rule_id="two-independent-unsure",
                         stance="unsure",
-                        minimum_independent_control_components=2,
+                        minimum_independent_control_components=minimum,
                     ),
                 )
             ),
@@ -173,7 +182,7 @@ def _rows(instance) -> tuple:  # type: ignore[no-untyped-def]
     )
 
 
-def test_two_independent_current_unsure_components_emit_one_deterministic_queue_row(
+def test_two_distinct_current_principals_emit_one_deterministic_queue_row(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -211,15 +220,39 @@ def test_two_independent_current_unsure_components_emit_one_deterministic_queue_
     )
 
 
-@pytest.mark.parametrize("case", ["correlated", "expired", "shell_stale", "future", "below"])
+@pytest.mark.parametrize(
+    "case", ["duplicate_principal", "provider", "expired", "shell_stale", "future", "below"]
+)
 def test_nonqualifying_attestation_sets_are_silent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     case: str,
 ) -> None:
     def mutate(instance, claim, items):  # type: ignore[no-untyped-def]
-        if case == "correlated":
-            return (items[0], items[1].model_copy(update={"control_domain": "independent-a"}))
+        if case == "duplicate_principal":
+            return (
+                items[0],
+                items[1].model_copy(
+                    update={
+                        "statement": items[1].statement.model_copy(
+                            update={
+                                "provider_or_principal": items[0].statement.provider_or_principal
+                            }
+                        )
+                    }
+                ),
+            )
+        if case == "provider":
+            return (
+                items[0],
+                _verified(
+                    instance,
+                    claim,
+                    suffix="b",
+                    control_domain="independent-b",
+                    signer_kind="Provider",
+                ),
+            )
         if case == "expired":
             return (
                 items[0],
@@ -262,3 +295,27 @@ def test_nonqualifying_attestation_sets_are_silent(
     )
 
     assert _rows(instance) == ()
+
+
+@pytest.mark.parametrize(
+    ("minimum", "attestation_count", "expected_rows"),
+    ((0, 0, 1), (1, 1, 1), (2, 1, 0), (2, 2, 1)),
+)
+def test_thresholds_zero_one_and_two_count_distinct_principals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    minimum: int,
+    attestation_count: int,
+    expected_rows: int,
+) -> None:
+    instance, _owner, _claim = threshold_world(
+        tmp_path,
+        monkeypatch,
+        minimum=minimum,
+        attestation_mutator=lambda _instance, _claim, items: items[:attestation_count],
+    )
+
+    rows = _rows(instance)
+    assert len(rows) == expected_rows
+    if rows:
+        assert rows[0].detail["independent_control_component_count"] == attestation_count

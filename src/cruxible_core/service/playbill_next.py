@@ -31,7 +31,6 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResultV2,
-    evidence_control_components,
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
@@ -87,7 +86,6 @@ from cruxible_core.service.playbill_claims import (
     service_list_playbill_claims,
 )
 from cruxible_core.service.playbill_evidence import (
-    accepted_claim_providers,
     current_verified_claim_attestations,
     service_evaluate_playbill_claim_verdict,
 )
@@ -653,7 +651,6 @@ def _claim_attestation_threshold_items(
         compiler_digest=coordinate.compiler_digest,
     )
     tree = instance.tree_at(coordinate.git_oid)
-    providers = accepted_claim_providers(tree)
     claim_types: dict[str, ClaimType] = {}
     items: list[PlaybillNextItemV1] = []
     for claim in sorted(claims, key=lambda item: item.identity.qualified.encode("utf-8")):
@@ -681,6 +678,8 @@ def _claim_attestation_threshold_items(
                 item
                 for item in current
                 if item.current
+                and item.attestation_grade == "verified_principal"
+                and item.statement.provider_or_principal.kind == "Principal"
                 and item.statement.claim_statement_digest
                 == claim_statement_digest(claim.statement).tagged
                 and item.statement.stance == rule.stance
@@ -690,8 +689,10 @@ def _claim_attestation_threshold_items(
                     or evaluation_time < item.statement.valid_until
                 )
             )
-            components = evidence_control_components((), matching, providers=providers)
-            if len(components) < rule.minimum_independent_control_components:
+            principal_identities = frozenset(
+                item.statement.provider_or_principal.qualified for item in matching
+            )
+            if len(principal_identities) < rule.minimum_independent_control_components:
                 continue
             attestation_digests = tuple(
                 sorted(
@@ -719,7 +720,7 @@ def _claim_attestation_threshold_items(
                         "claim_type_digest": claim_type_digest(claim_type).tagged,
                         "rule_id": rule.rule_id,
                         "stance": rule.stance,
-                        "independent_control_component_count": len(components),
+                        "independent_control_component_count": len(principal_identities),
                         "minimum_independent_control_components": (
                             rule.minimum_independent_control_components
                         ),
