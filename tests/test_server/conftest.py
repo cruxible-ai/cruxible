@@ -36,13 +36,24 @@ def playbill_http(
         authority_roles=("owner",),
         forbidden_roots=(managed,),
     )
+    reviewer = generate_client_principal_key(
+        tmp_path / "reviewer-custody",
+        principal_id="reviewer",
+        authority_roles=("reviewer",),
+        forbidden_roots=(managed,),
+    )
     with TestClient(create_app()) as client:
         initialized = client.post(
             f"/api/v1/{instance_id}/playbill/init",
-            json={"principals": [owner.principal.model_dump(mode="json")]},
+            json={
+                "principals": [
+                    owner.principal.model_dump(mode="json"),
+                    reviewer.principal.model_dump(mode="json"),
+                ]
+            },
         )
         assert initialized.status_code == 200, initialized.text
-        yield client, instance_id, owner.private_key_path
+        yield client, instance_id, reviewer.private_key_path
     get_playbill_manager().clear()
     reset_registry()
     reset_permissions()

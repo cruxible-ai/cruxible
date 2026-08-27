@@ -24,7 +24,7 @@ from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _sh
 
 
 def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Path) -> None:
-    instance, owner, _reviewer = _instance(tmp_path)
+    instance, _owner, reviewer = _instance(tmp_path)
     body = service_store_playbill_body(instance, content=b"# Playbill\n\nGoverned prose.\n")
     proposed = service_propose_playbill_document(
         instance,
@@ -69,17 +69,17 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Pat
     challenge = service_prepare_playbill_approval(
         instance,
         proposal_id=proposal_id,
-        signer_id="owner",
-        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        signer_id="reviewer",
+        access=BodyAccessContext(principal_id="reviewer", can_read_body=True),
     )
     serialized = challenge.model_dump_json()
-    assert str(owner.private_key_path) not in serialized
+    assert str(reviewer.private_key_path) not in serialized
     assert challenge.statement.payload_digest == review.candidate_digest
     assert challenge.statement.signing_semantic_root == review.parent_semantic_root
 
     signer = LocalEd25519ApprovalSigner.open(
-        signer_id="owner",
-        private_key_path=owner.private_key_path,
+        signer_id="reviewer",
+        private_key_path=reviewer.private_key_path,
         expected_public_key=challenge.signer_principal.public_key,
         forbidden_roots=(instance.root, tmp_path / "workspace"),
     )
@@ -90,7 +90,7 @@ def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Pat
         attestation=attestation,
         authenticated_submitter="bearer-owner",
     )
-    assert receipt.signer_id == "owner"
+    assert receipt.signer_id == "reviewer"
     assert receipt.submitted_by == "bearer-owner"
 
 

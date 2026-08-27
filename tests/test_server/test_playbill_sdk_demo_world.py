@@ -129,12 +129,12 @@ def _approve_and_activate(
 ) -> None:
     challenge_response = client.post(
         f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
-        json={"signer_id": "operator"},
+        json={"signer_id": "reviewer"},
     )
     assert challenge_response.status_code == 200, challenge_response.text
     challenge = challenge_response.json()
     signer = LocalEd25519ApprovalSigner.open(
-        signer_id="operator",
+        signer_id="reviewer",
         private_key_path=private_key_path,
         expected_public_key=challenge["signer_principal"]["public_key"],
         forbidden_roots=(),

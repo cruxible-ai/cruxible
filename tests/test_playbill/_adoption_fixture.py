@@ -118,6 +118,7 @@ from cruxible_core.playbill.settlement import (
     render_change_set,
     render_generation_descriptor,
 )
+from tests.test_playbill._support import client_material
 
 OWNER_AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
 SUBJECT_KIND = "project.work_item"
@@ -159,7 +160,7 @@ class AdoptionFixtureProfile:
             + self.seed_claims
             + self.generations * self.claims_per_generation
             + 1  # the direct self-asserted capture contract
-            + 2  # the daemon and owner principal records
+            + 3  # the daemon, owner, and independent reviewer principal records
         )
 
 
@@ -401,10 +402,12 @@ class _Builder:
         instance: PlaybillInstance,
         owner: GeneratedKeyMaterial,
         *,
+        approver: GeneratedKeyMaterial | None = None,
         checkpoint_interval: int = DEFAULT_CHECKPOINT_INTERVAL,
     ) -> None:
         self.instance = instance
         self.owner = owner
+        self.approver = approver or client_material(instance.root.parent, instance)
         self.base = instance.accepted_coordinate()
         self.tree = dict(instance.tree_at(self.base.git_oid))
         self.sequence = 0
@@ -416,12 +419,12 @@ class _Builder:
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
         private = serialization.load_ssh_private_key(
-            self.owner.private_key_path.read_bytes(),
+            self.approver.private_key_path.read_bytes(),
             password=None,
         )
         assert isinstance(private, Ed25519PrivateKey)
         statement = ApprovalStatement(
-            signer_id="owner",
+            signer_id=self.approver.principal.principal_id,
             signing_semantic_root=self.base.semantic_root,
             payload_digest=candidate_digest,
         )
@@ -536,6 +539,18 @@ def _existing_owner(root: Path, instance: PlaybillInstance) -> GeneratedKeyMater
     )
 
 
+def _existing_reviewer(root: Path, instance: PlaybillInstance) -> GeneratedKeyMaterial:
+    """Rebind the independent approval key a previous build left in custody."""
+
+    custody = root / "reviewer-custody"
+    principal = instance.accepted_history()[-1].principals.require_active("reviewer")
+    return GeneratedKeyMaterial(
+        principal=principal,
+        private_key_path=custody / "reviewer.ed25519",
+        public_key_path=custody / "reviewer.ed25519.pub",
+    )
+
+
 def build_fixture(
     root: Path,
     profile: AdoptionFixtureProfile,
@@ -562,7 +577,13 @@ def build_fixture(
         )
         instance = PlaybillInstance.open(managed_root, trust_root=trust_root)
         owner = _existing_owner(root, instance)
-        builder = _Builder(instance, owner, checkpoint_interval=profile.checkpoint_interval)
+        reviewer = _existing_reviewer(root, instance)
+        builder = _Builder(
+            instance,
+            owner,
+            approver=reviewer,
+            checkpoint_interval=profile.checkpoint_interval,
+        )
         builder.sequence = instance.accepted_history()[-1].sequence
     else:
         owner = generate_client_principal_key(
@@ -571,10 +592,16 @@ def build_fixture(
             authority_roles=("owner",),
             forbidden_roots=(workspace, managed_root),
         )
+        reviewer = generate_client_principal_key(
+            root / "reviewer-custody",
+            principal_id="reviewer",
+            authority_roles=("reviewer",),
+            forbidden_roots=(workspace, managed_root),
+        )
         instance = PlaybillInstance.initialize(
             managed_root,
             instance_id=f"inst_adoption_{profile.name.replace('-', '_')}",
-            client_principals=(owner.principal,),
+            client_principals=(owner.principal, reviewer.principal),
             workspace_roots=(workspace,),
             timestamp=BOOTSTRAP_TIMESTAMP,
         )
@@ -585,7 +612,12 @@ def build_fixture(
             json.dumps(instance.trust_root.model_dump(mode="json")),
             encoding="utf-8",
         )
-        builder = _Builder(instance, owner, checkpoint_interval=profile.checkpoint_interval)
+        builder = _Builder(
+            instance,
+            owner,
+            approver=reviewer,
+            checkpoint_interval=profile.checkpoint_interval,
+        )
     builder.timings.record("initialize", time.monotonic() - started)
 
     subjects = [_subject(index) for index in range(profile.subjects)]

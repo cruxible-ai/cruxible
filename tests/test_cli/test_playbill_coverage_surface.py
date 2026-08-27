@@ -45,7 +45,6 @@ from cruxible_core.cli.main import cli
 from cruxible_core.playbill.coverage.render import BATCH_SUMMARY_PREFIX
 from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
 from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
-    SIGNER_ID,
     _Cli,
     _proposal_id,
     _write,
@@ -80,14 +79,7 @@ COPY_SOURCE = f"external:{COPY_IDENTITY}"
 
 def _bootstrap(cruxible: _Cli, tmp_path: Path) -> None:
     cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
-    cruxible.json(
-        "playbill",
-        "init",
-        "--key-dir",
-        str(tmp_path / "custody"),
-        "--principal-id",
-        SIGNER_ID,
-    )
+    cruxible.bootstrap(tmp_path)
 
 
 def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:

@@ -278,7 +278,7 @@ def test_claim_type_v4_commits_a_canonical_attestation_consequence_policy() -> N
     assert claim_type_digest(successor).tagged != claim_type_digest(original).tagged
 
 
-def test_claim_type_v4_policy_rules_are_nonempty_sorted_unique_and_thresholded() -> None:
+def test_claim_type_v4_policy_rules_are_nonempty_sorted_unique_and_nonnegative() -> None:
     rule = ClaimAttestationConsequenceRuleV1(
         rule_id="z-rule",
         stance="contradict",
@@ -286,11 +286,19 @@ def test_claim_type_v4_policy_rules_are_nonempty_sorted_unique_and_thresholded()
     )
     with pytest.raises(ValidationError, match="at least 1"):
         ClaimAttestationConsequencePolicyV1(rules=())
-    with pytest.raises(ValidationError, match="greater than or equal to 2"):
+    assert (
+        ClaimAttestationConsequenceRuleV1(
+            rule_id="zero-threshold",
+            stance="unsure",
+            minimum_independent_control_components=0,
+        ).minimum_independent_control_components
+        == 0
+    )
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
         ClaimAttestationConsequenceRuleV1(
             rule_id="minimum",
             stance="unsure",
-            minimum_independent_control_components=1,
+            minimum_independent_control_components=-1,
         )
     with pytest.raises(ValidationError, match="sorted and unique"):
         ClaimAttestationConsequencePolicyV1(

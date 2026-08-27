@@ -37,6 +37,7 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.test_playbill._support import client_material
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_procedures import (
     AUTHORITY as PROCEDURE_AUTHORITY,
@@ -82,7 +83,7 @@ def _instance_with_procedure(tmp_path: Path):
     assert submitted.status.proposal_id is not None
     assert submitted.status.candidate_digest is not None
     approval = _sign(
-        owner,
+        client_material(instance.root.parent, instance),
         submitted.status.candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )
@@ -90,7 +91,7 @@ def _instance_with_procedure(tmp_path: Path):
         instance,
         proposal_id=submitted.status.proposal_id,
         attestation=approval.attestation,
-        authenticated_submitter="owner",
+        authenticated_submitter="reviewer",
     )
     service_activate_playbill_proposal(instance, proposal_id=submitted.status.proposal_id)
     return instance

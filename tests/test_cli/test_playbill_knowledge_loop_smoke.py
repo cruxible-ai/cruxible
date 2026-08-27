@@ -41,7 +41,9 @@ from tests.test_playbill._knowledge_loop_support import (
 )
 from tests.test_playbill.test_claims import _claim_type
 
-SIGNER_ID = "operator"
+CREATOR_ID = "operator"
+RECOVERY_ID = "recovery"
+SIGNER_ID = "reviewer"
 
 
 class _Cli:
@@ -50,6 +52,8 @@ class _Cli:
     def __init__(self, runner: CliRunner, key_dir: Path) -> None:
         self._runner = runner
         self.private_key = key_dir / f"{SIGNER_ID}.ed25519"
+        self.creator_private_key = key_dir / f"{CREATOR_ID}.ed25519"
+        self.recovery_private_key = key_dir / f"{RECOVERY_ID}.ed25519"
 
     def run(self, *args: str) -> Result:
         result = self._runner.invoke(cli, list(args))
@@ -77,6 +81,57 @@ class _Cli:
         activated = self.json("playbill", "proposal", "activate", proposal_id)
         assert activated["status"] == "accepted", activated
         return activated
+
+    def bootstrap(self, tmp_path: Path) -> dict[str, Any]:
+        """Bootstrap a constructible world and register an ordinary approver."""
+
+        custody = tmp_path / "custody"
+        recovery_custody = tmp_path / "recovery-custody"
+        initialized = self.json(
+            "playbill",
+            "init",
+            "--key-dir",
+            str(custody),
+            "--principal-id",
+            CREATOR_ID,
+            "--recovery-key-dir",
+            str(recovery_custody),
+            "--recovery-principal-id",
+            RECOVERY_ID,
+        )
+        self.recovery_private_key = recovery_custody / f"{RECOVERY_ID}.ed25519"
+        reviewer = self.json(
+            "playbill",
+            "principal",
+            "add",
+            SIGNER_ID,
+            "--role",
+            "reviewer",
+            "--key-dir",
+            str(custody),
+            "--name",
+            "bootstrap-reviewer",
+        )
+        proposal_id = _proposal_id(reviewer)
+        for signer_id, key_path in (
+            (CREATOR_ID, self.creator_private_key),
+            (RECOVERY_ID, self.recovery_private_key),
+        ):
+            self.run(
+                "playbill",
+                "proposal",
+                "approve",
+                proposal_id,
+                "--signer-id",
+                signer_id,
+                "--key",
+                str(key_path),
+                "--yes",
+                "--json",
+            )
+        activated = self.json("playbill", "proposal", "activate", proposal_id)
+        assert activated["status"] == "accepted", activated
+        return initialized
 
 
 def _write(path: Path, payload: Any) -> str:
@@ -143,14 +198,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     #    later command names neither the daemon nor the instance.
     host = cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
     assert host["status"] == "created"
-    initialized = cruxible.json(
-        "playbill",
-        "init",
-        "--key-dir",
-        str(tmp_path / "custody"),
-        "--principal-id",
-        SIGNER_ID,
-    )
+    initialized = cruxible.bootstrap(tmp_path)
     assert initialized["instance_id"] == host["instance_id"]
     assert cruxible.private_key.is_file()
 
@@ -322,14 +370,7 @@ def test_cli_floor_export_refuses_to_overwrite_a_non_empty_directory(
 ) -> None:
     cruxible = served_cli
     cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
-    cruxible.json(
-        "playbill",
-        "init",
-        "--key-dir",
-        str(tmp_path / "custody"),
-        "--principal-id",
-        SIGNER_ID,
-    )
+    cruxible.bootstrap(tmp_path)
 
     floor = tmp_path / "floor"
     floor.mkdir()
@@ -357,14 +398,7 @@ def test_cli_batch_propose_settles_every_claim_in_one_generation(
 
     cruxible = served_cli
     cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
-    cruxible.json(
-        "playbill",
-        "init",
-        "--key-dir",
-        str(tmp_path / "custody"),
-        "--principal-id",
-        SIGNER_ID,
-    )
+    cruxible.bootstrap(tmp_path)
     proposed = cruxible.json(
         "playbill",
         "claim-type",
@@ -405,4 +439,4 @@ def test_cli_batch_propose_settles_every_claim_in_one_generation(
     }
     for authored in batch["claims"]:
         history = cruxible.json("playbill", "claim", "history", str(authored["claim_identity"]))
-        assert [entry["sequence"] for entry in history["entries"]] == [2]
+        assert [entry["sequence"] for entry in history["entries"]] == [3]

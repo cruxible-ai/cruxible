@@ -607,7 +607,9 @@ def test_decision_only_claim_type_completes_two_successions_without_predecessor_
         candidate = result.proposal.proposal.candidate
         assert candidate is not None
         approval = _sign(
-            owner, candidate.candidate_digest, instance.accepted_coordinate().semantic_root
+            client_material(instance.root.parent, instance),
+            candidate.candidate_digest,
+            instance.accepted_coordinate().semantic_root,
         )
         service_submit_playbill_approval(
             instance,
@@ -699,7 +701,7 @@ def test_claim_type_v3_to_v4_migration_preserves_freshness_and_accepts_policy(
     v3_candidate = v3_result.proposal.proposal.candidate
     assert v3_candidate is not None
     v3_approval = _sign(
-        owner,
+        client_material(instance.root.parent, instance),
         v3_candidate.candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )
@@ -742,7 +744,7 @@ def test_claim_type_v3_to_v4_migration_preserves_freshness_and_accepts_policy(
     v4_candidate = v4_result.proposal.proposal.candidate
     assert v4_candidate is not None
     v4_approval = _sign(
-        owner,
+        client_material(instance.root.parent, instance),
         v4_candidate.candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )
@@ -831,7 +833,7 @@ def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
     candidate = result.proposal.proposal.candidate
     assert candidate is not None
     approval = _sign(
-        owner,
+        client_material(instance.root.parent, instance),
         candidate.candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )

@@ -50,7 +50,7 @@ from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
 from tests.test_playbill.test_claims import _claim_type, _subject
@@ -157,8 +157,9 @@ def _activate(
     proposal_id: str,
     candidate_digest: str,
 ) -> None:
+    approver = client_material(instance.root.parent, instance)
     approval = _sign(
-        owner,
+        approver,
         candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )
@@ -166,7 +167,7 @@ def _activate(
         instance,
         proposal_id=proposal_id,
         attestation=approval.attestation,
-        authenticated_submitter="owner",
+        authenticated_submitter=approver.principal.principal_id,
     )
     activated = service_activate_playbill_proposal(instance, proposal_id=proposal_id)
     assert activated.status == "accepted"

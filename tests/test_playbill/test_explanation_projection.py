@@ -26,18 +26,10 @@ from .test_activation import _candidate, _instance, _sign
 
 
 def _accepted_document(tmp_path: Path):
-    instance, owner, reviewer = _instance(tmp_path)
+    instance, _owner, reviewer = _instance(tmp_path)
     body = b"private body phrase that must not enter explanation facts"
     base, tree, candidate = _candidate(instance, body_content=body)
-    approvals = tuple(
-        sorted(
-            (
-                _sign(owner, candidate.candidate_digest, base.semantic_root),
-                _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-            ),
-            key=lambda item: item.attestation.signer_id,
-        )
-    )
+    approvals = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
     bundle = prepare_generation(
         instance._ledger,
         base=base,
@@ -98,7 +90,7 @@ def test_accepted_document_emits_composable_exact_proof_facts_without_body_leaka
         "replay_verified",
     }
     attestations = coverage["attestations"]  # type: ignore[index]
-    assert [item["signer_id"] for item in attestations] == ["owner", "reviewer"]
+    assert [item["signer_id"] for item in attestations] == ["reviewer"]
     for item in attestations:
         assert item["attestation_digest"]["$digest"].startswith("sha256:")
         assert item["key_history_ref"]["principal_path"]["$path"] == (

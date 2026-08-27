@@ -43,8 +43,8 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
     activate(instance, owner, accepted, sequence=3)
     refused = service_propose_playbill_claim(
         instance,
-        authoring=authoring("wi-45", "ready", with_claim_type=False),
-        actor_id="unregistered",
+        authoring=authoring("wi-45", "not-a-declared-status", with_claim_type=False),
+        actor_id="owner",
         proposal_name="refused",
         timestamp=TIMESTAMP,
     )

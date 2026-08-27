@@ -194,7 +194,13 @@ def accept_proposal(
         base=base,
         candidate_tree=instance.proposal_tree(evaluated_oid),
         candidate=candidate,
-        approvals=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=sequence,
     )

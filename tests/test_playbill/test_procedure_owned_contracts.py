@@ -62,7 +62,7 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 
 READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
@@ -286,7 +286,13 @@ def _activate_procedure(instance, owner, procedure, *, sequence: int, timestamp:
         base=base,
         candidate_tree=instance.proposal_tree(result.evaluation.evaluated_tree_oid),
         candidate=result.candidate,
-        approvals=(_sign(owner, result.candidate.candidate_digest, base.semantic_root),),
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                result.candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=sequence,
     )

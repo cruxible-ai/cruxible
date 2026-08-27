@@ -64,13 +64,13 @@ def test_http_document_lifecycle_and_explanation(
 
     challenge_response = client.post(
         f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
-        json={"signer_id": "operator", "include_body": True},
+        json={"signer_id": "reviewer", "include_body": True},
     )
     assert challenge_response.status_code == 200, challenge_response.text
     challenge = challenge_response.json()
     assert "private_key" not in challenge_response.text
     signer = LocalEd25519ApprovalSigner.open(
-        signer_id="operator",
+        signer_id="reviewer",
         private_key_path=private_key_path,
         expected_public_key=challenge["signer_principal"]["public_key"],
         forbidden_roots=(),
@@ -264,10 +264,10 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
     proposal_id = proposed.json()["proposal"]["admission"]["proposal_id"]
     challenge = client.post(
         f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
-        json={"signer_id": "operator"},
+        json={"signer_id": "reviewer"},
     ).json()
     signer = LocalEd25519ApprovalSigner.open(
-        signer_id="operator",
+        signer_id="reviewer",
         private_key_path=private_key_path,
         expected_public_key=challenge["signer_principal"]["public_key"],
         forbidden_roots=(),

@@ -101,9 +101,20 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
         authority_roles=("owner",),
         forbidden_roots=(managed_root,),
     )
+    reviewer = generate_client_principal_key(
+        tmp_path / "reviewer-custody",
+        principal_id="reviewer",
+        authority_roles=("reviewer",),
+        forbidden_roots=(managed_root,),
+    )
     initialized = host_client.post(
         f"/api/v1/{instance_id}/playbill/init",
-        json={"principals": [owner.principal.model_dump(mode="json")]},
+        json={
+            "principals": [
+                owner.principal.model_dump(mode="json"),
+                reviewer.principal.model_dump(mode="json"),
+            ]
+        },
     )
     assert initialized.status_code == 200, initialized.text
     assert initialized.json()["instance_id"] == instance_id
@@ -153,9 +164,20 @@ def test_authenticated_bootstrap_binds_owner_to_credential_identity(
         authority_roles=("owner",),
         forbidden_roots=(managed_root,),
     )
+    reviewer = generate_client_principal_key(
+        tmp_path / "authenticated-reviewer-custody",
+        principal_id="reviewer",
+        authority_roles=("reviewer",),
+        forbidden_roots=(managed_root,),
+    )
     initialized = client.post(
         f"/api/v1/{instance_id}/playbill/init",
-        json={"principals": [owner.principal.model_dump(mode="json")]},
+        json={
+            "principals": [
+                owner.principal.model_dump(mode="json"),
+                reviewer.principal.model_dump(mode="json"),
+            ]
+        },
         headers=admin_headers,
     )
     assert initialized.status_code == 200, initialized.text

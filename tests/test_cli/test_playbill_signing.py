@@ -26,7 +26,7 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    instance, owner, _reviewer = _instance(tmp_path)
+    instance, owner, reviewer = _instance(tmp_path)
     body = service_store_playbill_body(instance, content=b"# Review me\n")
     shell = DocumentShell(
         identity="document:signing-test",
@@ -88,7 +88,7 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
                 instance,
                 proposal_id=selected_proposal_id,
                 attestation=ApprovalAttestation.model_validate(attestation),
-                authenticated_submitter="owner",
+                authenticated_submitter="reviewer",
             )
             return contracts.PlaybillApprovalReceipt.model_validate(receipt.model_dump(mode="json"))
 
@@ -108,9 +108,9 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
             "approve",
             proposal_id,
             "--signer-id",
-            "owner",
+            "reviewer",
             "--key",
-            str(owner.private_key_path),
+            str(reviewer.private_key_path),
             "--yes",
             "--json",
         ],
@@ -123,7 +123,7 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
         proposal.candidate.candidate.parent_semantic_root
     )
     serialized = json.dumps(submitted[0])
-    assert str(owner.private_key_path) not in serialized
+    assert str(reviewer.private_key_path) not in serialized
     assert "private_key" not in serialized
 
 

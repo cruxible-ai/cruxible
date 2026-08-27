@@ -44,7 +44,7 @@ from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_claims import service_get_playbill_claim
 from cruxible_core.service.playbill_coverage import build_accepted_evidence_index_v2
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_claims import _claim, _claim_type, _subject
 
@@ -472,7 +472,13 @@ def _activate(instance, owner, candidate, evaluated_oid, *, sequence: int) -> No
         base=base,
         candidate_tree=instance.proposal_tree(evaluated_oid),
         candidate=candidate,
-        approvals=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=sequence,
     )

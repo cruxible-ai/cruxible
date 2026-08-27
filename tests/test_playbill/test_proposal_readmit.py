@@ -20,7 +20,7 @@ from cruxible_core.playbill.service.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.playbill_proposals import service_readmit_playbill_proposal
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 
 TIMESTAMP = "2026-08-22T12:00:00.000000Z"
@@ -45,12 +45,17 @@ def _shell(document_id: str, body_digest: str, *, title: str) -> DocumentShell:
 def _accept(instance, owner, inspection) -> None:
     candidate = inspection.proposal.candidate
     assert candidate is not None
-    approval = _sign(owner, candidate.candidate_digest, candidate.candidate.parent_semantic_root)
+    approver = client_material(instance.root.parent, instance)
+    approval = _sign(
+        approver,
+        candidate.candidate_digest,
+        candidate.candidate.parent_semantic_root,
+    )
     service_submit_playbill_approval(
         instance,
         proposal_id=inspection.proposal.admission.proposal_id,
         attestation=approval.attestation,
-        authenticated_submitter="owner",
+        authenticated_submitter=approver.principal.principal_id,
     )
     assert (
         service_activate_playbill_proposal(

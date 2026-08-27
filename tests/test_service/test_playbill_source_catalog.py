@@ -47,7 +47,7 @@ def _catalog(entry: SourceCatalogEntry, *, kind: str = "portable") -> SourceCata
 
 
 def test_compile_is_read_only_and_propose_uses_frozen_bytes(tmp_path: Path) -> None:
-    instance, owner, _reviewer = _instance(tmp_path)
+    instance, _owner, reviewer = _instance(tmp_path)
     repository = tmp_path / "authoring"
     source = repository / "specs" / "design.md"
     source.parent.mkdir(parents=True)
@@ -100,7 +100,7 @@ def test_compile_is_read_only_and_propose_uses_frozen_bytes(tmp_path: Path) -> N
     )
 
     approval = _sign(
-        owner,
+        reviewer,
         proposed.candidate.candidate_digest,
         proposed.candidate.candidate.parent_semantic_root,
     )
@@ -146,7 +146,7 @@ def test_compile_is_read_only_and_propose_uses_frozen_bytes(tmp_path: Path) -> N
     ).proposal
     assert second.candidate is not None
     second_approval = _sign(
-        owner,
+        reviewer,
         second.candidate.candidate_digest,
         second.candidate.candidate.parent_semantic_root,
     )

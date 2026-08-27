@@ -123,20 +123,19 @@ def test_service_document_lifecycle_keeps_state_boundaries_explicit(tmp_path: Pa
     assert persisted.proposal == proposal
     candidate = persisted.proposal.candidate
     assert candidate is not None
-    for material in (owner, reviewer):
-        signed = _sign(
-            material,
-            candidate.candidate_digest,
-            candidate.candidate.parent_semantic_root,
-        )
-        receipt = service_submit_playbill_approval(
-            instance,
-            proposal_id=proposal.admission.proposal_id,
-            attestation=signed.attestation,
-            authenticated_submitter="approval-relay",
-        )
-        assert receipt.signer_id == material.principal.principal_id
-        assert receipt.submitted_by == "approval-relay"
+    signed = _sign(
+        reviewer,
+        candidate.candidate_digest,
+        candidate.candidate.parent_semantic_root,
+    )
+    receipt = service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        attestation=signed.attestation,
+        authenticated_submitter="approval-relay",
+    )
+    assert receipt.signer_id == reviewer.principal.principal_id
+    assert receipt.submitted_by == "approval-relay"
 
     activated = service_activate_playbill_proposal(
         instance,
@@ -240,6 +239,17 @@ def test_service_owner_rotation_and_scoped_recovery_use_public_approval_path(
         attestation=rotation_signature.attestation,
         authenticated_submitter="owner",
     )
+    rotation_independent = _sign(
+        recovery,
+        rotation_challenge.statement.payload_digest,
+        rotation_challenge.statement.signing_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=rotated.admission.proposal_id,
+        attestation=rotation_independent.attestation,
+        authenticated_submitter="recovery",
+    )
     service_activate_playbill_proposal(instance, proposal_id=rotated.admission.proposal_id)
     assert (
         next(
@@ -281,6 +291,17 @@ def test_service_owner_rotation_and_scoped_recovery_use_public_approval_path(
         proposal_id=recovered.admission.proposal_id,
         attestation=recovery_signature.attestation,
         authenticated_submitter="recovery",
+    )
+    recovery_independent = _sign(
+        rotated_owner,
+        recovery_challenge.statement.payload_digest,
+        recovery_challenge.statement.signing_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=recovered.admission.proposal_id,
+        attestation=recovery_independent.attestation,
+        authenticated_submitter="owner",
     )
     service_activate_playbill_proposal(instance, proposal_id=recovered.admission.proposal_id)
     assert (

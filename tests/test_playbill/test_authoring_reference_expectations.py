@@ -20,7 +20,7 @@ from cruxible_core.playbill.keys import GeneratedKeyMaterial
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.settlement import ChangeActorBinding
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import (
     TIMESTAMP,
@@ -61,7 +61,13 @@ def _accept_subject_successor(
         base=base,
         candidate_tree=instance.proposal_tree(proposed.evaluation.evaluated_tree_oid),
         candidate=proposed.candidate,
-        approvals=(_sign(owner, proposed.candidate.candidate_digest, base.semantic_root),),
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                proposed.candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=2,
     )

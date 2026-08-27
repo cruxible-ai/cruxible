@@ -23,7 +23,6 @@ from click.testing import CliRunner
 from cruxible_core.cli.main import cli
 from cruxible_core.playbill.native import NATIVE_RENDER_MANIFEST_PATH
 from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
-    SIGNER_ID,
     _claim_authoring,
     _Cli,
     _proposal_id,
@@ -42,14 +41,7 @@ def _seed(cruxible: _Cli, tmp_path: Path) -> None:
     """Bootstrap a served instance and accept the knowledge the render shows."""
 
     cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
-    cruxible.json(
-        "playbill",
-        "init",
-        "--key-dir",
-        str(tmp_path / "custody"),
-        "--principal-id",
-        SIGNER_ID,
-    )
+    cruxible.bootstrap(tmp_path)
     proposed = cruxible.json(
         "playbill",
         "claim-type",

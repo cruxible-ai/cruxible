@@ -96,7 +96,7 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     subject_shell,
 )
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_insertions import (
     _activate as _activate_insertion,
@@ -1025,7 +1025,13 @@ def _document_modified(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         base=base,
         candidate_tree=instance.proposal_tree(evaluated_oid),
         candidate=candidate,
-        approvals=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=2,
     )

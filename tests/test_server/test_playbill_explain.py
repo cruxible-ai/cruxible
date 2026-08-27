@@ -41,10 +41,10 @@ def _accept_document(client: TestClient, instance_id: str, key_path: Path) -> di
     proposal_id = proposal["proposal"]["admission"]["proposal_id"]
     challenge = client.post(
         f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/approval-challenge",
-        json={"signer_id": "operator"},
+        json={"signer_id": "reviewer"},
     ).json()
     signer = LocalEd25519ApprovalSigner.open(
-        signer_id="operator",
+        signer_id="reviewer",
         private_key_path=key_path,
         expected_public_key=challenge["signer_principal"]["public_key"],
         forbidden_roots=(),

@@ -19,13 +19,19 @@ from cruxible_client.contracts.projection_extensions import (
 from cruxible_client.contracts.types import CompilerCoordinate
 
 
-def _coordinate(*, projection_content: str | None = None) -> CompilerCoordinate:
+def _coordinate(
+    *,
+    projection_content: str | None = None,
+    semantic_revision: int | None = None,
+) -> CompilerCoordinate:
     payload: dict[str, object] = {
         "implementation": "python-reference",
         "schema_version": 1,
     }
     if projection_content is not None:
         payload["projection_content"] = projection_content
+    if semantic_revision is not None:
+        payload["semantic_revision"] = semantic_revision
     return CompilerCoordinate(
         rule_digest=f"sha256:{canonical_digest('playbill-compiler-v1', payload)}"
     )
@@ -39,7 +45,10 @@ PC_A2_COMPILER = _coordinate(projection_content="claims-procedures-claim-type-v1
 PC_B_COMPILER = _coordinate(projection_content="claims-procedures-claim-v1")
 PC_C_COMPILER = _coordinate(projection_content="claims-procedures-evidence-v1")
 PC_D_COMPILER = _coordinate(projection_content="claims-procedures-procedure-v1")
-PC_E1_COMPILER = _coordinate(projection_content="claims-procedures-runtime-v1")
+PC_E1_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=2,
+)
 SUPPORTED_COMPILERS = (
     PB_B_COMPILER,
     PB_C_COMPILER,

@@ -419,6 +419,12 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
         authority_roles=("owner",),
         forbidden_roots=(managed,),
     )
+    reviewer = generate_client_principal_key(
+        tmp_path / "reviewer-custody",
+        principal_id="reviewer",
+        authority_roles=("reviewer",),
+        forbidden_roots=(managed,),
+    )
     payload = tmp_path / "claim-flow-a.json"
     payload.write_text(json.dumps(claim_flow_a_example().model_dump(mode="json")))
 
@@ -426,7 +432,12 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
         with TestClient(create_app()) as transport:
             initialized = transport.post(
                 f"/api/v1/{instance_id}/playbill/init",
-                json={"principals": [owner.principal.model_dump(mode="json")]},
+                json={
+                    "principals": [
+                        owner.principal.model_dump(mode="json"),
+                        reviewer.principal.model_dump(mode="json"),
+                    ]
+                },
             )
             assert initialized.status_code == 200, initialized.text
             client = CruxibleClient(base_url="http://cruxible")

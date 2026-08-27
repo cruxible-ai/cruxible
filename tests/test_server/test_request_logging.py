@@ -194,11 +194,22 @@ def test_playbill_write_logs_credential_actor_and_operation(
         authority_roles=("owner",),
         forbidden_roots=(managed_root,),
     )
+    reviewer = generate_client_principal_key(
+        tmp_path / "request-log-reviewer-custody",
+        principal_id="reviewer",
+        authority_roles=("reviewer",),
+        forbidden_roots=(managed_root,),
+    )
     _clear_buffer(request_log_buffer)
 
     response = app_client.post(
         f"/api/v1/{instance_id}/playbill/init",
-        json={"principals": [owner.principal.model_dump(mode="json")]},
+        json={
+            "principals": [
+                owner.principal.model_dump(mode="json"),
+                reviewer.principal.model_dump(mode="json"),
+            ]
+        },
         headers=headers,
     )
 

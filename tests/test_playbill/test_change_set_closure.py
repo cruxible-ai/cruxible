@@ -39,7 +39,7 @@ from cruxible_core.playbill.service.review import (
     render_playbill_proposal_review,
     service_review_playbill_proposal,
 )
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 
 TIMESTAMP = "2026-08-16T14:00:00.000000Z"
@@ -337,12 +337,17 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
         timestamp=TIMESTAMP,
     )
     assert isinstance(initial.candidate, CandidateRecordV3)
-    initial_approval = _sign(owner, initial.candidate.candidate_digest, base.semantic_root)
+    approver = client_material(instance.root.parent, instance)
+    initial_approval = _sign(
+        approver,
+        initial.candidate.candidate_digest,
+        base.semantic_root,
+    )
     service_submit_playbill_approval(
         instance,
         proposal_id=initial.admission.proposal_id,
         attestation=initial_approval.attestation,
-        authenticated_submitter="owner",
+        authenticated_submitter=approver.principal.principal_id,
     )
     assert (
         service_activate_playbill_proposal(

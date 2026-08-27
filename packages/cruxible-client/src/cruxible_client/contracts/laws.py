@@ -31,8 +31,9 @@ def _document_law_coordinate() -> AcceptanceLawCoordinate:
     """Return the reviewed semantic coordinate for the v1 Document law.
 
     The revision is deliberately explicit rather than derived from Python source
-    bytes. Any semantic evaluator change must register a successor coordinate and
-    retain this implementation for historical replay.
+    bytes. G12's unreleased lineage uses the authorized in-place revision-2 re-pin;
+    after the first public release, semantic changes must register a successor
+    coordinate and retain the deployed implementation for historical replay.
     """
 
     digest = typed_digest(
@@ -41,7 +42,7 @@ def _document_law_coordinate() -> AcceptanceLawCoordinate:
         {
             "identifier": DOCUMENT_LAW_IDENTIFIER,
             "artifact_tag": "playbill-document-v1",
-            "semantic_revision": 1,
+            "semantic_revision": 2,
         },
     )
     return AcceptanceLawCoordinate(
@@ -62,7 +63,7 @@ def _principal_lifecycle_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-principal-v1",
-                "semantic_revision": 1,
+                "semantic_revision": 2,
             },
         ).tagged,
     )
@@ -80,7 +81,7 @@ def _subject_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": SUBJECT_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-subject-v1",
-                "semantic_revision": 1,
+                "semantic_revision": 2,
             },
         ).tagged,
     )
@@ -98,7 +99,7 @@ def _claim_type_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": CLAIM_TYPE_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-claim-type-v1",
-                "semantic_revision": 1,
+                "semantic_revision": 2,
             },
         ).tagged,
     )
@@ -116,7 +117,7 @@ def _capture_contract_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": CAPTURE_CONTRACT_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-capture-contract-v1",
-                "semantic_revision": 1,
+                "semantic_revision": 2,
             },
         ).tagged,
     )
@@ -134,7 +135,7 @@ def _claim_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": CLAIM_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-claim-v1",
-                "semantic_revision": 1,
+                "semantic_revision": 2,
             },
         ).tagged,
     )
@@ -152,7 +153,7 @@ def _artifact_law_coordinate(identifier: str, artifact_tag: str) -> AcceptanceLa
             {
                 "identifier": identifier,
                 "artifact_tag": artifact_tag,
-                "semantic_revision": 1,
+                "semantic_revision": 2,
             },
         ).tagged,
     )

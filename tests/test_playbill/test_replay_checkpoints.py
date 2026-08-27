@@ -400,17 +400,9 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(tmp_path: Path)
 
     from .test_activation import _candidate, _instance, _sign
 
-    instance, owner, reviewer = _instance(tmp_path)
+    instance, _owner, reviewer = _instance(tmp_path)
     base, tree, candidate = _candidate(instance)
-    approvals = tuple(
-        sorted(
-            (
-                _sign(owner, candidate.candidate_digest, base.semantic_root),
-                _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-            ),
-            key=lambda item: item.attestation.signer_id,
-        )
-    )
+    approvals = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
     bundle = prepare_generation(
         instance._ledger,
         base=base,

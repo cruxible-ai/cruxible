@@ -33,7 +33,7 @@ from cruxible_core.playbill.settlement import (
     prepare_generation,
     render_change_set,
 )
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 
 TIMESTAMP = "2026-08-16T16:00:00.000000Z"
@@ -82,7 +82,11 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
     )
     assert isinstance(proposal.candidate, CandidateRecordV3)
     candidate = proposal.candidate
-    approval = _sign(owner, candidate.candidate_digest, base.semantic_root)
+    approval = _sign(
+        client_material(instance.root.parent, instance),
+        candidate.candidate_digest,
+        base.semantic_root,
+    )
 
     bundle = prepare_generation(
         instance._ledger,
@@ -134,7 +138,13 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
         base=base,
         candidate_tree=tree,
         candidate=candidate,
-        approval_submissions=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
+        approval_submissions=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=1,
@@ -216,7 +226,13 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
         base=base,
         candidate_tree=tree,
         candidate=candidate,
-        approval_submissions=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
+        approval_submissions=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=1,

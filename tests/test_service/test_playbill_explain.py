@@ -40,18 +40,17 @@ def _accepted(tmp_path: Path):
         source_compilation_digest="sha256:" + "77" * 32,
     ).proposal
     assert proposal.candidate is not None
-    for material in (owner, reviewer):
-        signed = _sign(
-            material,
-            proposal.candidate.candidate_digest,
-            proposal.candidate.candidate.parent_semantic_root,
-        )
-        service_submit_playbill_approval(
-            instance,
-            proposal_id=proposal.admission.proposal_id,
-            attestation=signed.attestation,
-            authenticated_submitter="relay",
-        )
+    signed = _sign(
+        reviewer,
+        proposal.candidate.candidate_digest,
+        proposal.candidate.candidate.parent_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        attestation=signed.attestation,
+        authenticated_submitter="relay",
+    )
     service_activate_playbill_proposal(
         instance,
         proposal_id=proposal.admission.proposal_id,
@@ -80,7 +79,6 @@ def test_summary_and_evidence_preserve_coverage_without_body_leakage(tmp_path: P
     )
     assert "exact_subject" not in str(summary.model_dump(mode="json"))
     assert {item["signer_id"] for item in summary.attestation_coverage["attestations"]} == {  # type: ignore[union-attr]
-        "owner",
         "reviewer",
     }
     assert len(summary.proof_references) == 1

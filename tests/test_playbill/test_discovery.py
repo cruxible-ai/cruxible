@@ -116,7 +116,7 @@ from tests.test_playbill._line_runtime_support import (
 from tests.test_playbill._line_runtime_support import (
     actor as journal_actor,
 )
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_claim_query_engine import (
     NOW,
     claim_fact,
@@ -918,7 +918,13 @@ def _accept(instance, owner, tree: dict[str, bytes]) -> None:
         base=base,
         candidate_tree=instance.proposal_tree(evaluated_oid),
         candidate=candidate,
-        approvals=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=1,
     )

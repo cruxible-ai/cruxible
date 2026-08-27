@@ -41,7 +41,7 @@ from cruxible_core.service.playbill_evidence import (
     service_evaluate_playbill_claim_verdict,
 )
 from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_claims import _claim_type
 from tests.test_playbill.test_direct_claim_authoring import (
@@ -52,12 +52,13 @@ from tests.test_playbill.test_direct_claim_authoring import (
 
 
 def _activate(instance, owner, proposal_id: str, candidate_digest: str) -> None:  # type: ignore[no-untyped-def]
-    approval = _sign(owner, candidate_digest, instance.accepted_coordinate().semantic_root)
+    reviewer = client_material(instance.root.parent, instance)
+    approval = _sign(reviewer, candidate_digest, instance.accepted_coordinate().semantic_root)
     service_submit_playbill_approval(
         instance,
         proposal_id=proposal_id,
         attestation=approval.attestation,
-        authenticated_submitter="owner",
+        authenticated_submitter=reviewer.principal.principal_id,
     )
     activated = service_activate_playbill_proposal(instance, proposal_id=proposal_id)
     assert activated.status == "accepted"
