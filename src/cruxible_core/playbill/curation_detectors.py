@@ -69,6 +69,7 @@ from cruxible_core.playbill.curation_calibration import (
     PROVENANCE_MINIMUM_ACTIVE_WRITING_PRINCIPALS,
     PROVENANCE_MINIMUM_LIVE_SUPPORTED_CLAIMS,
     QUALIFIER_MINIMUM_DISTINCT_SUBJECT_ADDRESSES,
+    RECURRING_CONFLICT_MINIMUM_UNRESOLVED_SLOTS,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.query.backends import ClaimFactRowV1, claim_row_visibility
@@ -260,6 +261,8 @@ def _recurring_conflicts(
     detections: list[CurationDetectionV1] = []
     frozen_coverage = coverage.freeze()
     for predicate in sorted(by_type, key=lambda item: item.encode("utf-8")):
+        if len(by_type[predicate]) < RECURRING_CONFLICT_MINIMUM_UNRESOLVED_SLOTS:
+            continue
         claim_type, type_path, type_digest = types[predicate]
         refs: list[CurationEvidenceRefV1] = [
             _artifact_ref(

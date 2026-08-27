@@ -145,6 +145,38 @@ def test_one_cardinality_conflict_is_type_level_and_same_value_duplicates_are_no
     assert not_detected == ()
 
 
+def test_recurring_conflict_fold_uses_the_published_slot_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = claim_type(PREDICATE, subject_kinds=("project.work_item",))
+    tree = {claim_type_path(PREDICATE): render_claim_type(contract)}
+    first_subject = subject("project.work_item", "wi-42")
+    first_slot = (
+        claim_fact(1, subject_row=first_subject, predicate=PREDICATE, value="ready"),
+        claim_fact(2, subject_row=first_subject, predicate=PREDICATE, value="blocked"),
+    )
+    second_subject = subject("project.work_item", "wi-43")
+    second_slot = (
+        claim_fact(3, subject_row=second_subject, predicate=PREDICATE, value="ready"),
+        claim_fact(4, subject_row=second_subject, predicate=PREDICATE, value="blocked"),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.playbill.curation_detectors.RECURRING_CONFLICT_MINIMUM_UNRESOLVED_SLOTS",
+        2,
+    )
+
+    below, _ = _recurring_conflicts(tree=tree, rows=first_slot, generation=4)
+    at_threshold, _ = _recurring_conflicts(
+        tree=tree,
+        rows=(*first_slot, *second_slot),
+        generation=4,
+    )
+
+    assert below == ()
+    assert len(at_threshold) == 1
+    assert len(tuple(ref for ref in at_threshold[0].evidence_refs if ref.kind == "slot")) == 2
+
+
 def test_qualifier_crystallization_counts_distinct_subject_addresses_only() -> None:
     rows = tuple(
         _with_qualifier(
