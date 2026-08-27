@@ -64,6 +64,10 @@ FORBIDDEN_MODULE_PREFIXES = (
     "cruxible_core.query",
     "cruxible_core.receipt_tree",
     "cruxible_core.workflow",
+    "cruxible_core.provider",
+    "cruxible_core.providers",
+    "cruxible_core.client",
+    "cruxible_core.governance",
     "cruxible_core.config.schema",
     "cruxible_core.service.mutations",
     "cruxible_core.service.execution",
@@ -614,7 +618,18 @@ def test_pc_del1_retired_old_core_families_are_absent() -> None:
     ):
         assert not (CORE / "service" / service_module).exists(), service_module
 
-    for package in ("config", "graph", "procedure", "query", "receipt_tree", "workflow"):
+    for package in (
+        "client",
+        "config",
+        "governance",
+        "graph",
+        "procedure",
+        "provider",
+        "providers",
+        "query",
+        "receipt_tree",
+        "workflow",
+    ):
         root = CORE / package
         assert not any(
             path.is_file() and "__pycache__" not in path.parts for path in root.rglob("*")

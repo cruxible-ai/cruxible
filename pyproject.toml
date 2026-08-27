@@ -50,15 +50,11 @@ mcp = ["mcp>=1.0,<2"]
 # dependencies, so the daemon ships in the default install. Whether that stack
 # should move back out of base deps is a 0.4 packaging question, not something
 # an empty extra can express.
-# Layout-aware PDF parsing (the pdf_to_markdown docling backend) pulls the
-# docling ML stack (~1GB incl. torch); opt in when you need it.
-pdf = ["docling>=2.0"]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
     "ruff==0.15.0",
     "mypy>=1.10",
-    "docling>=2.0",
 ]
 
 [project.scripts]
