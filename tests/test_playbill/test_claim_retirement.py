@@ -114,6 +114,7 @@ def _activate(instance, owner, result: ClaimRetireResultV1) -> None:  # type: ig
         service_activate_playbill_proposal(
             instance,
             proposal_id=proposal.admission.proposal_id,
+            activated_by="owner",
         ).status
         == "accepted"
     )
