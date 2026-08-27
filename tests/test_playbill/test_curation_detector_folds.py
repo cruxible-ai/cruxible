@@ -174,7 +174,7 @@ def test_qualifier_crystallization_counts_distinct_subject_addresses_only() -> N
     assert len({ref.facts["subject"]["artifact_path"] for ref in detected[0].evidence_refs}) == 3  # type: ignore[index]
 
 
-def test_duplicate_statement_fold_counts_lineages_across_history_not_revisions() -> None:
+def test_duplicate_statement_fold_counts_only_simultaneously_live_lineages() -> None:
     subject_row = subject("project.work_item", "wi-42")
     first = claim_fact(1, subject_row=subject_row, predicate=PREDICATE, value="ready")
     second = claim_fact(2, subject_row=subject_row, predicate=PREDICATE, value="ready")
@@ -182,21 +182,35 @@ def test_duplicate_statement_fold_counts_lineages_across_history_not_revisions()
         first.accepted.path: render_claim(first.accepted.claim),
         second.accepted.path: render_claim(second.accepted.claim),
     }
-    fake = SimpleNamespace(
-        accepted_history=lambda: (
-            SimpleNamespace(sequence=1, oid="one"),
-            SimpleNamespace(sequence=2, oid="two"),
-        ),
-        tree_at=lambda _oid: tree,
-    )
+    detected, coverage = _duplicate_statements(tree=tree, generation=2)
 
-    detected, coverage = _duplicate_statements(instance=fake)  # type: ignore[arg-type]
-
-    assert coverage.evaluated_fact_count == 4
+    assert coverage.evaluated_fact_count == 2
     assert len(detected) == 1
-    assert len(detected[0].evidence_refs) == 4
-    assert {ref.generation for ref in detected[0].evidence_refs} == {1, 2}
+    assert len(detected[0].evidence_refs) == 2
+    assert {ref.generation for ref in detected[0].evidence_refs} == {2}
     assert detected[0].detail == {"statement_digest": first.accepted.statement_digest}
+
+
+def test_duplicate_statement_fold_exempts_retired_predecessor_and_live_successor() -> None:
+    subject_row = subject("project.work_item", "wi-42")
+    predecessor = claim_fact(1, subject_row=subject_row, predicate=PREDICATE, value="ready")
+    successor = claim_fact(2, subject_row=subject_row, predicate=PREDICATE, value="ready")
+    retired = predecessor.accepted.claim.model_copy(
+        update={
+            "lifecycle": predecessor.accepted.claim.lifecycle.model_copy(
+                update={"state": "retired"}
+            )
+        }
+    )
+    tree = {
+        predecessor.accepted.path: render_claim(retired),
+        successor.accepted.path: render_claim(successor.accepted.claim),
+    }
+
+    detected, coverage = _duplicate_statements(tree=tree, generation=2)
+
+    assert coverage.evaluated_fact_count == 1
+    assert detected == ()
 
 
 def test_provenance_concentration_uses_effective_supporting_control_components() -> None:
@@ -220,6 +234,7 @@ def test_provenance_concentration_uses_effective_supporting_control_components()
         providers=(),
         evaluation_time=NOW,
         generation=3,
+        active_writing_principal_count=2,
     )
 
     assert coverage.evaluated_fact_count == 2
@@ -273,6 +288,35 @@ def test_provenance_concentration_excludes_a_stale_capture_that_bridges_current_
         providers=(upstream,),
         evaluation_time=NOW,
         generation=3,
+        active_writing_principal_count=2,
+    )
+
+    assert coverage.evaluated_fact_count == 2
+    assert detected == ()
+
+
+def test_provenance_concentration_is_silent_for_a_single_active_writer() -> None:
+    rows = tuple(
+        claim_fact(
+            index,
+            subject_row=subject("project.work_item", f"wi-{index}"),
+            predicate=PREDICATE,
+            value="ready",
+        ).model_copy(
+            update={
+                "captures": (_capture(index, "shared-owner"),),
+                "resolved_authority_basis": (),
+            }
+        )
+        for index in (1, 2)
+    )
+
+    detected, coverage = _provenance_concentration(
+        rows=rows,
+        providers=(),
+        evaluation_time=NOW,
+        generation=3,
+        active_writing_principal_count=1,
     )
 
     assert coverage.evaluated_fact_count == 2
@@ -441,7 +485,6 @@ def test_shared_history_index_prevents_per_detector_and_per_claim_rescans() -> N
     )
 
     indexed = _curation_history_index(fake)  # type: ignore[arg-type]
-    _duplicate_statements(instance=fake, history=indexed)  # type: ignore[arg-type]
     _freshness_calibration(
         instance=fake,  # type: ignore[arg-type]
         tree={},
@@ -471,6 +514,7 @@ def test_run_curation_detectors_builds_shared_history_once_for_all_history_consu
         tree_at=lambda _oid: {},
     )
     monkeypatch.setattr(detector_module, "_curation_history_index", history)
+    monkeypatch.setattr(detector_module, "_active_writing_principal_count", lambda *_a, **_k: 2)
     monkeypatch.setattr(
         detector_module,
         "build_accepted_query_facts",

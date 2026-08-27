@@ -19,6 +19,22 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_core.playbill.curation_calibration import (
+    ADMISSION_FAILURE_MINIMUM_DISTINCT_DURABLE_ATTEMPTS,
+    BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW,
+    BLOCK_CHURN_MINIMUM_DISTINCT_BODY_DIGESTS,
+    BLOCK_CHURN_MINIMUM_OBSERVED_GENERATIONS,
+    DEAD_VOCABULARY_MINIMUM_ZERO_TOUCH_GENERATIONS,
+    DUPLICATE_STATEMENT_MINIMUM_LIVE_CLAIM_IDENTITIES,
+    FRESHNESS_MINIMUM_CHANGED_COMMITMENT_INTERVALS,
+    FRESHNESS_RATIO_LOWER,
+    FRESHNESS_RATIO_UPPER,
+    PROVENANCE_CONCENTRATED_CONTROL_COMPONENT_COUNT,
+    PROVENANCE_MINIMUM_ACTIVE_WRITING_PRINCIPALS,
+    PROVENANCE_MINIMUM_LIVE_SUPPORTED_CLAIMS,
+    QUALIFIER_MINIMUM_DISTINCT_SUBJECT_ADDRESSES,
+    RECURRING_CONFLICT_MINIMUM_UNRESOLVED_SLOTS,
+)
 from cruxible_core.playbill.review_operational import PlaybillReviewOperationalEventV1
 
 CURATION_PATTERN_ID_DOMAIN = "playbill-curation-pattern-v1"
@@ -76,38 +92,41 @@ _DETECTOR_LAWS: dict[CurationPatternKind, dict[str, object]] = {
     "playbill.curation.recurring_conflict_per_type.v1": {
         "cardinality": "one",
         "slot_partition": "subject+predicate+qualifier",
-        "minimum_unresolved_slots": 1,
+        "minimum_unresolved_slots": RECURRING_CONFLICT_MINIMUM_UNRESOLVED_SLOTS,
     },
     "playbill.curation.admission_failure_cluster.v1": {
-        "minimum_distinct_durable_attempts": 2,
+        "minimum_distinct_durable_attempts": (ADMISSION_FAILURE_MINIMUM_DISTINCT_DURABLE_ATTEMPTS),
         "discriminator": "diagnostic_code",
     },
     "playbill.curation.freshness_drift_calibration.v1": {
-        "minimum_changed_commitment_intervals": 3,
-        "inclusive_ratio_lower_numerator": 1,
-        "inclusive_ratio_lower_denominator": 2,
-        "inclusive_ratio_upper_numerator": 2,
-        "inclusive_ratio_upper_denominator": 1,
+        "minimum_changed_commitment_intervals": FRESHNESS_MINIMUM_CHANGED_COMMITMENT_INTERVALS,
+        "inclusive_ratio_lower_numerator": FRESHNESS_RATIO_LOWER.numerator,
+        "inclusive_ratio_lower_denominator": FRESHNESS_RATIO_LOWER.denominator,
+        "inclusive_ratio_upper_numerator": FRESHNESS_RATIO_UPPER.numerator,
+        "inclusive_ratio_upper_denominator": FRESHNESS_RATIO_UPPER.denominator,
     },
     "playbill.curation.provenance_concentration.v1": {
-        "minimum_live_supported_claims": 2,
-        "effective_supporting_control_components": 1,
+        "minimum_live_supported_claims": PROVENANCE_MINIMUM_LIVE_SUPPORTED_CLAIMS,
+        "minimum_active_writing_principals": PROVENANCE_MINIMUM_ACTIVE_WRITING_PRINCIPALS,
+        "effective_supporting_control_components": (
+            PROVENANCE_CONCENTRATED_CONTROL_COMPONENT_COUNT
+        ),
     },
     "playbill.curation.duplicate_statement_lineages.v1": {
-        "minimum_distinct_claim_identities": 2,
-        "comparison": "exact_claim_statement_digest",
+        "minimum_distinct_claim_identities": DUPLICATE_STATEMENT_MINIMUM_LIVE_CLAIM_IDENTITIES,
+        "comparison": "exact_claim_statement_digest_across_live_claims",
     },
     "playbill.curation.qualifier_crystallization.v1": {
-        "minimum_distinct_subject_addresses": 3,
+        "minimum_distinct_subject_addresses": QUALIFIER_MINIMUM_DISTINCT_SUBJECT_ADDRESSES,
         "comparison": "exact_non_null_qualifier",
     },
     "playbill.curation.block_churn.v1": {
-        "minimum_distinct_observed_body_digests": 3,
-        "minimum_observed_generations": 2,
-        "accepted_generation_window": 10,
+        "minimum_distinct_observed_body_digests": BLOCK_CHURN_MINIMUM_DISTINCT_BODY_DIGESTS,
+        "minimum_observed_generations": BLOCK_CHURN_MINIMUM_OBSERVED_GENERATIONS,
+        "accepted_generation_window": BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW,
     },
     "playbill.curation.dead_vocabulary.v1": {
-        "minimum_zero_touch_generations": 10,
+        "minimum_zero_touch_generations": DEAD_VOCABULARY_MINIMUM_ZERO_TOUCH_GENERATIONS,
         "artifact_families": ["ClaimType", "Procedure", "QueryDefinition", "Subject"],
     },
 }

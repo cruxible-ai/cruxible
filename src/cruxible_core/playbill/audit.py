@@ -18,6 +18,22 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.closure import dependency_artifacts
+from cruxible_core.playbill.curation_calibration import (
+    AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+    AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+    AUDIT_BUDGET_MAX_MAX_BYTES,
+    AUDIT_BUDGET_MAX_MAX_ROWS,
+    AUDIT_BUDGET_MIN_MAX_BYTES,
+    AUDIT_BUDGET_MIN_MAX_ROWS,
+    AUDIT_CONSUMPTION_STAKE_WEIGHT,
+    AUDIT_DEPENDENT_STAKE_WEIGHT,
+    AUDIT_RANK_STAKE_WEIGHT,
+    AUDIT_RANK_STALENESS_WEIGHT,
+    AUDIT_RANK_WEAKNESS_WEIGHT,
+    AUDIT_STAKE_BASE,
+    AUDIT_WEAKNESS_BASE,
+    AUDIT_WEAKNESS_SIGNAL_WEIGHT,
+)
 from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 
 AUDIT_REQUEST_DIGEST_DOMAIN = "playbill-audit-request-v1"
@@ -69,8 +85,16 @@ class AuditScopeV1(_StrictAuditModel):
 
 class AuditBudgetV1(_StrictAuditModel):
     tag: Literal["playbill-audit-budget-v1"] = "playbill-audit-budget-v1"
-    max_rows: int = Field(default=100, ge=1, le=1_000)
-    max_bytes: int = Field(default=65_536, ge=1_024, le=4_194_304)
+    max_rows: int = Field(
+        default=AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+        ge=AUDIT_BUDGET_MIN_MAX_ROWS,
+        le=AUDIT_BUDGET_MAX_MAX_ROWS,
+    )
+    max_bytes: int = Field(
+        default=AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+        ge=AUDIT_BUDGET_MIN_MAX_BYTES,
+        le=AUDIT_BUDGET_MAX_MAX_BYTES,
+    )
 
 
 class AuditCursorV1(_StrictAuditModel):
@@ -133,9 +157,14 @@ class AuditClaimFactorsV1(_StrictAuditModel):
 
     @model_validator(mode="after")
     def _arithmetic(self) -> AuditClaimFactorsV1:
-        if self.stake != 1 + self.unique_dependent_count + self.qualifying_consumption_touch_count:
+        expected_stake = (
+            AUDIT_STAKE_BASE
+            + AUDIT_DEPENDENT_STAKE_WEIGHT * self.unique_dependent_count
+            + AUDIT_CONSUMPTION_STAKE_WEIGHT * self.qualifying_consumption_touch_count
+        )
+        if self.stake != expected_stake:
             raise ValueError("audit stake does not reproduce")
-        expected_weakness = 1 + sum(
+        expected_weakness = AUDIT_WEAKNESS_BASE + AUDIT_WEAKNESS_SIGNAL_WEIGHT * sum(
             int(item)
             for item in (
                 self.single_source,
@@ -173,7 +202,15 @@ class AuditClaimRowV1(_StrictAuditModel):
 
     @model_validator(mode="after")
     def _score(self) -> AuditClaimRowV1:
-        if self.rank_score != self.factors.stake * self.factors.weakness * self.factors.staleness:
+        expected_score = (
+            AUDIT_RANK_STAKE_WEIGHT
+            * self.factors.stake
+            * AUDIT_RANK_WEAKNESS_WEIGHT
+            * self.factors.weakness
+            * AUDIT_RANK_STALENESS_WEIGHT
+            * self.factors.staleness
+        )
+        if self.rank_score != expected_score:
             raise ValueError("audit rank score does not reproduce")
         ordered = tuple(
             sorted(

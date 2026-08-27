@@ -32,7 +32,6 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
-    claim_artifact_digest,
     claim_statement_digest,
     parse_claim,
 )
@@ -54,6 +53,21 @@ from cruxible_core.playbill.curation import (
     CurationEvidenceRefV1,
     CurationPatternKind,
     build_curation_detection,
+)
+from cruxible_core.playbill.curation_calibration import (
+    ADMISSION_FAILURE_MINIMUM_DISTINCT_DURABLE_ATTEMPTS,
+    BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW,
+    BLOCK_CHURN_MINIMUM_DISTINCT_BODY_DIGESTS,
+    BLOCK_CHURN_MINIMUM_OBSERVED_GENERATIONS,
+    DEAD_VOCABULARY_MINIMUM_ZERO_TOUCH_GENERATIONS,
+    DUPLICATE_STATEMENT_MINIMUM_LIVE_CLAIM_IDENTITIES,
+    FRESHNESS_MINIMUM_CHANGED_COMMITMENT_INTERVALS,
+    FRESHNESS_RATIO_LOWER,
+    FRESHNESS_RATIO_UPPER,
+    PROVENANCE_CONCENTRATED_CONTROL_COMPONENT_COUNT,
+    PROVENANCE_MINIMUM_ACTIVE_WRITING_PRINCIPALS,
+    PROVENANCE_MINIMUM_LIVE_SUPPORTED_CLAIMS,
+    QUALIFIER_MINIMUM_DISTINCT_SUBJECT_ADDRESSES,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.query.backends import ClaimFactRowV1, claim_row_visibility
@@ -304,7 +318,7 @@ def _qualifier_crystallization(
     for (predicate, qualifier), subjects in sorted(
         grouped.items(), key=lambda item: (item[0][0].encode(), item[0][1].encode())
     ):
-        if len(subjects) < 3:
+        if len(subjects) < QUALIFIER_MINIMUM_DISTINCT_SUBJECT_ADDRESSES:
             continue
         refs = tuple(
             _artifact_ref(
@@ -332,33 +346,31 @@ def _qualifier_crystallization(
 
 def _duplicate_statements(
     *,
-    instance: PlaybillInstance,
-    history: _CurationHistoryIndex | None = None,
+    tree: Mapping[str, bytes],
+    generation: int,
 ) -> tuple[tuple[CurationDetectionV1, ...], CurationDetectorCoverageV1]:
     kind: CurationPatternKind = "playbill.curation.duplicate_statement_lineages.v1"
     coverage = _Coverage(kind)
-    grouped: dict[tuple[str, str], dict[str, dict[int, CurationEvidenceRefV1]]] = defaultdict(
-        lambda: defaultdict(dict)
-    )
-    indexed = history or _curation_history_index(instance)
-    for generation, path, claim in indexed.claims:
+    grouped: dict[tuple[str, str], dict[str, CurationEvidenceRefV1]] = defaultdict(dict)
+    for state in dependency_artifacts(tree):
+        if state.artifact_kind != "claim" or state.lifecycle.state != "live":
+            continue
+        claim = parse_claim(tree[state.path], path=state.path)
         coverage.evaluated += 1
         statement = claim_statement_digest(claim.statement).tagged
-        grouped[(claim.statement.predicate, statement)][claim.identity.qualified][generation] = (
-            _artifact_ref(
-                identity=claim.identity,
-                path=path,
-                generation=generation,
-                artifact_digest=claim_artifact_digest(claim).tagged,
-                statement_digest=statement,
-            )
+        grouped[(claim.statement.predicate, statement)][claim.identity.qualified] = _artifact_ref(
+            identity=claim.identity,
+            path=state.path,
+            generation=generation,
+            artifact_digest=state.artifact_digest,
+            statement_digest=statement,
         )
     frozen_coverage = coverage.freeze()
     detections: list[CurationDetectionV1] = []
     for (predicate, statement), lineages in sorted(
         grouped.items(), key=lambda item: (item[0][0].encode(), item[0][1].encode())
     ):
-        if len(lineages) < 2:
+        if len(lineages) < DUPLICATE_STATEMENT_MINIMUM_LIVE_CLAIM_IDENTITIES:
             continue
         detections.append(
             build_curation_detection(
@@ -367,9 +379,7 @@ def _duplicate_statements(
                 detail={"statement_digest": statement},
                 coverage=frozen_coverage,
                 evidence_refs=tuple(
-                    lineages[key][generation]
-                    for key in sorted(lineages, key=lambda item: item.encode("utf-8"))
-                    for generation in sorted(lineages[key])
+                    lineages[key] for key in sorted(lineages, key=lambda item: item.encode("utf-8"))
                 ),
             )
         )
@@ -412,7 +422,7 @@ def _block_churn(
         ].append((event, observation))
     frozen_coverage = coverage.freeze()
     detections: list[CurationDetectionV1] = []
-    lower = max(0, generation - 9)
+    lower = max(0, generation - (BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW - 1))
     for (document, source_id, block_id), observations in sorted(grouped.items()):
         window = tuple(
             sorted(
@@ -439,7 +449,10 @@ def _block_churn(
             collapsed.append(pair)
         body_digests = {item.marker_summary.observed_body_digest for _event, item in collapsed}
         generations = {item.scan_generation for _event, item in collapsed}
-        if len(body_digests) < 3 or len(generations) < 2:
+        if (
+            len(body_digests) < BLOCK_CHURN_MINIMUM_DISTINCT_BODY_DIGESTS
+            or len(generations) < BLOCK_CHURN_MINIMUM_OBSERVED_GENERATIONS
+        ):
             continue
         identity = parse_artifact_identity(document)
         refs = list(
@@ -524,7 +537,7 @@ def _dead_vocabulary(
             first.get(state.identity.qualified, generation),
             aggregate.consumption_epoch_generation,
         )
-        if qualifying != 0 or generation - since < 10:
+        if qualifying != 0 or generation - since < DEAD_VOCABULARY_MINIMUM_ZERO_TOUCH_GENERATIONS:
             continue
         if frozen_coverage is None:
             # Final coverage is rebuilt below before these provisional values
@@ -679,7 +692,7 @@ def _admission_failures(
     for (subject_value, code), refs in sorted(
         attempts.items(), key=lambda item: (item[0][0].encode(), item[0][1].encode())
     ):
-        if len(refs) < 2:
+        if len(refs) < ADMISSION_FAILURE_MINIMUM_DISTINCT_DURABLE_ATTEMPTS:
             continue
         from cruxible_client.contracts.artifacts import parse_artifact_identity
 
@@ -813,7 +826,7 @@ def _freshness_calibration(
                         intervals.append(interval)
                         transitions.append((previous, current, interval))
                 previous = current
-        if len(intervals) < 3:
+        if len(intervals) < FRESHNESS_MINIMUM_CHANGED_COMMITMENT_INTERVALS:
             continue
         ordered_intervals = sorted(intervals)
         midpoint = len(ordered_intervals) // 2
@@ -826,7 +839,7 @@ def _freshness_calibration(
         assert claim_type.evidence_freshness is not None
         horizon = claim_type.evidence_freshness.stale_after.microseconds
         ratio = Fraction(horizon, 1) / median
-        if Fraction(1, 2) <= ratio <= Fraction(2, 1):
+        if FRESHNESS_RATIO_LOWER <= ratio <= FRESHNESS_RATIO_UPPER:
             continue
         refs: list[CurationEvidenceRefV1] = [
             _artifact_ref(
@@ -900,6 +913,7 @@ def _provenance_concentration(
     providers: tuple[ProviderV1, ...],
     evaluation_time: datetime,
     generation: int,
+    active_writing_principal_count: int,
 ) -> tuple[tuple[CurationDetectionV1, ...], CurationDetectorCoverageV1]:
     kind: CurationPatternKind = "playbill.curation.provenance_concentration.v1"
     coverage = _Coverage(kind)
@@ -923,9 +937,11 @@ def _provenance_concentration(
         if verdict.verdict == "supported" and verdict.currency == "current":
             supported[claim.statement.predicate].append((row, verdict))
     frozen_coverage = coverage.freeze()
+    if active_writing_principal_count < PROVENANCE_MINIMUM_ACTIVE_WRITING_PRINCIPALS:
+        return (), frozen_coverage
     detections: list[CurationDetectionV1] = []
     for predicate, members in sorted(supported.items()):
-        if len(members) < 2:
+        if len(members) < PROVENANCE_MINIMUM_LIVE_SUPPORTED_CLAIMS:
             continue
         captures: dict[str, CaptureVerdictEvidenceV1] = {}
         attestations: dict[str, VerifiedClaimAttestationV1] = {}
@@ -961,7 +977,7 @@ def _provenance_concentration(
             tuple(attestations[key] for key in sorted(attestations)),
             providers=provider_map,
         )
-        if len(components) != 1:
+        if len(components) != PROVENANCE_CONCENTRATED_CONTROL_COMPONENT_COUNT:
             continue
         component = components[0]
         component_id = typed_digest(
@@ -986,6 +1002,17 @@ def _provenance_concentration(
             )
         )
     return tuple(detections), frozen_coverage
+
+
+def _active_writing_principal_count(instance: PlaybillInstance, *, git_oid: str) -> int:
+    """Count active client principals capable of ordinary governed authorship."""
+
+    generation = next(item for item in instance.accepted_history() if item.oid == git_oid)
+    return sum(
+        principal.status == "active"
+        and any(role in {"owner", "reviewer"} for role in principal.authority_roles)
+        for principal in generation.principals.principals
+    )
 
 
 def run_curation_detectors(
@@ -1028,8 +1055,11 @@ def run_curation_detectors(
             providers=facts.providers,
             evaluation_time=evaluation_time,
             generation=generation,
+            active_writing_principal_count=_active_writing_principal_count(
+                instance, git_oid=internal.git_oid
+            ),
         ),
-        _duplicate_statements(instance=instance, history=history),
+        _duplicate_statements(tree=tree, generation=generation),
         _qualifier_crystallization(rows=rows, generation=generation),
         _block_churn(
             instance=instance,
