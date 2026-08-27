@@ -1255,7 +1255,7 @@ class Playbill:
             if (
                 isinstance(claim, ClaimRef)
                 or mode != "submit"
-                or original.error_code != _RETIRE_CLOSURE_MISMATCH_CODE
+                or getattr(original, "error_code", None) != _RETIRE_CLOSURE_MISMATCH_CODE
             ):
                 raise
             try:
