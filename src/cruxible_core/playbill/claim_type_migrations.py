@@ -27,6 +27,7 @@ from cruxible_client.contracts.claims import (
     ClaimArtifactV3,
     ClaimRetirementAttributionV1,
     ClaimRetirementReason,
+    ClaimStatement,
     claim_artifact_digest,
     parse_claim,
     render_claim,
@@ -528,16 +529,23 @@ def _canonical_successor_bytes(
                     "successor bytes are machine-owned"
                 )
             successor_digest = claim_type_digest(successor_type).tagged
-            statement = current_claim.statement.model_copy(
-                update={
-                    "claim_type_digest": successor_digest,
-                    **(
-                        {}
-                        if claim_effective_until is None
-                        else {"effective_until": claim_effective_until}
-                    ),
-                }
-            )
+            try:
+                statement = ClaimStatement.model_validate(
+                    {
+                        **current_claim.statement.model_dump(mode="python"),
+                        "claim_type_digest": successor_digest,
+                        **(
+                            {}
+                            if claim_effective_until is None
+                            else {"effective_until": claim_effective_until}
+                        ),
+                    }
+                )
+            except ValidationError as exc:
+                raise ClaimTypeMigrationDependentInvalid(
+                    f"{ClaimTypeMigrationDependentInvalid.code}: claim_effective_until "
+                    "produces an invalid Claim effective interval"
+                ) from exc
             pins = tuple(
                 pin.model_copy(
                     update={

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
@@ -17,6 +17,7 @@ from cruxible_client.contracts.claims import (
     ClaimRetirementAttributionV1,
     ClaimRetirementReason,
     ClaimRetireRequestV1,
+    ClaimStatement,
     claim_artifact_digest,
     claim_path,
     parse_claim,
@@ -185,7 +186,18 @@ def _retired_claim(
 ) -> ClaimArtifactV3:
     statement = claim.statement
     if effective_until is not None:
-        statement = statement.model_copy(update={"effective_until": effective_until})
+        try:
+            statement = ClaimStatement.model_validate(
+                {
+                    **statement.model_dump(mode="python"),
+                    "effective_until": effective_until,
+                }
+            )
+        except ValidationError as exc:
+            raise ClaimRetireError(
+                f"{ClaimRetireError.error_code}: effective_until produces an invalid Claim "
+                "effective interval"
+            ) from exc
     pins = tuple(
         pin.model_copy(update={"artifact_digest": successor_digests[pin.target.qualified]})
         if pin.target.kind == "Claim" and pin.target.qualified in successor_digests

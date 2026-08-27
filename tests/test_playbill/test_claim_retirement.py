@@ -32,6 +32,7 @@ from cruxible_client.contracts.query.definitions import (
 from cruxible_core.playbill.claim_retirement import (
     ClaimRetireClosureMismatch,
     ClaimRetireDependentUnsupported,
+    ClaimRetireError,
     ClaimRetireResultV1,
     ClaimRetireStale,
     service_retire_claim,
@@ -39,6 +40,7 @@ from cruxible_core.playbill.claim_retirement import (
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
+    ClaimTypeMigrationDependentInvalid,
     ClaimTypeMigrationRequestV3,
     ClaimTypeMigrationResultV3,
     service_migrate_claim_type,
@@ -56,7 +58,10 @@ from cruxible_core.service.playbill_claims import (
 from tests.test_playbill._adoption_fixture import _query_definition
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
-from tests.test_playbill.test_claim_type_migrations import _accepted_claim_world
+from tests.test_playbill.test_claim_type_migrations import (
+    _accepted_claim_world,
+    _decision_only_successor,
+)
 from tests.test_playbill.test_claims import _claim_type
 from tests.test_playbill.test_multi_claim_authoring import (
     STATUS_CLAIM_ID,
@@ -365,6 +370,70 @@ def test_effective_until_is_caller_supplied_or_preserved_without_clock_substitut
     )
     assert isinstance(preserved, ClaimRetireResultV1)
     assert preserved.retirements[0].effective_until is None
+
+
+def test_invalid_effective_interval_is_typed_for_retirement_and_migration(
+    tmp_path: Path,
+) -> None:
+    effective_from = datetime(2026, 8, 16, 17, tzinfo=UTC)
+    invalid_until = datetime(2026, 8, 16, 16, tzinfo=UTC)
+    instance, owner = initialize_local(tmp_path)
+    authoring = _status_authoring()
+    seeded = service_propose_playbill_claims(
+        instance,
+        authorings=(
+            authoring.model_copy(
+                update={
+                    "statement": authoring.statement.model_copy(
+                        update={"effective_from": effective_from}
+                    )
+                }
+            ),
+        ),
+        actor_id="owner",
+        proposal_name="effective-interval-seed",
+        timestamp=TIMESTAMP,
+    )
+    _activate_batch(
+        instance,
+        owner,
+        seeded,
+        sequence=len(instance.accepted_history()),
+    )
+    claim_id = STATUS_CLAIM_ID
+    actor = AuthenticatedActor(actor_id="owner")
+
+    with pytest.raises(ClaimRetireError, match="invalid Claim effective interval"):
+        service_retire_claim(
+            instance,
+            claim_id=claim_id,
+            request=_request(instance, mode="submit", effective_until=invalid_until),
+            actor=actor,
+        )
+
+    with pytest.raises(
+        ClaimTypeMigrationDependentInvalid,
+        match="invalid Claim effective interval",
+    ):
+        service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequestV3(
+                mode="submit",
+                successor=_decision_only_successor(
+                    instance,
+                    enum=["blocked", "ready", "waiting"],
+                ),
+                dependents=(
+                    ClaimTypeDependentDispositionV3(
+                        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                        disposition="retire",
+                        claim_retirement_reason="was-rescinded",
+                        claim_effective_until=invalid_until,
+                    ),
+                ),
+            ),
+            actor=actor,
+        )
 
 
 def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin(
