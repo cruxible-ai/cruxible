@@ -41,7 +41,7 @@ def _seed(cruxible: _Cli, tmp_path: Path) -> None:
     """Bootstrap a served instance and accept the knowledge the render shows."""
 
     cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
-    cruxible.bootstrap(tmp_path)
+    cruxible.bootstrap(tmp_path, with_reviewer=True)
     proposed = cruxible.json(
         "playbill",
         "claim-type",

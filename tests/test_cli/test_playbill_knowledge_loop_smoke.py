@@ -43,6 +43,7 @@ from tests.test_playbill.test_claims import _claim_type
 
 CREATOR_ID = "operator"
 RECOVERY_ID = "recovery"
+SIGNER_ID = "reviewer"
 
 
 class _Cli:
@@ -50,6 +51,7 @@ class _Cli:
 
     def __init__(self, runner: CliRunner, key_dir: Path) -> None:
         self._runner = runner
+        self.private_key = key_dir / f"{SIGNER_ID}.ed25519"
         self.creator_private_key = key_dir / f"{CREATOR_ID}.ed25519"
         self.recovery_private_key = key_dir / f"{RECOVERY_ID}.ed25519"
 
@@ -68,8 +70,8 @@ class _Cli:
         assert activated["status"] == "accepted", activated
         return activated
 
-    def bootstrap(self, tmp_path: Path) -> dict[str, Any]:
-        """Bootstrap the documented owner plus optional recovery custody shape."""
+    def bootstrap(self, tmp_path: Path, *, with_reviewer: bool = False) -> dict[str, Any]:
+        """Bootstrap owner/recovery custody and an optional voluntary reviewer."""
 
         custody = tmp_path / "custody"
         recovery_custody = tmp_path / "recovery-custody"
@@ -80,6 +82,7 @@ class _Cli:
             str(custody),
             "--principal-id",
             CREATOR_ID,
+            *(("--reviewer-key-dir", str(custody)) if with_reviewer else ()),
             "--recovery-key-dir",
             str(recovery_custody),
             "--recovery-principal-id",
