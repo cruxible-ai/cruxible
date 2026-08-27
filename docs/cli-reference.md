@@ -574,10 +574,14 @@ cruxible playbill principal recover ...
 Registration, rotation, revocation, and recovery are governed principal-change
 proposals. `principal add` generates the Ed25519 private key exclusively in the
 client-held `--key-dir` outside the current workspace and sends only its public
-principal record. Every principal-lifecycle proposal requires the affected
-principal's own cryptographic approval before it can settle: run
-`playbill proposal approve PID --signer-id <that principal> --key <its current
-private key> --yes`, then `playbill proposal activate`. Registration neither
+principal record. Every principal-lifecycle proposal requires the PROPOSING
+actor's own cryptographic approval before it can settle — the identity shown
+by `playbill whoami`, which coincides with the affected principal only for
+self-rotation: run `playbill proposal approve PID --signer-id <the proposing
+actor> --key <that actor's current private key> --yes`, then
+`playbill proposal activate`. For `principal add` and `principal recover`,
+the signer is the actor performing the operation, never the new or
+locked-out principal. Registration neither
 grants authority immediately nor sends a private key to the daemon. Other
 non-creator principals may record additional voluntary approvals. `--role`
 is explicit and may be `owner`, `reviewer`, or `recovery`. Recovery cannot

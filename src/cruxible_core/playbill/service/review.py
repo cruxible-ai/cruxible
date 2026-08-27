@@ -381,7 +381,8 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
                 for item in review.candidate.approval_requirements
             )
             or (
-                "the affected principal's own signature (lifecycle actor binding)"
+                f"{review.provenance.get('actor_id', 'the proposing actor')}'s "
+                "own signature (lifecycle actor binding)"
                 if all(
                     member.artifact_kind == "principal-lifecycle"
                     for member in review.complete_members

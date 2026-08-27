@@ -6,8 +6,9 @@
   Activation mutation receipts now carry a required `activated_by` naming the
   governed actor (public client contract re-pinned); the HTTP request log
   independently records the credential for the same request. Principal
-  lifecycle transitions require the affected principal's own cryptographic
-  approval with its current key — the one case where a creator's
+  lifecycle transitions require the proposing actor's own cryptographic
+  approval with its current key (the affected principal only for
+  self-rotation) — the one case where a creator's
   self-signature is mandatory rather than refused; ordinary candidates keep
   creator-refusal and need no approvals.
 

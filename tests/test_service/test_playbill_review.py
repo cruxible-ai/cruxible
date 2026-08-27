@@ -9,6 +9,9 @@ import pytest
 
 from cruxible_client.contracts.errors import PlaybillKeyError
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.service.documents import (
+    service_propose_playbill_principal_change,
+)
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.service.playbill_documents import (
     service_propose_playbill_document,
@@ -20,6 +23,7 @@ from cruxible_core.service.playbill_review import (
     service_prepare_playbill_approval,
     service_review_playbill_proposal,
 )
+from tests.test_playbill._support import generate_client
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _shell
 
 
@@ -112,3 +116,27 @@ def test_local_signer_refuses_exposed_or_wrong_key(tmp_path: Path) -> None:
             expected_public_key=owner.principal.public_key,
             forbidden_roots=(instance.root, tmp_path / "workspace"),
         )
+
+
+def test_lifecycle_review_names_the_proposing_actor(tmp_path: Path) -> None:
+    instance, owner, _reviewer = _instance(tmp_path)
+    keys = tmp_path / "keys-alice"
+    keys.mkdir()
+    record = generate_client(
+        tmp_path, managed_root=tmp_path / "managed-alice", principal_id="alice", roles=("reviewer",)
+    )
+    proposal = service_propose_playbill_principal_change(
+        instance,
+        principal=record.principal,
+        proposal_name="alice",
+        actor_id=owner.principal.principal_id,
+        timestamp=TIMESTAMP,
+    )
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal.proposal.admission.proposal_id,
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+    )
+    rendered = render_playbill_proposal_review(review)
+    assert f"{owner.principal.principal_id}'s own signature" in rendered
+    assert "Required approvals: none" not in rendered
