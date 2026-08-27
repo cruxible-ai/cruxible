@@ -5,9 +5,11 @@ from __future__ import annotations
 from inspect import signature
 
 import click
+from annotated_types import Ge, Le
 
 from cruxible_client import CruxibleClient
 from cruxible_client.authoring.sdk import Playbill
+from cruxible_client.contracts import PlaybillAuditFactors
 from cruxible_core.cli.main import cli
 from cruxible_core.playbill.audit import AuditBudgetV1
 from cruxible_core.playbill.curation_calibration import (
@@ -17,6 +19,11 @@ from cruxible_core.playbill.curation_calibration import (
     AUDIT_BUDGET_MAX_MAX_ROWS,
     AUDIT_BUDGET_MIN_MAX_BYTES,
     AUDIT_BUDGET_MIN_MAX_ROWS,
+    AUDIT_STAKE_BASE,
+    AUDIT_STALENESS_BASE,
+    AUDIT_WEAKNESS_BASE,
+    AUDIT_WEAKNESS_SIGNAL_COUNT,
+    AUDIT_WEAKNESS_SIGNAL_WEIGHT,
 )
 from cruxible_core.server.playbill_request_models import PlaybillAuditRequest
 
@@ -29,6 +36,22 @@ def _audit_cli_option(name: str) -> click.Option:
         parameter
         for parameter in audit.params
         if isinstance(parameter, click.Option) and parameter.name == name
+    )
+
+
+def _ge_bound(field_name: str) -> int:
+    return next(
+        constraint.ge
+        for constraint in PlaybillAuditFactors.model_fields[field_name].metadata
+        if isinstance(constraint, Ge)
+    )
+
+
+def _le_bound(field_name: str) -> int:
+    return next(
+        constraint.le
+        for constraint in PlaybillAuditFactors.model_fields[field_name].metadata
+        if isinstance(constraint, Le)
     )
 
 
@@ -61,3 +84,12 @@ def test_audit_budget_calibration_is_coherent_across_public_surfaces() -> None:
         AUDIT_BUDGET_MIN_MAX_BYTES,
         AUDIT_BUDGET_MAX_MAX_BYTES,
     )
+
+
+def test_client_audit_factor_bounds_mirror_core_calibration() -> None:
+    assert _ge_bound("stake") == AUDIT_STAKE_BASE
+    assert _ge_bound("weakness") == AUDIT_WEAKNESS_BASE
+    assert _le_bound("weakness") == (
+        AUDIT_WEAKNESS_BASE + AUDIT_WEAKNESS_SIGNAL_COUNT * AUDIT_WEAKNESS_SIGNAL_WEIGHT
+    )
+    assert _ge_bound("staleness") == AUDIT_STALENESS_BASE
