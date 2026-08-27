@@ -37,7 +37,7 @@ from cruxible_core.playbill.coverage.contracts import (
 from cruxible_core.playbill.coverage.indexes import (
     CaptureCitationInputV1,
     EvidenceCitationIndexV1,
-    WorkingOccurrenceOverlayV1,
+    WorkingOccurrenceOverlayV2,
     WorkingSourceContent,
     build_evidence_citation_index,
     build_working_occurrence_overlay,
@@ -185,10 +185,20 @@ def index(
 def overlay(
     *sources: WorkingSourceContent,
     citations: EvidenceCitationIndexV1,
-) -> WorkingOccurrenceOverlayV1:
+) -> WorkingOccurrenceOverlayV2:
     return build_working_occurrence_overlay(
         sources,
-        wanted=citations.wanted_selections(),
+        wanted=unmaterialized_wanted(citations),
+    )
+
+
+def unmaterialized_wanted(
+    citations: EvidenceCitationIndexV1,
+) -> tuple[tuple[str, int, None], ...]:
+    """Select the deterministic exhaustive route used by unit-only callers."""
+
+    return tuple(
+        (digest, byte_length, None) for digest, byte_length in citations.wanted_selections()
     )
 
 
@@ -198,7 +208,7 @@ def working(source: LogicalSourceIdentityV1, content: bytes) -> WorkingSourceCon
 
 def manifest(
     citations: EvidenceCitationIndexV1,
-    snapshot: WorkingOccurrenceOverlayV1,
+    snapshot: WorkingOccurrenceOverlayV2,
     *,
     access: CoverageAccessProfileV1 | None = None,
     epoch: int = 0,

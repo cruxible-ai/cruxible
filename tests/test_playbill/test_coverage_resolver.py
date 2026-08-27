@@ -44,6 +44,7 @@ from tests.test_playbill._coverage_support import (
     profile,
     request,
     sha256,
+    unmaterialized_wanted,
     working,
 )
 
@@ -244,7 +245,7 @@ def test_an_unscanned_selection_lowers_the_boundary_instead_of_claiming_drift() 
     citations = index(capture(HANDBOOK, CITED))
     starved = build_working_occurrence_overlay(
         (working(HANDBOOK, PREAMBLE + EPILOGUE),),
-        wanted=citations.wanted_selections(),
+        wanted=unmaterialized_wanted(citations),
         budget=CoverageScanBudgetV1(max_scanned_bytes=0),
     )
     body = manifest(citations, starved)

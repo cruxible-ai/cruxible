@@ -67,6 +67,7 @@ from cruxible_core.playbill.coverage.indexes import (
     EvidenceCitationIndexV1,
     EvidenceCitationV1,
     WorkingOccurrenceOverlayV1,
+    WorkingOccurrenceOverlayV2,
     WorkingSourceCommitmentV1,
 )
 from cruxible_core.playbill.coverage.manifest import (
@@ -331,13 +332,13 @@ def native_invalidation_overlay(
     *,
     manifest: NativeRenderManifestV1,
     index: EvidenceCitationIndexV1 | None = None,
-) -> WorkingOccurrenceOverlayV1:
+) -> WorkingOccurrenceOverlayV2:
     """Build the working overlay for one rendered tree, wanting the baselines."""
 
     resolved = index or native_invalidation_index(manifest)
     return build_overlay(
         native_invalidation_observations(files, manifest=manifest),
-        wanted=resolved.wanted_selections(),
+        wanted=tuple((digest, length, None) for digest, length in resolved.wanted_selections()),
     )
 
 
@@ -495,7 +496,10 @@ def resolve_native_invalidation(
         raise ValueError("a native invalidation resolves one accepted coordinate at a time")
     index = native_invalidation_index(manifest)
     observations = native_invalidation_observations(files, manifest=manifest)
-    overlay = build_overlay(observations, wanted=index.wanted_selections())
+    overlay = build_overlay(
+        observations,
+        wanted=tuple((digest, length, None) for digest, length in index.wanted_selections()),
+    )
     requested: Sequence[CoverageSpanRequestV1] = tuple(spans or ()) or native_invalidation_spans(
         files, manifest=manifest, parsed=parsed
     )

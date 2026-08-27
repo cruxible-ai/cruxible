@@ -132,6 +132,12 @@ class CoverageError(PlaybillError):
     """A coverage answer could not be produced deterministically."""
 
 
+class CoverageCommitmentMaterializationCorrupt(CoverageError):
+    """Retained exact bytes exist but do not reproduce their commitment."""
+
+    error_code = "playbill.coverage.commitment_materialization_corrupt"
+
+
 class _StrictCoverageModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -177,6 +183,65 @@ class LogicalSourceIdentityV1(_StrictCoverageModel):
     @property
     def sort_key(self) -> bytes:
         return f"{self.plane}\x00{self.identity}".encode()
+
+
+class CoverageCommitmentScanProofV1(_StrictCoverageModel):
+    """Complete local scan proof for one source/commitment/length tuple."""
+
+    tag: Literal["playbill-coverage-commitment-scan-proof-v1"] = (
+        "playbill-coverage-commitment-scan-proof-v1"
+    )
+    source: LogicalSourceIdentityV1
+    commitment_digest: str
+    byte_length: int = Field(ge=0)
+    complete: Literal[True] = True
+
+    @field_validator("commitment_digest")
+    @classmethod
+    def _commitment_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @property
+    def sort_key(self) -> tuple[bytes, bytes, int]:
+        return (
+            self.source.sort_key,
+            self.commitment_digest.encode("ascii"),
+            self.byte_length,
+        )
+
+
+class PlaybillCitationWindowObservationV1(_StrictCoverageModel):
+    """Observed bytes at one accepted citation's original source window."""
+
+    tag: Literal["playbill-citation-window-observation-v1"] = (
+        "playbill-citation-window-observation-v1"
+    )
+    source: LogicalSourceIdentityV1
+    citation_id: str
+    commitment_digest: str
+    original_start: int = Field(ge=0)
+    original_end: int = Field(ge=0)
+    addressable: bool
+    observed_window_digest: str | None = None
+
+    @field_validator("citation_id", "commitment_digest", "observed_window_digest")
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _window_shape(self) -> "PlaybillCitationWindowObservationV1":
+        if self.original_end < self.original_start:
+            raise ValueError("citation window end must not precede its start")
+        if self.addressable != (self.observed_window_digest is not None):
+            raise ValueError(
+                "an addressable citation window requires its observed digest; "
+                "an unaddressable window forbids one"
+            )
+        return self
 
 
 def logical_sources_sorted(
@@ -552,6 +617,66 @@ class CoverageSpanResultV2(CoverageSpanResultV1):
     cards: tuple[CoverageCardV2, ...] = ()
 
 
+class CoverageSpanResultV3(_StrictCoverageModel):
+    """One locally proved span, independent of unrelated batch truncation."""
+
+    tag: Literal["playbill-coverage-span-result-v3"] = "playbill-coverage-span-result-v3"
+    request: CoverageSpanRequestV1
+    match_state: CoverageMatchStateV1
+    health: CoverageHealthV1
+    absence_is_factual: bool
+    cards: tuple[CoverageCardV2, ...] = ()
+    ambiguous_occurrence_count: int = Field(default=0, ge=0)
+    omitted_card_count: int = Field(default=0, ge=0)
+    commitment_scan_proofs: tuple[CoverageCommitmentScanProofV1, ...] = ()
+    citation_window_observations: tuple[PlaybillCitationWindowObservationV1, ...] = ()
+    coverage: CoverageDescriptorV1
+
+    @model_validator(mode="after")
+    def _span_law(self) -> "CoverageSpanResultV3":
+        expected_absence = (
+            self.match_state == "none" and COVERAGE_HEALTH_ABSENCE_IS_FACTUAL[self.health]
+        )
+        if self.absence_is_factual != expected_absence:
+            raise ValueError("a coverage absence is factual exactly when the boundary is complete")
+        if self.match_state == "exact" and not COVERAGE_HEALTH_PROVES_FRESHNESS[self.health]:
+            raise ValueError("an exact match requires health that proves freshness and access")
+        if self.match_state == "none":
+            if self.cards:
+                raise ValueError("a `none` span cannot carry coverage cards")
+        else:
+            if not self.cards:
+                raise ValueError("a non-`none` span requires at least one card")
+            strongest = min(MATCH_STATE_PRECEDENCE[card.match_state] for card in self.cards)
+            if MATCH_STATE_PRECEDENCE[self.match_state] != strongest:
+                raise ValueError("a span reports the strongest state its cards carry")
+        if self.ambiguous_occurrence_count and self.match_state == "exact":
+            raise ValueError("indistinguishable occurrences are never silently bound to one")
+        if tuple(card.sort_key for card in self.cards) != tuple(
+            sorted(card.sort_key for card in self.cards)
+        ):
+            raise ValueError("coverage cards must be in canonical order")
+        proof_keys = tuple(item.sort_key for item in self.commitment_scan_proofs)
+        if proof_keys != tuple(sorted(set(proof_keys))):
+            raise ValueError("coverage span scan proofs must be sorted and unique")
+        if any(item.source != self.request.source for item in self.commitment_scan_proofs):
+            raise ValueError("coverage span scan proofs must name the requested source")
+        window_keys = tuple(
+            (
+                item.source.sort_key,
+                item.citation_id.encode("ascii"),
+                item.original_start,
+                item.original_end,
+            )
+            for item in self.citation_window_observations
+        )
+        if window_keys != tuple(sorted(set(window_keys))):
+            raise ValueError("citation window observations must be sorted and unique")
+        if any(item.source != self.request.source for item in self.citation_window_observations):
+            raise ValueError("citation window observations must name the requested source")
+        return self
+
+
 class CoverageBatchSummaryV1(_StrictCoverageModel):
     """§11.6.4: one summary per operation, not one `none` beside every line."""
 
@@ -572,6 +697,22 @@ class CoverageBatchSummaryV1(_StrictCoverageModel):
 
 class CoverageBatchSummaryV2(CoverageBatchSummaryV1):
     tag: Literal["playbill-coverage-batch-summary-v2"] = "playbill-coverage-batch-summary-v2"  # type: ignore[assignment]
+
+
+class CoverageBatchSummaryV3(_StrictCoverageModel):
+    tag: Literal["playbill-coverage-batch-summary-v3"] = "playbill-coverage-batch-summary-v3"
+    exact: int = Field(ge=0)
+    drifted: int = Field(ge=0)
+    candidate: int = Field(ge=0)
+    none: int = Field(ge=0)
+    returned_spans: int = Field(ge=0)
+    omitted_card_count: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _totals(self) -> "CoverageBatchSummaryV3":
+        if self.exact + self.drifted + self.candidate + self.none != self.returned_spans:
+            raise ValueError("coverage summary states must total the returned spans")
+        return self
 
 
 class CoverageResultV1(_StrictCoverageModel):
@@ -645,8 +786,79 @@ class CoverageResultV2(CoverageResultV1):
     summary: CoverageBatchSummaryV2
 
 
+class CoverageResultV3(_StrictCoverageModel):
+    """Coverage with source-local proof health and explicit global completeness."""
+
+    tag: Literal["playbill-coverage-result-v3"] = "playbill-coverage-result-v3"
+    at: AcceptedCoordinate
+    instance_id: str
+    index_digest: str
+    overlay_digest: str
+    manifest_digest: str | None
+    epoch: int | None = Field(default=None, ge=0)
+    watcher_health: CoverageWatcherHealthV1
+    access_profile: CoverageAccessProfileV1
+    scope: tuple[LogicalSourceIdentityV1, ...] = ()
+    spans: tuple[CoverageSpanResultV3, ...]
+    summary: CoverageBatchSummaryV3
+    health: CoverageHealthV1
+    global_scan_complete: bool
+    truncation_reason_codes: tuple[str, ...] = ()
+    coverage: CoverageDescriptorV1
+
+    @field_validator("index_digest", "overlay_digest", "manifest_digest")
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("truncation_reason_codes")
+    @classmethod
+    def _truncation_reasons(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != byte_sorted(value):
+            raise ValueError("coverage truncation reasons must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _result_law(self) -> "CoverageResultV3":
+        counts = {state: 0 for state in COVERAGE_MATCH_STATES}
+        for span in self.spans:
+            counts[span.match_state] += 1
+        if (
+            self.summary.exact,
+            self.summary.drifted,
+            self.summary.candidate,
+            self.summary.none,
+            self.summary.returned_spans,
+        ) != (
+            counts["exact"],
+            counts["drifted"],
+            counts["candidate"],
+            counts["none"],
+            len(self.spans),
+        ):
+            raise ValueError("coverage summary must reproduce from the span results")
+        expected_health = weakest_health(
+            *(span.health for span in self.spans),
+            *("stale",) if self.watcher_health in {"degraded", "overflowed"} else (),
+            *("partial",) if not self.global_scan_complete else (),
+        )
+        if self.health != expected_health:
+            raise ValueError(
+                "batch coverage health derives from spans, watcher health, and global scan health"
+            )
+        if self.global_scan_complete == bool(self.truncation_reason_codes):
+            raise ValueError("global scan incompleteness must state its reasons")
+        if (self.manifest_digest is None) != (self.epoch is None):
+            raise ValueError("a manifest digest and its epoch are bound together or absent")
+        if self.scope != logical_sources_sorted(self.scope):
+            raise ValueError("coverage scope must be sorted and unique")
+        return self
+
+
 CoverageResultAny: TypeAlias = Annotated[
-    CoverageResultV1 | CoverageResultV2,
+    CoverageResultV1 | CoverageResultV2 | CoverageResultV3,
     Field(discriminator="tag"),
 ]
 
@@ -749,10 +961,13 @@ __all__ = [
     "CoverageAccessProfileV1",
     "CoverageBatchSummaryV1",
     "CoverageBatchSummaryV2",
+    "CoverageBatchSummaryV3",
     "CoverageCardBudgetV1",
     "CoverageCardV1",
     "CoverageCardV2",
     "CoverageClaimCitationV2",
+    "CoverageCommitmentMaterializationCorrupt",
+    "CoverageCommitmentScanProofV1",
     "CoverageError",
     "CoverageHealthV1",
     "CoverageLineOverlayV1",
@@ -763,12 +978,15 @@ __all__ = [
     "CoverageResultV1",
     "CoverageResultAny",
     "CoverageResultV2",
+    "CoverageResultV3",
     "CoverageSelectionV1",
     "CoverageSpanRequestV1",
     "CoverageSpanResultV1",
     "CoverageSpanResultV2",
+    "CoverageSpanResultV3",
     "CoverageWatcherHealthV1",
     "LogicalSourceIdentityV1",
+    "PlaybillCitationWindowObservationV1",
     "logical_sources_sorted",
     "strongest_match_state",
     "occurrence_identity_digest",

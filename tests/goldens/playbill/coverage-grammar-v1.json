@@ -32,8 +32,8 @@
     "health": "complete",
     "index_digest": "sha256:c666a54b88961453ac13956ae2dcb98abe488cf4543f9a63abdf2c5921cc2b90",
     "instance_id": "inst_coverage",
-    "manifest_digest": "sha256:fba27f0e39274672fbb8341eda13e77a700de7926f627470723587d0b6fe724c",
-    "overlay_digest": "sha256:c79453f6f54563ce7fd27a85753459700bf523da45b43ea598d3e2c5dee93bf7",
+    "manifest_digest": "sha256:636ec8170cb9875360ad7e07930d3888eccbf1a1a72ef33e5c30e60245125387",
+    "overlay_digest": "sha256:630be72dec190caf945d84fc0d04e22258f7093ef1d3b29e383ca7bd16a7226a",
     "scope": [
       {
         "identity": "workspace.scratch",
@@ -384,7 +384,7 @@
     "format_version": 1,
     "index_digest": "sha256:c666a54b88961453ac13956ae2dcb98abe488cf4543f9a63abdf2c5921cc2b90",
     "instance_id": "inst_coverage",
-    "overlay_digest": "sha256:c79453f6f54563ce7fd27a85753459700bf523da45b43ea598d3e2c5dee93bf7",
+    "overlay_digest": "sha256:630be72dec190caf945d84fc0d04e22258f7093ef1d3b29e383ca7bd16a7226a",
     "scope": {
       "complete": true,
       "sources": [
@@ -568,9 +568,51 @@
         "tag": "playbill-coverage-working-occurrence-v1"
       }
     ],
-    "scanned_selections": [
-      "sha256:418bf9dc9c7f616402cf2005d2e7a04c584cbb0dfa49aaf9c50017f26623ed1a",
-      "sha256:e0a5fa9cfaf6eef3057c18d845b0f3fe6080d599670a8ccc8984e3547f3293ca"
+    "source_scan_proofs": [
+      {
+        "byte_length": 37,
+        "commitment_digest": "sha256:418bf9dc9c7f616402cf2005d2e7a04c584cbb0dfa49aaf9c50017f26623ed1a",
+        "complete": true,
+        "source": {
+          "identity": "workspace.scratch",
+          "plane": "external",
+          "tag": "playbill-logical-source-identity-v1"
+        },
+        "tag": "playbill-coverage-commitment-scan-proof-v1"
+      },
+      {
+        "byte_length": 64,
+        "commitment_digest": "sha256:e0a5fa9cfaf6eef3057c18d845b0f3fe6080d599670a8ccc8984e3547f3293ca",
+        "complete": true,
+        "source": {
+          "identity": "workspace.scratch",
+          "plane": "external",
+          "tag": "playbill-logical-source-identity-v1"
+        },
+        "tag": "playbill-coverage-commitment-scan-proof-v1"
+      },
+      {
+        "byte_length": 37,
+        "commitment_digest": "sha256:418bf9dc9c7f616402cf2005d2e7a04c584cbb0dfa49aaf9c50017f26623ed1a",
+        "complete": true,
+        "source": {
+          "identity": "documents/handbook.md",
+          "plane": "ledger",
+          "tag": "playbill-logical-source-identity-v1"
+        },
+        "tag": "playbill-coverage-commitment-scan-proof-v1"
+      },
+      {
+        "byte_length": 64,
+        "commitment_digest": "sha256:e0a5fa9cfaf6eef3057c18d845b0f3fe6080d599670a8ccc8984e3547f3293ca",
+        "complete": true,
+        "source": {
+          "identity": "documents/handbook.md",
+          "plane": "ledger",
+          "tag": "playbill-logical-source-identity-v1"
+        },
+        "tag": "playbill-coverage-commitment-scan-proof-v1"
+      }
     ],
     "sources": [
       {
@@ -594,7 +636,7 @@
         "tag": "playbill-coverage-working-source-commitment-v1"
       }
     ],
-    "tag": "playbill-coverage-occurrence-overlay-v1",
+    "tag": "playbill-coverage-occurrence-overlay-v2",
     "truncated": false,
     "truncation_reason_codes": []
   }

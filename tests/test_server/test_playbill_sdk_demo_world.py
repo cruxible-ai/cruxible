@@ -417,8 +417,14 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     drifted = pb.next(expiring_within=Duration.days(count=7))
     drift = next(item for item in drifted.items if item["reason"] == "citation_drifted")
     assert drift["subject_identity"] == f"Claim:{claim_id}"
-    assert drift["detail"]["source_id"] == "corpus.vuln-response-runbook"
+    assert drift["detail"]["drift_state"] == "changed"
+    assert drift["detail"]["logical_source"] == {
+        "tag": "playbill-logical-source-identity-v1",
+        "plane": "external",
+        "identity": "corpus.vuln-response-runbook",
+    }
     assert drift["repair"]["operation"] == "playbill.authoring.bind"
+    assert drift["repair"]["required_change"] == "adjudicate_citation_drift"
     assert drift["repair"]["arguments"]["source_id"] == "corpus.vuln-response-runbook"
     runbook.write_text(original_runbook, encoding="utf-8")
     reverted = pb.next(expiring_within=Duration.days(count=7))

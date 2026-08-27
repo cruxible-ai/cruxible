@@ -16,7 +16,7 @@ import tempfile
 import unicodedata
 from collections.abc import Mapping, Sequence
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from cruxible_client import contracts
 from cruxible_client.authoring.blocks import ProjectionMarkerError, parse_projection_blocks
@@ -459,15 +459,15 @@ def _unobserved_projection_source(
     marker_notes: Sequence[str] = (),
 ) -> dict[str, object]:
     return {
-        "tag": "playbill-next-source-observation-v3",
+        "tag": "playbill-next-source-observation-v4",
         "source_id": source_id,
         "document_id": document_id,
         "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
         "byte_length": len(content),
         "marker_summaries": list(marker_summaries),
         "occurrences": [],
-        "scanned_commitment_digests": [],
-        "scan_complete": False,
+        "commitment_scan_proofs": [],
+        "citation_window_observations": [],
         "scan_notes": sorted(set(scan_notes), key=lambda item: item.encode("utf-8")),
         "marker_notes": sorted(set(marker_notes), key=lambda item: item.encode("utf-8")),
     }
@@ -491,61 +491,210 @@ def _projection_marker_observation(
     )
 
 
-def _coverage_occurrences(
-    span: Mapping[str, Any], *, source_id: str, content: bytes
-) -> tuple[list[dict[str, object]], list[str], tuple[str, ...]]:
+def _coverage_v3_fields(
+    span: Mapping[str, Any],
+    *,
+    source_id: str,
+    content: bytes,
+) -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+    list[dict[str, object]],
+    tuple[str, ...],
+]:
     notes: set[str] = set()
+    if span.get("tag") != "playbill-coverage-span-result-v3":
+        return [], [], [], ("coverage_result_version_unsupported",)
     if span.get("health") != "complete":
         notes.add("coverage_" + str(span.get("health", "unavailable")))
     if span.get("ambiguous_occurrence_count", 0):
         notes.add("coverage_occurrence_ambiguous")
     if span.get("omitted_card_count", 0):
         notes.add("coverage_cards_omitted")
-    cards = span.get("cards", [])
-    if not isinstance(cards, list) or len(cards) > MAX_PROJECTION_CARDS_PER_SOURCE:
+    raw_cards = span.get("cards", [])
+    cards_clipped = not isinstance(raw_cards, list) or (
+        len(raw_cards) > MAX_PROJECTION_CARDS_PER_SOURCE
+    )
+    cards = raw_cards
+    if cards_clipped:
         notes.add("coverage_card_limit_exceeded")
-        return [], [], tuple(sorted(notes))
+        cards = []
 
-    occurrences: dict[str, dict[str, object]] = {}
-    scanned: set[str] = set()
     expected_source = {
         "tag": "playbill-logical-source-identity-v1",
         "plane": "external",
         "identity": source_id,
     }
+    proofs: dict[tuple[str, int], dict[str, object]] = {}
+    raw_proofs = span.get("commitment_scan_proofs", [])
+    if not isinstance(raw_proofs, list) or len(raw_proofs) > MAX_PROJECTION_CARDS_PER_SOURCE:
+        notes.add("coverage_proof_limit_exceeded")
+        raw_proofs = []
+    for proof in raw_proofs:
+        if not isinstance(proof, Mapping) or proof.get("source") != expected_source:
+            notes.add("coverage_proof_invalid")
+            continue
+        digest, length = proof.get("commitment_digest"), proof.get("byte_length")
+        if (
+            proof.get("tag") != "playbill-coverage-commitment-scan-proof-v1"
+            or proof.get("complete") is not True
+            or not isinstance(digest, str)
+            or not isinstance(length, int)
+            or isinstance(length, bool)
+            or length < 0
+        ):
+            notes.add("coverage_proof_invalid")
+            continue
+        try:
+            Sha256Value.from_tagged(digest)
+        except ValueError:
+            notes.add("coverage_proof_invalid")
+            continue
+        proof_value = dict(proof)
+        proof_previous = proofs.setdefault((digest, length), proof_value)
+        if proof_previous != proof_value:
+            notes.add("coverage_proof_invalid")
+    if cards_clipped:
+        proofs.clear()
+
+    skipped_occurrences: dict[tuple[str, int], set[str]] = {}
+    forced_drops: set[tuple[str, int]] = set()
+
+    def discard_proof_for_skipped_card(
+        card: Mapping[str, object] | None,
+        *,
+        force: bool = False,
+    ) -> None:
+        """A proof may survive only beside a complete occurrence enumeration."""
+
+        if card is None:
+            proofs.clear()
+            return
+        match_state = card.get("match_state")
+        if match_state not in {"exact", "candidate"}:
+            return
+        digest = card.get("expected_commitment_digest")
+        overlay = card.get("line_overlay")
+        if not isinstance(digest, str) or not isinstance(overlay, Mapping):
+            proofs.clear()
+            return
+        try:
+            Sha256Value.from_tagged(digest)
+        except ValueError:
+            proofs.clear()
+            return
+        start, end = overlay.get("start_byte"), overlay.get("end_byte")
+        observed_digest = card.get("observed_commitment_digest")
+        identity = card.get("occurrence_identity_digest")
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or not 0 <= start <= end <= len(content)
+            or not isinstance(observed_digest, str)
+            or observed_digest != "sha256:" + hashlib.sha256(content[start:end]).hexdigest()
+            or not isinstance(identity, str)
+        ):
+            for key in tuple(proofs):
+                if key[0] == digest:
+                    proofs.pop(key)
+            return
+        pair = (digest, end - start)
+        skipped_occurrences.setdefault(pair, set()).add(identity)
+        if force:
+            forced_drops.add(pair)
+
+    windows: dict[tuple[str, int, int], dict[str, object]] = {}
+    raw_windows = span.get("citation_window_observations", [])
+    if not isinstance(raw_windows, list) or len(raw_windows) > MAX_PROJECTION_CARDS_PER_SOURCE:
+        notes.add("coverage_window_limit_exceeded")
+        raw_windows = []
+    for window in raw_windows:
+        if not isinstance(window, Mapping) or window.get("source") != expected_source:
+            notes.add("coverage_window_invalid")
+            continue
+        citation_id = window.get("citation_id")
+        commitment_digest = window.get("commitment_digest")
+        start, end = window.get("original_start"), window.get("original_end")
+        addressable = window.get("addressable")
+        observed_digest = window.get("observed_window_digest")
+        if (
+            window.get("tag") != "playbill-citation-window-observation-v1"
+            or not isinstance(citation_id, str)
+            or not isinstance(commitment_digest, str)
+            or not isinstance(start, int)
+            or isinstance(start, bool)
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or not isinstance(addressable, bool)
+            or not 0 <= start <= end
+        ):
+            notes.add("coverage_window_invalid")
+            continue
+        try:
+            Sha256Value.from_tagged(citation_id)
+            Sha256Value.from_tagged(commitment_digest)
+        except ValueError:
+            notes.add("coverage_window_invalid")
+            continue
+        if addressable:
+            expected_digest = (
+                "sha256:" + hashlib.sha256(content[start:end]).hexdigest()
+                if end <= len(content)
+                else None
+            )
+            if observed_digest != expected_digest:
+                notes.add("coverage_window_invalid")
+                continue
+        elif observed_digest is not None:
+            notes.add("coverage_window_invalid")
+            continue
+        value = dict(window)
+        key = (citation_id, start, end)
+        window_previous = windows.setdefault(key, value)
+        if window_previous != value:
+            notes.add("coverage_window_invalid")
+
+    occurrences: dict[str, dict[str, object]] = {}
     for card in cards:
         if not isinstance(card, Mapping):
             notes.add("coverage_card_invalid")
+            discard_proof_for_skipped_card(None)
             continue
         observed_source = card.get("observed_source")
         accepted_source = card.get("accepted_source")
         if observed_source != expected_source:
             notes.add("coverage_source_mismatch")
-            continue
-        if card.get("match_state") == "candidate":
-            if accepted_source == expected_source:
-                notes.add("coverage_occurrence_unverified")
+            discard_proof_for_skipped_card(card)
             continue
         if accepted_source != expected_source:
             notes.add("coverage_source_mismatch")
+            discard_proof_for_skipped_card(card)
             continue
         expected_digest = card.get("expected_commitment_digest")
         if not isinstance(expected_digest, str):
             notes.add("coverage_card_invalid")
+            discard_proof_for_skipped_card(card)
             continue
         try:
             Sha256Value.from_tagged(expected_digest)
         except ValueError:
             notes.add("coverage_card_invalid")
+            discard_proof_for_skipped_card(card)
             continue
-        scanned.add(expected_digest)
-        if card.get("match_state") != "exact":
+        if card.get("match_state") not in {"exact", "candidate"}:
             continue
         overlay = card.get("line_overlay")
         observed_digest = card.get("observed_commitment_digest")
         identity = card.get("occurrence_identity_digest")
-        if not isinstance(overlay, Mapping) or not isinstance(observed_digest, str):
+        if (
+            not isinstance(overlay, Mapping)
+            or not isinstance(observed_digest, str)
+            or not isinstance(identity, str)
+        ):
             notes.add("coverage_occurrence_invalid")
+            discard_proof_for_skipped_card(card)
             continue
         start, end = overlay.get("start_byte"), overlay.get("end_byte")
         if (
@@ -557,42 +706,75 @@ def _coverage_occurrences(
             or observed_digest != "sha256:" + hashlib.sha256(content[start:end]).hexdigest()
         ):
             notes.add("coverage_occurrence_invalid")
+            discard_proof_for_skipped_card(card)
             continue
-        expected_identity = typed_digest(
-            Sha256Value,
-            "playbill-coverage-occurrence-identity-v1",
-            {
-                "source": expected_source,
-                "observed_commitment_digest": observed_digest,
-                "ordinal": 0,
-            },
-        ).tagged
-        if identity != expected_identity:
+        ordinal = next(
+            (
+                candidate
+                for candidate in range(max(len(cards), 1))
+                if typed_digest(
+                    Sha256Value,
+                    "playbill-coverage-occurrence-identity-v1",
+                    {
+                        "source": expected_source,
+                        "observed_commitment_digest": observed_digest,
+                        "ordinal": candidate,
+                    },
+                ).tagged
+                == identity
+            ),
+            None,
+        )
+        if ordinal is None:
             notes.add("coverage_occurrence_ambiguous")
+            discard_proof_for_skipped_card(card)
+            continue
+        if (observed_digest, end - start) not in proofs:
+            notes.add(
+                "coverage_occurrence_unverified"
+                if card.get("match_state") == "candidate"
+                else "coverage_occurrence_unproved"
+            )
             continue
         occurrence: dict[str, object] = {
             "tag": "playbill-coverage-working-occurrence-v1",
             "source": expected_source,
             "observed_commitment_digest": observed_digest,
             "byte_length": end - start,
-            "ordinal": 0,
+            "ordinal": ordinal,
             "identity_digest": identity,
             "line_overlay": dict(overlay),
         }
-        previous = occurrences.get(identity)
-        if previous is not None and previous != occurrence:
+        occurrence_previous = occurrences.get(identity)
+        if occurrence_previous is not None and occurrence_previous != occurrence:
             notes.add("coverage_occurrence_ambiguous")
+            discard_proof_for_skipped_card(card, force=True)
             continue
         occurrences[identity] = occurrence
-    if notes:
-        return [], [], tuple(sorted(notes, key=lambda item: item.encode("utf-8")))
+    for pair, identities in skipped_occurrences.items():
+        if pair in forced_drops or not identities.issubset(occurrences):
+            proofs.pop(pair, None)
+    occurrences = {
+        identity: occurrence
+        for identity, occurrence in occurrences.items()
+        if (
+            cast(str, occurrence["observed_commitment_digest"]),
+            cast(int, occurrence["byte_length"]),
+        )
+        in proofs
+    }
     return (
         sorted(
             occurrences.values(),
-            key=lambda item: str(item["observed_commitment_digest"]).encode("ascii"),
+            key=lambda item: (
+                str(item["source"]).encode("utf-8"),
+                str(item["observed_commitment_digest"]).encode("ascii"),
+                cast(int, item["ordinal"]),
+            ),
         ),
-        sorted(scanned, key=lambda item: item.encode("ascii")),
-        (),
+        [proofs[key] for key in sorted(proofs)],
+        [windows[key] for key in sorted(windows)],
+        tuple(sorted(notes, key=lambda item: item.encode("utf-8"))),
     )
 
 
@@ -719,33 +901,24 @@ def observe_playbill_next_workspace_with_coverage(
         if len(candidates) != 1:
             notes.append("coverage_span_missing" if not candidates else "coverage_span_ambiguous")
         occurrences: list[dict[str, object]] = []
-        scanned: list[str] = []
+        proofs: list[dict[str, object]] = []
+        windows: list[dict[str, object]] = []
         if not notes:
-            occurrences, scanned, scan_notes = _coverage_occurrences(
+            occurrences, proofs, windows, scan_notes = _coverage_v3_fields(
                 candidates[0], source_id=source_id, content=content
             )
             notes.extend(scan_notes)
-        if notes:
-            enriched[source_id] = _unobserved_projection_source(
-                source_id,
-                document_id=document_ids[source_id],
-                content=content,
-                scan_notes=notes,
-                marker_summaries=markers,
-                marker_notes=marker_notes,
-            )
-            continue
         enriched[source_id] = {
-            "tag": "playbill-next-source-observation-v3",
+            "tag": "playbill-next-source-observation-v4",
             "source_id": source_id,
             "document_id": document_ids[source_id],
             "observed_source_digest": "sha256:" + hashlib.sha256(content).hexdigest(),
             "byte_length": len(content),
             "marker_summaries": markers,
             "occurrences": occurrences,
-            "scanned_commitment_digests": scanned,
-            "scan_complete": True,
-            "scan_notes": [],
+            "commitment_scan_proofs": proofs,
+            "citation_window_observations": windows,
+            "scan_notes": sorted(set(notes), key=lambda item: item.encode("utf-8")),
             "marker_notes": list(marker_notes),
         }
     base["source_observations"] = [

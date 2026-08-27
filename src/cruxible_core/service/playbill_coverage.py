@@ -24,10 +24,12 @@ access classes would be a request that could widen its own disclosure, and
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import hashlib
+from collections.abc import Mapping, Sequence
 
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
+    CaptureEnvelopeV1,
     capture_contract_digest,
     capture_contract_is_self_asserted,
     parse_capture_contract,
@@ -42,8 +44,12 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_statement_digest,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
-from cruxible_client.contracts.source_references import SourceAccessClass
+from cruxible_client.contracts.errors import PlaybillCasError, ProposalIntegrityError
+from cruxible_client.contracts.source_references import (
+    ExternalSourceReferenceV1,
+    LedgerSourceReferenceV1,
+    SourceAccessClass,
+)
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
@@ -53,9 +59,11 @@ from cruxible_core.playbill.coverage.adapter import (
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageCardBudgetV1,
+    CoverageCommitmentMaterializationCorrupt,
     CoverageRequestV1,
-    CoverageResultV2,
+    CoverageResultV3,
     LogicalSourceIdentityV1,
+    PlaybillCitationWindowObservationV1,
 )
 from cruxible_core.playbill.coverage.indexes import (
     CaptureCitationInputV1,
@@ -64,6 +72,7 @@ from cruxible_core.playbill.coverage.indexes import (
     EvidenceCitationIndexV1,
     EvidenceCitationIndexV2,
     WorkingOccurrenceOverlayV1,
+    WorkingOccurrenceOverlayV2,
     build_evidence_citation_index,
     build_evidence_citation_index_v2,
 )
@@ -78,7 +87,7 @@ from cruxible_core.playbill.coverage.manifest import (
     write_coverage_manifest,
     write_coverage_manifest_v2,
 )
-from cruxible_core.playbill.coverage.resolver import resolve_coverage_v2
+from cruxible_core.playbill.coverage.resolver import resolve_coverage_v3
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
@@ -246,6 +255,153 @@ def accepted_evidence_sources(
     return tuple(seen[key] for key in sorted(seen))
 
 
+def _materialized_wanted_selections(
+    instance: PlaybillInstance,
+    *,
+    index: EvidenceCitationIndexV2,
+    envelopes: Mapping[str, CaptureEnvelopeV1] | None = None,
+) -> tuple[tuple[str, int, bytes | None], ...]:
+    """Resolve retained exact bytes before entering the pure occurrence scanner.
+
+    A missing retained body is an availability condition and selects the
+    exhaustive fallback. A present CAS object that fails its content address is
+    an integrity failure and must never be laundered into that fallback.
+    """
+
+    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
+    store = instance.body_store()
+    resolved_envelopes = (
+        _capture_envelopes(instance, index=index) if envelopes is None else envelopes
+    )
+    materialized: list[tuple[str, int, bytes | None]] = []
+    for digest, byte_length in index.wanted_selections():
+        needle: bytes | None = None
+        citations = index.by_commitment(digest)
+        capture_digests = sorted(
+            {capture for citation in citations for capture in citation.capture_digests}
+        )
+        for capture_digest in capture_digests:
+            envelope = resolved_envelopes[capture_digest]
+            if (
+                envelope.commitment.digest != digest
+                or envelope.commitment.byte_length != byte_length
+            ):
+                raise ProposalIntegrityError(
+                    "coverage index and retained Capture commitment disagree"
+                )
+            content: bytes | None = None
+            if envelope.commitment.materialization == "cas":
+                try:
+                    metadata = store.metadata(digest, access=access)
+                    if not metadata.present:
+                        continue
+                    content = store.read(digest, access=access)
+                except PlaybillCasError as exc:
+                    raise CoverageCommitmentMaterializationCorrupt(
+                        "retained commitment bytes failed CAS verification"
+                    ) from exc
+            elif isinstance(envelope.source, LedgerSourceReferenceV1):
+                content = instance.tree_at(envelope.source.coordinate.git_oid).get(
+                    envelope.source.address.artifact_path
+                )
+                # A ledger address may select a region whose materializer is not
+                # retained independently. Only an exact whole-body reproduction
+                # is a usable needle; otherwise the exhaustive route remains sound.
+                if content is not None and (
+                    len(content) != byte_length
+                    or hashlib.sha256(content).hexdigest() != digest.removeprefix("sha256:")
+                ):
+                    content = None
+            if content is None:
+                continue
+            observed = f"sha256:{hashlib.sha256(content).hexdigest()}"
+            if len(content) != byte_length or observed != digest:
+                if envelope.commitment.materialization == "cas":
+                    raise CoverageCommitmentMaterializationCorrupt(
+                        "retained commitment bytes do not reproduce their digest and length"
+                    )
+                continue
+            needle = content
+            break
+        materialized.append((digest, byte_length, needle))
+    return tuple(materialized)
+
+
+def _citation_window_observations(
+    *,
+    index: EvidenceCitationIndexV2,
+    observations: Sequence[WorkingSourceObservationV1],
+    envelopes: Mapping[str, CaptureEnvelopeV1],
+) -> tuple[PlaybillCitationWindowObservationV1, ...]:
+    """Observe each accepted citation's original window in its named working source."""
+
+    by_source = {item.source.sort_key: item for item in observations}
+    windows: dict[tuple[bytes, bytes, int, int], PlaybillCitationWindowObservationV1] = {}
+    for citation in index.citations:
+        if citation.accepted_source is None or citation.byte_length is None:
+            continue
+        observed = by_source.get(citation.accepted_source.sort_key)
+        for association in citation.citation_associations:
+            envelope = envelopes[association.capture_digest]
+            if not isinstance(envelope.source, ExternalSourceReferenceV1):
+                continue
+            selector = envelope.source.selector
+            if not isinstance(selector, Mapping):
+                continue
+            window = selector.get("working_selection", selector)
+            raw_start = window.get("start_byte") if isinstance(window, Mapping) else None
+            raw_end = window.get("end_byte") if isinstance(window, Mapping) else None
+            if (
+                not isinstance(raw_start, int)
+                or isinstance(raw_start, bool)
+                or not isinstance(raw_end, int)
+                or isinstance(raw_end, bool)
+                or not 0 <= raw_start <= raw_end
+            ):
+                continue
+            start, end = raw_start, raw_end
+            addressable = observed is not None and end <= observed.byte_length
+            observed_digest = None
+            if addressable and observed is not None:
+                observed_digest = (
+                    f"sha256:{hashlib.sha256(observed.content[start:end]).hexdigest()}"
+                )
+            item = PlaybillCitationWindowObservationV1(
+                source=citation.accepted_source,
+                citation_id=association.reference.citation_id,
+                commitment_digest=citation.commitment_digest,
+                original_start=start,
+                original_end=end,
+                addressable=addressable,
+                observed_window_digest=observed_digest,
+            )
+            key = (
+                item.source.sort_key,
+                item.citation_id.encode("ascii"),
+                item.original_start,
+                item.original_end,
+            )
+            windows[key] = item
+    return tuple(windows[key] for key in sorted(windows))
+
+
+def _capture_envelopes(
+    instance: PlaybillInstance,
+    *,
+    index: EvidenceCitationIndexV2,
+) -> dict[str, CaptureEnvelopeV1]:
+    """Read each retained capture envelope once for both coverage consumers."""
+
+    access = BodyAccessContext(principal_id=COVERAGE_PRINCIPAL, can_read_body=True)
+    store = instance.body_store()
+    return {
+        digest: parse_capture_envelope(store.read(digest, access=access))
+        for digest in sorted(
+            {capture for citation in index.citations for capture in citation.capture_digests}
+        )
+    }
+
+
 def _publish_manifest(
     instance: PlaybillInstance,
     *,
@@ -293,7 +449,7 @@ def _publish_manifest_v2(
     *,
     instance_id: str,
     index: EvidenceCitationIndexV2,
-    overlay: WorkingOccurrenceOverlayV1,
+    overlay: WorkingOccurrenceOverlayV1 | WorkingOccurrenceOverlayV2,
     access_profile: CoverageAccessProfileV1,
 ) -> CoverageManifestBodyV2:
     directory = instance.root / COVERAGE_DIRECTORY
@@ -330,7 +486,7 @@ def service_resolve_playbill_coverage(
     at: PlaybillAcceptedCoordinate | None = None,
     budget: CoverageCardBudgetV1 | None = None,
     scan_budget: CoverageScanBudgetV1 | None = None,
-) -> CoverageResultV2:
+) -> CoverageResultV3:
     """Resolve one batch of working-set observations against accepted state.
 
     The whole operation is: rebuild the index, hash the observed snapshot into
@@ -345,9 +501,10 @@ def service_resolve_playbill_coverage(
 
     coordinate = _resolve_coordinate(instance, at)
     index = build_accepted_evidence_index_v2(instance, at=coordinate)
+    envelopes = _capture_envelopes(instance, index=index)
     overlay = build_overlay(
         observations,
-        wanted=index.wanted_selections(),
+        wanted=_materialized_wanted_selections(instance, index=index, envelopes=envelopes),
         budget=scan_budget,
     )
     access_profile = coverage_access_profile()
@@ -364,12 +521,17 @@ def service_resolve_playbill_coverage(
         spans=coverage_span_requests(observations),
         budget=budget or CoverageCardBudgetV1(),
     )
-    return resolve_coverage_v2(
+    return resolve_coverage_v3(
         request,
         index=index,
         overlay=overlay,
         access=access_profile,
         manifest=manifest,
+        window_observations=_citation_window_observations(
+            index=index,
+            observations=observations,
+            envelopes=envelopes,
+        ),
     )
 
 

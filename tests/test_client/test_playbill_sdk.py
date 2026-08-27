@@ -264,7 +264,7 @@ def test_sdk_curation_list_uses_the_existing_explicit_workspace_scanner(
     assert isinstance(client.curation_observation, dict)
     assert client.curation_observation["tag"] == "playbill-next-workspace-observation-v1"
     (source_row,) = client.curation_observation["source_observations"]
-    assert source_row["tag"] == "playbill-next-source-observation-v3"
+    assert source_row["tag"] == "playbill-next-source-observation-v4"
     assert source_row["source_id"] == "corpus.runbook"
     assert isinstance(client.coverage_observations, list)
 

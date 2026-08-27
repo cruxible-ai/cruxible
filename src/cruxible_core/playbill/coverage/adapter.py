@@ -63,7 +63,7 @@ from cruxible_core.playbill.coverage.contracts import (
 )
 from cruxible_core.playbill.coverage.indexes import (
     CoverageScanBudgetV1,
-    WorkingOccurrenceOverlayV1,
+    WorkingOccurrenceOverlayV2,
     WorkingSourceContent,
     build_working_occurrence_overlay,
 )
@@ -375,14 +375,14 @@ def coverage_span_requests(
 def build_overlay(
     observations: Sequence[WorkingSourceObservationV1],
     *,
-    wanted: Iterable[tuple[str, int]] = (),
+    wanted: Iterable[tuple[str, int, bytes | None]] = (),
     budget: CoverageScanBudgetV1 | None = None,
-) -> WorkingOccurrenceOverlayV1:
+) -> WorkingOccurrenceOverlayV2:
     """Build the working-occurrence overlay from observed bytes.
 
-    ``wanted`` comes from the evidence index and is the only reason this call
-    cannot happen entirely inside a harness: the lengths worth hashing for are a
-    fact about accepted state.
+    ``wanted`` is materialized by the accepted-state service as
+    ``(digest, length, verified_needle_or_none)``. This adapter only forwards
+    those values into the pure scanner.
     """
 
     return build_working_occurrence_overlay(

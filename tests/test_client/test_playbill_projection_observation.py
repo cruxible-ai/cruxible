@@ -79,11 +79,22 @@ class _CoverageClient:
             "citation_associations": [],
         }
         span: dict[str, object] = {
+            "tag": "playbill-coverage-span-result-v3",
             "request": {"source": dict(SOURCE)},
             "health": "complete",
             "ambiguous_occurrence_count": 0,
             "omitted_card_count": 0,
             "cards": [card],
+            "commitment_scan_proofs": [
+                {
+                    "tag": "playbill-coverage-commitment-scan-proof-v1",
+                    "source": dict(SOURCE),
+                    "commitment_digest": digest,
+                    "byte_length": len(self.needle),
+                    "complete": True,
+                }
+            ],
+            "citation_window_observations": [],
         }
         coordinate = COORDINATE.model_dump(mode="json")
         profile: dict[str, object] = {
@@ -92,10 +103,22 @@ class _CoverageClient:
         }
         if self.mode == "partial":
             span["health"] = "partial"
+            span["commitment_scan_proofs"] = []
         elif self.mode == "ambiguous":
             span["ambiguous_occurrence_count"] = 1
+            card["match_state"] = "candidate"
         elif self.mode == "omitted":
             span["omitted_card_count"] = 1
+            span["cards"] = []
+            span["commitment_scan_proofs"] = []
+        elif self.mode == "invalid_card":
+            span["cards"] = [None]
+        elif self.mode == "observed_source_mismatch":
+            card["observed_source"] = {**SOURCE, "identity": "corpus.other"}
+        elif self.mode == "accepted_source_mismatch":
+            card["accepted_source"] = {**SOURCE, "identity": "corpus.other"}
+        elif self.mode == "invalid_expected_digest":
+            card["expected_commitment_digest"] = "not-a-digest"
         elif self.mode == "bad_overlay":
             overlay["start_byte"] = start + 1
         elif self.mode == "bad_identity":
@@ -110,6 +133,7 @@ class _CoverageClient:
             }
         elif self.mode == "same_source_candidate":
             card["match_state"] = "candidate"
+            span["commitment_scan_proofs"] = []
 
         return api.PlaybillCoverageResult(
             coordinate=COORDINATE,
@@ -155,13 +179,13 @@ def test_one_coordinate_pinned_coverage_read_enriches_existing_v1_without_replac
         }
     ]
     (source,) = enriched["source_observations"]
-    assert source["tag"] == "playbill-next-source-observation-v3"
-    assert source["scan_complete"] is True
+    assert source["tag"] == "playbill-next-source-observation-v4"
     assert source["marker_summaries"][0]["stamp"]["block_id"] == "summary"
     assert len(source["occurrences"]) == 1
-    assert source["scanned_commitment_digests"] == [
-        source["occurrences"][0]["observed_commitment_digest"]
-    ]
+    assert (
+        source["commitment_scan_proofs"][0]["commitment_digest"]
+        == (source["occurrences"][0]["observed_commitment_digest"])
+    )
 
 
 def test_relocated_unique_citation_keeps_identity_while_presentation_offsets_move(
@@ -188,6 +212,10 @@ def test_relocated_unique_citation_keeps_identity_while_presentation_offsets_mov
         ("omitted", "coverage_cards_omitted"),
         ("bad_overlay", "coverage_occurrence_invalid"),
         ("bad_identity", "coverage_occurrence_ambiguous"),
+        ("invalid_card", "coverage_card_invalid"),
+        ("observed_source_mismatch", "coverage_source_mismatch"),
+        ("accepted_source_mismatch", "coverage_source_mismatch"),
+        ("invalid_expected_digest", "coverage_card_invalid"),
         ("denied", "coverage_access_mismatch"),
         ("mismatched_coordinate", "coverage_coordinate_mismatch"),
         ("missing_span", "coverage_span_missing"),
@@ -203,10 +231,22 @@ def test_partial_ambiguous_denied_or_unverified_coverage_is_explicitly_unobserve
     observation, coordinate = _observe(client, tmp_path)
 
     (source,) = observation["source_observations"]
-    assert source["scan_complete"] is False
     assert reason in source["scan_notes"]
-    assert source["occurrences"] == []
-    assert source["scanned_commitment_digests"] == []
+    if mode == "ambiguous":
+        assert len(source["occurrences"]) == 1
+    else:
+        assert source["occurrences"] == []
+    if mode == "partial":
+        assert source["commitment_scan_proofs"] == []
+    if mode in {
+        "bad_overlay",
+        "bad_identity",
+        "invalid_card",
+        "observed_source_mismatch",
+        "accepted_source_mismatch",
+        "invalid_expected_digest",
+    }:
+        assert source["commitment_scan_proofs"] == []
     if mode == "mismatched_coordinate":
         assert coordinate is None
 
@@ -219,7 +259,7 @@ def test_unstamped_bootstrap_has_its_own_note_and_is_never_an_invented_declarati
     observation, _ = _observe(_CoverageClient(), tmp_path)
 
     (source,) = observation["source_observations"]
-    assert source["scan_complete"] is True
+    assert source["scan_notes"] == []
     assert source["marker_summaries"] == []
     assert source["marker_notes"] == ["projection_block_unstamped"]
 
@@ -236,7 +276,7 @@ def test_malformed_marker_keeps_its_invalid_grammar_note(tmp_path: Path) -> None
     observation, _ = _observe(_CoverageClient(), tmp_path)
 
     (source_observation,) = observation["source_observations"]
-    assert source_observation["scan_complete"] is True
+    assert source_observation["scan_notes"] == []
     assert source_observation["marker_summaries"] == []
     assert source_observation["marker_notes"] == ["projection_marker_invalid"]
 

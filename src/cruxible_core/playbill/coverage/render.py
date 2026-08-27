@@ -53,6 +53,7 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageResultAny,
     CoverageSpanResultV1,
     CoverageSpanResultV2,
+    CoverageSpanResultV3,
     LogicalSourceIdentityV1,
 )
 
@@ -137,7 +138,9 @@ def render_card(card: CoverageCardV1 | CoverageCardV2) -> str:
     return "  ".join(parts) + _reasons(card.reason_codes)
 
 
-def render_span(span: CoverageSpanResultV1 | CoverageSpanResultV2) -> tuple[str, ...]:
+def render_span(
+    span: CoverageSpanResultV1 | CoverageSpanResultV2 | CoverageSpanResultV3,
+) -> tuple[str, ...]:
     """Render one span: its cards, then whatever qualifies them.
 
     A `none` span inside a complete boundary renders nothing. That silence is

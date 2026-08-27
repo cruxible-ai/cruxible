@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Playbill citation liveness now fails closed at every observation boundary.**
+  Source-local scan proofs are withheld whenever the matching occurrence cards
+  are clipped or rejected, partial scan budgets can no longer assert factual
+  absence, and instance-invisible source observations disclose no liveness
+  detail. Legacy drift observations now name `observed_window_digest` (instead
+  of `observed_commitment_digest`) and require `claim_id`; a legacy observation
+  for an invisible Claim is rejected with a typed 400 rather than silently
+  ignored.
+
 - **ClaimType migration now carries retired Claim dependents forward.** The
   shipped request previously omitted retired Claims from the dependent set.
   Callers must now disposition each retired Claim as `successor` so its stored

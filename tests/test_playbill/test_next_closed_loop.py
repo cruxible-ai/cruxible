@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import get_args
@@ -50,6 +50,7 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_client.contracts.semantic import ContentSpan
+from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.cas import BodyAccessContext
@@ -58,7 +59,15 @@ from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeMigrationRequestV1,
     service_migrate_claim_type,
 )
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.coverage.contracts import (
+    CoverageAccessProfileV1,
+    CoverageCommitmentScanProofV1,
+    CoverageLineOverlayV1,
+    LogicalSourceIdentityV1,
+    PlaybillCitationWindowObservationV1,
+    occurrence_identity_digest,
+)
+from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import service_propose_playbill_document
@@ -76,6 +85,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV1,
     PlaybillNextSourceObservationV3,
+    PlaybillNextSourceObservationV4,
     PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
@@ -133,6 +143,7 @@ from tests.test_playbill.test_reverse_drift_next import (
 
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
 RepairCase = Callable[[Path, pytest.MonkeyPatch], None]
+ClosedLoopKey = tuple[str, str | None]
 
 EXPECTED_OPERATIONS = {
     "claim_conflicted": "playbill.authoring.create",
@@ -187,6 +198,39 @@ def _row(instance, reason: str, request: PlaybillNextRequestV1):  # type: ignore
 def _assert_gone(instance, reason: str, request: PlaybillNextRequestV1) -> None:  # type: ignore[no-untyped-def]
     assert all(
         item.reason != reason for item in service_playbill_next(instance, request=request).items
+    )
+
+
+def _item_key(item: object) -> ClosedLoopKey:
+    reason = getattr(item, "reason")
+    detail = getattr(item, "detail")
+    discriminator = (
+        detail.get("drift_state")
+        if reason == "citation_drifted" and isinstance(detail, Mapping)
+        else None
+    )
+    return reason, discriminator
+
+
+def _row_by_key(
+    instance,
+    key: ClosedLoopKey,
+    request: PlaybillNextRequestV1,  # type: ignore[no-untyped-def]
+):  # type: ignore[no-untyped-def]
+    return next(
+        item
+        for item in service_playbill_next(instance, request=request).items
+        if _item_key(item) == key
+    )
+
+
+def _assert_key_gone(
+    instance,
+    key: ClosedLoopKey,
+    request: PlaybillNextRequestV1,  # type: ignore[no-untyped-def]
+) -> None:
+    assert all(
+        _item_key(item) != key for item in service_playbill_next(instance, request=request).items
     )
 
 
@@ -476,7 +520,7 @@ def _evidence_expiring(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _citation_drifted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     instance, owner = seed_claims(root)
     current = _current_claim(instance)
     citation = claim_citation_references(current)[0]
@@ -544,13 +588,15 @@ def _citation_drifted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
             )
         ),
     )
-    row = _row(instance, "citation_drifted", before)
+    key = ("citation_drifted", "changed")
+    row = _row_by_key(instance, key, before)
     assert row.repair.operation == EXPECTED_OPERATIONS["citation_drifted"]
+    assert row.repair.required_change == "adjudicate_citation_drift"
 
     activate(instance, owner, successor, sequence=3)
-    _assert_gone(
+    _assert_key_gone(
         instance,
-        "citation_drifted",
+        key,
         _request(
             instance,
             workspace=PlaybillNextWorkspaceObservationV1(
@@ -564,6 +610,184 @@ def _citation_drifted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
             ),
         ),
     )
+
+
+def _foreign_citation(instance):  # type: ignore[no-untyped-def]
+    current = _current_claim(instance)
+    for citation in claim_citation_references(current):
+        envelope = parse_capture_envelope(
+            instance.body_store().read(
+                citation.capture_digest,
+                access=BodyAccessContext(principal_id="closed-loop", can_read_body=True),
+            )
+        )
+        if isinstance(envelope.source, ExternalSourceReferenceV1):
+            return current, citation, envelope
+    raise AssertionError("the closed-loop world has no foreign citation")
+
+
+def _v4_citation_observation(
+    *,
+    instance,  # type: ignore[no-untyped-def]
+    source_id: str,
+    citation_id: str,
+    envelope,  # type: ignore[no-untyped-def]
+    state: str,
+) -> PlaybillNextSourceObservationV4:
+    source = LogicalSourceIdentityV1(plane="external", identity=source_id)
+    selector = envelope.source.selector
+    assert isinstance(selector, Mapping)
+    window = selector.get("working_selection", selector)
+    assert isinstance(window, Mapping)
+    start = window["start_byte"]
+    end = window["end_byte"]
+    assert isinstance(start, int) and isinstance(end, int)
+    commitment = envelope.commitment.digest
+    byte_length = envelope.commitment.byte_length
+    assert byte_length is not None
+
+    if state == "gone":
+        source_bytes = b"gone\n"
+    elif state == "ambiguous":
+        selected = b"ready"
+        source_bytes = selected + b"\n" + selected + b"\n"
+    elif state == "current":
+        source_bytes = b"status: blocked\n"
+    else:
+        raise AssertionError(f"unsupported closed-loop citation state: {state}")
+    source_digest = instance.body_store().store(source_bytes).digest
+
+    occurrences: tuple[WorkingOccurrenceV1, ...] = ()
+    if state in {"ambiguous", "current"}:
+        offsets = (0, 6) if state == "ambiguous" else (start,)
+        occurrences = tuple(
+            WorkingOccurrenceV1(
+                source=source,
+                observed_commitment_digest=commitment,
+                byte_length=byte_length,
+                ordinal=ordinal,
+                identity_digest=occurrence_identity_digest(
+                    source=source,
+                    observed_commitment_digest=commitment,
+                    ordinal=ordinal,
+                ),
+                line_overlay=CoverageLineOverlayV1(
+                    start_byte=offset,
+                    end_byte=offset + byte_length,
+                    start_line=ordinal + 1,
+                    end_line=ordinal + 1,
+                ),
+            )
+            for ordinal, offset in enumerate(offsets)
+        )
+    windows = (
+        (
+            PlaybillCitationWindowObservationV1(
+                source=source,
+                citation_id=citation_id,
+                commitment_digest=commitment,
+                original_start=start,
+                original_end=end,
+                addressable=False,
+                observed_window_digest=None,
+            ),
+        )
+        if state == "gone"
+        else ()
+    )
+    return PlaybillNextSourceObservationV4(
+        source_id=source_id,
+        observed_source_digest=source_digest,
+        byte_length=len(source_bytes),
+        marker_summaries=(),
+        occurrences=occurrences,
+        commitment_scan_proofs=(
+            CoverageCommitmentScanProofV1(
+                source=source,
+                commitment_digest=commitment,
+                byte_length=byte_length,
+            ),
+        ),
+        citation_window_observations=windows,
+        scan_notes=(),
+        marker_notes=(),
+    )
+
+
+def _citation_drifted_v4(
+    root: Path,
+    *,
+    drift_state: str,
+) -> None:
+    instance, owner, _successor, source_id, _source_digest = _foreign_world(root, bind=True)
+    current, citation, envelope = _foreign_citation(instance)
+    before_observation = _v4_citation_observation(
+        instance=instance,
+        source_id=source_id,
+        citation_id=citation.citation_id,
+        envelope=envelope,
+        state=drift_state,
+    )
+    key = ("citation_drifted", drift_state)
+    before = _request(
+        instance,
+        workspace=PlaybillNextWorkspaceObservationV1(source_observations=(before_observation,)),
+    )
+    row = _row_by_key(instance, key, before)
+    assert row.repair.operation == EXPECTED_OPERATIONS["citation_drifted"]
+    assert row.repair.required_change == "adjudicate_citation_drift"
+
+    source_body = instance.body_store().store(b"status: blocked\n")
+    successor = service_propose_playbill_claim(
+        instance,
+        authoring=DirectClaimAuthoringV1(
+            statement=authoring("wi-42", "blocked", with_claim_type=False).statement.model_copy(
+                update={"claim_type_digest": current.statement.claim_type_digest}
+            ),
+            rationale=f"Adjudicate the mechanically {drift_state} citation.",
+            claim_id=current.identity.name,
+            predecessor_artifact_digest=claim_artifact_digest(current).tagged,
+            source_selection=DirectForeignSourceSelectionV1(
+                logical_source_identity=source_id,
+                span=ContentSpan(
+                    content_digest=source_body.digest,
+                    start_byte=8,
+                    end_byte=15,
+                ),
+                media_type="text/markdown",
+            ),
+        ),
+        actor_id="owner",
+        proposal_name=f"closed-loop-adjudicate-{drift_state}-citation",
+        timestamp="2026-08-24T17:00:04.000000Z",
+    )
+    activate(instance, owner, successor, sequence=4)
+    _new_current, new_citation, new_envelope = _foreign_citation(instance)
+    current_observation = _v4_citation_observation(
+        instance=instance,
+        source_id=source_id,
+        citation_id=new_citation.citation_id,
+        envelope=new_envelope,
+        state="current",
+    )
+    _assert_key_gone(
+        instance,
+        key,
+        _request(
+            instance,
+            workspace=PlaybillNextWorkspaceObservationV1(
+                source_observations=(current_observation,)
+            ),
+        ),
+    )
+
+
+def _citation_drifted_gone(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    _citation_drifted_v4(root, drift_state="gone")
+
+
+def _citation_drifted_ambiguous(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    _citation_drifted_v4(root, drift_state="ambiguous")
 
 
 def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -840,35 +1064,40 @@ def _claim_attestation_threshold(
     _assert_gone(instance, "claim_attestation_threshold_met", _request(instance))
 
 
-CLOSED_LOOP_CASES: dict[str, RepairCase] = {
-    "claim_conflicted": _claim_conflicted,
-    "claim_uncovered": _claim_uncovered,
-    "claim_stale_evidence": _claim_stale_evidence,
-    "citation_drifted": _citation_drifted,
-    "citation_source_unobserved": _citation_source_unobserved,
-    "evidence_expiring": _evidence_expiring,
-    "floor_missing": _floor_missing,
-    "floor_stale": _floor_stale,
-    "floor_invalid": _floor_invalid,
-    "projection_dirty": _projection_dirty,
-    "projection_backing_stale": _projection_backing_stale,
-    "self_published_source_stale": _self_published_source_stale,
-    "claim_dependency_stale": _claim_dependency_stale,
-    "claim_attestation_threshold_met": _claim_attestation_threshold,
-    "document_modified": _document_modified,
+CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
+    ("claim_conflicted", None): _claim_conflicted,
+    ("claim_uncovered", None): _claim_uncovered,
+    ("claim_stale_evidence", None): _claim_stale_evidence,
+    ("citation_drifted", "changed"): _citation_drifted_changed,
+    ("citation_drifted", "gone"): _citation_drifted_gone,
+    ("citation_drifted", "ambiguous"): _citation_drifted_ambiguous,
+    ("citation_source_unobserved", None): _citation_source_unobserved,
+    ("evidence_expiring", None): _evidence_expiring,
+    ("floor_missing", None): _floor_missing,
+    ("floor_stale", None): _floor_stale,
+    ("floor_invalid", None): _floor_invalid,
+    ("projection_dirty", None): _projection_dirty,
+    ("projection_backing_stale", None): _projection_backing_stale,
+    ("self_published_source_stale", None): _self_published_source_stale,
+    ("claim_dependency_stale", None): _claim_dependency_stale,
+    ("claim_attestation_threshold_met", None): _claim_attestation_threshold,
+    ("document_modified", None): _document_modified,
 }
 
 
-@pytest.mark.parametrize("reason", get_args(NextReason))
+@pytest.mark.parametrize("key", tuple(CLOSED_LOOP_CASES))
 def test_every_next_reason_has_an_effective_named_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    reason: str,
+    key: ClosedLoopKey,
 ) -> None:
     reasons = set(get_args(NextReason))
-    assert set(CLOSED_LOOP_CASES) == reasons
+    assert {reason for reason, _discriminator in CLOSED_LOOP_CASES} == reasons
+    assert {
+        discriminator for reason, discriminator in CLOSED_LOOP_CASES if reason == "citation_drifted"
+    } == {"changed", "gone", "ambiguous"}
     assert set(EXPECTED_OPERATIONS) == reasons
 
-    case_root = tmp_path / reason
+    case_root = tmp_path / "-".join(part for part in key if part is not None)
     case_root.mkdir()
-    CLOSED_LOOP_CASES[reason](case_root, monkeypatch)
+    CLOSED_LOOP_CASES[key](case_root, monkeypatch)

@@ -62,7 +62,12 @@ from cruxible_client.contracts.source_references import ExternalSourceReferenceV
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_slots import classify_claim_slot
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.coverage.contracts import (
+    CoverageAccessProfileV1,
+    CoverageCommitmentScanProofV1,
+    LogicalSourceIdentityV1,
+    PlaybillCitationWindowObservationV1,
+)
 from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -302,6 +307,104 @@ class PlaybillNextSourceObservationV3(_StrictNextModel):
         return self
 
 
+class PlaybillNextSourceObservationV4(_StrictNextModel):
+    tag: Literal["playbill-next-source-observation-v4"] = "playbill-next-source-observation-v4"
+    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    observed_source_digest: str
+    byte_length: int = Field(ge=0, le=MAX_PROJECTION_SOURCE_BYTES)
+    marker_summaries: tuple[ProjectionMarkerSummaryV1, ...] = Field(
+        max_length=MAX_PROJECTION_BLOCKS_PER_SOURCE
+    )
+    occurrences: tuple[WorkingOccurrenceV1, ...] = Field(max_length=MAX_PROJECTION_CARDS_PER_SOURCE)
+    commitment_scan_proofs: tuple[CoverageCommitmentScanProofV1, ...] = Field(
+        max_length=MAX_PROJECTION_CARDS_PER_SOURCE
+    )
+    citation_window_observations: tuple[PlaybillCitationWindowObservationV1, ...] = Field(
+        max_length=MAX_PROJECTION_CARDS_PER_SOURCE
+    )
+    scan_notes: tuple[str, ...]
+    marker_notes: tuple[str, ...]
+
+    @field_validator("observed_source_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("scan_notes", "marker_notes")
+    @classmethod
+    def _notes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("next observation notes must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _source_shape(self) -> "PlaybillNextSourceObservationV4":
+        expected_source = LogicalSourceIdentityV1(plane="external", identity=self.source_id)
+        marker_ids = tuple(marker.stamp.block_id for marker in self.marker_summaries)
+        if marker_ids != tuple(sorted(set(marker_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("next marker summaries must be sorted and unique by block ID")
+        previous_end = -1
+        for marker in sorted(self.marker_summaries, key=lambda item: item.start_byte):
+            if marker.stamp.source_id != self.source_id:
+                raise ValueError("next marker summary names a different logical source")
+            if marker.start_byte < previous_end or marker.end_byte > self.byte_length:
+                raise ValueError("next marker summary windows overlap or escape the source")
+            previous_end = marker.end_byte
+
+        occurrence_keys = tuple(item.sort_key for item in self.occurrences)
+        if occurrence_keys != tuple(sorted(set(occurrence_keys))):
+            raise ValueError("next source occurrences must be sorted and unique")
+        proof_keys = tuple(item.sort_key for item in self.commitment_scan_proofs)
+        if proof_keys != tuple(sorted(set(proof_keys))):
+            raise ValueError("next source scan proofs must be sorted and unique")
+        proof_identities = {
+            (item.source.sort_key, item.commitment_digest, item.byte_length)
+            for item in self.commitment_scan_proofs
+        }
+        for proof in self.commitment_scan_proofs:
+            if proof.source != expected_source:
+                raise ValueError("next source scan proof names a different logical source")
+        for occurrence in self.occurrences:
+            if occurrence.source != expected_source:
+                raise ValueError("next occurrence names a different logical source")
+            if occurrence.line_overlay.end_byte > self.byte_length:
+                raise ValueError("next occurrence presentation window escapes the source")
+            if (
+                occurrence.source.sort_key,
+                occurrence.observed_commitment_digest,
+                occurrence.byte_length,
+            ) not in proof_identities:
+                raise ValueError("every next occurrence requires its exact local scan proof")
+
+        window_keys = tuple(
+            (
+                item.source.sort_key,
+                item.citation_id.encode("ascii"),
+                item.original_start,
+                item.original_end,
+            )
+            for item in self.citation_window_observations
+        )
+        if window_keys != tuple(sorted(set(window_keys))):
+            raise ValueError("next citation windows must be sorted and unique")
+        for window in self.citation_window_observations:
+            if window.source != expected_source:
+                raise ValueError("next citation window names a different logical source")
+            if window.addressable and window.original_end > self.byte_length:
+                raise ValueError("addressable next citation window escapes the source")
+        return self
+
+
+PlaybillNextSourceObservationAny: TypeAlias = (
+    PlaybillNextSourceObservationV1
+    | PlaybillNextSourceObservationV2
+    | PlaybillNextSourceObservationV3
+    | PlaybillNextSourceObservationV4
+)
+
+
 class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     tag: Literal["playbill-next-workspace-observation-v1"] = (
         "playbill-next-workspace-observation-v1"
@@ -309,15 +412,7 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     floor_status: Literal["not_configured", "missing", "current", "stale", "invalid"] | None = None
     installed_coordinate: AcceptedCoordinate | None = None
     drift_observations: tuple[PlaybillNextDriftObservationV1, ...] | None = None
-    source_observations: (
-        tuple[
-            PlaybillNextSourceObservationV1
-            | PlaybillNextSourceObservationV2
-            | PlaybillNextSourceObservationV3,
-            ...,
-        ]
-        | None
-    ) = None
+    source_observations: tuple[PlaybillNextSourceObservationAny, ...] | None = None
     presentation_policy: PlaybillPresentationPolicyV1 | None = None
     presentation_policy_notes: tuple[PlaybillPresentationPolicyNoteV1, ...] = ()
 
@@ -338,22 +433,8 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     @classmethod
     def _sources(
         cls,
-        value: tuple[
-            PlaybillNextSourceObservationV1
-            | PlaybillNextSourceObservationV2
-            | PlaybillNextSourceObservationV3,
-            ...,
-        ]
-        | None,
-    ) -> (
-        tuple[
-            PlaybillNextSourceObservationV1
-            | PlaybillNextSourceObservationV2
-            | PlaybillNextSourceObservationV3,
-            ...,
-        ]
-        | None
-    ):
+        value: tuple[PlaybillNextSourceObservationAny, ...] | None,
+    ) -> tuple[PlaybillNextSourceObservationAny, ...] | None:
         if value is None:
             return None
         ids = tuple(item.source_id for item in value)
@@ -848,10 +929,14 @@ def _qualifier_discriminator(claims: list[ClaimArtifactAny]) -> str | None:
 
 @dataclass(frozen=True)
 class _CitationCommitment:
+    citation_id: str
     commitment_digest: str
+    byte_length: int
     claim_identity: str
     source_id: str | None
     source_digest: str | None
+    original_start: int | None = None
+    original_end: int | None = None
     whole_source: bool = False
     lineage_note: CitationLineageNote | None = None
 
@@ -885,10 +970,35 @@ def _whole_source_selection(envelope: object) -> bool:
     )
 
 
+def _source_selection_span(envelope: object) -> tuple[int, int] | None:
+    """Read the accepted original byte window without inferring a locator."""
+
+    source = getattr(envelope, "source", None)
+    if not isinstance(source, ExternalSourceReferenceV1):
+        return None
+    selector = source.selector
+    if not isinstance(selector, Mapping):
+        return None
+    window = selector.get("working_selection", selector)
+    if not isinstance(window, Mapping):
+        return None
+    start, end = window.get("start_byte"), window.get("end_byte")
+    if (
+        not isinstance(start, int)
+        or isinstance(start, bool)
+        or not isinstance(end, int)
+        or isinstance(end, bool)
+        or not 0 <= start <= end
+    ):
+        return None
+    return start, end
+
+
 def _citation_commitments(
     instance: PlaybillInstance,
     *,
     coordinate: PlaybillAcceptedCoordinate,
+    evaluation_time: datetime,
 ) -> dict[str, _CitationCommitment]:
     listed = service_list_playbill_claims(instance, at=coordinate)
     internal_coordinate = instance.resolve_accepted_coordinate(
@@ -904,10 +1014,25 @@ def _citation_commitments(
     target_index = next(
         index for index, generation in enumerate(history) if generation.oid == coordinate.git_oid
     )
+    facts = build_accepted_query_facts(instance, coordinate=internal_coordinate)
+    subjects = {subject.path: subject for subject in facts.subjects}
+    providers = {provider.identity.qualified: provider for provider in facts.providers}
+    visible_claims = {
+        row.accepted.claim.identity.qualified
+        for row in facts.claims
+        if claim_row_visibility(
+            row,
+            subject=subjects.get(row.subject_path),
+            providers=providers,
+            policy=_PROJECTION_VISIBILITY_POLICY,
+            evaluation_time=evaluation_time,
+        )
+        is not None
+    }
     try:
         for view in listed.claims:
             claim = _claim_from_view(view)
-            if claim.lifecycle.state != "live":
+            if claim.lifecycle.state != "live" or claim.identity.qualified not in visible_claims:
                 continue
             evidence = _claim_law_evidence(
                 instance,
@@ -963,11 +1088,16 @@ def _citation_commitments(
                         else:
                             source_id = envelope.source.source_identity
                             source_digest = observed_digest
+                selection_span = _source_selection_span(envelope)
                 result[citation.citation_id] = _CitationCommitment(
+                    citation_id=citation.citation_id,
                     commitment_digest=envelope.commitment.digest,
+                    byte_length=envelope.commitment.byte_length or 0,
                     claim_identity=claim.identity.qualified,
                     source_id=source_id,
                     source_digest=source_digest,
+                    original_start=None if selection_span is None else selection_span[0],
+                    original_end=None if selection_span is None else selection_span[1],
                     whole_source=_whole_source_selection(envelope),
                     lineage_note=lineage_note,
                 )
@@ -1072,8 +1202,19 @@ def _self_published_source_items(
     observed = {
         item.source_id: item
         for item in observation.source_observations
-        if isinstance(item, (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3))
-        and item.scan_complete
+        if isinstance(
+            item,
+            (
+                PlaybillNextSourceObservationV2,
+                PlaybillNextSourceObservationV3,
+                PlaybillNextSourceObservationV4,
+            ),
+        )
+        and (
+            not item.scan_notes
+            if isinstance(item, PlaybillNextSourceObservationV4)
+            else item.scan_complete
+        )
         and not item.scan_notes
         and not item.marker_notes
     }
@@ -1307,84 +1448,197 @@ def _source_citation_item(
     *,
     citation_id: str,
     commitment: _CitationCommitment,
-    observed: (
-        PlaybillNextSourceObservationV1
-        | PlaybillNextSourceObservationV2
-        | PlaybillNextSourceObservationV3
-        | None
-    ),
+    observed: PlaybillNextSourceObservationAny | None,
+    coordinate: PlaybillAcceptedCoordinate,
 ) -> PlaybillNextItemV1 | None:
     source_id = commitment.source_id
     captured_source_digest = commitment.source_digest
     assert source_id is not None and captured_source_digest is not None
-    claim_identity = commitment.claim_identity
-    unobserved = observed is None or (
+    if observed is None:
+        return _citation_unobserved_item(commitment)
+    if isinstance(observed, PlaybillNextSourceObservationV4):
+        expected_source = LogicalSourceIdentityV1(plane="external", identity=source_id)
+        proved = any(
+            proof.source == expected_source
+            and proof.commitment_digest == commitment.commitment_digest
+            and proof.byte_length == commitment.byte_length
+            for proof in observed.commitment_scan_proofs
+        )
+        if not proved:
+            return _citation_unobserved_item(commitment)
+        occurrences = tuple(
+            item
+            for item in observed.occurrences
+            if item.source == expected_source
+            and item.observed_commitment_digest == commitment.commitment_digest
+            and item.byte_length == commitment.byte_length
+        )
+        if len(occurrences) == 1:
+            return None
+        if len(occurrences) > 1:
+            return _citation_drift_item(
+                commitment,
+                coordinate=coordinate,
+                drift_state="ambiguous",
+                occurrences=occurrences,
+            )
+        if commitment.original_start is None or commitment.original_end is None:
+            return _citation_unobserved_item(commitment)
+        windows = tuple(
+            item
+            for item in observed.citation_window_observations
+            if item.citation_id == citation_id
+            and item.commitment_digest == commitment.commitment_digest
+            and item.original_start == commitment.original_start
+            and item.original_end == commitment.original_end
+        )
+        if len(windows) != 1:
+            return _citation_unobserved_item(commitment)
+        window = windows[0]
+        if not window.addressable:
+            return _citation_drift_item(
+                commitment,
+                coordinate=coordinate,
+                drift_state="gone",
+            )
+        if window.observed_window_digest == commitment.commitment_digest:
+            raise PlaybillNextWorkspaceObservationInvalid(
+                f"{PlaybillNextWorkspaceObservationInvalid.code}: "
+                "a complete zero-occurrence proof contradicts its unchanged original window"
+            )
+        return _citation_drift_item(
+            commitment,
+            coordinate=coordinate,
+            drift_state="changed",
+            observed_window_digest=window.observed_window_digest,
+        )
+
+    unobserved = (
         isinstance(observed, (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3))
         and not observed.scan_complete
     )
-    if (
-        isinstance(observed, (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3))
-        and observed.scan_complete
-    ):
-        matched = any(
-            item.observed_commitment_digest == commitment.commitment_digest
-            for item in observed.occurrences
-        )
-        if commitment.whole_source:
-            if observed.observed_source_digest == captured_source_digest:
+    if isinstance(observed, (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3)):
+        if observed.scan_complete:
+            matched = any(
+                item.observed_commitment_digest == commitment.commitment_digest
+                for item in observed.occurrences
+            )
+            whole_source_current = (
+                commitment.whole_source
+                and observed.observed_source_digest == captured_source_digest
+            )
+            if whole_source_current or (not commitment.whole_source and matched):
                 return None
-        elif matched:
-            return None
-        elif commitment.commitment_digest not in observed.scanned_commitment_digests:
-            unobserved = True
-    elif observed is not None and observed.observed_source_digest == captured_source_digest:
+            if commitment.commitment_digest not in observed.scanned_commitment_digests:
+                unobserved = True
+    elif observed.observed_source_digest == captured_source_digest:
         return None
+    if unobserved:
+        return _citation_unobserved_item(commitment)
+    return _citation_drift_item(
+        commitment,
+        coordinate=coordinate,
+        drift_state="changed",
+        observed_window_digest=observed.observed_source_digest,
+    )
 
-    arguments = {
-        "claim_id": claim_identity.removeprefix("Claim:"),
-        "citation_id": citation_id,
-        "source_id": source_id,
-    }
+
+def _citation_unobserved_item(commitment: _CitationCommitment) -> PlaybillNextItemV1:
+    source_id = commitment.source_id
+    assert source_id is not None
     lineage_detail = (
         {} if commitment.lineage_note is None else {"lineage_note": commitment.lineage_note}
     )
-    if unobserved:
-        return _item(
-            severity="warning",
-            reason="citation_source_unobserved",
-            subject_identity=claim_identity,
-            related_identities=(citation_id,),
-            detail={
-                "citation_id": citation_id,
-                "source_id": source_id,
-                "expected_source_digest": captured_source_digest,
-                **lineage_detail,
-            },
-            repair=PlaybillNextRepairV1(
-                operation="playbill.authoring.bind",
-                target=claim_identity,
-                required_change="observe_cited_source",
-                arguments=arguments,
-            ),
-        )
-    assert observed is not None
     return _item(
-        severity="repair",
-        reason="citation_drifted",
-        subject_identity=claim_identity,
-        related_identities=(citation_id,),
+        severity="warning",
+        reason="citation_source_unobserved",
+        subject_identity=commitment.claim_identity,
+        related_identities=(commitment.citation_id,),
         detail={
-            "citation_id": citation_id,
+            "citation_id": commitment.citation_id,
             "source_id": source_id,
-            "expected_source_digest": captured_source_digest,
-            "observed_source_digest": observed.observed_source_digest,
+            "expected_source_digest": commitment.source_digest,
             **lineage_detail,
         },
         repair=PlaybillNextRepairV1(
             operation="playbill.authoring.bind",
-            target=claim_identity,
-            required_change="recapture_or_revise_citation",
-            arguments=arguments,
+            target=commitment.claim_identity,
+            required_change="observe_cited_source",
+            arguments={
+                "claim_id": commitment.claim_identity.removeprefix("Claim:"),
+                "citation_id": commitment.citation_id,
+                "source_id": source_id,
+            },
+        ),
+    )
+
+
+def _citation_drift_item(
+    commitment: _CitationCommitment,
+    *,
+    coordinate: PlaybillAcceptedCoordinate,
+    drift_state: Literal["changed", "gone", "ambiguous"],
+    observed_window_digest: str | None = None,
+    occurrences: tuple[WorkingOccurrenceV1, ...] = (),
+) -> PlaybillNextItemV1:
+    source_id = commitment.source_id
+    source = (
+        None
+        if source_id is None
+        else LogicalSourceIdentityV1(plane="external", identity=source_id).model_dump(mode="json")
+    )
+    occurrence_spans = [
+        {
+            "end_byte": item.line_overlay.end_byte,
+            "identity_digest": item.identity_digest,
+            "start_byte": item.line_overlay.start_byte,
+        }
+        for item in sorted(
+            occurrences,
+            key=lambda item: (
+                item.line_overlay.start_byte,
+                item.line_overlay.end_byte,
+                item.identity_digest.encode("ascii"),
+            ),
+        )
+    ]
+    detail: dict[str, object] = {
+        "accepted_claim_identity": commitment.claim_identity,
+        "accepted_coordinate": coordinate.model_dump(mode="json"),
+        "citation_id": commitment.citation_id,
+        "drift_state": drift_state,
+        "expected_commitment_digest": commitment.commitment_digest,
+        "exact_occurrence_count": len(occurrences),
+        "exact_occurrence_spans": occurrence_spans,
+        "logical_source": source,
+        "original_span": (
+            None
+            if commitment.original_start is None or commitment.original_end is None
+            else {
+                "end_byte": commitment.original_end,
+                "start_byte": commitment.original_start,
+            }
+        ),
+    }
+    if observed_window_digest is not None:
+        detail["observed_window_digest"] = observed_window_digest
+    if commitment.lineage_note is not None:
+        detail["lineage_note"] = commitment.lineage_note
+    return _item(
+        severity="repair",
+        reason="citation_drifted",
+        subject_identity=commitment.claim_identity,
+        related_identities=(commitment.citation_id,),
+        detail=detail,
+        repair=PlaybillNextRepairV1(
+            operation="playbill.authoring.bind",
+            target=commitment.claim_identity,
+            required_change="adjudicate_citation_drift",
+            arguments={
+                "claim_id": commitment.claim_identity.removeprefix("Claim:"),
+                "citation_id": commitment.citation_id,
+                **({} if source_id is None else {"source_id": source_id}),
+            },
         ),
     )
 
@@ -1393,6 +1647,8 @@ def _workspace_items(
     instance: PlaybillInstance,
     *,
     coordinate: PlaybillAcceptedCoordinate,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
 ) -> tuple[tuple[NextDomain, ...], tuple[PlaybillNextItemV1, ...]]:
     if observation is None:
@@ -1438,9 +1694,13 @@ def _workspace_items(
                     ),
                 )
             )
-    if observation.drift_observations is not None:
+    if observation.drift_observations is not None and access_profile.permits("instance"):
         domains.append("workspace_sources")
-        commitments = _citation_commitments(instance, coordinate=coordinate)
+        commitments = _citation_commitments(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+        )
         for drift in observation.drift_observations:
             expected = commitments.get(drift.citation_id)
             if expected is None or expected.commitment_digest != drift.expected_commitment_digest:
@@ -1450,35 +1710,22 @@ def _workspace_items(
                 )
             if drift.observed_commitment_digest == drift.expected_commitment_digest:
                 continue
-            claim_identity = expected.claim_identity
             items.append(
-                _item(
-                    severity="repair",
-                    reason="citation_drifted",
-                    subject_identity=claim_identity,
-                    related_identities=(drift.citation_id,),
-                    detail={
-                        "citation_id": drift.citation_id,
-                        "expected_commitment_digest": drift.expected_commitment_digest,
-                        "observed_commitment_digest": drift.observed_commitment_digest,
-                        **(
-                            {}
-                            if expected.lineage_note is None
-                            else {"lineage_note": expected.lineage_note}
-                        ),
-                    },
-                    repair=PlaybillNextRepairV1(
-                        operation="playbill.authoring.bind",
-                        target=claim_identity,
-                        required_change="recapture_or_revise_citation",
-                        arguments={"citation_id": drift.citation_id},
-                    ),
+                _citation_drift_item(
+                    expected,
+                    coordinate=coordinate,
+                    drift_state="changed",
+                    observed_window_digest=drift.observed_commitment_digest,
                 )
             )
-    elif observation.source_observations is not None:
+    elif observation.source_observations is not None and access_profile.permits("instance"):
         domains.append("workspace_sources")
         observed = {source.source_id: source for source in observation.source_observations}
-        commitments = _citation_commitments(instance, coordinate=coordinate)
+        commitments = _citation_commitments(
+            instance,
+            coordinate=coordinate,
+            evaluation_time=evaluation_time,
+        )
         for citation_id in sorted(commitments, key=lambda item: item.encode("ascii")):
             commitment = commitments[citation_id]
             if commitment.source_id is None or commitment.source_digest is None:
@@ -1487,6 +1734,7 @@ def _workspace_items(
                 citation_id=citation_id,
                 commitment=commitment,
                 observed=observed.get(commitment.source_id),
+                coordinate=coordinate,
             )
             if item is not None:
                 items.append(item)
@@ -1567,9 +1815,17 @@ def _projection_items(
         for source in observation.source_observations
         if isinstance(
             source,
-            (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3),
+            (
+                PlaybillNextSourceObservationV2,
+                PlaybillNextSourceObservationV3,
+                PlaybillNextSourceObservationV4,
+            ),
         )
-        and source.scan_complete
+        and (
+            not source.scan_notes
+            if isinstance(source, PlaybillNextSourceObservationV4)
+            else source.scan_complete
+        )
         and not source.marker_notes
         and source.marker_summaries
     )
@@ -1697,6 +1953,8 @@ def service_playbill_next(
     workspace_domains, workspace_items = _workspace_items(
         instance,
         coordinate=public_coordinate,
+        evaluation_time=request.evaluation_time,
+        access_profile=request.access_profile,
         observation=request.workspace_observation,
     )
     observed = tuple(
@@ -1780,6 +2038,7 @@ __all__ = [
     "PlaybillNextSourceObservationV1",
     "PlaybillNextSourceObservationV2",
     "PlaybillNextSourceObservationV3",
+    "PlaybillNextSourceObservationV4",
     "PlaybillNextWorkspaceObservationInvalid",
     "PlaybillNextWorkspaceObservationV1",
     "playbill_next_item_id",

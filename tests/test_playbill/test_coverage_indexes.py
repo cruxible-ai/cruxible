@@ -51,6 +51,7 @@ from tests.test_playbill._coverage_support import (
     overlay,
     sha256,
     source_reference,
+    unmaterialized_wanted,
     working,
 )
 from tests.test_playbill.test_claims import _claim
@@ -214,7 +215,7 @@ def test_a_working_snapshot_names_each_logical_source_at_most_once() -> None:
     with pytest.raises(CoverageError, match="at most once"):
         build_working_occurrence_overlay(
             (working(HANDBOOK, CITED), working(HANDBOOK, PREAMBLE)),
-            wanted=citations.wanted_selections(),
+            wanted=unmaterialized_wanted(citations),
         )
 
 
@@ -223,7 +224,7 @@ def test_a_scan_budget_bounds_recall_and_states_the_truncation() -> None:
     content = PREAMBLE + CITED + EPILOGUE
     starved = build_working_occurrence_overlay(
         (working(HANDBOOK, content),),
-        wanted=citations.wanted_selections(),
+        wanted=unmaterialized_wanted(citations),
         budget=CoverageScanBudgetV1(max_scanned_bytes=0),
     )
 
@@ -232,7 +233,7 @@ def test_a_scan_budget_bounds_recall_and_states_the_truncation() -> None:
     # The whole-source occurrence is free, so the source is still observed --
     # what shrank is the ability to find a cited selection inside it.
     assert starved.commitment_for(HANDBOOK) is not None
-    assert starved.scanned(sha256(CITED)) is False
+    assert starved.scanned(HANDBOOK, sha256(CITED), len(CITED)) is False
     assert all(item.observed_commitment_digest != sha256(CITED) for item in starved.occurrences)
 
 
@@ -254,7 +255,7 @@ def test_deleting_and_rebuilding_both_indexes_reproduces_their_digests() -> None
                 working(HANDBOOK, PREAMBLE + CITED + EPILOGUE),
                 working(SCRATCH, PREAMBLE),
             ),
-            wanted=citations.wanted_selections(),
+            wanted=unmaterialized_wanted(citations),
         )
         return (
             evidence_citation_index_digest(citations),

@@ -43,6 +43,7 @@ from tests.test_playbill._coverage_support import (
     capture,
     index,
     sha256,
+    unmaterialized_wanted,
 )
 
 HANDBOOK_BODY = PREAMBLE + CITED + EPILOGUE
@@ -225,7 +226,7 @@ def test_the_working_set_scope_form_observes_every_declared_path(tmp_path: Path)
 
 def test_the_overlay_finds_cited_content_that_moved_and_keeps_its_identity() -> None:
     citations = index(capture(HANDBOOK, CITED))
-    wanted = citations.wanted_selections()
+    wanted = unmaterialized_wanted(citations)
 
     before = build_overlay((observe_working_source(HANDBOOK, PREAMBLE + CITED),), wanted=wanted)
     after = build_overlay(
