@@ -615,6 +615,10 @@ def test_pc_del1_retired_old_core_families_are_absent() -> None:
         "queries.py",
         "server.py",
         "types.py",
+        "playbill_documents.py",
+        "playbill_explain.py",
+        "playbill_review.py",
+        "playbill_source_catalog.py",
     ):
         assert not (CORE / "service" / service_module).exists(), service_module
 

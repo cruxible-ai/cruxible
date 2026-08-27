@@ -14,11 +14,11 @@ from cruxible_client.contracts.source_catalog import (
     merge_source_catalogs,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.service.playbill_documents import (
+from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.playbill_source_catalog import (
+from cruxible_core.playbill.service.source_catalog import (
     service_check_playbill_source_bundle,
     service_compile_playbill_sources,
     service_propose_playbill_source_bundle,

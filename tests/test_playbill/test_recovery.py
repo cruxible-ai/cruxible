@@ -26,18 +26,18 @@ from cruxible_core.playbill.assembler import PROJECTION_CRASH_POINTS
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.recovery import RecoveredGeneration
-from cruxible_core.playbill.serving import SERVING_MANIFEST_FILE, bind_current_projection
-from cruxible_core.playbill.settlement import (
-    GENERATION_CONSTRUCTION,
-    ChangeActorBinding,
-    prepare_generation,
-)
-from cruxible_core.service.playbill_documents import (
+from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_playbill_document_history,
     service_propose_playbill_document,
     service_store_playbill_body,
     service_submit_playbill_approval,
+)
+from cruxible_core.playbill.serving import SERVING_MANIFEST_FILE, bind_current_projection
+from cruxible_core.playbill.settlement import (
+    GENERATION_CONSTRUCTION,
+    ChangeActorBinding,
+    prepare_generation,
 )
 from cruxible_core.storage.playbill_projection import detect_projection_orphans
 

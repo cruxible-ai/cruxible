@@ -9,14 +9,14 @@ import pytest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.semantic import SemanticAddress, SemanticSelector
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.service.playbill_documents import (
+from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     service_activate_playbill_proposal,
     service_propose_playbill_document,
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.playbill_explain import (
+from cruxible_core.playbill.service.explain import (
     PlaybillExplainResult,
     PlaybillExplainUnsupportedDetail,
     service_explain_playbill_subject,
