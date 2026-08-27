@@ -123,6 +123,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
+from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
@@ -138,6 +139,7 @@ _SUBJECT_RE = re.compile(
     r"(?P<identifier>[a-z][a-z0-9_.-]{0,255})$"
 )
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
+_RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
 
 
 def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
@@ -780,6 +782,7 @@ class Playbill:
         self._access_profile = access_profile
         self._clock = clock
         self._coordinate: AcceptedCoordinate | None = None
+        self._retirement_submissions: dict[str, tuple[ClaimRetireRequestV1, str]] = {}
 
     @classmethod
     def connect(
@@ -1231,11 +1234,50 @@ class Playbill:
             expected_coordinate=coordinate,
             dependents=tuple(dependents),
         )
-        return self._client.retire_playbill_claim(
-            self._instance_id,
-            claim_address.removeprefix("Claim:"),
-            request=request.model_dump(mode="json"),
-        )
+        claim_id = claim_address.removeprefix("Claim:")
+        try:
+            result = self._client.retire_playbill_claim(
+                self._instance_id,
+                claim_id,
+                request=request.model_dump(mode="json"),
+            )
+        except CoreError as original:
+            if (
+                isinstance(claim, ClaimRef)
+                or mode != "submit"
+                or _RETIRE_CLOSURE_MISMATCH_CODE not in str(original)
+            ):
+                raise
+            try:
+                history = self._client.playbill_claim_history(self._instance_id, claim_id)
+                if not any(
+                    entry.get("lifecycle_state") == "retired" for entry in history.entries
+                ):
+                    raise ValueError("accepted Claim history has no retirement")
+                submitted_request, submitted_operation_digest = (
+                    self._retirement_submissions[claim_id]
+                )
+                replay_request = request.model_copy(
+                    update={"expected_coordinate": submitted_request.expected_coordinate}
+                )
+                if replay_request != submitted_request:
+                    raise ValueError("retirement request differs from submitted operation")
+                replayed = self._client.retire_playbill_claim(
+                    self._instance_id,
+                    claim_id,
+                    request=replay_request.model_dump(mode="json"),
+                )
+            except (CoreError, KeyError, TypeError, ValueError):
+                raise original from None
+            if (
+                getattr(replayed, "outcome", None) != "already_retired"
+                or replayed.operation_digest != submitted_operation_digest
+            ):
+                raise original
+            return replayed
+        if mode == "submit" and getattr(result, "outcome", None) == "proposed":
+            self._retirement_submissions[claim_id] = (request, result.operation_digest)
+        return result
 
     def procedure(
         self,
