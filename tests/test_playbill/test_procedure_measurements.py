@@ -40,7 +40,6 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.compiler import PC_D_COMPILER, projection_registry_for_compiler
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
-from cruxible_core.procedure.digest import DIGEST_FUNCTIONS
 
 
 def _digest(label: str) -> str:
@@ -362,7 +361,6 @@ def test_claim_measurements_bind_exact_statement_addresses_and_digests() -> None
             _declaration(name="claim-outcome", measurement=claim),
         )
     ).measurements
-
     wrong_subject = SemanticAddress.procedure_unit("procedures/measured-procedure.yaml")
     with pytest.raises(ValidationError, match="Claim statement address"):
         ClaimStatementProcedureMeasurementV1(
@@ -370,7 +368,3 @@ def test_claim_measurements_bind_exact_statement_addresses_and_digests() -> None
             claim_statement_digest=digest,
             acceptable_verdicts=("supported",),
         )
-
-
-def test_frozen_v1_v2_digest_dispatch_is_not_extended_or_reinterpreted() -> None:
-    assert tuple(DIGEST_FUNCTIONS) == (1, 2)

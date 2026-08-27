@@ -2,7 +2,7 @@
   "format": "playbill-modeling-parity-oracle-v1",
   "purpose": "PC-F semantic parity pin. Each case records what the LEGACY query surface answers over a donor world and what the Claim-native surface answers over the same world restated as Subjects and Claims. Rows are query MEANING -- selected values or result identity -- never wire receipts, paths, or provenance. While the donor island stands, tests/test_playbill/test_modeling_parity_donors.py re-derives every donor_rows entry from the legacy engine, so these are recordings and not guesses. After PC-F slice F8 purges the donors, tests/test_playbill/test_modeling_parity.py keeps asserting the Claim-native side against these same rows.",
   "donor_archive_commit": "b36b2a1b",
-  "donor_archive_note": "kits/ bundles were deleted in b36b2a1b. tests/data/config_donors/ holds the PC-F parity slices of kits/project-domain and kits/supply-chain-blast-radius at b36b2a1b^, alongside the agent-operation config copied in DP-0C.",
+  "donor_archive_note": "The retired donor worlds are preserved in repository history at b36b2a1b^; the live tree retains only this semantic parity recording.",
   "evaluation_time": "2026-08-16T12:00:00Z",
   "cases": [
     {

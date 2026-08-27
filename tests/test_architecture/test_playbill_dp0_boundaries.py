@@ -12,8 +12,6 @@ from pathlib import Path
 
 from packaging.requirements import Requirement
 
-from cruxible_core.playbill.donors.manifest import DONOR_MANIFEST, donor_for
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 CORE = SRC / "cruxible_core"
@@ -27,17 +25,6 @@ MCP_HANDLERS = CORE / "mcp" / "handlers.py"
 ORACLE_COMMITS = {
     "family_1": "e3fe35b360d098f14a5d59bf770ffee401224f0c",
     "procedure_graph_program": "986307d56649eb51747ca227228fbe19f73e3895",
-}
-
-RATIFIED_DONOR_REMOVAL_BATCHES = {
-    "cruxible_core.procedure": "PC-H",
-    "cruxible_core.config": "PC-H",
-    "cruxible_core.predicate": "PC-H",
-    "cruxible_core.query": "PC-H",
-    "cruxible_core.graph": "PC-H",
-    "cruxible_core.workflow": "PC-H",
-    "cruxible_core.provider": "PC-G",
-    "cruxible_core.providers": "PC-G",
 }
 
 SERVED_ROOTS = (
@@ -73,6 +60,10 @@ FORBIDDEN_MODULE_PREFIXES = (
     "cruxible_core.runtime.instance_manager",
     "cruxible_core.instance_protocol",
     "cruxible_core.graph",
+    "cruxible_core.procedure",
+    "cruxible_core.query",
+    "cruxible_core.receipt_tree",
+    "cruxible_core.workflow",
     "cruxible_core.config.schema",
     "cruxible_core.service.mutations",
     "cruxible_core.service.execution",
@@ -170,21 +161,6 @@ def test_playbill_served_dependency_closure_excludes_legacy_core() -> None:
         )
     )
     assert violations == []
-
-    donor_violations: list[str] = []
-    for importer in sorted(closure):
-        path = _module_path(importer)
-        if path is None:
-            continue
-        for imported in _imports(path):
-            donor = donor_for(imported)
-            is_donor_package_initializer = donor is not None and donor.module_prefix.startswith(
-                f"{importer}."
-            )
-            if donor is not None and importer != donor.adapter and not is_donor_package_initializer:
-                donor_violations.append(f"{importer} -> {imported}")
-    assert donor_violations == []
-
 
 def test_importing_playbill_http_surface_does_not_initialize_legacy_core() -> None:
     check = (
@@ -332,18 +308,9 @@ def test_dp0c_deleted_products_are_absent() -> None:
         "generate_kit_docs.py",
     ):
         assert not (ROOT / "scripts" / script).exists()
-    # DP-0C deleted the kit bundles "after copying only semantic parity fixtures
-    # needed by PC-F/PC-G into test data". These three are those fixtures, and
-    # the PC-F donor purge must not take them with the donors: the parity oracle
-    # keeps reading them after cruxible_core.config and cruxible_core.query are
-    # gone.
-    donors = ROOT / "tests" / "data" / "config_donors"
-    for domain in ("agent-operation", "project-domain", "supply-chain-blast-radius"):
-        assert (donors / domain / "config.yaml").is_file()
     assert (
         ROOT / "tests" / "data" / "playbill_parity" / "modeling-parity-oracle-v1.json"
     ).is_file()
-    assert (ROOT / "tests" / "data" / "procedure_digest_corpus").is_dir()
 
 
 def test_public_registration_catalogs_are_playbill_only() -> None:
@@ -555,39 +522,6 @@ def test_unserved_donor_operations_retain_permissions_without_public_registratio
     )
 
 
-def test_playbill_legacy_imports_are_adapter_only_and_manifested() -> None:
-    donors_root = CORE / "playbill" / "donors"
-    violations: list[str] = []
-    for path in sorted((CORE / "playbill").rglob("*.py")):
-        if path.is_relative_to(donors_root):
-            continue
-        for imported in _imports(path):
-            donor = donor_for(imported)
-            if donor is not None:
-                violations.append(f"{path.relative_to(ROOT)} -> {imported}")
-    assert violations == []
-
-    adapters = {entry.adapter for entry in DONOR_MANIFEST if entry.adapter is not None}
-    implemented = {
-        f"cruxible_core.playbill.donors.{path.stem}"
-        for path in donors_root.glob("*.py")
-        if path.stem not in {"__init__", "manifest"}
-    }
-    assert implemented == adapters
-    for adapter in implemented:
-        path = _module_path(adapter)
-        assert path is not None
-        donor_imports = {item for item in _imports(path) if donor_for(item) is not None}
-        assert len(donor_imports) == 1
-        imported = next(iter(donor_imports))
-        assert donor_for(imported).adapter == adapter  # type: ignore[union-attr]
-
-
-def test_donor_manifest_matches_ratified_removal_batches() -> None:
-    actual = {entry.module_prefix: entry.removal_batch for entry in DONOR_MANIFEST}
-    assert actual == RATIFIED_DONOR_REMOVAL_BATCHES
-
-
 def test_pc_d_retired_donor_packages_and_modules_are_absent() -> None:
     for package in ("group", "kits"):
         root = CORE / package
@@ -650,16 +584,8 @@ def test_pc_e1_retired_storage_authorities_and_executor_are_absent() -> None:
         assert not retired_harness.exists()
 
 
-def test_pc_f_purged_donors_are_absent_and_residue_is_exact() -> None:
-    """PC-F deleted the query-oracle spine and every harness that carried it.
-
-    The residue is deliberately narrow: it is the deferred validator chain
-    ``cruxible_core.config.schema`` reaches (``query.predicates`` is imported
-    inside ``_validate_top_level_query_predicate_scopes``), plus the lock types
-    ``procedure/pins.py`` describes a pin with, plus the provider contract the
-    un-transplanted readers are written against. Both halves are asserted so a
-    later batch cannot quietly widen the residue or re-land a purged donor.
-    """
+def test_pc_del1_retired_old_core_families_are_absent() -> None:
+    """The old schema, graph, Procedure, query, receipt, and workflow island is gone."""
     for module in (
         CORE / "instance_protocol.py",
         CORE / "sqlite_ddl.py",
@@ -688,39 +614,12 @@ def test_pc_f_purged_donors_are_absent_and_residue_is_exact() -> None:
     ):
         assert not (CORE / "service" / service_module).exists(), service_module
 
-    def _surviving_modules(package: str) -> set[str]:
-        return {
-            path.stem
-            for path in (CORE / package).glob("*.py")
-            if path.stem != "__init__" and "__pycache__" not in path.parts
-        }
-
-    assert _surviving_modules("workflow") == {"types"}
-    assert _surviving_modules("provider") == {"types", "trace_payloads"}
-    assert _surviving_modules("query") == {
-        "enums",
-        "predicates",
-        "profiles",
-        "relationship_state",
-        "types",
-    }
-    assert _surviving_modules("graph") == {
-        "assertion_state",
-        "entity_graph",
-        "evidence",
-        "provenance",
-        "types",
-    }
-
-    # The residue is exactly the config-schema import closure, so it is derived
-    # rather than merely listed: nothing survives that the chain does not need.
-    chain = _dependency_closure(("cruxible_core.config.schema",))
-    for donor_package in ("cruxible_core.query", "cruxible_core.graph"):
-        surviving = {
-            f"{donor_package}.{name}"
-            for name in _surviving_modules(donor_package.rsplit(".", 1)[1])
-        }
-        assert surviving <= chain, surviving - chain
+    for package in ("config", "graph", "procedure", "query", "receipt_tree", "workflow"):
+        root = CORE / package
+        assert not any(
+            path.is_file() and "__pycache__" not in path.parts for path in root.rglob("*")
+        ), package
+    assert not (CORE / "workflow_execution_types.py").exists()
 
 
 def test_pc_f2_coverage_delivery_adds_no_authority() -> None:
@@ -964,12 +863,9 @@ def test_dp0_review_guide_matches_surviving_inventories() -> None:
     }
     assert _fenced_inventory(document, "Exact frozen goldens retained") == tracked_goldens
 
-    for entry in DONOR_MANIFEST:
-        assert f"| `{entry.module_prefix}` | {entry.removal_batch} |" in document
-
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     retained_requirements = list(project["dependencies"])
-    for extra in ("mcp", "pdf"):
+    for extra in ("mcp",):
         retained_requirements.extend(project["optional-dependencies"][extra])
     for requirement in retained_requirements:
         name = Requirement(requirement).name
