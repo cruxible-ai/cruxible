@@ -60,6 +60,7 @@ from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-16T18:30:00.000000Z"
 OBSERVED_AT = datetime(2026, 8, 16, 18, 30, tzinfo=timezone.utc)
@@ -358,3 +359,72 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
     )
     assert claim_evidence.initial_verdict == "supported"
     assert claim_evidence.evidence_basis == ("direct",)
+
+
+def test_v1_claim_successor_preserves_the_base_accepted_authority_change_shape(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    claim_id = "CLM-abcdefabcdefabcdefabcdefabcdefab"
+    capture = build_direct_claim_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=claim_id,
+        value="ready",
+        rationale="Seed the v1 succession law.",
+        observed_at=OBSERVED_AT,
+        accepted_coordinate=AcceptedCoordinate.from_internal(base),
+    )
+    assert capture.envelope.commitment.byte_length is not None
+    predecessor = _claim(
+        claim_id=claim_id,
+        capture_digest=capture.capture_digest,
+        source_digest=capture.source_body_digest,
+        source_length=capture.envelope.commitment.byte_length,
+    )
+    shell = _subject()
+    tree = {
+        **instance.tree_at(base.git_oid),
+        subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+        "claim-types/project.work_item/status.yaml": render_claim_type(_claim_type()),
+        capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
+            render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+        ),
+        claim_path(claim_id): render_claim(predecessor),
+    }
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name="v1-authority-seed",
+    )
+
+    accepted = instance.accepted_coordinate()
+    successor = predecessor.model_copy(
+        update={
+            "authority": ArtifactAuthority(
+                propose_roles=("owner",),
+                approve_roles=("owner", "reviewer"),
+            ),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_artifact_digest(predecessor).tagged
+            ),
+        }
+    )
+    successor_tree = instance.tree_at(accepted.git_oid)
+    successor_tree[claim_path(claim_id)] = render_claim(successor)
+    evaluated = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/v1-authority-successor",
+            proposed_base_oid=accepted.git_oid,
+        ),
+        candidate_tree=successor_tree,
+        timestamp=TIMESTAMP,
+    )
+    assert evaluated.candidate is not None
+    assert "playbill.claim.authority_change_unsupported" not in {
+        item.code for item in evaluated.evaluation.diagnostics
+    }

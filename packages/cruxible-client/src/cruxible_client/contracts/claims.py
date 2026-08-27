@@ -1605,8 +1605,10 @@ def evaluate_claim_law(
                 "A retired Claim lineage cannot be revived.",
                 path=path,
             )
-        if claim.authority != predecessor.claim.authority and not (
-            claim_type_rederivation or claim_type_attributed_retirement
+        if (
+            isinstance(claim, ClaimArtifactV3)
+            and claim.authority != predecessor.claim.authority
+            and not (claim_type_rederivation or claim_type_attributed_retirement)
         ):
             return _diagnostic(
                 "playbill.claim.authority_change_unsupported",
