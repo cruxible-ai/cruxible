@@ -63,7 +63,7 @@ def _principal_lifecycle_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-principal-v1",
-                "semantic_revision": 2,
+                "semantic_revision": 3,
             },
         ).tagged,
     )
