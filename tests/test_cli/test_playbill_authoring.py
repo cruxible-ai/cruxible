@@ -206,9 +206,7 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     retirement_payload = json.loads(retirement.stdout)
     assert retirement_payload["tag"] == "playbill-claim-retire-request-v1"
     assert retirement_payload["mode"] == "preflight"
-    assert retirement_payload["expected_coordinate"]["tag"] == (
-        "playbill-accepted-coordinate-v1"
-    )
+    assert retirement_payload["expected_coordinate"]["tag"] == ("playbill-accepted-coordinate-v1")
 
     assert create_help.exit_code == 0, create_help.output
     assert "PAYLOAD_FILE" in create_help.output
@@ -490,6 +488,14 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
                 intent={"intent_id": intent_id},
                 expectation={"state": "prepared"},
                 preparation={"preparation_digest": "sha256:" + "7" * 64},
+                warnings=[
+                    contracts.PlaybillPublicationPrepareWarning(
+                        tag="playbill-publication-prepare-warning-v1",
+                        code="playbill.authoring.publication_citation_anchor_collision",
+                        source_id="repo.work-items",
+                        citation_ids=["sha256:" + "8" * 64],
+                    )
+                ],
             )
 
         def confirm_playbill_authoring_insertion(
@@ -538,6 +544,7 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
     abandoned = runner.invoke(cli, [*common, "abandon-insertion", INTENT_ID, "--json"])
 
     assert confirmed.exit_code == prepared.exit_code == abandoned.exit_code == 0
+    assert json.loads(prepared.stdout)["warnings"][0]["citation_ids"] == ["sha256:" + "8" * 64]
     assert calls == [
         (INTENT_ID, OBSERVATION),
         (INTENT_ID, OBSERVATION),

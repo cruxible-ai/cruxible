@@ -57,6 +57,7 @@ from tests.test_playbill.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
     _self_source_payload,
+    _working_payload,
 )
 
 COORDINATE = AcceptedCoordinate(
@@ -412,6 +413,57 @@ def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
         retained_body=b"status: ready\n",
     )
     assert applied.outcome == "applied"
+
+
+def test_prepare_warns_when_body_duplicates_a_live_citation_on_the_target_source(
+    tmp_path: Path,
+) -> None:
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    revision_coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(
+            instance.root / instance.descriptor.storage.exhaust,
+            token_factory=lambda: "3" * 32,
+        ),
+        claim_id_factory=lambda: "CLM-" + "4" * 32,
+        clock=lambda: datetime(2026, 8, 22, 12, tzinfo=UTC),
+    )
+    revision_payload = _working_payload(occurrence_count=1).model_copy(
+        update={"claim_ref": "CLM-" + "2" * 32}
+    )
+    revision_intent = revision_coordinator.create(
+        actor=actor,
+        payload=revision_payload,
+        canonical_timestamp="2026-08-22T12:00:01.000000Z",
+    ).intent
+    revised = revision_coordinator.submit(revision_intent.intent_id, actor=actor)
+    assert revised.status.proposal_id is not None
+    assert revised.status.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=revised.status.proposal_id,
+        candidate_digest=revised.status.candidate_digest,
+    )
+
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    replayed = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+
+    (warning,) = prepared.warnings
+    assert warning.code == "playbill.authoring.publication_citation_anchor_collision"
+    assert warning.source_id == "repo.work-items"
+    assert warning.citation_ids == tuple(sorted(set(warning.citation_ids)))
+    assert replayed.warnings == prepared.warnings
 
 
 def test_stale_prepare_replay_cannot_return_a_superseded_preparation(

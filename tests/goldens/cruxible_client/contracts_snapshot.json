@@ -11805,9 +11805,59 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "warnings": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "warnings",
+          "required": false,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillPublicationPrepareWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
         }
       },
       "json_schema": {
+        "$defs": {
+          "PlaybillPublicationPrepareWarning": {
+            "additionalProperties": false,
+            "properties": {
+              "citation_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Citation Ids",
+                "type": "array"
+              },
+              "code": {
+                "const": "playbill.authoring.publication_citation_anchor_collision",
+                "title": "Code",
+                "type": "string"
+              },
+              "source_id": {
+                "title": "Source Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-publication-prepare-warning-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tag",
+              "code",
+              "source_id",
+              "citation_ids"
+            ],
+            "title": "PlaybillPublicationPrepareWarning",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "expectation": {
@@ -11848,6 +11898,13 @@
             "const": "playbill-insertion-prepare-result-v2",
             "title": "Tag",
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/$defs/PlaybillPublicationPrepareWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -14414,6 +14471,97 @@
         "interface_basis",
         "interface_digest",
         "pin_role",
+        "tag"
+      ]
+    },
+    "PlaybillPublicationPrepareWarning": {
+      "fields": {
+        "citation_ids": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "citation_ids",
+          "required": true,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Citation Ids",
+            "type": "array"
+          }
+        },
+        "code": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "code",
+          "required": true,
+          "schema": {
+            "const": "playbill.authoring.publication_citation_anchor_collision",
+            "title": "Code",
+            "type": "string"
+          }
+        },
+        "source_id": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "source_id",
+          "required": true,
+          "schema": {
+            "title": "Source Id",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": true,
+          "schema": {
+            "const": "playbill-publication-prepare-warning-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "citation_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Citation Ids",
+            "type": "array"
+          },
+          "code": {
+            "const": "playbill.authoring.publication_citation_anchor_collision",
+            "title": "Code",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-publication-prepare-warning-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tag",
+          "code",
+          "source_id",
+          "citation_ids"
+        ],
+        "title": "PlaybillPublicationPrepareWarning",
+        "type": "object"
+      },
+      "required_fields": [
+        "citation_ids",
+        "code",
+        "source_id",
         "tag"
       ]
     },

@@ -41,6 +41,7 @@ from cruxible_client.contracts.authoring.models import (
     PreflightResultV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    PublicationPrepareWarningV1,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
     authoring_create_fingerprint,
@@ -70,6 +71,7 @@ from cruxible_client.contracts.claims import (
     ClaimBackingV2,
     build_claim_citation,
     claim_artifact_digest,
+    claim_citation_references,
     claim_path,
     claim_statement_address,
     claim_statement_digest,
@@ -80,7 +82,10 @@ from cruxible_client.contracts.claims import (
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError, PlaybillError
 from cruxible_client.contracts.semantic import ContentSpan, SourceMapping
-from cruxible_client.contracts.source_references import CasSourceReferenceV1
+from cruxible_client.contracts.source_references import (
+    CasSourceReferenceV1,
+    ExternalSourceReferenceV1,
+)
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime, utc_now
 from cruxible_core.playbill.authoring.insertions import (
     PUBLICATION_EXPECTATION_EXPIRY,
@@ -771,6 +776,10 @@ class AuthoringIntentCoordinator:
             accepted_generation=self._accepted_sequence(coordinate),
         )
         was_prepared = expectation.preparation == preparation
+        warnings = self._publication_prepare_warnings(
+            source_id=observation.source_id,
+            body=body,
+        )
 
         def persist_preparation(intent: AuthoringIntentV1) -> AuthoringIntentV1:
             live = intent.insertion_expectation
@@ -800,6 +809,7 @@ class AuthoringIntentCoordinator:
             intent=prepared,
             expectation=prepared_expectation,
             preparation=prepared_expectation.preparation,
+            warnings=warnings,
         )
 
     def confirm_insertion(
@@ -1681,6 +1691,49 @@ class AuthoringIntentCoordinator:
         if any(body != bodies[0] for body in bodies[1:]):  # pragma: no cover - digest invariant
             raise RuntimeError("one retained publication digest resolved to different bytes")
         return bodies[0]
+
+    def _publication_prepare_warnings(
+        self,
+        *,
+        source_id: str,
+        body: bytes,
+    ) -> tuple[PublicationPrepareWarningV1, ...]:
+        """Report exact retained anchors that this body would duplicate in one source."""
+
+        store = self.instance.body_store()
+        access = BodyAccessContext(principal_id="playbill-publication", can_read_body=True)
+        tree = self.instance.tree_at(self.instance.accepted_coordinate().git_oid)
+        citation_ids: set[str] = set()
+        for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+            if not path.startswith("claims/"):
+                continue
+            claim = parse_claim(tree[path], path=path)
+            if claim.lifecycle.state != "live":
+                continue
+            for citation in claim_citation_references(claim):
+                try:
+                    envelope = parse_capture_envelope(
+                        store.read(citation.capture_digest, access=access)
+                    )
+                    if (
+                        not isinstance(envelope.source, ExternalSourceReferenceV1)
+                        or envelope.source.source_identity != source_id
+                        or envelope.commitment.materialization != "cas"
+                    ):
+                        continue
+                    commitment = store.read(envelope.commitment.digest, access=access)
+                except PlaybillError:
+                    continue
+                if commitment and commitment in body:
+                    citation_ids.add(citation.citation_id)
+        if not citation_ids:
+            return ()
+        return (
+            PublicationPrepareWarningV1(
+                source_id=source_id,
+                citation_ids=tuple(sorted(citation_ids, key=lambda item: item.encode("ascii"))),
+            ),
+        )
 
     def _accepted_sequence(self, coordinate: AcceptedCoordinate) -> int:
         return next(

@@ -61,7 +61,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.4.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:5b899488f8e824985f008c2fca0a31a348c4189ea1ecd38d49ca15ac8b587db5"
+    "sha256:6186cfe4c546aca1641487ca1a13dfd3f3b3e9aa97a683aabe1a746aef9975c7"
 )
 INSERTION_TARGET_DIGEST_DOMAIN = "playbill-insertion-target-v1"
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
@@ -2087,6 +2087,31 @@ class InsertionPrepareRequestV2(_StrictAuthoringModel):
     observation: PublicationSourceObservationV2
 
 
+class PublicationPrepareWarningV1(_StrictAuthoringModel):
+    tag: Literal["playbill-publication-prepare-warning-v1"] = (
+        "playbill-publication-prepare-warning-v1"
+    )
+    code: Literal["playbill.authoring.publication_citation_anchor_collision"] = (
+        "playbill.authoring.publication_citation_anchor_collision"
+    )
+    source_id: str
+    citation_ids: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("source_id")
+    @classmethod
+    def _source_id(cls, value: str) -> str:
+        return InsertionTargetV1._source_id(value)
+
+    @field_validator("citation_ids")
+    @classmethod
+    def _citation_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("publication warning citation IDs must be sorted and unique")
+        for item in value:
+            Sha256Value.from_tagged(item)
+        return value
+
+
 class InsertionPrepareResultV2(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-prepare-result-v2"] = "playbill-insertion-prepare-result-v2"
     outcome: Literal[
@@ -2099,12 +2124,31 @@ class InsertionPrepareResultV2(_StrictAuthoringModel):
     intent: AuthoringIntentV1
     expectation: InsertionExpectationV2
     preparation: PublicationPreparationV2 | None = None
+    warnings: tuple[PublicationPrepareWarningV1, ...] = ()
 
     @model_validator(mode="after")
     def _preparation_shape(self) -> "InsertionPrepareResultV2":
         if self.outcome in {"prepared", "already_prepared", "bound"} and (self.preparation is None):
             raise ValueError("successful publication preparation requires exact preparation")
         return self
+
+    @field_validator("warnings")
+    @classmethod
+    def _warnings(
+        cls, value: tuple[PublicationPrepareWarningV1, ...]
+    ) -> tuple[PublicationPrepareWarningV1, ...]:
+        if value != tuple(
+            sorted(
+                set(value),
+                key=lambda item: (
+                    item.source_id.encode("utf-8"),
+                    item.code.encode("ascii"),
+                    item.citation_ids,
+                ),
+            )
+        ):
+            raise ValueError("publication prepare warnings must be sorted and unique")
+        return value
 
 
 class InsertionConfirmRequestV2(_StrictAuthoringModel):
@@ -2219,6 +2263,7 @@ __all__ = [
     "InsertionPrepareRequestV2",
     "InsertionPrepareResultV2",
     "PublicationPreparationV2",
+    "PublicationPrepareWarningV1",
     "PublicationSourceObservationV2",
     "PreflightCertificateV1",
     "PreflightResultV1",
