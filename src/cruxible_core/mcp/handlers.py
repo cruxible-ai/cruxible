@@ -50,7 +50,10 @@ from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp.workspace import mcp_workspace_root, resolve_workspace_path
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_example
+from cruxible_core.playbill.claim_type_inputs import (
+    ClaimTypeInputV1,
+    defaulted_claim_type_input_example,
+)
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
@@ -806,7 +809,7 @@ def handle_playbill_authoring_example(
     name: contracts.PlaybillAuthoringExampleName,
 ) -> contracts.PlaybillAuthoringExampleResult:
     if name == "claim-type":
-        payload = claim_type_input_example().model_dump(mode="json")
+        payload = defaulted_claim_type_input_example().model_dump(mode="json")
     else:
         payload = authoring_example(name).model_dump(mode="json")
     return contracts.PlaybillAuthoringExampleResult(name=name, payload=payload)

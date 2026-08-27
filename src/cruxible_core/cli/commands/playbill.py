@@ -43,10 +43,6 @@ from cruxible_client.authoring.sources import (
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.captures import (
-    capture_contract_digest,
-    foreign_source_capture_contract,
-)
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillSinceRequestInvalid
@@ -71,7 +67,7 @@ from cruxible_core.deprecation import (
 from cruxible_core.playbill import native
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
-    claim_type_input_example,
+    defaulted_claim_type_input_example,
 )
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import (
@@ -222,26 +218,7 @@ _CLAIM_RETIRE_ADAPTER = TypeAdapter(ClaimRetireRequestV1)
 def _cli_claim_type_input_example() -> ClaimTypeInputV1:
     """Give CLI authors the same supported-by-default source rule as the SDK."""
 
-    example = claim_type_input_example()
-    source_id = "corpus.replace_me"
-    contract_digest = capture_contract_digest(foreign_source_capture_contract(source_id)).tagged
-    return example.model_copy(
-        update={
-            "anticipated_source_ids": (source_id,),
-            "evidence_admission_policy": {
-                "rules": [
-                    {
-                        "rule_id": f"source-{source_id}",
-                        "claim_roles": sorted(example.permitted_roles),
-                        "capture_contract_digests": [contract_digest],
-                        "evidence_kinds": ["self_asserted"],
-                        "admission": "direct",
-                        "subject_binding": "exact_claim_subject",
-                    }
-                ]
-            },
-        }
-    )
+    return defaulted_claim_type_input_example()
 
 
 def _claim_retire_example() -> ClaimRetireRequestV1:
@@ -1142,7 +1119,8 @@ def propose_claim_type(
         raise click.UsageError("provide exactly one of --input or --example")
     if example:
         click.echo(
-            "# Edit evidence_admission_policy.rules for the source contracts this type admits.",
+            "# Edit anticipated_source_ids and evidence_admission_policy.rules for the "
+            "source contracts this type admits.",
             err=True,
         )
         click.echo(

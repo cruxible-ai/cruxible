@@ -199,8 +199,10 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     (rule,) = claim_type_payload["evidence_admission_policy"]["rules"]
     assert rule["evidence_kinds"] == ["self_asserted"]
     assert rule["capture_contract_digests"][0].startswith("sha256:")
-    assert claim_type_payload["anticipated_source_ids"] == ["corpus.replace_me"]
+    assert claim_type_payload["predicate"] == "project.work_item.status"
+    assert claim_type_payload["anticipated_source_ids"] == ["repo.replace-me"]
     assert "evidence_admission_policy.rules" in claim_type.stderr
+    assert "anticipated_source_ids" in claim_type.stderr
 
     assert retirement.exit_code == 0, retirement.output
     retirement_payload = json.loads(retirement.stdout)

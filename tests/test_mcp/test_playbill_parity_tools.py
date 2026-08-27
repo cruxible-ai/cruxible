@@ -8,8 +8,12 @@ from typing import Any
 from cruxible_client import contracts
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import ClaimInput
+from cruxible_core.cli.commands.playbill import _cli_claim_type_input_example
 from cruxible_core.mcp import handlers
-from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
+from cruxible_core.playbill.claim_type_inputs import (
+    claim_type_input_example,
+    defaulted_claim_type_input_example,
+)
 
 
 def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
@@ -26,6 +30,16 @@ def test_examples_are_the_model_factories_not_copied_literals() -> None:
 
     assert result.payload == authoring_example("claim-flow-a").model_dump(mode="json")
     assert result.name == "claim-flow-a"
+
+
+def test_claim_type_example_has_cli_mcp_factory_parity() -> None:
+    result = handlers.handle_playbill_authoring_example("claim-type")
+
+    assert result.payload == defaulted_claim_type_input_example().model_dump(mode="json")
+    assert result.payload == _cli_claim_type_input_example().model_dump(mode="json")
+    assert result.payload["predicate"] == authoring_example("claim-flow-a").predicate
+    assert result.payload["anticipated_source_ids"] == ["repo.replace-me"]
+    assert result.name == "claim-type"
 
 
 def test_publication_prepare_handler_preserves_advisory_warnings(monkeypatch) -> None:  # type: ignore[no-untyped-def]
