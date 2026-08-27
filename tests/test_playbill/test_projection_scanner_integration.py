@@ -153,13 +153,13 @@ def test_one_existing_scanner_handles_relocation_duplicate_and_genuine_span_drif
 
     source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, NEEDLE + NEEDLE))
     duplicated, ambiguous = _result(instance, client, workspace)
-    assert duplicated["source_observations"][0]["scan_complete"] is False
+    assert "coverage_occurrence_ambiguous" in duplicated["source_observations"][0]["scan_notes"]
     assert any(item.reason == "citation_source_unobserved" for item in ambiguous.items)
     assert all(item.reason != "citation_drifted" for item in ambiguous.items)
 
     source.write_bytes(SOURCE_CONTENT.replace(NEEDLE, b"status: blocked\n"))
     changed, drifted = _result(instance, client, workspace)
-    assert changed["source_observations"][0]["scan_complete"] is True
+    assert changed["source_observations"][0]["scan_notes"] == []
     assert any(item.reason == "citation_drifted" for item in drifted.items)
     assert invocations == client.calls == 4
 

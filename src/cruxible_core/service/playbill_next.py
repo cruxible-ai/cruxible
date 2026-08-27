@@ -62,7 +62,12 @@ from cruxible_client.contracts.source_references import ExternalSourceReferenceV
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_slots import classify_claim_slot
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.coverage.contracts import (
+    CoverageAccessProfileV1,
+    CoverageCommitmentScanProofV1,
+    LogicalSourceIdentityV1,
+    PlaybillCitationWindowObservationV1,
+)
 from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -302,6 +307,104 @@ class PlaybillNextSourceObservationV3(_StrictNextModel):
         return self
 
 
+class PlaybillNextSourceObservationV4(_StrictNextModel):
+    tag: Literal["playbill-next-source-observation-v4"] = "playbill-next-source-observation-v4"
+    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    document_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_.-]{0,255}$")
+    observed_source_digest: str
+    byte_length: int = Field(ge=0, le=MAX_PROJECTION_SOURCE_BYTES)
+    marker_summaries: tuple[ProjectionMarkerSummaryV1, ...] = Field(
+        max_length=MAX_PROJECTION_BLOCKS_PER_SOURCE
+    )
+    occurrences: tuple[WorkingOccurrenceV1, ...] = Field(max_length=MAX_PROJECTION_CARDS_PER_SOURCE)
+    commitment_scan_proofs: tuple[CoverageCommitmentScanProofV1, ...] = Field(
+        max_length=MAX_PROJECTION_CARDS_PER_SOURCE
+    )
+    citation_window_observations: tuple[PlaybillCitationWindowObservationV1, ...] = Field(
+        max_length=MAX_PROJECTION_CARDS_PER_SOURCE
+    )
+    scan_notes: tuple[str, ...]
+    marker_notes: tuple[str, ...]
+
+    @field_validator("observed_source_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("scan_notes", "marker_notes")
+    @classmethod
+    def _notes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("next observation notes must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _source_shape(self) -> "PlaybillNextSourceObservationV4":
+        expected_source = LogicalSourceIdentityV1(plane="external", identity=self.source_id)
+        marker_ids = tuple(marker.stamp.block_id for marker in self.marker_summaries)
+        if marker_ids != tuple(sorted(set(marker_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("next marker summaries must be sorted and unique by block ID")
+        previous_end = -1
+        for marker in sorted(self.marker_summaries, key=lambda item: item.start_byte):
+            if marker.stamp.source_id != self.source_id:
+                raise ValueError("next marker summary names a different logical source")
+            if marker.start_byte < previous_end or marker.end_byte > self.byte_length:
+                raise ValueError("next marker summary windows overlap or escape the source")
+            previous_end = marker.end_byte
+
+        occurrence_keys = tuple(item.sort_key for item in self.occurrences)
+        if occurrence_keys != tuple(sorted(set(occurrence_keys))):
+            raise ValueError("next source occurrences must be sorted and unique")
+        proof_keys = tuple(item.sort_key for item in self.commitment_scan_proofs)
+        if proof_keys != tuple(sorted(set(proof_keys))):
+            raise ValueError("next source scan proofs must be sorted and unique")
+        proof_identities = {
+            (item.source.sort_key, item.commitment_digest, item.byte_length)
+            for item in self.commitment_scan_proofs
+        }
+        for proof in self.commitment_scan_proofs:
+            if proof.source != expected_source:
+                raise ValueError("next source scan proof names a different logical source")
+        for occurrence in self.occurrences:
+            if occurrence.source != expected_source:
+                raise ValueError("next occurrence names a different logical source")
+            if occurrence.line_overlay.end_byte > self.byte_length:
+                raise ValueError("next occurrence presentation window escapes the source")
+            if (
+                occurrence.source.sort_key,
+                occurrence.observed_commitment_digest,
+                occurrence.byte_length,
+            ) not in proof_identities:
+                raise ValueError("every next occurrence requires its exact local scan proof")
+
+        window_keys = tuple(
+            (
+                item.source.sort_key,
+                item.citation_id.encode("ascii"),
+                item.original_start,
+                item.original_end,
+            )
+            for item in self.citation_window_observations
+        )
+        if window_keys != tuple(sorted(set(window_keys))):
+            raise ValueError("next citation windows must be sorted and unique")
+        for window in self.citation_window_observations:
+            if window.source != expected_source:
+                raise ValueError("next citation window names a different logical source")
+            if window.addressable and window.original_end > self.byte_length:
+                raise ValueError("addressable next citation window escapes the source")
+        return self
+
+
+PlaybillNextSourceObservationAny: TypeAlias = (
+    PlaybillNextSourceObservationV1
+    | PlaybillNextSourceObservationV2
+    | PlaybillNextSourceObservationV3
+    | PlaybillNextSourceObservationV4
+)
+
+
 class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     tag: Literal["playbill-next-workspace-observation-v1"] = (
         "playbill-next-workspace-observation-v1"
@@ -309,15 +412,7 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     floor_status: Literal["not_configured", "missing", "current", "stale", "invalid"] | None = None
     installed_coordinate: AcceptedCoordinate | None = None
     drift_observations: tuple[PlaybillNextDriftObservationV1, ...] | None = None
-    source_observations: (
-        tuple[
-            PlaybillNextSourceObservationV1
-            | PlaybillNextSourceObservationV2
-            | PlaybillNextSourceObservationV3,
-            ...,
-        ]
-        | None
-    ) = None
+    source_observations: tuple[PlaybillNextSourceObservationAny, ...] | None = None
     presentation_policy: PlaybillPresentationPolicyV1 | None = None
     presentation_policy_notes: tuple[PlaybillPresentationPolicyNoteV1, ...] = ()
 
@@ -338,22 +433,8 @@ class PlaybillNextWorkspaceObservationV1(_StrictNextModel):
     @classmethod
     def _sources(
         cls,
-        value: tuple[
-            PlaybillNextSourceObservationV1
-            | PlaybillNextSourceObservationV2
-            | PlaybillNextSourceObservationV3,
-            ...,
-        ]
-        | None,
-    ) -> (
-        tuple[
-            PlaybillNextSourceObservationV1
-            | PlaybillNextSourceObservationV2
-            | PlaybillNextSourceObservationV3,
-            ...,
-        ]
-        | None
-    ):
+        value: tuple[PlaybillNextSourceObservationAny, ...] | None,
+    ) -> tuple[PlaybillNextSourceObservationAny, ...] | None:
         if value is None:
             return None
         ids = tuple(item.source_id for item in value)
@@ -1072,8 +1153,19 @@ def _self_published_source_items(
     observed = {
         item.source_id: item
         for item in observation.source_observations
-        if isinstance(item, (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3))
-        and item.scan_complete
+        if isinstance(
+            item,
+            (
+                PlaybillNextSourceObservationV2,
+                PlaybillNextSourceObservationV3,
+                PlaybillNextSourceObservationV4,
+            ),
+        )
+        and (
+            not item.scan_notes
+            if isinstance(item, PlaybillNextSourceObservationV4)
+            else item.scan_complete
+        )
         and not item.scan_notes
         and not item.marker_notes
     }
@@ -1307,12 +1399,7 @@ def _source_citation_item(
     *,
     citation_id: str,
     commitment: _CitationCommitment,
-    observed: (
-        PlaybillNextSourceObservationV1
-        | PlaybillNextSourceObservationV2
-        | PlaybillNextSourceObservationV3
-        | None
-    ),
+    observed: PlaybillNextSourceObservationAny | None,
 ) -> PlaybillNextItemV1 | None:
     source_id = commitment.source_id
     captured_source_digest = commitment.source_digest
@@ -1322,6 +1409,20 @@ def _source_citation_item(
         isinstance(observed, (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3))
         and not observed.scan_complete
     )
+    if isinstance(observed, PlaybillNextSourceObservationV4):
+        matched_count = sum(
+            item.observed_commitment_digest == commitment.commitment_digest
+            for item in observed.occurrences
+        )
+        proved = any(
+            item.commitment_digest == commitment.commitment_digest
+            for item in observed.commitment_scan_proofs
+        )
+        if commitment.whole_source and observed.observed_source_digest == captured_source_digest:
+            return None
+        if not commitment.whole_source and matched_count == 1 and proved:
+            return None
+        unobserved = not proved or matched_count > 1
     if (
         isinstance(observed, (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3))
         and observed.scan_complete
@@ -1567,9 +1668,17 @@ def _projection_items(
         for source in observation.source_observations
         if isinstance(
             source,
-            (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3),
+            (
+                PlaybillNextSourceObservationV2,
+                PlaybillNextSourceObservationV3,
+                PlaybillNextSourceObservationV4,
+            ),
         )
-        and source.scan_complete
+        and (
+            not source.scan_notes
+            if isinstance(source, PlaybillNextSourceObservationV4)
+            else source.scan_complete
+        )
         and not source.marker_notes
         and source.marker_summaries
     )
@@ -1780,6 +1889,7 @@ __all__ = [
     "PlaybillNextSourceObservationV1",
     "PlaybillNextSourceObservationV2",
     "PlaybillNextSourceObservationV3",
+    "PlaybillNextSourceObservationV4",
     "PlaybillNextWorkspaceObservationInvalid",
     "PlaybillNextWorkspaceObservationV1",
     "playbill_next_item_id",
