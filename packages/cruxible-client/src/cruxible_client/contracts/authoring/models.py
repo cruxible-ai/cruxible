@@ -1718,7 +1718,7 @@ def insertion_prepare_operation_v2_key(
     ).tagged
 
 
-def _insertion_prepare_terminal_operation_v2_key(
+def insertion_prepare_terminal_operation_v2_key(
     expectation_id: str,
     observation: PublicationSourceObservationV2,
 ) -> str:
@@ -2256,6 +2256,7 @@ __all__ = [
     "insertion_terminal_tombstone_digest",
     "insertion_terminal_tombstone_v2_digest",
     "insertion_prepare_operation_v2_key",
+    "insertion_prepare_terminal_operation_v2_key",
     "publication_block_id",
     "publication_preparation_v2_digest",
     "publication_source_observation_v2_digest",

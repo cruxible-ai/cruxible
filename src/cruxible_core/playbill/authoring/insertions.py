@@ -49,6 +49,7 @@ from cruxible_client.contracts.temporal import ensure_utc
 
 DEFAULT_INSERTION_TOMBSTONE_HORIZON = timedelta(days=30)
 MAX_PUBLICATION_PREPARATION_REVISIONS = 16
+PUBLICATION_EXPECTATION_EXPIRY = timedelta(days=7)
 
 
 class InsertionProtocolError(PlaybillError):
@@ -264,7 +265,8 @@ def build_publication_preparation(
         _raise(
             PublicationRevisionLimitExceeded,
             f"publication reached its {MAX_PUBLICATION_PREPARATION_REVISIONS}-revision limit; "
-            "confirm the revision-16 postimage or wait for the expectation's 7-day expiry",
+            f"confirm the revision-{MAX_PUBLICATION_PREPARATION_REVISIONS} postimage or wait "
+            f"for the expectation's {PUBLICATION_EXPECTATION_EXPIRY.days}-day expiry",
         )
 
     block_id = (
@@ -688,6 +690,7 @@ __all__ = [
     "DEFAULT_INSERTION_TOMBSTONE_HORIZON",
     "InsertionProtocolError",
     "MAX_PUBLICATION_PREPARATION_REVISIONS",
+    "PUBLICATION_EXPECTATION_EXPIRY",
     "PublicationAnchorAmbiguous",
     "PublicationAnchorStale",
     "PublicationBodyNotMarkerCompatible",

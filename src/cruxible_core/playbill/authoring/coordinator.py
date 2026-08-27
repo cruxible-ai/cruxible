@@ -43,12 +43,12 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureAuthoringPayloadV2,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
-    _insertion_prepare_terminal_operation_v2_key,
     authoring_create_fingerprint,
     authoring_payload_digest,
     insertion_confirm_operation_v2_key,
     insertion_confirmation_operation_key,
     insertion_prepare_operation_v2_key,
+    insertion_prepare_terminal_operation_v2_key,
     reference_expectations_digest,
     update_insertion_expectation,
 )
@@ -83,6 +83,7 @@ from cruxible_client.contracts.semantic import ContentSpan, SourceMapping
 from cruxible_client.contracts.source_references import CasSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime, utc_now
 from cruxible_core.playbill.authoring.insertions import (
+    PUBLICATION_EXPECTATION_EXPIRY,
     InsertionProtocolError,
     PublicationClaimNotAccepted,
     PublicationConfirmationMismatch,
@@ -577,14 +578,14 @@ class AuthoringIntentCoordinator:
                     preflighted,
                     original_claim_artifact_digest=artifact_digest,
                     claim_statement_digest=statement_digest,
-                    expires_at=created_at + timedelta(days=7),
+                    expires_at=created_at + PUBLICATION_EXPECTATION_EXPIRY,
                 )
                 if isinstance(payload.insertion_target, InsertionTargetV2)
                 else mint_insertion_expectation(
                     preflighted,
                     original_claim_artifact_digest=artifact_digest,
                     claim_statement_digest=statement_digest,
-                    expires_at=created_at + timedelta(days=7),
+                    expires_at=created_at + PUBLICATION_EXPECTATION_EXPIRY,
                 )
             )
 
@@ -646,7 +647,7 @@ class AuthoringIntentCoordinator:
             observation,
             live_expectation_digest=expectation.expectation_digest,
         )
-        terminal_operation_key = _insertion_prepare_terminal_operation_v2_key(
+        terminal_operation_key = insertion_prepare_terminal_operation_v2_key(
             expectation.expectation_id,
             observation,
         )

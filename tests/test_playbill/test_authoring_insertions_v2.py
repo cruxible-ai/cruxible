@@ -21,6 +21,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     WorkingDigestCoordinateV1,
     build_insertion_expectation_v2,
+    insertion_prepare_terminal_operation_v2_key,
     insertion_target_v2_digest,
     publication_block_id,
     publication_source_observation_v2_digest,
@@ -68,6 +69,15 @@ COORDINATE = AcceptedCoordinate(
 
 def _digest(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def test_terminal_prepare_operation_key_is_a_public_deterministic_helper() -> None:
+    observation = _observation(b"status: ready\n")
+
+    first = insertion_prepare_terminal_operation_v2_key("sha256:" + "1" * 64, observation)
+    second = insertion_prepare_terminal_operation_v2_key("sha256:" + "1" * 64, observation)
+
+    assert first == second
 
 
 def _target(content: bytes = b"status: \n") -> InsertionTargetV2:
