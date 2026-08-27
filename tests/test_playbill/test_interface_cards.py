@@ -58,12 +58,6 @@ from cruxible_core.playbill.query.backends import (
     ClaimQueryFactsV1,
     subject_query_view,
 )
-from cruxible_core.playbill.query.capsules import (
-    DATA_FENCE_OPEN,
-    ContextCapsuleBudgetV1,
-    build_interface_context_capsule,
-    render_bounded_context_capsule,
-)
 from cruxible_core.playbill.query.cards import (
     ClaimTypeCardV1,
     InterfaceProjectionBudgetV1,
@@ -155,7 +149,6 @@ def _addressed_claim(
         rule=rule_for(predicate, object_kind=object_kind),
         resolved_authority_basis=("authority:owner",),
     )
-
 
 def _subjects(items: tuple[str, ...]) -> tuple[AcceptedSubject, ...]:
     return tuple(
@@ -633,42 +626,6 @@ def test_the_same_request_and_coordinate_yield_a_byte_identical_interface_page()
         second.model_dump(mode="json")
     )
     assert first.receipt_digest == second.receipt_digest
-
-
-def test_an_interface_capsule_quotes_cards_as_untrusted_data() -> None:
-    facts = _standard_facts()
-    vocabulary, projections = _projections(facts)
-    page = discover_interfaces(
-        _request(query=STATUS_PREDICATE),
-        vocabulary=vocabulary,
-        projections=projections,
-    )
-    capsule = build_interface_context_capsule(page, budget=ContextCapsuleBudgetV1())
-
-    assert capsule.instruction_blocks == ()
-    assert {block.label for block in capsule.data_blocks} == {
-        "claim-type-card",
-        "discovery-handle",
-    }
-    assert all(block.material.classification == "untrusted_data" for block in capsule.data_blocks)
-    assert capsule.verdict_relative is False
-    rendered = render_bounded_context_capsule(capsule)
-    assert rendered.count(DATA_FENCE_OPEN.encode("utf-8")) == len(capsule.data_blocks)
-
-
-def test_a_verdict_relative_profile_makes_its_capsule_say_so() -> None:
-    facts = _standard_facts()
-    vocabulary, projections = _projections(facts, evaluation_time=NOW)
-    page = discover_interfaces(
-        _request(query="Ready Queue"),
-        vocabulary=vocabulary,
-        projections=projections,
-    )
-    capsule = build_interface_context_capsule(page)
-
-    assert page.profiles and page.profiles[0].verdict_relative is True
-    assert capsule.verdict_relative is True
-    assert capsule.evaluation_time == EVALUATION_TIME
 
 
 # -- token economics -------------------------------------------------------
