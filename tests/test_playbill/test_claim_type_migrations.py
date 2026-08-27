@@ -65,10 +65,9 @@ from cruxible_core.playbill.service.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.service.playbill_claims import _claim_law_evidence
-from cruxible_core.service.playbill_evidence import _queue_only_claim_type_successor
 from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
 from tests.test_playbill._adoption_fixture import _query_definition
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
 from tests.test_playbill.test_claims import _claim_type
@@ -97,7 +96,7 @@ def _accepted_claim_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     assert submitted.status.proposal_id is not None
     assert submitted.status.candidate_digest is not None
     approval = _sign(
-        owner,
+        client_material(instance.root.parent, instance),
         submitted.status.candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )
@@ -403,7 +402,7 @@ def _activate_migration(instance, owner, successor, dependents):  # type: ignore
     candidate = result.proposal.proposal.candidate
     assert candidate is not None
     approval = _sign(
-        owner,
+        client_material(instance.root.parent, instance),
         candidate.candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )
@@ -521,30 +520,6 @@ def test_retired_query_definition_does_not_block_later_claim_type_migration(
         parse_query_definition(retired_tree[query_path], path=query_path)
     )
     _next(instance)
-
-
-def test_queue_only_equivalence_requires_legal_authority_widening() -> None:
-    predecessor = _claim_type()
-    widened = predecessor.model_copy(
-        update={
-            "authority": ArtifactAuthority(
-                propose_roles=predecessor.authority.propose_roles,
-                approve_roles=tuple(sorted((*predecessor.authority.approve_roles, "reviewer"))),
-            )
-        }
-    )
-    changed_proposer = widened.model_copy(
-        update={
-            "authority": ArtifactAuthority(
-                propose_roles=("reviewer",),
-                approve_roles=widened.authority.approve_roles,
-            )
-        }
-    )
-
-    assert _queue_only_claim_type_successor(predecessor, widened)
-    assert not _queue_only_claim_type_successor(predecessor, changed_proposer)
-    assert not _queue_only_claim_type_successor(widened, predecessor)
 
 
 def test_migration_refuses_hand_authored_predecessor_artifact_pins(tmp_path: Path) -> None:
@@ -982,6 +957,37 @@ def test_already_broken_retired_claim_refuses_schema_divergence(tmp_path: Path) 
         _decision_only_successor(instance, enum=["blocked", "closed", "ready"]),
         proposal_name="schema-divergence",
     )
+    with pytest.raises(ProposalIntegrityError, match="adjudication rule does not reproduce"):
+        _next(instance)
+
+
+def test_already_broken_retired_claim_refuses_schema_change_then_revert(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    dependent = ClaimTypeDependentDispositionV2(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition="retire",
+    )
+    _activate_migration(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        (dependent,),
+    )
+    _accept_claim_type_only(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "closed", "ready"]),
+        proposal_name="schema-change",
+    )
+    _accept_claim_type_only(
+        instance,
+        owner,
+        _decision_only_successor(instance, enum=["blocked", "ready"]),
+        proposal_name="schema-revert",
+    )
+
     with pytest.raises(ProposalIntegrityError, match="adjudication rule does not reproduce"):
         _next(instance)
 

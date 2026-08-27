@@ -474,42 +474,6 @@ def _current_replay_available(
     return reader is not None and reader.replay_available(envelope.source)
 
 
-def _without_queue_only_claim_type_fields(claim_type: ClaimType) -> dict[str, object]:
-    payload = claim_type.model_dump(mode="json")
-    for field in (
-        "artifact_format",
-        "authority",
-        "lifecycle",
-        "subject_scope",
-        "slot_policy",
-        "attestation_consequence_policy",
-    ):
-        payload.pop(field, None)
-    # The v1 wire omitted the later null placeholder entirely. Normalize that
-    # historical spelling without erasing a real, verdict-bearing horizon.
-    payload["evidence_freshness"] = (
-        None
-        if claim_type.evidence_freshness is None
-        else claim_type.evidence_freshness.model_dump(mode="json")
-    )
-    return payload
-
-
-def _queue_only_claim_type_successor(
-    predecessor: ClaimType,
-    successor: ClaimType,
-) -> bool:
-    """Accept only contract equivalence plus the law's monotonic authority widening."""
-
-    authority_is_legal_widening = (
-        predecessor.authority.propose_roles == successor.authority.propose_roles
-        and set(predecessor.authority.approve_roles).issubset(successor.authority.approve_roles)
-    )
-    return authority_is_legal_widening and _without_queue_only_claim_type_fields(
-        predecessor
-    ) == _without_queue_only_claim_type_fields(successor)
-
-
 @dataclass
 class ClaimReadHistoryIndex:
     instance: PlaybillInstance
@@ -575,11 +539,48 @@ def _reproduced_claim_adjudication_rule(
 ) -> ClaimAdjudicationRuleV1:
     """Return the current rule when accepted evidence proves the same verdict contract.
 
-    Queue-only policy changes and legal authority widening cannot invalidate an
-    otherwise identical adjudication receipt. The exact-current digest remains
-    preferred; recovery walks the accepted predecessor chain and requires the
-    reviewed equivalence projection at every hop.
+    Queue-only policy, dormant authority, and dormant actor-requirement changes
+    cannot invalidate an otherwise identical adjudication receipt. The
+    exact-current digest remains preferred. Recovery compares every historical
+    predecessor's verdict-bearing projection directly with the current rule, so
+    a verdict-semantic change cannot be hidden by a later revert.
     """
+
+    def verdict_projection(item: ClaimType) -> dict[str, object]:
+        payload = item.model_dump(mode="json")
+        for field in (
+            "artifact_format",
+            "authority",
+            "lifecycle",
+            "subject_scope",
+            "slot_policy",
+            "attestation_consequence_policy",
+        ):
+            payload.pop(field, None)
+        # The v1 wire omitted the later null placeholder. Parsing preserves its
+        # meaning, so normalize the historical spelling before comparison.
+        payload["evidence_freshness"] = (
+            None
+            if item.evidence_freshness is None
+            else item.evidence_freshness.model_dump(mode="json")
+        )
+        admission = payload["admission_policy"]
+        if not isinstance(admission, dict):  # pragma: no cover - model_dump invariant
+            raise ProposalIntegrityError("accepted ClaimType admission policy is invalid")
+        actor_requirement_ids = {
+            item["requirement_id"]
+            for item in admission["actor_requirements"]
+            if isinstance(item, dict) and isinstance(item.get("requirement_id"), str)
+        }
+        admission["actor_requirements"] = []
+        for transition in admission["transition_requirements"]:
+            if isinstance(transition, dict) and isinstance(transition.get("require"), list):
+                transition["require"] = [
+                    requirement
+                    for requirement in transition["require"]
+                    if requirement not in actor_requirement_ids
+                ]
+        return payload
 
     current_digest = claim_type_digest(claim_type).tagged
     current_rule = claim_adjudication_rule(
@@ -588,6 +589,7 @@ def _reproduced_claim_adjudication_rule(
     )
     if claim_adjudication_rule_digest(current_rule) == evidence_digest:
         return current_rule
+    current_projection = verdict_projection(claim_type)
     claim_type_versions = history.claim_types()
     path = claim_type_path(claim_type.predicate)
     current = claim_type
@@ -602,12 +604,13 @@ def _reproduced_claim_adjudication_rule(
             raise ProposalIntegrityError(
                 "accepted ClaimType predecessor is absent from accepted history"
             )
-        if not _queue_only_claim_type_successor(predecessor, current):
-            raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
         predecessor_rule = claim_adjudication_rule(
             predecessor,
             claim_type_digest=predecessor_digest,
         )
+        predecessor_projection = verdict_projection(predecessor)
+        if predecessor_projection != current_projection:
+            raise ProposalIntegrityError("accepted Claim adjudication rule does not reproduce")
         if claim_adjudication_rule_digest(predecessor_rule) == evidence_digest:
             return current_rule
         current = predecessor
