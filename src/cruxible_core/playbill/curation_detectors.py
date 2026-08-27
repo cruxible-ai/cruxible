@@ -588,17 +588,24 @@ def _dead_vocabulary(
     return rebuilt, final_coverage
 
 
-def _attempt_subject_from_path(*, tree: Mapping[str, bytes], path: str) -> ArtifactIdentity | None:
+def _attempt_subject_from_path(
+    *, tree: Mapping[str, bytes], path: str
+) -> tuple[ArtifactIdentity, str] | None:
     content = tree.get(path)
     if content is None:
         return None
-    parsed = parse_dependency_artifact(path, content)
+    try:
+        parsed = parse_dependency_artifact(path, content)
+    except (PlaybillError, ValueError):
+        return None
     if parsed is None:
         return None
     if parsed.artifact_kind == "claim":
         claim = parse_claim(content, path=path)
-        return claim.statement.claim_type
-    return parsed.identity
+        return claim.statement.claim_type, "payload_side"
+    if parsed.artifact_kind == "claim-type":
+        return parsed.identity, "schema_side"
+    return parsed.identity, "payload_side"
 
 
 def _admission_failures(
@@ -606,7 +613,7 @@ def _admission_failures(
 ) -> tuple[tuple[CurationDetectionV1, ...], CurationDetectorCoverageV1]:
     kind: CurationPatternKind = "playbill.curation.admission_failure_cluster.v1"
     coverage = _Coverage(kind)
-    attempts: dict[tuple[str, str], dict[str, CurationEvidenceRefV1]] = defaultdict(dict)
+    attempts: dict[tuple[str, str, str], dict[str, CurationEvidenceRefV1]] = defaultdict(dict)
     evidence = instance.proposal_evidence()
     admissions = {item.proposal_id: item for item in evidence.list_admissions()}
     for evaluation in evidence.list_evaluations():
@@ -635,22 +642,26 @@ def _admission_failures(
             if path is None:
                 coverage.omit("admission_subject_unresolved")
                 continue
-            subject = _attempt_subject_from_path(tree=candidate_tree, path=path)
-            if subject is None:
-                subject = _attempt_subject_from_path(tree=base_tree, path=path)
-            if subject is None:
+            resolved = _attempt_subject_from_path(tree=candidate_tree, path=path)
+            if resolved is None:
+                resolved = _attempt_subject_from_path(tree=base_tree, path=path)
+            if resolved is None:
                 coverage.omit("admission_subject_unresolved")
                 continue
-            attempts[(subject.qualified, diagnostic.code)][attempt_id] = CurationEvidenceRefV1(
-                kind="proposal_attempt",
-                identity=attempt_id,
-                path=path,
-                event_digest=evaluation.proposal_id,
-                facts={
-                    "diagnostic_code": diagnostic.code,
-                    "evaluated_base_oid": evaluation.evaluated_base_oid,
-                    "proposal_id": evaluation.proposal_id,
-                },
+            subject, direction = resolved
+            attempts[(subject.qualified, diagnostic.code, direction)][attempt_id] = (
+                CurationEvidenceRefV1(
+                    kind="proposal_attempt",
+                    identity=attempt_id,
+                    path=path,
+                    event_digest=evaluation.proposal_id,
+                    facts={
+                        "diagnostic_code": diagnostic.code,
+                        "refusal_direction": direction,
+                        "evaluated_base_oid": evaluation.evaluated_base_oid,
+                        "proposal_id": evaluation.proposal_id,
+                    },
+                )
             )
 
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
@@ -674,13 +685,14 @@ def _admission_failures(
                 coverage.omit("admission_subject_unresolved")
                 continue
             attempt_id = preflight.certificate.certificate_digest
-            attempts[(subject.qualified, authoring_diagnostic.code)][attempt_id] = (
+            attempts[(subject.qualified, authoring_diagnostic.code, "payload_side")][attempt_id] = (
                 CurationEvidenceRefV1(
                     kind="authoring_attempt",
                     identity=attempt_id,
                     event_digest=event.event_digest,
                     facts={
                         "diagnostic_code": authoring_diagnostic.code,
+                        "refusal_direction": "payload_side",
                         "frontier_digest": preflight.frontier.digest,
                         "intent_id": event.intent.intent_id,
                     },
@@ -689,8 +701,9 @@ def _admission_failures(
 
     frozen_coverage = coverage.freeze()
     detections: list[CurationDetectionV1] = []
-    for (subject_value, code), refs in sorted(
-        attempts.items(), key=lambda item: (item[0][0].encode(), item[0][1].encode())
+    for (subject_value, code, direction), refs in sorted(
+        attempts.items(),
+        key=lambda item: (item[0][0].encode(), item[0][1].encode(), item[0][2].encode()),
     ):
         if len(refs) < ADMISSION_FAILURE_MINIMUM_DISTINCT_DURABLE_ATTEMPTS:
             continue
@@ -700,7 +713,7 @@ def _admission_failures(
             build_curation_detection(
                 pattern_kind=kind,
                 subject=parse_artifact_identity(subject_value),
-                detail={"diagnostic_code": code},
+                detail={"diagnostic_code": code, "refusal_direction": direction},
                 coverage=frozen_coverage,
                 evidence_refs=tuple(
                     refs[key] for key in sorted(refs, key=lambda item: item.encode("ascii"))

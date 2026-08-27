@@ -96,7 +96,7 @@ _DETECTOR_LAWS: dict[CurationPatternKind, dict[str, object]] = {
     },
     "playbill.curation.admission_failure_cluster.v1": {
         "minimum_distinct_durable_attempts": (ADMISSION_FAILURE_MINIMUM_DISTINCT_DURABLE_ATTEMPTS),
-        "discriminator": "diagnostic_code",
+        "discriminators": ["diagnostic_code", "refusal_direction"],
     },
     "playbill.curation.freshness_drift_calibration.v1": {
         "minimum_changed_commitment_intervals": FRESHNESS_MINIMUM_CHANGED_COMMITMENT_INTERVALS,
@@ -211,8 +211,14 @@ def _validate_pattern_detail(pattern_kind: CurationPatternKind, detail: dict[str
         }:
             raise ValueError("recurring-conflict pattern detail differs from the frozen preimage")
     elif pattern_kind == "playbill.curation.admission_failure_cluster.v1":
-        if keys != {"diagnostic_code"} or not isinstance(detail["diagnostic_code"], str):
-            raise ValueError("admission-failure pattern detail requires diagnostic_code")
+        if (
+            keys != {"diagnostic_code", "refusal_direction"}
+            or not isinstance(detail["diagnostic_code"], str)
+            or detail["refusal_direction"] not in {"payload_side", "schema_side"}
+        ):
+            raise ValueError(
+                "admission-failure pattern detail requires diagnostic_code and refusal_direction"
+            )
     elif pattern_kind == "playbill.curation.freshness_drift_calibration.v1":
         expected = {"capture_contract_identity", "external_source_identity", "selector_type"}
         if keys != expected or not all(isinstance(detail[key], str) for key in expected):
