@@ -1,8 +1,9 @@
 """Freeze the complete sanctioned persistent derivative-text writer inventory.
 
 Door A guarantees that every persistent derivative-text writer routes through a
-shared framing primitive. It does not require each caller to invoke the lower-level
-frame assertion directly; the shared primitive owns that verification boundary.
+verifying primitive: frame_projection_block re-parses the framed bytes and proves
+exactly one block with the exact stamp and body digest, and the repin pipeline must
+spell assert_projection_block_frame, which performs the same proof on its output.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ SANCTIONED_CALLERS = {
 SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str]] = {
     "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::repin_projection_block": (
         repin_projection_block,
-        "render_projection_opening",
+        "assert_projection_block_frame",
     ),
     "packages/cruxible-client/src/cruxible_client/authoring/insertions.py::"
     "apply_playbill_publication": (apply_playbill_publication, "frame_projection_block"),
