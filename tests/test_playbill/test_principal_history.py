@@ -355,3 +355,154 @@ def test_last_recovery_and_unconfigured_recovery_authority_refuse(tmp_path: Path
             candidate_tree=local_tree,
             timestamp="2026-08-12T17:01:00.000000Z",
         )
+
+
+def test_revoked_key_needs_fresh_material_and_dormant_roles_stay_immutable(
+    tmp_path: Path,
+) -> None:
+    managed = tmp_path / "managed-key-invariants"
+    owner = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="owner",
+        roles=("owner",),
+    )
+    reviewer = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
+    third = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="third",
+        roles=("reviewer",),
+    )
+    recovery = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="recovery",
+        roles=("recovery",),
+    )
+    instance = PlaybillInstance.initialize(
+        managed,
+        instance_id="inst_key_invariants",
+        client_principals=(
+            owner.principal,
+            reviewer.principal,
+            third.principal,
+            recovery.principal,
+        ),
+        workspace_roots=(tmp_path / "workspace",),
+        timestamp=FIXED_TIMESTAMP,
+    )
+
+    def propose(
+        label: str,
+        proposed: PrincipalRecord,
+        *,
+        actor: GeneratedKeyMaterial = owner,
+    ):
+        base = instance.accepted_coordinate()
+        path = f"principals/{proposed.principal_id}.yaml"
+        return instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id=actor.principal.principal_id),
+            request=ProposalAdmissionRequest(
+                target_ref=f"refs/proposals/{actor.principal.principal_id}/{label}",
+                proposed_base_oid=base.git_oid,
+            ),
+            candidate_tree={
+                **instance.tree_at(base.git_oid),
+                path: render_principal(proposed),
+            },
+            timestamp="2026-08-12T18:00:00.000000Z",
+        )
+
+    replacement_with_changed_roles = _replacement_key(
+        tmp_path,
+        instance,
+        custody_name="third-role-change",
+        principal_id="third",
+        roles=("owner",),
+    )
+    role_change = propose(
+        "change-dormant-role",
+        replacement_with_changed_roles.principal,
+        actor=third,
+    )
+    assert role_change.candidate is None
+    assert role_change.evaluation.diagnostics[0].code == (
+        "playbill.principal.transition_unauthorized"
+    )
+
+    recovery_escalation = _replacement_key(
+        tmp_path,
+        instance,
+        custody_name="recovery-role-change",
+        principal_id="recovery",
+        roles=("owner",),
+    )
+    role_escalation = propose(
+        "recovery-role-escalation",
+        recovery_escalation.principal,
+        actor=recovery,
+    )
+    assert role_escalation.candidate is None
+    assert role_escalation.evaluation.diagnostics[0].code == (
+        "playbill.principal.transition_unauthorized"
+    )
+
+    swapped_key = _replacement_key(
+        tmp_path,
+        instance,
+        custody_name="third-revoke-swap",
+        principal_id="third",
+        roles=("reviewer",),
+    )
+    swapped_revocation = propose(
+        "revoke-with-key-swap",
+        swapped_key.principal.model_copy(update={"status": "revoked"}),
+    )
+    assert swapped_revocation.candidate is None
+    assert swapped_revocation.evaluation.diagnostics[0].code == (
+        "playbill.principal.transition_unauthorized"
+    )
+
+    revoked = third.principal.model_copy(update={"status": "revoked"})
+    instance = _settle_transition(
+        instance,
+        actor=owner,
+        approver=reviewer,
+        proposed=revoked,
+        timestamp="2026-08-12T18:01:00.000000Z",
+    )
+    revoked_record = next(
+        item
+        for item in instance._recovered.head.principals.principals
+        if item.principal_id == "third"
+    )
+    assert revoked_record.status == "revoked"
+
+    same_key_rearm = propose("rearm-revoked-key", third.principal)
+    assert same_key_rearm.candidate is None
+    assert same_key_rearm.evaluation.diagnostics[0].code == (
+        "playbill.principal.transition_unauthorized"
+    )
+
+    fresh_third = _replacement_key(
+        tmp_path,
+        instance,
+        custody_name="third-fresh-recovery",
+        principal_id="third",
+        roles=("reviewer",),
+    )
+    instance = _settle_transition(
+        instance,
+        actor=owner,
+        approver=reviewer,
+        proposed=fresh_third.principal,
+        timestamp="2026-08-12T18:02:00.000000Z",
+    )
+    assert instance._recovered.head.principals.require_active("third") == (fresh_third.principal)
+    assert fresh_third.principal.public_key != third.principal.public_key

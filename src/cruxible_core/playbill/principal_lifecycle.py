@@ -72,15 +72,26 @@ def _classify(
         return "register"
     if previous.principal_id == "daemon" or proposed.principal_id == "daemon":
         return None
+    # Authority roles are dormant for admission in this pre-release lineage,
+    # but their accepted bytes remain immutable across lifecycle transitions.
+    # Changing them requires a future governed policy/ontology succession.
+    if previous.authority_roles != proposed.authority_roles:
+        return None
     if previous.status == "active" and proposed.status == "active":
-        if previous == proposed:
+        if previous.public_key == proposed.public_key:
             return None
         if actor.principal_id == previous.principal_id:
             return "rotate"
         return "recover"
     if previous.status == "active" and proposed.status == "revoked":
+        if previous.public_key != proposed.public_key:
+            return None
         return "revoke"
     if previous.status == "revoked" and proposed.status == "active":
+        # Revocation permanently kills the accepted key bytes. Recovery must
+        # introduce fresh material before the Principal can become active.
+        if previous.public_key == proposed.public_key:
+            return None
         return "recover"
     return None
 
