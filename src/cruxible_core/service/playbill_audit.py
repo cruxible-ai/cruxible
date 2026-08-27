@@ -218,10 +218,17 @@ def _resolve_coordinate(
 
 
 def _operational_input_head(instance: PlaybillInstance) -> ReviewOperationalHeadV1:
-    """Commit every operational input while excluding prior audit outputs."""
+    """Commit patrol inputs while excluding audit outputs and demand receipts.
+
+    Consumption is a demand signal for ranking future patrols.  It is not a
+    cursor invalidator for an in-flight patrol because serving that patrol can
+    itself append qualifying consumption receipts.
+    """
 
     head = instance.review_operational_store().head()
-    partitions = tuple(item for item in head.partitions if item.family != "audit")
+    partitions = tuple(
+        item for item in head.partitions if item.family not in {"audit", "consumption"}
+    )
     return build_review_operational_head(
         initialized_coordinate=(head.initialized_coordinate if partitions else None),
         initialized_generation=(head.initialized_generation if partitions else None),

@@ -156,6 +156,16 @@ def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift
     assert first.coverage.omission_reasons == ("row_budget_exceeded",)
     assert len(first.coverage.covered_claims) == 3
     assert first.next_cursor is not None
+    record_consumption(
+        instance,
+        context=ConsumptionContextV1(
+            actor_context=_actor(),
+            access_profile_id="test-audit-pages",
+        ),
+        operation="playbill.claim.get",
+        coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        artifacts=tuple((row.claim_identity, row.claim_artifact_digest) for row in first.rows),
+    )
     second = service_playbill_audit(
         instance,
         request=first_request.model_copy(update={"cursor": first.next_cursor}),
@@ -163,6 +173,13 @@ def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift
     )
     assert len(second.rows) == 1
     assert second.next_cursor is None
+    assert len(completed_audit_runs(instance)) == 2
+    retry = service_playbill_audit(
+        instance,
+        request=first_request.model_copy(update={"cursor": first.next_cursor}),
+        actor_context=_actor(),
+    )
+    assert retry.model_dump(mode="json") == second.model_dump(mode="json")
     assert len(completed_audit_runs(instance)) == 2
 
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
