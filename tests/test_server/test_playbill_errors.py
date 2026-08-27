@@ -17,6 +17,7 @@ from cruxible_core.errors import (
     PermissionDeniedError,
     RuntimeCredentialNotFoundError,
 )
+from cruxible_core.playbill.authoring.insertions import PublicationClaimNotAccepted
 from cruxible_core.server.errors import error_to_response
 from cruxible_core.server.errors import response_to_error as compat_response_to_error
 
@@ -99,6 +100,18 @@ def test_request_validation_envelope_retains_field_errors() -> None:
 
     assert type(restored) is client_errors.DataValidationError
     assert restored.errors == ["body.coordinate: Input should be a valid object"]
+
+
+def test_insertion_protocol_refusal_is_a_typed_bad_request() -> None:
+    error = PublicationClaimNotAccepted(
+        "playbill.authoring.publication_claim_not_accepted: Claim is not accepted"
+    )
+
+    status, body = error_to_response(error)
+
+    assert status == 400
+    assert body.error_type == "PublicationClaimNotAccepted"
+    assert body.error_code == "playbill.authoring.publication_claim_not_accepted"
 
 
 def test_capability_ceiling_denial_message_survives_round_trip() -> None:

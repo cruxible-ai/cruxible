@@ -60,6 +60,7 @@ from cruxible_core.errors import (
     TerminalLifecycleWriteRefusedError,
     TraceNotFoundError,
 )
+from cruxible_core.playbill.authoring.insertions import InsertionProtocolError
 from cruxible_core.playbill.review_operational import (
     ReviewOperationalConcurrentChangeError,
     ReviewOperationalStoreError,
@@ -117,6 +118,7 @@ def _status_for_error(exc: CoreError) -> int:
             PlaybillSinceError,
             ReviewOperationalStoreError,
             ProposalAdmissionError,
+            InsertionProtocolError,
         ),
     ):
         # A refused bind is a bad REQUEST, not a denied tier: the caller offered
@@ -192,7 +194,7 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     """Convert a CoreError into an HTTP status code and structured payload."""
     context: dict[str, Any] = {}
     errors: list[str] = []
-    error_code = getattr(exc, "error_code", None)
+    error_code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
 
     if isinstance(exc, ConfigError | DataValidationError):
         errors = list(exc.errors)
