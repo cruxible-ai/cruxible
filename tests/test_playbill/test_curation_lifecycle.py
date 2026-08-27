@@ -682,7 +682,7 @@ def test_item_and_instance_suppression_scopes_apply_in_the_served_fold(
     assert all_hidden.items == ()
 
 
-def test_overrule_redetection_mints_linked_successor_and_detector_identity_is_versioned(
+def test_overrule_stays_silent_on_redetection_and_detector_identity_is_versioned(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -703,13 +703,10 @@ def test_overrule_redetection_mints_linked_successor_and_detector_identity_is_ve
         detections=(_detection(),),
     )
     projected = replay_curation_items(instance.review_operational_store().events(family="curation"))
-    assert len(projected) == 2
-    overruled = next(row for row in projected if row.item_id == item.item_id)
-    successor = next(row for row in projected if row.item_id != item.item_id)
-    assert overruled.status == "overruled"
-    assert successor.status == "open"
-    assert successor.predecessor_item_id == overruled.item_id
-    assert [row.item_id for row in result.items] == [successor.item_id]
+    assert result.items == ()
+    assert len(projected) == 1
+    assert projected[0].status == "overruled"
+    assert projected[0].observation_count == 1
 
     other_version_identity = build_curation_detection(
         pattern_kind="playbill.curation.dead_vocabulary.v1",
@@ -735,10 +732,7 @@ def test_overrule_redetection_mints_linked_successor_and_detector_identity_is_ve
         generation=2,
         detections=(other_version_identity,),
     )
-    assert {row.pattern_id for row in versioned_result.items} == {
-        item.pattern_id,
-        other_version_identity.pattern_id,
-    }
+    assert [row.pattern_id for row in versioned_result.items] == [other_version_identity.pattern_id]
 
 
 def test_curation_list_retries_one_same_generation_operational_conflict(

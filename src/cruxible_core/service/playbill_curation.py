@@ -655,7 +655,12 @@ def service_list_playbill_curation(
             key=lambda item: (item.first_proposed_generation, item.item_id),
         )
         current = None if not lineage else lineage[-1]
-        starts_successor = current is not None and current.status != "open"
+        if current is not None and current.status == "overruled":
+            continue
+        starts_successor = current is not None and current.status in {
+            "accepted_fixed",
+            "quarantined",
+        }
         predecessor = (
             current.item_id
             if current is not None and starts_successor
@@ -695,7 +700,12 @@ def service_list_playbill_curation(
                     )
                 )
                 current = None if not refreshed else refreshed[-1]
-                starts_successor = current is not None and current.status != "open"
+                if current is not None and current.status == "overruled":
+                    break
+                starts_successor = current is not None and current.status in {
+                    "accepted_fixed",
+                    "quarantined",
+                }
                 predecessor = (
                     current.item_id
                     if current is not None and starts_successor
