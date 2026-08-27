@@ -455,9 +455,9 @@ def test_sdk_plain_retirement_replay_uses_accepted_operation_coordinate(
             return api.PlaybillClaimHistory(
                 identity=f"Claim:{identity}",
                 entries=[
-                        {
-                            "sequence": 5,
-                            "coordinate": _COORDINATE.model_dump(mode="json"),
+                    {
+                        "sequence": 5,
+                        "coordinate": _COORDINATE.model_dump(mode="json"),
                         "lifecycle_state": "retired",
                     }
                 ],

@@ -224,9 +224,7 @@ def _cli_claim_type_input_example() -> ClaimTypeInputV1:
 
     example = claim_type_input_example()
     source_id = "corpus.replace_me"
-    contract_digest = capture_contract_digest(
-        foreign_source_capture_contract(source_id)
-    ).tagged
+    contract_digest = capture_contract_digest(foreign_source_capture_contract(source_id)).tagged
     return example.model_copy(
         update={
             "anticipated_source_ids": (source_id,),
@@ -1144,8 +1142,7 @@ def propose_claim_type(
         raise click.UsageError("provide exactly one of --input or --example")
     if example:
         click.echo(
-            "# Edit evidence_admission_policy.rules for the source contracts this type "
-            "admits.",
+            "# Edit evidence_admission_policy.rules for the source contracts this type admits.",
             err=True,
         )
         click.echo(
@@ -1161,9 +1158,7 @@ def propose_claim_type(
         envelope_payload = _read_mapping(envelope)
         resolved_name = proposal_name or envelope_payload.get("predicate")
         if not isinstance(resolved_name, str) or not resolved_name:
-            raise click.UsageError(
-                "--name is required when the ClaimType payload has no predicate"
-            )
+            raise click.UsageError("--name is required when the ClaimType payload has no predicate")
         envelope_result = _server_call(
             lambda client, instance_id: client.propose_playbill_claim_type(
                 instance_id,

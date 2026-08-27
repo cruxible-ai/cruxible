@@ -222,9 +222,7 @@ def test_activation_renders_malformed_proposal_id_as_typed_refusal(
                 "canonical sha256 digest"
             )
 
-    monkeypatch.setattr(
-        "cruxible_core.cli.commands._common._get_client", lambda: StubClient()
-    )
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
 
     result = CliRunner().invoke(
         cli,

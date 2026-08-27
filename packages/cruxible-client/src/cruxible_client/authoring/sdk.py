@@ -1250,13 +1250,11 @@ class Playbill:
                 raise
             try:
                 history = self._client.playbill_claim_history(self._instance_id, claim_id)
-                if not any(
-                    entry.get("lifecycle_state") == "retired" for entry in history.entries
-                ):
+                if not any(entry.get("lifecycle_state") == "retired" for entry in history.entries):
                     raise ValueError("accepted Claim history has no retirement")
-                submitted_request, submitted_operation_digest = (
-                    self._retirement_submissions[claim_id]
-                )
+                submitted_request, submitted_operation_digest = self._retirement_submissions[
+                    claim_id
+                ]
                 replay_request = request.model_copy(
                     update={"expected_coordinate": submitted_request.expected_coordinate}
                 )
