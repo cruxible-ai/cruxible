@@ -6,9 +6,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
+    ArtifactLifecycle,
     ArtifactPin,
 )
 from cruxible_client.contracts.candidates import CandidateRecordV3
@@ -24,10 +27,13 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
+    ClaimArtifactV3,
     ClaimBacking,
     ClaimLawEvidenceV1,
     ClaimReferentContext,
+    ClaimRetirementAttributionV1,
     ClaimStatement,
+    ClaimUnsupportedFormatError,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -206,6 +212,46 @@ def test_claim_identity_sharding_and_three_digest_layers(tmp_path: Path) -> None
     )
     assert claim_statement_digest(stronger_backing.statement) == statement_digest
     assert claim_artifact_digest(stronger_backing) != claim_artifact_digest(claim)
+
+
+def test_claim_v3_digest_commits_retirement_attribution_without_moving_v1() -> None:
+    predecessor = _claim(
+        claim_id="CLM-0123456789abcdef0123456789abcdef",
+        capture_digest="sha256:" + "11" * 32,
+        source_digest="sha256:" + "22" * 32,
+        source_length=1,
+    )
+    predecessor_digest = claim_artifact_digest(predecessor)
+    rescinded = ClaimArtifactV3(
+        identity=predecessor.identity,
+        statement=predecessor.statement,
+        backing=predecessor.backing,
+        authority=predecessor.authority,
+        pins=predecessor.pins,
+        lifecycle=ArtifactLifecycle(
+            state="retired",
+            predecessor_digest=predecessor_digest.tagged,
+        ),
+        retirement=ClaimRetirementAttributionV1(reason="was-rescinded"),
+    )
+    wrong = rescinded.model_copy(
+        update={"retirement": ClaimRetirementAttributionV1(reason="was-wrong")}
+    )
+
+    assert parse_claim(render_claim(rescinded), path=claim_path(rescinded.identity.name)) == (
+        rescinded
+    )
+    assert claim_artifact_digest(rescinded) != claim_artifact_digest(wrong)
+    assert claim_artifact_digest(predecessor) == predecessor_digest
+
+
+def test_unknown_claim_wire_has_a_typed_format_refusal() -> None:
+    claim_id = "CLM-0123456789abcdef0123456789abcdef"
+    with pytest.raises(ClaimUnsupportedFormatError, match="playbill.claim.format_unsupported"):
+        parse_claim(
+            b'{"artifact_format":"playbill-claim-v999"}\n',
+            path=claim_path(claim_id),
+        )
 
 
 def test_direct_capture_contract_envelope_and_claim_match_frozen_golden(

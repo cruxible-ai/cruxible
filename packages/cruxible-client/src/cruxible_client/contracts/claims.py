@@ -20,6 +20,7 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
+    CanonicalValue,
     CasDigest,
     Sha256Value,
     canonical_bytes,
@@ -81,6 +82,10 @@ _CLAIM_ID_RE = re.compile(r"^CLM-[0-9a-f]{32}$")
 
 class ClaimFormatError(PlaybillFormatError):
     """A Claim envelope, path, or frozen semantic preimage is invalid."""
+
+
+class ClaimUnsupportedFormatError(ClaimFormatError):
+    error_code = "playbill.claim.format_unsupported"
 
 
 class _StrictClaimModel(BaseModel):
@@ -498,8 +503,116 @@ class ClaimArtifactV2(_StrictClaimModel):
         return self
 
 
+ClaimRetirementReason: TypeAlias = Literal["was-rescinded", "was-wrong"]
+
+
+class ClaimRetirementAttributionV1(_StrictClaimModel):
+    tag: Literal["playbill-claim-retirement-attribution-v1"] = (
+        "playbill-claim-retirement-attribution-v1"
+    )
+    reason: ClaimRetirementReason
+
+
+class ClaimRetireDependentV1(_StrictClaimModel):
+    tag: Literal["playbill-claim-retire-dependent-v1"] = "playbill-claim-retire-dependent-v1"
+    artifact_identity: ArtifactIdentity
+    predecessor_digest: str
+    reason: ClaimRetirementReason
+    effective_until: datetime | None = None
+
+    @field_validator("predecessor_digest")
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("artifact_identity")
+    @classmethod
+    def _identity(cls, value: ArtifactIdentity) -> ArtifactIdentity:
+        if value.kind != "Claim":
+            raise ValueError("retirement dependents must be Claims")
+        claim_path(value.name)
+        return value
+
+    @field_validator("effective_until")
+    @classmethod
+    def _time(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
+            raise ValueError("effective_until must be timezone-aware")
+        return value
+
+
+class ClaimRetireRequestV1(_StrictClaimModel):
+    tag: Literal["playbill-claim-retire-request-v1"] = "playbill-claim-retire-request-v1"
+    mode: Literal["preflight", "submit"]
+    claim_ref: str | None = None
+    reason: ClaimRetirementReason
+    effective_until: datetime | None = None
+    expected_coordinate: AcceptedCoordinate
+    dependents: tuple[ClaimRetireDependentV1, ...] = ()
+
+    @field_validator("claim_ref")
+    @classmethod
+    def _claim_ref(cls, value: str | None) -> str | None:
+        if value is not None:
+            claim_path(value.removeprefix("Claim:"))
+        return value
+
+    @field_validator("effective_until")
+    @classmethod
+    def _time(cls, value: datetime | None) -> datetime | None:
+        return ClaimRetireDependentV1._time(value)
+
+    @model_validator(mode="after")
+    def _ordered_dependents(self) -> "ClaimRetireRequestV1":
+        identities = tuple(item.artifact_identity.qualified for item in self.dependents)
+        if identities != tuple(sorted(set(identities), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("retirement dependents must be UTF-8 byte-sorted and unique")
+        return self
+
+
+ClaimBackingAny: TypeAlias = Annotated[
+    ClaimBacking | ClaimBackingV2,
+    Field(discriminator="tag"),
+]
+
+
+class ClaimArtifactV3(_StrictClaimModel):
+    artifact_format: Literal["playbill-claim-v3"] = "playbill-claim-v3"
+    identity: ArtifactIdentity
+    statement: ClaimStatement
+    backing: ClaimBackingAny
+    authority: ArtifactAuthority
+    pins: tuple[ArtifactPin, ...]
+    lifecycle: ArtifactLifecycle
+    retirement: ClaimRetirementAttributionV1
+
+    @field_validator("pins")
+    @classmethod
+    def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
+        return ClaimArtifact._pins(value)
+
+    @model_validator(mode="after")
+    def _identity_shape(self) -> "ClaimArtifactV3":
+        if self.identity.kind != "Claim" or not _CLAIM_ID_RE.fullmatch(self.identity.name):
+            raise ValueError("Claim identity must be Claim:CLM- plus 128-bit lowercase hex")
+        if self.lifecycle.state != "retired" or self.lifecycle.predecessor_digest is None:
+            raise ValueError("Claim v3 is an attributed retired successor")
+        if isinstance(self.backing, ClaimBackingV2):
+            for citation in self.backing.citations:
+                expected = claim_citation_id(
+                    self.identity,
+                    capture_digest=citation.capture_digest,
+                    role=citation.role,
+                    origin=citation.origin,
+                ).tagged
+                if citation.citation_id != expected:
+                    raise ValueError("Claim citation ID does not reproduce")
+        return self
+
+
 ClaimArtifactAny: TypeAlias = Annotated[
-    ClaimArtifact | ClaimArtifactV2,
+    ClaimArtifact | ClaimArtifactV2 | ClaimArtifactV3,
     Field(discriminator="artifact_format"),
 ]
 
@@ -535,14 +648,17 @@ def parse_claim(content: bytes, *, path: str) -> ClaimArtifactAny:
     except (UnicodeDecodeError, ValueError) as exc:
         raise ClaimFormatError("Claim is not strict JSON") from exc
     declared = payload.get("artifact_format") if isinstance(payload, dict) else None
-    model: type[ClaimArtifact] | type[ClaimArtifactV2]
+    model: type[ClaimArtifact] | type[ClaimArtifactV2] | type[ClaimArtifactV3]
     if declared == "playbill-claim-v1":
         model = ClaimArtifact
     elif declared == "playbill-claim-v2":
         model = ClaimArtifactV2
+    elif declared == "playbill-claim-v3":
+        model = ClaimArtifactV3
     else:
-        declared = payload.get("artifact_format") if isinstance(payload, dict) else None
-        raise ClaimFormatError(f"unsupported Claim artifact format: {declared!r}")
+        raise ClaimUnsupportedFormatError(
+            f"{ClaimUnsupportedFormatError.error_code}: {declared!r}"
+        )
     try:
         claim = model.model_validate(payload)
     except ValidationError as exc:
@@ -573,19 +689,18 @@ def claim_referent_context_digest(context: ClaimReferentContext) -> Sha256Value:
 
 
 def claim_artifact_digest(claim: ClaimArtifactAny) -> ArtifactDigest:
-    return typed_digest(
-        ArtifactDigest,
-        "playbill-envelope-v1",
-        {
-            "artifact_format": claim.artifact_format,
-            "identity": claim.identity.model_dump(mode="json"),
-            "statement_digest": claim_statement_digest(claim.statement).tagged,
-            "backing": claim.backing.model_dump(mode="json"),
-            "authority": claim.authority.model_dump(mode="json"),
-            "pins": [item.model_dump(mode="json") for item in claim.pins],
-            "lifecycle": claim.lifecycle.model_dump(mode="json"),
-        },
-    )
+    payload: dict[str, CanonicalValue] = {
+        "artifact_format": claim.artifact_format,
+        "identity": claim.identity.model_dump(mode="json"),
+        "statement_digest": claim_statement_digest(claim.statement).tagged,
+        "backing": claim.backing.model_dump(mode="json"),
+        "authority": claim.authority.model_dump(mode="json"),
+        "pins": [item.model_dump(mode="json") for item in claim.pins],
+        "lifecycle": claim.lifecycle.model_dump(mode="json"),
+    }
+    if isinstance(claim, ClaimArtifactV3):
+        payload["retirement"] = claim.retirement.model_dump(mode="json")
+    return typed_digest(ArtifactDigest, "playbill-envelope-v1", payload)
 
 
 def claim_statement_address(path: str) -> SemanticAddress:
@@ -613,7 +728,7 @@ def claim_citation_references(claim: ClaimArtifactAny) -> tuple[ClaimCitationRef
 
     explicit_by_capture = (
         {item.capture_digest for item in claim.backing.citations}
-        if isinstance(claim, ClaimArtifactV2)
+        if isinstance(claim.backing, ClaimBackingV2)
         else set()
     )
     legacy = tuple(
@@ -632,7 +747,7 @@ def claim_citation_references(claim: ClaimArtifactAny) -> tuple[ClaimCitationRef
         for capture_digest in claim.backing.capture_digests
         if capture_digest not in explicit_by_capture
     )
-    explicit = claim.backing.citations if isinstance(claim, ClaimArtifactV2) else ()
+    explicit = claim.backing.citations if isinstance(claim.backing, ClaimBackingV2) else ()
     return tuple(sorted((*legacy, *explicit), key=lambda item: item.citation_id.encode("ascii")))
 
 
@@ -924,7 +1039,7 @@ def _capture_is_explicitly_eligible(
 ) -> bool:
     """Keep v1/implicit-legacy evidence semantics; gate only explicit v2 associations."""
 
-    if isinstance(claim, ClaimArtifact):
+    if isinstance(claim.backing, ClaimBacking):
         return True
     associations = tuple(
         item for item in claim.backing.citations if item.capture_digest == capture_digest
@@ -1026,7 +1141,7 @@ def _citation_origin_refusal(
 ) -> tuple[str, str] | None:
     """Validate caller-authored origin against mechanically proven Capture shape."""
 
-    if isinstance(claim, ClaimArtifact):
+    if isinstance(claim.backing, ClaimBacking):
         return None
     associations = tuple(
         item for item in claim.backing.citations if item.capture_digest == capture_digest
@@ -1089,6 +1204,9 @@ def _is_claim_type_rederivation(
         else pin
         for pin in predecessor.pins
     )
+    retirement_matches = not isinstance(claim, ClaimArtifactV3) or (
+        isinstance(predecessor, ClaimArtifactV3) and claim.retirement == predecessor.retirement
+    )
     return (
         claim.artifact_format == predecessor.artifact_format
         and claim.authority == claim_type_authority
@@ -1096,6 +1214,99 @@ def _is_claim_type_rederivation(
         and claim.backing == predecessor.backing
         and claim.pins == expected_pins
         and claim.lifecycle.state == predecessor.lifecycle.state
+        and retirement_matches
+    )
+
+
+def _is_attributed_retirement(
+    claim: ClaimArtifactAny,
+    *,
+    predecessor: ClaimArtifactAny,
+) -> bool:
+    if not isinstance(claim, ClaimArtifactV3) or predecessor.lifecycle.state != "live":
+        return False
+    expected_statement = predecessor.statement.model_copy(
+        update={"effective_until": claim.statement.effective_until}
+    )
+    effective_until_preserved_or_replaced = not (
+        predecessor.statement.effective_until is not None
+        and claim.statement.effective_until is None
+    )
+    pins_preserve_shape = len(claim.pins) == len(predecessor.pins) and all(
+        current.role == previous.role
+        and current.target == previous.target
+        and (current.artifact_digest == previous.artifact_digest or current.target.kind == "Claim")
+        for previous, current in zip(predecessor.pins, claim.pins, strict=True)
+    )
+    return (
+        claim.identity == predecessor.identity
+        and claim.statement == expected_statement
+        and effective_until_preserved_or_replaced
+        and claim.backing == predecessor.backing
+        and claim.authority == predecessor.authority
+        and pins_preserve_shape
+        and claim.lifecycle.state == "retired"
+    )
+
+
+def _is_claim_type_attributed_retirement(
+    claim: ClaimArtifactAny,
+    *,
+    predecessor: ClaimArtifactAny,
+    claim_type_digest: str,
+    claim_type_identity: ArtifactIdentity,
+    claim_type_authority: ArtifactAuthority,
+) -> bool:
+    if not isinstance(claim, ClaimArtifactV3) or predecessor.lifecycle.state != "live":
+        return False
+    expected_statement = predecessor.statement.model_copy(
+        update={
+            "claim_type_digest": claim_type_digest,
+            "effective_until": claim.statement.effective_until,
+        }
+    )
+    expected_pins = tuple(
+        pin.model_copy(update={"artifact_digest": claim_type_digest})
+        if pin.role == "claim-type" and pin.target == claim_type_identity
+        else pin
+        for pin in predecessor.pins
+    )
+    pins_preserve_shape = len(claim.pins) == len(expected_pins) and all(
+        current.role == previous.role
+        and current.target == previous.target
+        and (current.artifact_digest == previous.artifact_digest or current.target.kind == "Claim")
+        for previous, current in zip(expected_pins, claim.pins, strict=True)
+    )
+    return (
+        claim.identity == predecessor.identity
+        and claim.statement == expected_statement
+        and not (
+            predecessor.statement.effective_until is not None
+            and claim.statement.effective_until is None
+        )
+        and claim.backing == predecessor.backing
+        and claim.authority == claim_type_authority
+        and pins_preserve_shape
+        and claim.lifecycle.state == "retired"
+    )
+
+
+def claim_retirement_pin_digest_updates(
+    claim: ClaimArtifactAny,
+    *,
+    predecessor: ClaimArtifactAny,
+) -> tuple[tuple[ArtifactPin, ArtifactPin], ...]:
+    """Return the Claim-target digest deltas admitted only for closure-carried retirement."""
+
+    if not isinstance(claim, ClaimArtifactV3) or len(claim.pins) != len(predecessor.pins):
+        return ()
+    return tuple(
+        (previous, current)
+        for previous, current in zip(predecessor.pins, claim.pins, strict=True)
+        if previous.role == current.role
+        and previous.target == current.target
+        and previous.target.kind == "Claim"
+        and previous.artifact_digest != current.artifact_digest
     )
 
 
@@ -1330,13 +1541,19 @@ def evaluate_claim_law(
                 )
     digest = claim_artifact_digest(claim).tagged
     if predecessor is None:
+        if isinstance(claim, ClaimArtifactV3):
+            return _diagnostic(
+                "playbill.claim.retirement_predecessor_required",
+                "An attributed retirement requires an exact live Claim predecessor.",
+                path=path,
+            )
         if claim.lifecycle != ArtifactLifecycle():
             return _diagnostic(
                 "playbill.claim.unexpected_predecessor",
                 "A new Claim must begin live without a predecessor.",
                 path=path,
             )
-        if isinstance(claim, ClaimArtifactV2) and {
+        if isinstance(claim.backing, ClaimBackingV2) and {
             item.capture_digest for item in claim.backing.citations
         } != set(claim.backing.capture_digests):
             return _diagnostic(
@@ -1364,16 +1581,46 @@ def evaluate_claim_law(
             claim_type_identity=contract.identity,
             claim_type_authority=contract.authority,
         )
+        attributed_retirement = _is_attributed_retirement(
+            claim,
+            predecessor=predecessor.claim,
+        )
+        claim_type_attributed_retirement = _is_claim_type_attributed_retirement(
+            claim,
+            predecessor=predecessor.claim,
+            claim_type_digest=claim_type.artifact_digest,
+            claim_type_identity=contract.identity,
+            claim_type_authority=contract.authority,
+        )
+        if isinstance(claim, ClaimArtifactV3) and not (
+            attributed_retirement or claim_type_rederivation or claim_type_attributed_retirement
+        ):
+            return _diagnostic(
+                "playbill.claim.retirement_delta_invalid",
+                "Claim v3 permits only attributed retirement or exact retired ClaimType "
+                "rederivation.",
+                path=path,
+            )
         if predecessor.claim.lifecycle.state == "retired" and not claim_type_rederivation:
             return _diagnostic(
                 "playbill.claim.lifecycle_invalid",
                 "A retired Claim lineage cannot be revived.",
                 path=path,
             )
-        if isinstance(predecessor.claim, ClaimArtifactV2) and isinstance(claim, ClaimArtifact):
+        if claim.authority != predecessor.claim.authority and not (
+            claim_type_rederivation or claim_type_attributed_retirement
+        ):
+            return _diagnostic(
+                "playbill.claim.authority_change_unsupported",
+                "Claim succession cannot weaken or rewrite accepted authority in v1.",
+                path=path,
+            )
+        if isinstance(predecessor.claim, (ClaimArtifactV2, ClaimArtifactV3)) and isinstance(
+            claim, ClaimArtifact
+        ):
             return _diagnostic(
                 "playbill.claim.wire_downgrade",
-                "A v2 Claim lineage cannot be succeeded by the legacy v1 wire.",
+                "A v2/v3 Claim lineage cannot be succeeded by the legacy v1 wire.",
                 path=path,
             )
         old = predecessor.claim.backing
@@ -1387,9 +1634,9 @@ def evaluate_claim_law(
                 "Claim succession cannot silently drop accepted backing.",
                 path=path,
             )
-        if isinstance(claim, ClaimArtifactV2):
+        if isinstance(claim.backing, ClaimBackingV2):
             citation_capture_digests = {item.capture_digest for item in claim.backing.citations}
-            if isinstance(predecessor.claim, ClaimArtifact):
+            if isinstance(predecessor.claim.backing, ClaimBacking):
                 implicit_legacy = set(predecessor.claim.backing.capture_digests)
                 if citation_capture_digests.intersection(implicit_legacy):
                     return _diagnostic(
@@ -1716,7 +1963,9 @@ __all__ = [
     "ClaimArtifact",
     "ClaimArtifactAny",
     "ClaimArtifactV2",
+    "ClaimArtifactV3",
     "ClaimBacking",
+    "ClaimBackingAny",
     "ClaimBackingV2",
     "ClaimCitationReference",
     "ClaimCitationV1",
@@ -1727,7 +1976,12 @@ __all__ = [
     "ClaimLawResult",
     "ClaimObject",
     "ClaimReferentContext",
+    "ClaimRetirementAttributionV1",
+    "ClaimRetireDependentV1",
+    "ClaimRetireRequestV1",
+    "ClaimRetirementReason",
     "ClaimStatement",
+    "ClaimUnsupportedFormatError",
     "ExactContentClaimObject",
     "LiteralClaimObject",
     "LegacyCitationReferenceV1",
@@ -1736,6 +1990,7 @@ __all__ = [
     "build_claim_citation",
     "claim_citation_id",
     "claim_citation_references",
+    "claim_retirement_pin_digest_updates",
     "claim_path",
     "claim_referent_context_digest",
     "claim_statement_address",

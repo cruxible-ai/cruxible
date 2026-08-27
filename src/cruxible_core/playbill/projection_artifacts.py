@@ -147,6 +147,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-capture-envelope-v1",
                 "playbill-claim-v1",
                 "playbill-claim-v2",
+                "playbill-claim-v3",
                 "playbill-accepted-state-run-input-v1",
                 "playbill-exhaust-run-input-v1",
                 "playbill-exhaust-promotion-v1",
@@ -169,6 +170,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-capture-envelope-v1",
             "playbill-claim-v1",
             "playbill-claim-v2",
+            "playbill-claim-v3",
             "playbill-exhaust-run-input-v1",
             "playbill-exhaust-promotion-v1",
             "playbill-landed-capture-run-input-v1",
@@ -506,6 +508,7 @@ def parse_projection_tree(
     )
     from cruxible_client.contracts.claim_verdicts import claim_verdict_v1_compat
     from cruxible_client.contracts.claims import (
+        ClaimArtifactV3,
         ClaimFormatError,
         claim_artifact_digest,
         claim_statement_address,
@@ -1740,6 +1743,11 @@ def parse_projection_tree(
                                 "authority": claim.authority.model_dump(mode="json"),
                                 "lifecycle": claim.lifecycle.model_dump(mode="json"),
                                 "pins": [pin.model_dump(mode="json") for pin in claim.pins],
+                                **(
+                                    {"retirement": claim.retirement.model_dump(mode="json")}
+                                    if isinstance(claim, ClaimArtifactV3)
+                                    else {}
+                                ),
                             },
                         ),
                     )

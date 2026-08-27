@@ -40,12 +40,14 @@ from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
+    ClaimArtifactV3,
     ClaimBacking,
     ClaimCitationV1,
     ClaimLawEvidenceAny,
     ClaimLawEvidenceV1,
     ClaimReferentContext,
     ClaimStatement,
+    ClaimUnsupportedFormatError,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_citation_references,
@@ -214,6 +216,12 @@ class DirectClaimAuthoringV1(_StrictClaimServiceModel):
         return value
 
 
+class DirectClaimWarningV1(_StrictClaimServiceModel):
+    code: Literal["playbill.claim.direct_retire_deprecated"]
+    field_path: Literal["$.retire"] = "$.retire"
+    repair_operation: Literal["playbill.claim.retire"] = "playbill.claim.retire"
+
+
 class AuthoredClaimV1(_StrictClaimServiceModel):
     """One authored Claim's result, independent of how many shared its proposal."""
 
@@ -227,6 +235,7 @@ class AuthoredClaimV1(_StrictClaimServiceModel):
     observed_at: datetime
     existing_statements: tuple[ExistingClaimStatementHandleV1, ...]
     handoffs: tuple[ExistingStatementHandoffV1, ...]
+    warnings: tuple[DirectClaimWarningV1, ...] = ()
 
 
 class DirectClaimProposalV1(_StrictClaimServiceModel):
@@ -241,6 +250,7 @@ class DirectClaimProposalV1(_StrictClaimServiceModel):
     observed_at: datetime
     existing_statements: tuple[ExistingClaimStatementHandleV1, ...]
     handoffs: tuple[ExistingStatementHandoffV1, ...]
+    warnings: tuple[DirectClaimWarningV1, ...] = ()
 
 
 class DirectClaimBatchProposalV1(_StrictClaimServiceModel):
@@ -492,7 +502,16 @@ def _claim_from_view(view: PlaybillClaimView | PlaybillClaimViewV2) -> ClaimArti
     ):
         raise ProposalIntegrityError("Claim projection lacks its complete canonical artifact")
     artifact_format = view.envelope.get("format_tag")
-    model = ClaimArtifactV2 if artifact_format == "playbill-claim-v2" else ClaimArtifact
+    if artifact_format == "playbill-claim-v1":
+        model: type[ClaimArtifact] | type[ClaimArtifactV2] | type[ClaimArtifactV3] = ClaimArtifact
+    elif artifact_format == "playbill-claim-v2":
+        model = ClaimArtifactV2
+    elif artifact_format == "playbill-claim-v3":
+        model = ClaimArtifactV3
+    else:
+        raise ClaimUnsupportedFormatError(
+            f"{ClaimUnsupportedFormatError.error_code}: {artifact_format!r}"
+        )
     return model.model_validate(
         {
             "artifact_format": artifact_format,
@@ -505,6 +524,11 @@ def _claim_from_view(view: PlaybillClaimView | PlaybillClaimViewV2) -> ClaimArti
             "authority": lifecycle.get("authority"),
             "pins": lifecycle.get("pins"),
             "lifecycle": lifecycle.get("lifecycle"),
+            **(
+                {"retirement": lifecycle.get("retirement")}
+                if artifact_format == "playbill-claim-v3"
+                else {}
+            ),
         }
     )
 
@@ -742,6 +766,11 @@ def _author_direct_claim(
         raise ProposalIntegrityError("new Claim cannot name a predecessor artifact digest")
     if authoring.retire and predecessor is None:
         raise ProposalIntegrityError("only an accepted Claim lineage can be retired")
+    if authoring.retire and not isinstance(predecessor, ClaimArtifact):
+        raise ProposalIntegrityError(
+            "playbill.claim.direct_retire_wire_downgrade: direct retirement is limited to "
+            "legacy v1 predecessors; use playbill.claim.retire"
+        )
     capture = build_direct_claim_capture(
         store=instance.body_store(),
         actor_id=actor_id,
@@ -938,6 +967,15 @@ def _author_direct_claim(
         observed_at=observed_at,
         existing_statements=existing,
         handoffs=authoring.existing_statement_handoffs,
+        warnings=(
+            (
+                DirectClaimWarningV1(
+                    code="playbill.claim.direct_retire_deprecated",
+                ),
+            )
+            if authoring.retire
+            else ()
+        ),
     )
 
 
@@ -1031,6 +1069,7 @@ def service_propose_playbill_claim(
         observed_at=authored.observed_at,
         existing_statements=authored.existing_statements,
         handoffs=authored.handoffs,
+        warnings=authored.warnings,
     )
 
 
@@ -2050,6 +2089,7 @@ __all__ = [
     "DirectClaimAuthoringV1",
     "DirectClaimBatchProposalV1",
     "DirectClaimProposalV1",
+    "DirectClaimWarningV1",
     "ExistingClaimStatementHandleV1",
     "ExistingStatementHandoffV1",
     "PlaybillClaimExplanationV1",
