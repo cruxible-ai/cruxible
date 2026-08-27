@@ -17,6 +17,14 @@ from cruxible_core import __version__
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.tool_prompts import tool_description
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.playbill.curation_calibration import (
+    AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+    AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+    AUDIT_BUDGET_MAX_MAX_BYTES,
+    AUDIT_BUDGET_MAX_MAX_ROWS,
+    AUDIT_BUDGET_MIN_MAX_BYTES,
+    AUDIT_BUDGET_MIN_MAX_ROWS,
+)
 
 
 def register_tools(
@@ -692,8 +700,14 @@ def register_tools(
         access_profile: dict[str, Any] | None = None,
         claim_type_identities: list[str] | None = None,
         subject_kinds: list[str] | None = None,
-        max_rows: Annotated[int, Field(ge=1, le=1000)] = 100,
-        max_bytes: Annotated[int, Field(ge=1024, le=4_194_304)] = 65_536,
+        max_rows: Annotated[
+            int,
+            Field(ge=AUDIT_BUDGET_MIN_MAX_ROWS, le=AUDIT_BUDGET_MAX_MAX_ROWS),
+        ] = AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+        max_bytes: Annotated[
+            int,
+            Field(ge=AUDIT_BUDGET_MIN_MAX_BYTES, le=AUDIT_BUDGET_MAX_MAX_BYTES),
+        ] = AUDIT_BUDGET_DEFAULT_MAX_BYTES,
         cursor: dict[str, Any] | None = None,
     ) -> contracts.PlaybillAuditResult:
         """Read ranked Claim verification work and record completed coverage."""

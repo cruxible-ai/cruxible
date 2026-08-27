@@ -8,25 +8,37 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.curation import (
+    CURATION_DETECTOR_LAW_DIGEST_DOMAIN,
+    CURATION_PATTERN_ID_DOMAIN,
     CurationAffectedMemberV1,
     CurationDetectorCoverageV1,
     CurationEvidenceRefV1,
     build_curation_accepted_fixed,
     build_curation_detection,
+    build_curation_overruled,
+    build_curation_suppressed,
     build_pattern_observation,
+    curation_detection_evidence_digest,
     curation_item_id,
+    curation_observation_id,
+    detector_law_digest,
     replay_curation_items,
 )
 from cruxible_core.playbill.curation_detectors import CurationDetectorResult
 from cruxible_core.playbill.review_operational import ReviewOperationalConcurrentChangeError
 from cruxible_core.service.playbill_curation import (
+    PlaybillCurationAcceptFixedRequestV1,
+    PlaybillCurationError,
+    PlaybillCurationItemAlreadyResolved,
     PlaybillCurationListRequestV1,
     PlaybillCurationOverruleRequestV1,
     PlaybillCurationSuppressRequestV1,
+    service_accept_fixed_playbill_curation,
     service_list_playbill_curation,
     service_overrule_playbill_curation,
     service_suppress_playbill_curation,
@@ -70,6 +82,30 @@ def _detection(subject: str = "project.work_item.status"):  # type: ignore[no-un
     )
 
 
+def _provenance_detection(
+    subject: str = "project.work_item.owner",
+):  # type: ignore[no-untyped-def]
+    kind = "playbill.curation.provenance_concentration.v1"
+    identity = ArtifactIdentity(kind="ClaimType", name=subject)
+    return build_curation_detection(
+        pattern_kind=kind,
+        subject=identity,
+        detail={"basis": "effective_supporting_control_components"},
+        coverage=CurationDetectorCoverageV1(
+            pattern_kind=kind,
+            status="complete",
+            evaluated_fact_count=2,
+        ),
+        evidence_refs=(
+            CurationEvidenceRefV1(
+                kind="accepted_artifact",
+                identity=identity.qualified,
+                generation=1,
+            ),
+        ),
+    )
+
+
 def _seed_item(tmp_path: Path):  # type: ignore[no-untyped-def]
     instance, _owner = initialize_local(tmp_path)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
@@ -89,6 +125,320 @@ def _seed_item(tmp_path: Path):  # type: ignore[no-untyped-def]
     )
     item = replay_curation_items(instance.review_operational_store().events(family="curation"))[0]
     return instance, item
+
+
+def _legacy_observation(
+    *,
+    pattern_kind: str,
+    subject: ArtifactIdentity,
+    detail: dict[str, object],
+    old_law: dict[str, object],
+) -> dict[str, object]:
+    coverage = CurationDetectorCoverageV1(
+        pattern_kind=pattern_kind,  # type: ignore[arg-type]
+        status="complete",
+        evaluated_fact_count=2,
+    )
+    refs = (
+        CurationEvidenceRefV1(
+            kind="accepted_artifact",
+            identity=subject.qualified,
+            generation=0,
+        ),
+    )
+    pattern_id = typed_digest(
+        Sha256Value,
+        CURATION_PATTERN_ID_DOMAIN,
+        {
+            "pattern_kind": pattern_kind,
+            "subject": subject.model_dump(mode="json"),
+            "detail": detail,
+        },
+    ).tagged
+    law_digest = typed_digest(
+        Sha256Value,
+        CURATION_DETECTOR_LAW_DIGEST_DOMAIN,
+        {"pattern_kind": pattern_kind, "law": old_law},
+    ).tagged
+    assert law_digest != detector_law_digest(pattern_kind)  # type: ignore[arg-type]
+    evidence_digest = curation_detection_evidence_digest(
+        pattern_id=pattern_id,
+        detector_law_digest_value=law_digest,
+        coverage=coverage,
+        evidence_refs=refs,
+    )
+    item_id = curation_item_id(pattern_id=pattern_id, predecessor_item_id=None)
+    observation_id = curation_observation_id(
+        item_id=item_id,
+        accepted_generation=0,
+        detection_evidence_digest=evidence_digest,
+    )
+    return {
+        "tag": "playbill-curation-pattern-observed-v1",
+        "event_id": observation_id,
+        "observation_id": observation_id,
+        "item_id": item_id,
+        "predecessor_item_id": None,
+        "pattern_id": pattern_id,
+        "pattern_kind": pattern_kind,
+        "subject": subject.model_dump(mode="json"),
+        "detail": detail,
+        "detector_law_digest": law_digest,
+        "detection_evidence_digest": evidence_digest,
+        "evidence_refs": [item.model_dump(mode="json") for item in refs],
+        "coverage": coverage.model_dump(mode="json"),
+        "accepted_generation": 0,
+    }
+
+
+def test_changed_detector_laws_quarantine_old_items_without_bricking_curation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, healthy = _seed_item(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    legacy = (
+        _legacy_observation(
+            pattern_kind="playbill.curation.admission_failure_cluster.v1",
+            subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.priority"),
+            detail={"diagnostic_code": "playbill.claim.literal_schema_invalid"},
+            old_law={
+                "minimum_distinct_durable_attempts": 2,
+                "discriminator": "diagnostic_code",
+            },
+        ),
+        _legacy_observation(
+            pattern_kind="playbill.curation.provenance_concentration.v1",
+            subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
+            detail={"basis": "effective_supporting_control_components"},
+            old_law={
+                "minimum_live_supported_claims": 2,
+                "effective_supporting_control_components": 1,
+            },
+        ),
+        _legacy_observation(
+            pattern_kind="playbill.curation.duplicate_statement_lineages.v1",
+            subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.assignee"),
+            detail={"statement_digest": "sha256:" + "a" * 64},
+            old_law={
+                "minimum_distinct_claim_identities": 2,
+                "comparison": "exact_claim_statement_digest",
+            },
+        ),
+    )
+    for raw in legacy:
+        instance.review_operational_store().append(
+            family="curation",
+            partition_id=str(raw["item_id"]),
+            event_id=str(raw["event_id"]),
+            payload=raw,
+            coordinate=coordinate,
+            generation=0,
+            actor_context=_actor(),
+            recorded_at=NOW,
+            expected_latest_event_digest=None,
+        )
+
+    result = _serve_detection(
+        instance,
+        monkeypatch,
+        generation=1,
+        detections=(_detection(),),
+    )
+
+    by_status = {item.status: [] for item in result.items}
+    for item in result.items:
+        by_status[item.status].append(item)
+    assert [item.item_id for item in by_status["open"]] == [healthy.item_id]
+    quarantined = tuple(by_status["quarantined"])
+    assert len(quarantined) == 3
+    assert {item.pattern_kind for item in quarantined} == {
+        "playbill.curation.admission_failure_cluster.v1",
+        "playbill.curation.provenance_concentration.v1",
+        "playbill.curation.duplicate_statement_lineages.v1",
+    }
+    assert all(item.quarantine_reason == "detector_law_unreproducible" for item in quarantined)
+    assert all(
+        item.current_detector_law_digest == detector_law_digest(item.pattern_kind)
+        and item.current_detector_law_digest != item.detector_law_digest
+        for item in quarantined
+    )
+
+    suppressed = service_suppress_playbill_curation(
+        instance,
+        request=PlaybillCurationSuppressRequestV1(
+            item_id=quarantined[0].item_id,
+            expected_latest_event_digest=quarantined[0].latest_event_digest,
+            reason="quarantine reviewed later",
+            scope="item",
+        ),
+        actor_context=_actor(),
+    )
+    assert suppressed.item.status == "quarantined"
+    overruled = service_overrule_playbill_curation(
+        instance,
+        request=PlaybillCurationOverruleRequestV1(
+            item_id=quarantined[1].item_id,
+            expected_latest_event_digest=quarantined[1].latest_event_digest,
+            reason="old detector law is no longer applicable",
+        ),
+        actor_context=_actor(),
+    )
+    assert overruled.item.status == "overruled"
+    with pytest.raises(PlaybillCurationItemAlreadyResolved, match="quarantined"):
+        service_accept_fixed_playbill_curation(
+            instance,
+            request=PlaybillCurationAcceptFixedRequestV1(
+                item_id=quarantined[2].item_id,
+                expected_latest_event_digest=quarantined[2].latest_event_digest,
+                reason="must not resolve an unreproducible detector law as fixed",
+                accepted_proposal_id="sha256:" + "b" * 64,
+                accepted_changeset_digest="sha256:" + "c" * 64,
+            ),
+            actor_context=_actor(),
+        )
+
+
+def test_historical_accept_fixed_on_newly_quarantined_law_replays_as_recorded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    raw = _legacy_observation(
+        pattern_kind="playbill.curation.provenance_concentration.v1",
+        subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
+        detail={"basis": "effective_supporting_control_components"},
+        old_law={
+            "minimum_live_supported_claims": 2,
+            "effective_supporting_control_components": 1,
+        },
+    )
+    observed_event = instance.review_operational_store().append(
+        family="curation",
+        partition_id=str(raw["item_id"]),
+        event_id=str(raw["event_id"]),
+        payload=raw,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=None,
+    )
+    accepted = build_curation_accepted_fixed(
+        item_id=str(raw["item_id"]),
+        expected_latest_event_digest=observed_event.event_digest,
+        actor_principal_id="curator",
+        reason="the historical detector condition was fixed",
+        accepted_proposal_id="sha256:" + "2" * 64,
+        accepted_changeset_digest="sha256:" + "3" * 64,
+        resolved_generation=1,
+        affected_members=(
+            CurationAffectedMemberV1(
+                path="claim-types/project.work_item.owner.yaml",
+                disposition="replace",
+                predecessor_artifact_digest="sha256:" + "4" * 64,
+                candidate_artifact_digest="sha256:" + "5" * 64,
+            ),
+        ),
+    )
+    instance.review_operational_store().append(
+        family="curation",
+        partition_id=str(raw["item_id"]),
+        event_id=accepted.event_id,
+        payload=accepted,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=observed_event.event_digest,
+    )
+
+    listed = _serve_detection(instance, monkeypatch, generation=1, detections=())
+    projected = replay_curation_items(instance.review_operational_store().events(family="curation"))
+
+    assert listed.items == ()
+    assert len(projected) == 1
+    assert projected[0].status == "accepted_fixed"
+    assert projected[0].quarantine_reason == "detector_law_unreproducible"
+    assert projected[0].accepted_proposal_id == accepted.accepted_proposal_id
+
+
+def test_current_law_detection_chains_past_quarantine_but_absence_mints_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    live_path = tmp_path / "live"
+    live_path.mkdir()
+    instance, _owner = initialize_local(live_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    raw = _legacy_observation(
+        pattern_kind="playbill.curation.provenance_concentration.v1",
+        subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
+        detail={"basis": "effective_supporting_control_components"},
+        old_law={
+            "minimum_live_supported_claims": 2,
+            "effective_supporting_control_components": 1,
+        },
+    )
+    instance.review_operational_store().append(
+        family="curation",
+        partition_id=str(raw["item_id"]),
+        event_id=str(raw["event_id"]),
+        payload=raw,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=None,
+    )
+
+    listed = _serve_detection(
+        instance,
+        monkeypatch,
+        generation=1,
+        detections=(_provenance_detection(),),
+    )
+    projected = replay_curation_items(instance.review_operational_store().events(family="curation"))
+    original = next(item for item in projected if item.item_id == raw["item_id"])
+    successor = next(item for item in projected if item.item_id != raw["item_id"])
+    assert original.status == "quarantined"
+    assert successor.status == "open"
+    assert successor.predecessor_item_id == original.item_id
+    assert successor.detector_law_digest == detector_law_digest(successor.pattern_kind)
+    assert {item.item_id for item in listed.items} == {original.item_id, successor.item_id}
+
+    gone_path = tmp_path / "gone"
+    gone_path.mkdir()
+    gone, _owner = initialize_local(gone_path)
+    gone_coordinate = AcceptedCoordinate.from_internal(gone.accepted_coordinate())
+    gone_event = gone.review_operational_store().append(
+        family="curation",
+        partition_id=str(raw["item_id"]),
+        event_id=str(raw["event_id"]),
+        payload=raw,
+        coordinate=gone_coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=None,
+    )
+    service_overrule_playbill_curation(
+        gone,
+        request=PlaybillCurationOverruleRequestV1(
+            item_id=str(raw["item_id"]),
+            expected_latest_event_digest=gone_event.event_digest,
+            reason="the historical condition is gone",
+        ),
+        actor_context=_actor(),
+    )
+    before = gone.review_operational_store().events(family="curation")
+
+    gone_result = _serve_detection(gone, monkeypatch, generation=1, detections=())
+
+    after = gone.review_operational_store().events(family="curation")
+    assert gone_result.items == ()
+    assert len(after) == len(before)
 
 
 def test_redetection_reuses_item_and_accept_fixed_recurrence_mints_linked_successor(
@@ -358,6 +708,7 @@ def test_overrule_stays_silent_on_redetection_and_detector_identity_is_versioned
     projected = replay_curation_items(instance.review_operational_store().events(family="curation"))
     assert result.items == ()
     assert len(projected) == 1
+    assert projected[0].status == "overruled"
     assert projected[0].observation_count == 1
 
     other_version_identity = build_curation_detection(
@@ -385,6 +736,229 @@ def test_overrule_stays_silent_on_redetection_and_detector_identity_is_versioned
         detections=(other_version_identity,),
     )
     assert [row.pattern_id for row in versioned_result.items] == [other_version_identity.pattern_id]
+
+
+_MATRIX_STATUSES = (
+    "open",
+    "suppressed",
+    "accepted_fixed",
+    "overruled",
+    "quarantined",
+    "accepted_fixed_successor",
+    "quarantined_successor",
+    "quarantined_predecessor_with_successor",
+)
+_MATRIX_ACTIONS = (
+    "overrule",
+    "suppress_item",
+    "suppress_pattern",
+    "accept_fixed",
+    "redetect",
+)
+
+
+def _append_matrix_payload(instance, payload, *, expected: str | None):  # type: ignore[no-untyped-def]
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    return instance.review_operational_store().append(
+        family="curation",
+        partition_id=payload.item_id,
+        event_id=payload.event_id,
+        payload=payload,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=expected,
+    )
+
+
+def _matrix_fixed(item):  # type: ignore[no-untyped-def]
+    return build_curation_accepted_fixed(
+        item_id=item.item_id,
+        expected_latest_event_digest=item.latest_event_digest,
+        actor_principal_id="curator",
+        reason="matrix setup accepted fix",
+        accepted_proposal_id="sha256:" + "2" * 64,
+        accepted_changeset_digest="sha256:" + "3" * 64,
+        resolved_generation=1,
+        affected_members=(
+            CurationAffectedMemberV1(
+                path="claim-types/project.work_item.status.yaml",
+                disposition="replace",
+                predecessor_artifact_digest="sha256:" + "4" * 64,
+                candidate_artifact_digest="sha256:" + "5" * 64,
+            ),
+        ),
+    )
+
+
+def _matrix_scenario(tmp_path: Path, status: str):  # type: ignore[no-untyped-def]
+    if status.startswith("quarantined"):
+        instance, _owner = initialize_local(tmp_path)
+        coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        raw = _legacy_observation(
+            pattern_kind="playbill.curation.provenance_concentration.v1",
+            subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
+            detail={"basis": "effective_supporting_control_components"},
+            old_law={
+                "minimum_live_supported_claims": 2,
+                "effective_supporting_control_components": 1,
+            },
+        )
+        instance.review_operational_store().append(
+            family="curation",
+            partition_id=str(raw["item_id"]),
+            event_id=str(raw["event_id"]),
+            payload=raw,
+            coordinate=coordinate,
+            generation=0,
+            actor_context=_actor(),
+            recorded_at=NOW,
+            expected_latest_event_digest=None,
+        )
+        predecessor = replay_curation_items(
+            instance.review_operational_store().events(family="curation")
+        )[0]
+        if status == "quarantined":
+            return instance, predecessor
+        successor_observation = build_pattern_observation(
+            detection=_provenance_detection(),
+            predecessor_item_id=predecessor.item_id,
+            accepted_generation=1,
+        )
+        _append_matrix_payload(instance, successor_observation, expected=None)
+        items = replay_curation_items(instance.review_operational_store().events(family="curation"))
+        if status == "quarantined_predecessor_with_successor":
+            return instance, next(item for item in items if item.item_id == predecessor.item_id)
+        return instance, next(
+            item for item in items if item.predecessor_item_id == predecessor.item_id
+        )
+
+    instance, item = _seed_item(tmp_path)
+    if status == "open":
+        return instance, item
+    if status == "suppressed":
+        suppressed = build_curation_suppressed(
+            item_id=item.item_id,
+            expected_latest_event_digest=item.latest_event_digest,
+            actor_principal_id="curator",
+            reason="matrix setup suppression",
+            scope="item",
+            until_generation=None,
+        )
+        _append_matrix_payload(instance, suppressed, expected=item.latest_event_digest)
+    elif status in {"accepted_fixed", "accepted_fixed_successor"}:
+        fixed = _matrix_fixed(item)
+        _append_matrix_payload(instance, fixed, expected=item.latest_event_digest)
+        if status == "accepted_fixed_successor":
+            successor_observation = build_pattern_observation(
+                detection=_detection(),
+                predecessor_item_id=item.item_id,
+                accepted_generation=2,
+            )
+            _append_matrix_payload(instance, successor_observation, expected=None)
+    else:
+        assert status == "overruled"
+        overruled = build_curation_overruled(
+            item_id=item.item_id,
+            expected_latest_event_digest=item.latest_event_digest,
+            actor_principal_id="curator",
+            reason="matrix setup overrule",
+        )
+        _append_matrix_payload(instance, overruled, expected=item.latest_event_digest)
+    items = replay_curation_items(instance.review_operational_store().events(family="curation"))
+    if status == "accepted_fixed_successor":
+        return instance, next(item for item in items if item.predecessor_item_id is not None)
+    return instance, next(row for row in items if row.item_id == item.item_id)
+
+
+def _matrix_detection(item):  # type: ignore[no-untyped-def]
+    if item.pattern_kind == "playbill.curation.provenance_concentration.v1":
+        return _provenance_detection(item.subject.name)
+    return _detection(item.subject.name)
+
+
+@pytest.mark.parametrize("status", _MATRIX_STATUSES)
+@pytest.mark.parametrize("action", _MATRIX_ACTIONS)
+def test_every_accepted_public_curation_action_preserves_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    action: str,
+) -> None:
+    instance, target = _matrix_scenario(tmp_path, status)
+    store = instance.review_operational_store()
+    before_count = len(store.events(family="curation"))
+    try:
+        if action == "overrule":
+            service_overrule_playbill_curation(
+                instance,
+                request=PlaybillCurationOverruleRequestV1(
+                    item_id=target.item_id,
+                    expected_latest_event_digest=target.latest_event_digest,
+                    reason=f"matrix {status} overrule",
+                ),
+                actor_context=_actor(),
+            )
+        elif action in {"suppress_item", "suppress_pattern"}:
+            service_suppress_playbill_curation(
+                instance,
+                request=PlaybillCurationSuppressRequestV1(
+                    item_id=target.item_id,
+                    expected_latest_event_digest=target.latest_event_digest,
+                    reason=f"matrix {status} {action}",
+                    scope="item" if action == "suppress_item" else "pattern",
+                ),
+                actor_context=_actor(),
+            )
+        elif action == "accept_fixed":
+            affected = _matrix_fixed(target).affected_members
+            monkeypatch.setattr(
+                "cruxible_core.service.playbill_curation._accepted_change",
+                lambda *args, **kwargs: (
+                    target.first_proposed_generation + 1,
+                    object(),
+                    {},
+                    {},
+                ),
+            )
+            monkeypatch.setattr(
+                "cruxible_core.service.playbill_curation._affected_members",
+                lambda *args, **kwargs: affected,
+            )
+            monkeypatch.setattr(
+                "cruxible_core.service.playbill_curation._related_paths",
+                lambda *args, **kwargs: {affected[0].path},
+            )
+            service_accept_fixed_playbill_curation(
+                instance,
+                request=PlaybillCurationAcceptFixedRequestV1(
+                    item_id=target.item_id,
+                    expected_latest_event_digest=target.latest_event_digest,
+                    reason=f"matrix {status} accepted fix",
+                    accepted_proposal_id="sha256:" + "6" * 64,
+                    accepted_changeset_digest="sha256:" + "7" * 64,
+                ),
+                actor_context=_actor(),
+            )
+        else:
+            assert action == "redetect"
+            _serve_detection(
+                instance,
+                monkeypatch,
+                generation=3,
+                detections=(_matrix_detection(target),),
+            )
+    except PlaybillCurationError:
+        assert len(store.events(family="curation")) == before_count
+
+    after_action_count = len(store.events(family="curation"))
+    if status == "quarantined_predecessor_with_successor" and action == "overrule":
+        assert after_action_count == before_count + 1
+    replayed = replay_curation_items(store.events(family="curation"))
+    listed = _serve_detection(instance, monkeypatch, generation=4, detections=())
+    assert replayed
+    assert listed.tag == "playbill-curation-list-result-v1"
 
 
 def test_curation_list_retries_one_same_generation_operational_conflict(

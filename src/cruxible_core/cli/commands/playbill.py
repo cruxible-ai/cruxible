@@ -94,6 +94,14 @@ from cruxible_core.playbill.coverage.render import (
     render_coverage_result,
 )
 from cruxible_core.playbill.coverage.workspace import bindings_from_mapping, observe_workspace
+from cruxible_core.playbill.curation_calibration import (
+    AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+    AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+    AUDIT_BUDGET_MAX_MAX_BYTES,
+    AUDIT_BUDGET_MAX_MAX_ROWS,
+    AUDIT_BUDGET_MIN_MAX_BYTES,
+    AUDIT_BUDGET_MIN_MAX_ROWS,
+)
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.native.grammar import NativeRenderError
 from cruxible_core.playbill.native.manifest import parse_native_manifest
@@ -2150,8 +2158,18 @@ def curation_suppress(
 @playbill_group.command("audit")
 @click.option("--claim-type", "claim_types", multiple=True)
 @click.option("--subject-kind", "subject_kinds", multiple=True)
-@click.option("--max-rows", default=100, show_default=True, type=click.IntRange(1, 1000))
-@click.option("--max-bytes", default=65_536, show_default=True, type=click.IntRange(1024))
+@click.option(
+    "--max-rows",
+    default=AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+    show_default=True,
+    type=click.IntRange(AUDIT_BUDGET_MIN_MAX_ROWS, AUDIT_BUDGET_MAX_MAX_ROWS),
+)
+@click.option(
+    "--max-bytes",
+    default=AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+    show_default=True,
+    type=click.IntRange(AUDIT_BUDGET_MIN_MAX_BYTES, AUDIT_BUDGET_MAX_MAX_BYTES),
+)
 @click.option(
     "--access-profile",
     "access_profile_path",

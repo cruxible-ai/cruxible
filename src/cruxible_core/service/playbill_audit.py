@@ -58,6 +58,19 @@ from cruxible_core.playbill.consumption import (
 )
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.coverage.indexes import accepted_logical_source
+from cruxible_core.playbill.curation_calibration import (
+    AUDIT_CONSUMPTION_STAKE_WEIGHT,
+    AUDIT_CORROBORATED_CONTROL_COMPONENT_MINIMUM,
+    AUDIT_DEPENDENT_STAKE_WEIGHT,
+    AUDIT_NEAR_FRESHNESS_HORIZON_DIVISOR,
+    AUDIT_RANK_STAKE_WEIGHT,
+    AUDIT_RANK_STALENESS_WEIGHT,
+    AUDIT_RANK_WEAKNESS_WEIGHT,
+    AUDIT_STAKE_BASE,
+    AUDIT_STALENESS_BASE,
+    AUDIT_WEAKNESS_BASE,
+    AUDIT_WEAKNESS_SIGNAL_WEIGHT,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import ClaimFactRowV1, claim_row_visibility
@@ -205,7 +218,13 @@ def _resolve_coordinate(
 
 
 def _operational_input_head(instance: PlaybillInstance) -> ReviewOperationalHeadV1:
-    """Commit every operational input while excluding prior audit outputs."""
+    """Commit every patrol input while excluding only audit outputs.
+
+    Consumption is a ranking input, so a cursor must bind it even though reads
+    can append receipts between pages.  Such a receipt invalidates the cursor
+    rather than letting an offset address a newly reordered worklist.  Audit
+    completion records remain excluded because they are outputs of this fold.
+    """
 
     head = instance.review_operational_store().head()
     partitions = tuple(item for item in head.partitions if item.family != "audit")
@@ -427,7 +446,10 @@ def _row(
     }
     near_horizon = False
     if isinstance(verdict, ClaimVerdictResultV2) and row.rule.max_evidence_age is not None:
-        quarter = timedelta(microseconds=row.rule.max_evidence_age.microseconds) / 4
+        quarter = (
+            timedelta(microseconds=row.rule.max_evidence_age.microseconds)
+            / AUDIT_NEAR_FRESHNESS_HORIZON_DIVISOR
+        )
         near_horizon = any(
             item.capture_digest in effective
             and evaluation_time < item.expires_at
@@ -444,25 +466,30 @@ def _row(
     factors = AuditClaimFactorsV1(
         unique_dependent_count=len(dependents),
         qualifying_consumption_touch_count=qualifying_consumption_touch_count,
-        stake=1 + len(dependents) + qualifying_consumption_touch_count,
+        stake=(
+            AUDIT_STAKE_BASE
+            + AUDIT_DEPENDENT_STAKE_WEIGHT * len(dependents)
+            + AUDIT_CONSUMPTION_STAKE_WEIGHT * qualifying_consumption_touch_count
+        ),
         single_source=single_source,
         proposer_observed_only=proposer_only,
-        zero_corroboration=len(components) < 2,
+        zero_corroboration=len(components) < AUDIT_CORROBORATED_CONTROL_COMPONENT_MINIMUM,
         near_freshness_horizon=near_horizon,
-        weakness=1
-        + sum(
+        weakness=AUDIT_WEAKNESS_BASE
+        + AUDIT_WEAKNESS_SIGNAL_WEIGHT
+        * sum(
             int(item)
             for item in (
                 single_source,
                 proposer_only,
-                len(components) < 2,
+                len(components) < AUDIT_CORROBORATED_CONTROL_COMPONENT_MINIMUM,
                 near_horizon,
             )
         ),
         first_accepted_generation=first_generation,
         last_independent_verification_generation=last_verification,
         never_verified=not verification_generations,
-        staleness=1 + generation - last_verification,
+        staleness=AUDIT_STALENESS_BASE + generation - last_verification,
     )
     refs: list[AuditEvidenceRefV1] = [
         AuditEvidenceRefV1(
@@ -540,7 +567,14 @@ def _row(
         verdict=verdict.verdict,
         currency=verdict.currency,
         factors=factors,
-        rank_score=factors.stake * factors.weakness * factors.staleness,
+        rank_score=(
+            AUDIT_RANK_STAKE_WEIGHT
+            * factors.stake
+            * AUDIT_RANK_WEAKNESS_WEIGHT
+            * factors.weakness
+            * AUDIT_RANK_STALENESS_WEIGHT
+            * factors.staleness
+        ),
         evidence_refs=ordered_refs,
     )
 

@@ -156,14 +156,51 @@ def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift
     assert first.coverage.omission_reasons == ("row_budget_exceeded",)
     assert len(first.coverage.covered_claims) == 3
     assert first.next_cursor is not None
+    omitted = next(
+        row.accepted
+        for row in claims
+        if row.accepted.claim.identity not in {item.claim_identity for item in first.rows}
+    )
+    record_consumption(
+        instance,
+        context=ConsumptionContextV1(
+            actor_context=_actor(),
+            access_profile_id="test-audit-pages",
+        ),
+        operation="playbill.claim.get",
+        coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        artifacts=((omitted.claim.identity, omitted.artifact_digest),),
+    )
+    with pytest.raises(PlaybillAuditCursorInvalid):
+        service_playbill_audit(
+            instance,
+            request=first_request.model_copy(update={"cursor": first.next_cursor}),
+            actor_context=_actor(),
+        )
+
+    # A fresh patrol at the new fold-start head delivers every row exactly once.
+    restarted = service_playbill_audit(instance, request=first_request, actor_context=_actor())
+    assert restarted.next_cursor is not None
     second = service_playbill_audit(
         instance,
-        request=first_request.model_copy(update={"cursor": first.next_cursor}),
+        request=first_request.model_copy(update={"cursor": restarted.next_cursor}),
         actor_context=_actor(),
     )
     assert len(second.rows) == 1
     assert second.next_cursor is None
-    assert len(completed_audit_runs(instance)) == 2
+    delivered = (*restarted.rows, *second.rows)
+    assert len({row.claim_identity for row in delivered}) == 3
+    assert {row.claim_identity for row in delivered} == {
+        row.accepted.claim.identity for row in claims
+    }
+    assert len(completed_audit_runs(instance)) == 3
+    retry = service_playbill_audit(
+        instance,
+        request=first_request.model_copy(update={"cursor": restarted.next_cursor}),
+        actor_context=_actor(),
+    )
+    assert retry.model_dump(mode="json") == second.model_dump(mode="json")
+    assert len(completed_audit_runs(instance)) == 3
 
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     instance.review_operational_store().append(
@@ -179,7 +216,7 @@ def test_pagination_commits_actual_coverage_and_cursor_rejects_operational_drift
     with pytest.raises(PlaybillAuditCursorInvalid):
         service_playbill_audit(
             instance,
-            request=first_request.model_copy(update={"cursor": first.next_cursor}),
+            request=first_request.model_copy(update={"cursor": restarted.next_cursor}),
             actor_context=_actor(),
         )
 

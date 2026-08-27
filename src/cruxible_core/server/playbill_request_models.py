@@ -33,6 +33,10 @@ from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
 from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
+from cruxible_core.playbill.curation_calibration import (
+    AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+    AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+)
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.search import (
     SEARCH_KINDS,
@@ -260,8 +264,8 @@ class PlaybillAuditRequest(_StrictPlaybillRequest):
     budget: dict[str, Any] = Field(
         default_factory=lambda: {
             "tag": "playbill-audit-budget-v1",
-            "max_rows": 100,
-            "max_bytes": 65_536,
+            "max_rows": AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+            "max_bytes": AUDIT_BUDGET_DEFAULT_MAX_BYTES,
         }
     )
     cursor: dict[str, Any] | None = None

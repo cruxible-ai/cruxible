@@ -8,6 +8,14 @@ from typing import Any
 import pytest
 
 from cruxible_core.mcp.server import create_server
+from cruxible_core.playbill.curation_calibration import (
+    AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+    AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+    AUDIT_BUDGET_MAX_MAX_BYTES,
+    AUDIT_BUDGET_MAX_MAX_ROWS,
+    AUDIT_BUDGET_MIN_MAX_BYTES,
+    AUDIT_BUDGET_MIN_MAX_ROWS,
+)
 from cruxible_core.runtime.permissions import TOOL_PERMISSIONS
 
 
@@ -113,3 +121,20 @@ def test_since_schema_exposes_the_frozen_history_wire() -> None:
     assert set(schema["required"]) == {"instance_id", "generation"}
     assert schema["properties"]["max_rows"]["maximum"] == 1000
     assert schema["properties"]["max_bytes"]["maximum"] == 1_048_576
+
+
+def test_audit_schema_uses_the_central_budget_calibration() -> None:
+    schema = _schemas()["cruxible_playbill_audit"].inputSchema
+    rows = schema["properties"]["max_rows"]
+    bytes_ = schema["properties"]["max_bytes"]
+
+    assert (rows["default"], rows["minimum"], rows["maximum"]) == (
+        AUDIT_BUDGET_DEFAULT_MAX_ROWS,
+        AUDIT_BUDGET_MIN_MAX_ROWS,
+        AUDIT_BUDGET_MAX_MAX_ROWS,
+    )
+    assert (bytes_["default"], bytes_["minimum"], bytes_["maximum"]) == (
+        AUDIT_BUDGET_DEFAULT_MAX_BYTES,
+        AUDIT_BUDGET_MIN_MAX_BYTES,
+        AUDIT_BUDGET_MAX_MAX_BYTES,
+    )

@@ -441,6 +441,140 @@ def _replay_items(instance: PlaybillInstance) -> tuple[CurationItemV1, ...]:
         raise ReviewOperationalStoreError("curation event replay is invalid") from exc
 
 
+def _accepted_retirements_for_items(
+    instance: PlaybillInstance,
+    items: tuple[CurationItemV1, ...],
+) -> dict[
+    str,
+    tuple[int, str, ChangeSetRecordAnyVersion, tuple[CurationAffectedMemberV1, ...]],
+]:
+    """Find first exact retirements in one bounded history/tree traversal."""
+
+    history = instance.accepted_history()
+    evaluations_by_candidate: dict[str, list[str]] = {}
+    for evaluation in instance.proposal_evidence().list_evaluations():
+        if evaluation.verdict == "candidate" and evaluation.candidate_digest is not None:
+            evaluations_by_candidate.setdefault(evaluation.candidate_digest, []).append(
+                evaluation.proposal_id
+            )
+    unresolved = {item.item_id: item for item in items}
+    resolved: dict[
+        str,
+        tuple[int, str, ChangeSetRecordAnyVersion, tuple[CurationAffectedMemberV1, ...]],
+    ] = {}
+    for index, accepted in enumerate(history[1:], start=1):
+        if not unresolved or accepted.record is None:
+            continue
+        eligible = tuple(
+            item
+            for item in unresolved.values()
+            # An operational item is created after its accepted coordinate is
+            # observed, so a same-generation change cannot have fixed it.
+            if accepted.sequence > item.first_proposed_generation
+        )
+        if not eligible:
+            continue
+        proposal_ids = tuple(
+            sorted(
+                set(evaluations_by_candidate.get(accepted.record.candidate_digest, ())),
+                key=lambda value: value.encode("ascii"),
+            )
+        )
+        if not proposal_ids:
+            # Imported ledgers can preserve the accepted receipt without local
+            # proposal exhaust.  Do not invent a resolving proposal identity.
+            continue
+        parent_tree = instance.tree_at(history[index - 1].oid)
+        candidate_tree = instance.tree_at(accepted.oid)
+        affected = _affected_members(
+            accepted.record,
+            parent_tree=parent_tree,
+            candidate_tree=candidate_tree,
+        )
+        retired_paths = {member.path for member in affected if member.disposition == "retire"}
+        if not retired_paths:
+            continue
+        parent_paths: dict[ArtifactIdentity, set[str]] = {}
+        candidate_paths: dict[ArtifactIdentity, set[str]] = {}
+        for state in dependency_artifacts(parent_tree):
+            parent_paths.setdefault(state.identity, set()).add(state.path)
+        for state in dependency_artifacts(candidate_tree):
+            candidate_paths.setdefault(state.identity, set()).add(state.path)
+        for item in eligible:
+            related = {ref.path for ref in item.latest_evidence_refs if ref.path is not None}
+            related.update(parent_paths.get(item.subject, ()))
+            related.update(candidate_paths.get(item.subject, ()))
+            if retired_paths.isdisjoint(related):
+                continue
+            resolved[item.item_id] = (
+                accepted.sequence,
+                proposal_ids[0],
+                accepted.record,
+                affected,
+            )
+            unresolved.pop(item.item_id)
+    return resolved
+
+
+def _auto_resolve_retired_dead_vocabulary(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedCoordinate,
+    generation: int,
+    actor_context: GovernedActorContext,
+    recorded_at: datetime,
+) -> None:
+    """Close dead-vocabulary rows whose exact artifact was retired by succession."""
+
+    store = instance.review_operational_store()
+    candidates = tuple(
+        item
+        for item in _replay_items(instance)
+        if item.status == "open" and item.pattern_kind == "playbill.curation.dead_vocabulary.v1"
+    )
+    resolutions = _accepted_retirements_for_items(instance, candidates)
+    for candidate in candidates:
+        resolution = resolutions.get(candidate.item_id)
+        if resolution is None:
+            continue
+        resolved_generation, proposal_id, record, affected = resolution
+        current = candidate
+        for attempt in range(2):
+            payload = build_curation_accepted_fixed(
+                item_id=current.item_id,
+                expected_latest_event_digest=current.latest_event_digest,
+                actor_principal_id=record.actor_binding.actor_id,
+                reason="accepted change retired the artifact",
+                accepted_proposal_id=proposal_id,
+                accepted_changeset_digest=record.changeset_digest,
+                resolved_generation=resolved_generation,
+                affected_members=affected,
+            )
+            try:
+                store.append(
+                    family="curation",
+                    partition_id=current.item_id,
+                    event_id=payload.event_id,
+                    payload=payload,
+                    coordinate=coordinate,
+                    generation=generation,
+                    actor_context=actor_context,
+                    recorded_at=recorded_at,
+                    expected_latest_event_digest=current.latest_event_digest,
+                )
+                break
+            except ReviewOperationalConcurrentChangeError:
+                if attempt == 1:
+                    raise
+                refreshed = next(
+                    (item for item in _replay_items(instance) if item.item_id == current.item_id),
+                    None,
+                )
+                if refreshed is None or refreshed.status != "open":
+                    break
+                current = refreshed
+
+
 def service_list_playbill_curation(
     instance: PlaybillInstance,
     *,
@@ -523,9 +657,13 @@ def service_list_playbill_curation(
         current = None if not lineage else lineage[-1]
         if current is not None and current.status == "overruled":
             continue
+        starts_successor = current is not None and current.status in {
+            "accepted_fixed",
+            "quarantined",
+        }
         predecessor = (
             current.item_id
-            if current is not None and current.status == "accepted_fixed"
+            if current is not None and starts_successor
             else (None if current is None else current.predecessor_item_id)
         )
         observation = build_pattern_observation(
@@ -533,11 +671,7 @@ def service_list_playbill_curation(
             predecessor_item_id=predecessor,
             accepted_generation=generation,
         )
-        expected = (
-            None
-            if current is None or current.status == "accepted_fixed"
-            else (current.latest_event_digest)
-        )
+        expected = None if current is None or starts_successor else (current.latest_event_digest)
         for attempt in range(2):
             try:
                 store.append(
@@ -568,9 +702,13 @@ def service_list_playbill_curation(
                 current = None if not refreshed else refreshed[-1]
                 if current is not None and current.status == "overruled":
                     break
+                starts_successor = current is not None and current.status in {
+                    "accepted_fixed",
+                    "quarantined",
+                }
                 predecessor = (
                     current.item_id
-                    if current is not None and current.status == "accepted_fixed"
+                    if current is not None and starts_successor
                     else (None if current is None else current.predecessor_item_id)
                 )
                 observation = build_pattern_observation(
@@ -579,17 +717,23 @@ def service_list_playbill_curation(
                     accepted_generation=generation,
                 )
                 expected = (
-                    None
-                    if current is None or current.status == "accepted_fixed"
-                    else current.latest_event_digest
+                    None if current is None or starts_successor else current.latest_event_digest
                 )
+    _auto_resolve_retired_dead_vocabulary(
+        instance,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=actor_context,
+        recorded_at=request.evaluation_time,
+    )
     all_items = _replay_items(instance)
     items = tuple(
         sorted(
             (
                 item
                 for item in all_items
-                if item.status == "open" and not item.suppressed_at(generation, all_items=all_items)
+                if item.status in {"open", "quarantined"}
+                and not item.suppressed_at(generation, all_items=all_items)
             ),
             key=lambda item: (
                 item.pattern_kind.encode("ascii"),
@@ -622,11 +766,16 @@ def service_list_playbill_curation(
     )
 
 
-def _open_item(instance: PlaybillInstance, item_id: str) -> CurationItemV1:
+def _open_item(
+    instance: PlaybillInstance,
+    item_id: str,
+    *,
+    allow_quarantined: bool = False,
+) -> CurationItemV1:
     item = next((item for item in _replay_items(instance) if item.item_id == item_id), None)
     if item is None:
         raise PlaybillCurationItemNotFound(f"curation item does not exist: {item_id}")
-    if item.status != "open":
+    if item.status != "open" and not (allow_quarantined and item.status == "quarantined"):
         raise PlaybillCurationItemAlreadyResolved(
             f"curation item is already {item.status}: {item_id}"
         )
@@ -651,7 +800,7 @@ def service_overrule_playbill_curation(
     request: PlaybillCurationOverruleRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
-    item = _open_item(instance, request.item_id)
+    item = _open_item(instance, request.item_id, allow_quarantined=True)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     generation = _generation(instance, coordinate)
     payload = build_curation_overruled(
@@ -681,7 +830,7 @@ def service_suppress_playbill_curation(
     request: PlaybillCurationSuppressRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
-    item = _open_item(instance, request.item_id)
+    item = _open_item(instance, request.item_id, allow_quarantined=True)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     generation = _generation(instance, coordinate)
     if request.until_generation is not None and request.until_generation < generation:
@@ -818,9 +967,11 @@ def service_accept_fixed_playbill_curation(
         proposal_id=request.accepted_proposal_id,
         changeset_digest=request.accepted_changeset_digest,
     )
-    if resolved_generation < item.first_proposed_generation:
+    # The item is proposed only after its accepted coordinate is observed; a
+    # resolving ChangeSet must therefore postdate, not merely equal, that generation.
+    if resolved_generation <= item.first_proposed_generation:
         raise PlaybillCurationResolvingProposalInvalid(
-            "curation resolving generation predates the item"
+            "curation resolving generation does not postdate the item"
         )
     affected = _affected_members(record, parent_tree=parent_tree, candidate_tree=candidate_tree)
     related = _related_paths(item, tree=parent_tree) | _related_paths(item, tree=candidate_tree)
