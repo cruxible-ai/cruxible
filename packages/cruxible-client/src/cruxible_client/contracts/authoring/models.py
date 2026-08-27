@@ -80,6 +80,7 @@ INSERTION_CONFIRMATION_OBSERVATION_V2_DIGEST_DOMAIN = (
 )
 INSERTION_TERMINAL_TOMBSTONE_V2_DIGEST_DOMAIN = "playbill-insertion-terminal-tombstone-v2"
 INSERTION_PREPARE_OPERATION_V2_DOMAIN = "playbill-insertion-prepare-operation-v2"
+_INSERTION_PREPARE_TERMINAL_OPERATION_V2_DOMAIN = "playbill-insertion-prepare-terminal-operation-v2"
 INSERTION_CONFIRM_OPERATION_V2_DOMAIN = "playbill-insertion-confirm-operation-v2"
 PUBLICATION_BLOCK_ID_DOMAIN = "playbill-publication-block-id-v1"
 MAX_PUBLICATION_SOURCE_BYTES = 4 * 1024 * 1024
@@ -1712,6 +1713,22 @@ def insertion_prepare_operation_v2_key(
         {
             "expectation_id": expectation_id,
             "live_expectation_digest": live_expectation_digest,
+            "observation_digest": publication_source_observation_v2_digest(observation),
+        },
+    ).tagged
+
+
+def _insertion_prepare_terminal_operation_v2_key(
+    expectation_id: str,
+    observation: PublicationSourceObservationV2,
+) -> str:
+    """Key one terminal prepare attempt independently of the state it terminalizes."""
+
+    return typed_digest(
+        Sha256Value,
+        _INSERTION_PREPARE_TERMINAL_OPERATION_V2_DOMAIN,
+        {
+            "expectation_id": expectation_id,
             "observation_digest": publication_source_observation_v2_digest(observation),
         },
     ).tagged

@@ -558,6 +558,115 @@ def test_prepare_response_loss_and_terminal_conflicts_are_deterministic(tmp_path
         )
 
 
+def test_prepared_to_expired_prepare_response_loss_replays_terminal_result(
+    tmp_path: Path,
+) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.outcome == "prepared"
+    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
+
+    terminal = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    retry = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+
+    assert terminal.outcome == retry.outcome == "expired"
+    assert retry.model_dump_json() == terminal.model_dump_json()
+
+
+def test_prepared_to_currency_changed_prepare_response_loss_replays_terminal_result(
+    tmp_path: Path,
+) -> None:
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.outcome == "prepared"
+    original = coordinator.store.get(intent_id, actor_id=actor.actor_id)
+    successor_coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    successor = successor_coordinator.create(
+        actor=actor,
+        payload=_successor_payload(original.semantic_identity, value="done"),
+        canonical_timestamp="2026-08-21T12:00:02.000000Z",
+    ).intent
+    submitted = successor_coordinator.submit(successor.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=submitted.status.proposal_id,
+        candidate_digest=submitted.status.candidate_digest,
+    )
+
+    terminal = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    retry = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+
+    assert terminal.outcome == retry.outcome == "claim_currency_changed"
+    assert retry.model_dump_json() == terminal.model_dump_json()
+
+
+def test_prepared_to_expired_confirm_response_loss_replays_terminal_result(
+    tmp_path: Path,
+) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    final = _final_source(intent_id, prepared, preimage)
+    exact = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(final),
+    )
+    assert exact is not None
+    nonmatching = exact.model_copy(update={"observed_occurrence_count": 2})
+    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
+
+    terminal = coordinator.confirm_insertion(
+        intent_id,
+        actor=actor,
+        observation=nonmatching,
+    )
+    retry = coordinator.confirm_insertion(
+        intent_id,
+        actor=actor,
+        observation=nonmatching,
+    )
+
+    assert terminal.outcome == retry.outcome == "expired"
+    assert retry.model_dump_json() == terminal.model_dump_json()
+
+
 def test_exact_postimage_prepare_rescues_after_expiry_and_confirm_retry_is_idempotent(
     tmp_path: Path,
 ) -> None:

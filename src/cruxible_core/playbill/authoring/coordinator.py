@@ -39,6 +39,7 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureAuthoringPayloadV2,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
+    _insertion_prepare_terminal_operation_v2_key,
     authoring_create_fingerprint,
     authoring_payload_digest,
     insertion_confirm_operation_v2_key,
@@ -641,6 +642,10 @@ class AuthoringIntentCoordinator:
             observation,
             live_expectation_digest=expectation.expectation_digest,
         )
+        terminal_operation_key = _insertion_prepare_terminal_operation_v2_key(
+            expectation.expectation_id,
+            observation,
+        )
         if expectation.state == "bound":
             if exact is None:
                 raise PublicationTerminalStateRefused(
@@ -656,7 +661,7 @@ class AuthoringIntentCoordinator:
             replayed = self.store.operation_result(
                 intent_id,
                 actor_id=actor.actor_id,
-                operation_key=operation_key,
+                operation_key=terminal_operation_key,
             )
             replayed_expectation = None if replayed is None else replayed.insertion_expectation
             before_expectation = before.insertion_expectation
@@ -670,7 +675,7 @@ class AuthoringIntentCoordinator:
                 replayed = self.store.transition(
                     intent_id,
                     actor_id=actor.actor_id,
-                    operation_key=operation_key,
+                    operation_key=terminal_operation_key,
                     transform=lambda intent: intent,
                 )
                 replayed_expectation = replayed.insertion_expectation
@@ -736,7 +741,7 @@ class AuthoringIntentCoordinator:
                 actor=actor,
                 state=terminal_state,
                 evaluation_time=evaluation_time,
-                operation_key=operation_key,
+                operation_key=terminal_operation_key,
             )
             terminal_expectation = terminal.insertion_expectation
             assert isinstance(terminal_expectation, InsertionExpectationV2)
