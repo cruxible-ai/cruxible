@@ -53,6 +53,7 @@ from cruxible_client.contracts.claim_types import (
     parse_claim_type,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifactAny,
     ClaimFormatError,
     claim_artifact_digest,
     parse_claim,
@@ -696,8 +697,14 @@ def reverse_pin_closure(
     *,
     root: ArtifactIdentity,
     include: Callable[[ArtifactDependencyStateV1], bool],
+    claim_identity_by_digest: Mapping[str, ArtifactIdentity] | None = None,
 ) -> tuple[ReversePinClosureItem, ...]:
-    """Return the complete included reverse-pin closure of ``root``.
+    """Return the complete included reverse-dependency closure of ``root``.
+
+    Claim dependencies have two accepted representations: ordinary Claim-target
+    pins and historical ``backing.input_claim_digests``. The optional digest
+    index joins the latter back to lineage identity without rewriting their
+    historical bytes. Current Claim digests are always indexed locally.
 
     Inclusion controls both membership and traversal. That is deliberate: a
     mutation operation may only walk through artifact families it can
@@ -706,24 +713,45 @@ def reverse_pin_closure(
     """
 
     index = build_dependency_index(tree)
+    digest_identities = dict(claim_identity_by_digest or {})
+    claims_by_path: dict[str, ClaimArtifactAny] = {}
+    for path, state in index.states.items():
+        if state.artifact_kind != "claim":
+            continue
+        claim = parse_claim(tree[path], path=path)
+        claims_by_path[path] = claim
+        digest_identities[state.artifact_digest] = state.identity
+    input_sources: dict[str, set[str]] = {}
+    for path, claim in claims_by_path.items():
+        for digest in claim.backing.input_claim_digests:
+            identity = digest_identities.get(digest)
+            if identity is not None:
+                input_sources.setdefault(identity.qualified, set()).add(path)
     pending = [root.qualified]
     seen_identities = {root.qualified}
     inventory: dict[str, ReversePinClosureItem] = {}
     while pending:
         triggering = pending.pop(0)
+        dependent_paths = {
+            *index.sources_by_pinned_identity.get(triggering, frozenset()),
+            *input_sources.get(triggering, set()),
+        }
         for path in sorted(
-            index.sources_by_pinned_identity.get(triggering, frozenset()),
+            dependent_paths,
             key=lambda item: item.encode("utf-8"),
         ):
             state = index.states[path]
             if state.identity.qualified in seen_identities or not include(state):
                 continue
-            roles = tuple(
-                sorted(
-                    {pin.role for pin in state.pins if pin.target.qualified == triggering},
-                    key=lambda item: item.encode("utf-8"),
-                )
-            )
+            roles_set = {pin.role for pin in state.pins if pin.target.qualified == triggering}
+            dependent_claim = claims_by_path.get(path)
+            if dependent_claim is not None and any(
+                (identity := digest_identities.get(digest)) is not None
+                and identity.qualified == triggering
+                for digest in dependent_claim.backing.input_claim_digests
+            ):
+                roles_set.add("backing-input")
+            roles = tuple(sorted(roles_set, key=lambda item: item.encode("utf-8")))
             if not roles:
                 raise ValueError("reverse-pin index lacks an exact dependency edge")
             inventory[state.identity.qualified] = ReversePinClosureItem(
