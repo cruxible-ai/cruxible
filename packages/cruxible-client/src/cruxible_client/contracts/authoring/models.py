@@ -711,7 +711,13 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
     citation_role: Literal["evidence", "copy"] | None = None
     claim_ref: str | None = None
     existing_claim_dispositions: tuple[AuthoringExistingClaimDispositionV1, ...] = ()
-    insertion_target: InsertionTargetV1 | None = None
+    insertion_target: (
+        Annotated[
+            InsertionTargetV1 | InsertionTargetV2,
+            Field(discriminator="tag"),
+        ]
+        | None
+    ) = None
 
     @field_validator("rationale")
     @classmethod
@@ -1515,7 +1521,7 @@ class InsertionTerminalTombstoneV2(_StrictAuthoringModel):
     final_postimage_byte_length: int | None = Field(default=None, ge=0)
     accepted_claim_identity: str
     accepted_claim_artifact_digest: str
-    accepted_claim_coordinate: AcceptedCoordinate
+    accepted_claim_coordinate: AcceptedCoordinate | None = None
     finalized_at: datetime
     retain_until: datetime
     tombstone_digest: str
@@ -1560,6 +1566,8 @@ class InsertionTerminalTombstoneV2(_StrictAuthoringModel):
             raise ValueError("bound publication tombstone requires exact source commitments")
         if self.final_state != "bound" and any(item is not None for item in commitments):
             raise ValueError("unbound publication tombstone cannot claim applied source bytes")
+        if self.final_state == "bound" and self.accepted_claim_coordinate is None:
+            raise ValueError("bound publication tombstone requires its accepted Claim coordinate")
         if self.tombstone_digest != insertion_terminal_tombstone_v2_digest(self):
             raise ValueError("publication tombstone digest does not reproduce")
         return self
@@ -1626,7 +1634,11 @@ class InsertionExpectationV2(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _shape(self) -> "InsertionExpectationV2":
-        if (self.state == "awaiting_claim_acceptance") != (self.accepted_claim_coordinate is None):
+        if self.state == "awaiting_claim_acceptance" and self.accepted_claim_coordinate is not None:
+            raise ValueError("awaiting publication cannot claim an accepted Claim coordinate")
+        if self.state in {"pending", "prepared", "bound"} and (
+            self.accepted_claim_coordinate is None
+        ):
             raise ValueError("accepted publication state requires its Claim coordinate")
         if self.state == "prepared" and self.preparation is None:
             raise ValueError("prepared publication state requires exact preparation")
@@ -1640,6 +1652,18 @@ class InsertionExpectationV2(_StrictAuthoringModel):
             raise ValueError("terminal publication state requires exactly one tombstone")
         if self.state == "bound" and self.preparation is None:
             raise ValueError("bound publication state requires its preparation")
+        if self.preparation is not None:
+            if self.accepted_claim_coordinate != self.preparation.accepted_coordinate:
+                raise ValueError("publication preparation names another accepted Claim coordinate")
+            if self.preparation.expires_at != self.expires_at:
+                raise ValueError("publication preparation changes the expectation expiry")
+        if self.terminal_tombstone is not None:
+            if self.terminal_tombstone.expectation_id != self.expectation_id:
+                raise ValueError("publication tombstone names another expectation")
+            if self.terminal_tombstone.final_state != self.state:
+                raise ValueError("publication tombstone disagrees with its terminal state")
+            if self.terminal_tombstone.accepted_claim_coordinate != self.accepted_claim_coordinate:
+                raise ValueError("publication tombstone changes the accepted Claim coordinate")
         if self.expectation_digest != insertion_expectation_v2_digest(self):
             raise ValueError("publication expectation digest does not reproduce")
         return self
@@ -1821,7 +1845,13 @@ class AuthoringIntentV1(_StrictAuthoringModel):
     intent_revision: int = Field(default=0, ge=0)
     last_preflight: PreflightResultV1 | None = None
     candidate_status: CandidateStatusV1
-    insertion_expectation: InsertionExpectationV1 | None = None
+    insertion_expectation: (
+        Annotated[
+            InsertionExpectationV1 | InsertionExpectationV2,
+            Field(discriminator="tag"),
+        ]
+        | None
+    ) = None
 
     @field_validator("intent_id")
     @classmethod
@@ -1865,6 +1895,16 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                 )
                 if self.insertion_expectation.expectation_id != expected_id:
                     raise ValueError("insertion expectation ID does not reproduce")
+                target = self.payload.insertion_target
+                expectation = self.insertion_expectation
+                if isinstance(target, InsertionTargetV1) != isinstance(
+                    expectation, InsertionExpectationV1
+                ):
+                    raise ValueError("insertion expectation version differs from its target")
+                if isinstance(expectation, InsertionExpectationV2) and (
+                    expectation.target != target
+                ):
+                    raise ValueError("publication expectation changes its frozen target")
         elif self.semantic_identity != f"Procedure:{self.payload.definition['name']}":
             raise ValueError("Procedure AuthoringIntent identity differs from its definition")
         elif self.insertion_expectation is not None:
@@ -2053,7 +2093,10 @@ class InsertionAbandonRequestV1(_StrictAuthoringModel):
 class InsertionAbandonResultV1(_StrictAuthoringModel):
     tag: Literal["playbill-insertion-abandon-result-v1"] = "playbill-insertion-abandon-result-v1"
     intent: AuthoringIntentV1
-    expectation: InsertionExpectationV1
+    expectation: Annotated[
+        InsertionExpectationV1 | InsertionExpectationV2,
+        Field(discriminator="tag"),
+    ]
 
 
 __all__ = [
@@ -2160,6 +2203,7 @@ __all__ = [
     "authoring_program_stamp_operation_key",
     "canonical_reference_expectations",
     "build_insertion_expectation",
+    "build_insertion_expectation_v2",
     "build_insertion_patch_envelope",
     "build_insertion_terminal_tombstone",
     "build_insertion_terminal_tombstone_v2",
