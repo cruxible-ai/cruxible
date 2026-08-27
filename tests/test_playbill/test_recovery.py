@@ -51,15 +51,7 @@ class SimulatedCrash(RuntimeError):
 def _prepared(tmp_path: Path):
     instance, owner, reviewer = _instance(tmp_path)
     base, tree, candidate = _candidate(instance)
-    approvals = tuple(
-        sorted(
-            (
-                _sign(owner, candidate.candidate_digest, base.semantic_root),
-                _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-            ),
-            key=lambda item: item.attestation.signer_id,
-        )
-    )
+    approvals = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
     bundle = prepare_generation(
         instance._ledger,
         base=base,
@@ -165,15 +157,7 @@ def test_restart_collects_crash_residue_from_generation_construction(
 ) -> None:
     instance, owner, reviewer = _instance(tmp_path)
     base, tree, candidate = _candidate(instance)
-    approvals = tuple(
-        sorted(
-            (
-                _sign(owner, candidate.candidate_digest, base.semantic_root),
-                _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-            ),
-            key=lambda item: item.attestation.signer_id,
-        )
-    )
+    approvals = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
 
     def crash(actual: str) -> None:
         if actual == f"{phase}:{GENERATION_CONSTRUCTION}":
@@ -232,15 +216,7 @@ def test_restart_finishes_losing_cas_orphan_cleanup(tmp_path: Path, phase: str) 
     _same_base, loser_tree, loser_candidate = _candidate(instance, title="Loser")
 
     def bundle(tree, candidate):
-        approvals = tuple(
-            sorted(
-                (
-                    _sign(owner, candidate.candidate_digest, base.semantic_root),
-                    _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-                ),
-                key=lambda item: item.attestation.signer_id,
-            )
-        )
+        approvals = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
         return prepare_generation(
             instance._ledger,
             base=base,
@@ -305,18 +281,17 @@ def _accept_document_revision(instance, owner, reviewer, *, revision: int, prede
     ).proposal
     candidate = proposal.candidate
     assert candidate is not None
-    for material in (owner, reviewer):
-        signed = _sign(
-            material,
-            candidate.candidate_digest,
-            candidate.candidate.parent_semantic_root,
-        )
-        service_submit_playbill_approval(
-            instance,
-            proposal_id=proposal.admission.proposal_id,
-            attestation=signed.attestation,
-            authenticated_submitter="approval-relay",
-        )
+    signed = _sign(
+        reviewer,
+        candidate.candidate_digest,
+        candidate.candidate.parent_semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        attestation=signed.attestation,
+        authenticated_submitter="approval-relay",
+    )
     activated = service_activate_playbill_proposal(
         instance,
         proposal_id=proposal.admission.proposal_id,

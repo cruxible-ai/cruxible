@@ -438,6 +438,7 @@ def _verify_successor(
         candidate,
         record.approvals,
         principals=parent.principals,
+        creator_principal_id=record.actor_binding.actor_id,
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
     if principal_lifecycle and record.actor_binding.actor_id not in {

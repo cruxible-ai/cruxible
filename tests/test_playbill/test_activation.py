@@ -158,15 +158,7 @@ def test_prepare_generation_binds_complete_change_set_without_advancing_main(
 ) -> None:
     instance, owner, reviewer = _instance(tmp_path)
     base, tree, candidate = _candidate(instance)
-    submissions = tuple(
-        sorted(
-            (
-                _sign(owner, candidate.candidate_digest, base.semantic_root),
-                _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-            ),
-            key=lambda item: item.attestation.signer_id,
-        )
-    )
+    submissions = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
 
     bundle = prepare_generation(
         instance._ledger,
@@ -205,15 +197,7 @@ def test_prebuild_is_unserved_until_winning_cas_then_switches_atomically(
 ) -> None:
     instance, owner, reviewer = _instance(tmp_path)
     base, tree, candidate = _candidate(instance)
-    submissions = tuple(
-        sorted(
-            (
-                _sign(owner, candidate.candidate_digest, base.semantic_root),
-                _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-            ),
-            key=lambda item: item.attestation.signer_id,
-        )
-    )
+    submissions = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
     bundle = prepare_generation(
         instance._ledger,
         base=base,
@@ -279,15 +263,7 @@ def test_two_candidates_from_one_base_leave_one_winner_and_no_loser_projection(
     )
 
     def prepare(tree, candidate):
-        submissions = tuple(
-            sorted(
-                (
-                    _sign(owner, candidate.candidate_digest, base.semantic_root),
-                    _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-                ),
-                key=lambda item: item.attestation.signer_id,
-            )
-        )
+        submissions = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
         return prepare_generation(
             instance._ledger,
             base=base,
@@ -332,15 +308,7 @@ def test_two_candidates_from_one_base_leave_one_winner_and_no_loser_projection(
 def test_prepare_generation_refuses_tampered_law_or_candidate_tree(tmp_path: Path) -> None:
     instance, owner, reviewer = _instance(tmp_path)
     base, tree, candidate = _candidate(instance)
-    submissions = tuple(
-        sorted(
-            (
-                _sign(owner, candidate.candidate_digest, base.semantic_root),
-                _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-            ),
-            key=lambda item: item.attestation.signer_id,
-        )
-    )
+    submissions = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
     tampered_law = candidate.model_copy(
         update={"law_digests": {"playbill.document.v1": "sha256:" + "00" * 32}}
     )
@@ -480,15 +448,7 @@ def test_qualified_git_formats_preserve_candidate_changeset_and_semantic_root(
         assert evaluated.candidate is not None
         candidate = evaluated.candidate
         candidates.append(candidate)
-        submissions = tuple(
-            sorted(
-                (
-                    _sign(owner, candidate.candidate_digest, base.semantic_root),
-                    _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-                ),
-                key=lambda item: item.attestation.signer_id,
-            )
-        )
+        submissions = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
         prepared.append(
             prepare_generation(
                 ledger,

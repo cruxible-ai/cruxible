@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import ApprovalIntegrityError, PrincipalIntegrityError
+from cruxible_client.contracts.errors import (
+    ApprovalIntegrityError,
+    PrincipalIntegrityError,
+    ProposalAdmissionError,
+)
 from cruxible_client.contracts.principals import principal_registry_from_tree
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.bootstrap import render_principal
@@ -111,6 +115,7 @@ def _settle_transition(
     instance: PlaybillInstance,
     *,
     actor: GeneratedKeyMaterial,
+    approver: GeneratedKeyMaterial,
     proposed: PrincipalRecord,
     timestamp: str,
 ) -> PlaybillInstance:
@@ -145,7 +150,15 @@ def _settle_transition(
         base=base,
         candidate_tree=tree,
         candidate=candidate,
-        approval_submissions=(_sign(actor, candidate.candidate_digest, base.semantic_root),),
+        approval_submissions=tuple(
+            sorted(
+                (
+                    _sign(actor, candidate.candidate_digest, base.semantic_root),
+                    _sign(approver, candidate.candidate_digest, base.semantic_root),
+                ),
+                key=lambda item: item.attestation.signer_id,
+            )
+        ),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id=actor.principal.principal_id),
         sequence=instance._recovered.head.sequence + 1,
@@ -170,6 +183,7 @@ def test_owner_rotation_and_recovery_replacement_replay_exact_key_roots(
     instance = _settle_transition(
         instance,
         actor=owner,
+        approver=recovery,
         proposed=rotated_owner.principal,
         timestamp="2026-08-12T15:00:00.000000Z",
     )
@@ -186,6 +200,7 @@ def test_owner_rotation_and_recovery_replacement_replay_exact_key_roots(
     instance = _settle_transition(
         instance,
         actor=recovery,
+        approver=rotated_owner,
         proposed=recovered_owner.principal,
         timestamp="2026-08-12T15:01:00.000000Z",
     )
@@ -226,6 +241,7 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
     instance = _settle_transition(
         instance,
         actor=owner,
+        approver=_recovery,
         proposed=reviewer.principal,
         timestamp="2026-08-12T16:00:00.000000Z",
     )
@@ -234,6 +250,7 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
     instance = _settle_transition(
         instance,
         actor=owner,
+        approver=_recovery,
         proposed=reviewer.principal.model_copy(update={"status": "revoked"}),
         timestamp="2026-08-12T16:01:00.000000Z",
     )
@@ -245,15 +262,7 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
     assert reviewer_record.status == "revoked"
 
     base, tree, document_candidate = _candidate(instance)
-    submissions = tuple(
-        sorted(
-            (
-                _sign(owner, document_candidate.candidate_digest, base.semantic_root),
-                _sign(reviewer, document_candidate.candidate_digest, base.semantic_root),
-            ),
-            key=lambda item: item.attestation.signer_id,
-        )
-    )
+    submissions = (_sign(reviewer, document_candidate.candidate_digest, base.semantic_root),)
     with pytest.raises(ApprovalIntegrityError, match="not active"):
         prepare_generation(
             instance._ledger,
@@ -294,10 +303,16 @@ def test_last_recovery_and_unconfigured_recovery_authority_refuse(tmp_path: Path
         principal_id="local-owner",
         roles=("owner",),
     )
+    local_reviewer = generate_client(
+        tmp_path,
+        managed_root=local_root,
+        principal_id="local-reviewer",
+        roles=("reviewer",),
+    )
     local = PlaybillInstance.initialize(
         local_root,
         instance_id="inst_no_recovery",
-        client_principals=(local_owner.principal,),
+        client_principals=(local_owner.principal, local_reviewer.principal),
         workspace_roots=(tmp_path / "workspace",),
         timestamp=FIXED_TIMESTAMP,
     )
@@ -313,14 +328,13 @@ def test_last_recovery_and_unconfigured_recovery_authority_refuse(tmp_path: Path
         **local._ledger.read_tree(local_base.git_oid),
         "principals/local-owner.yaml": render_principal(replacement.principal),
     }
-    invented = local.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id="recovery"),
-        request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/recovery/invented-recovery",
-            proposed_base_oid=local_base.git_oid,
-        ),
-        candidate_tree=local_tree,
-        timestamp="2026-08-12T17:01:00.000000Z",
-    )
-    assert invented.candidate is None
-    assert invented.evaluation.diagnostics[0].code == "playbill.principal.actor_unauthorized"
+    with pytest.raises(ProposalAdmissionError, match="creator_principal_invalid"):
+        local.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="recovery"),
+            request=ProposalAdmissionRequest(
+                target_ref="refs/proposals/recovery/invented-recovery",
+                proposed_base_oid=local_base.git_oid,
+            ),
+            candidate_tree=local_tree,
+            timestamp="2026-08-12T17:01:00.000000Z",
+        )

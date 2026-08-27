@@ -45,8 +45,7 @@ def _candidate(
     *,
     parent: str = ROOT,
     approval_requirements: tuple[ApprovalRequirement, ...] = (
-        ApprovalRequirement(role="owner"),
-        ApprovalRequirement(role="reviewer"),
+        ApprovalRequirement(role="independent-principal"),
     ),
 ) -> CandidateRecord:
     semantic = SemanticCandidate(
@@ -174,18 +173,69 @@ def test_tampered_stale_foreign_revoked_and_recovery_approvals_refuse() -> None:
         )
 
 
-def test_distinct_signers_must_fill_independent_roles() -> None:
-    both_private, both = _key("both", ("owner", "reviewer"))
+def test_one_noncreator_principal_satisfies_fixed_quorum_regardless_of_role() -> None:
+    owner_private, owner = _key("owner", ("owner",))
     reviewer_private, reviewer = _key("reviewer", ("reviewer",))
     candidate = _candidate()
-    one = (_submission(both_private, candidate, signer_id="both"),)
-    with pytest.raises(ApprovalIntegrityError, match="independent"):
-        verify_candidate_approvals(candidate, one, principals=_registry(both))
+    del owner_private
+    submission = (_submission(reviewer_private, candidate, signer_id="reviewer"),)
+    verified = verify_candidate_approvals(
+        candidate,
+        submission,
+        principals=_registry(owner, reviewer),
+        creator_principal_id="owner",
+    )
+    assert tuple(item.signer_id for item in verified) == ("reviewer",)
 
-    two = tuple(
+
+def test_ordinary_creator_cannot_satisfy_or_join_the_fixed_quorum() -> None:
+    owner_private, owner = _key("owner", ("owner",))
+    reviewer_private, reviewer = _key("reviewer", ("reviewer",))
+    candidate = _candidate()
+    creator = _submission(owner_private, candidate, signer_id="owner")
+    with pytest.raises(ApprovalIntegrityError, match="creator_forbidden"):
+        verify_candidate_approvals(
+            candidate,
+            (creator,),
+            principals=_registry(owner, reviewer),
+            creator_principal_id="owner",
+        )
+
+    submissions = tuple(
         sorted(
             (
-                one[0],
+                creator,
+                _submission(reviewer_private, candidate, signer_id="reviewer"),
+            ),
+            key=lambda item: item.attestation.signer_id,
+        )
+    )
+    with pytest.raises(ApprovalIntegrityError, match="creator_forbidden"):
+        verify_candidate_approvals(
+            candidate,
+            submissions,
+            principals=_registry(owner, reviewer),
+            creator_principal_id="owner",
+        )
+
+
+def test_principal_lifecycle_requires_creator_signature_plus_independent_principal() -> None:
+    owner_private, owner = _key("owner", ("owner",))
+    reviewer_private, reviewer = _key("reviewer", ("reviewer",))
+    candidate = _candidate()
+    creator = _submission(owner_private, candidate, signer_id="owner")
+    with pytest.raises(ApprovalIntegrityError, match="independent-Principal"):
+        verify_candidate_approvals(
+            candidate,
+            (creator,),
+            principals=_registry(owner, reviewer),
+            creator_principal_id="owner",
+            purpose="principal-lifecycle",
+        )
+    approvals = tuple(
+        sorted(
+            (
+                creator,
                 _submission(reviewer_private, candidate, signer_id="reviewer"),
             ),
             key=lambda item: item.attestation.signer_id,
@@ -193,50 +243,27 @@ def test_distinct_signers_must_fill_independent_roles() -> None:
     )
     verified = verify_candidate_approvals(
         candidate,
-        two,
-        principals=_registry(both, reviewer),
+        approvals,
+        principals=_registry(owner, reviewer),
+        creator_principal_id="owner",
+        purpose="principal-lifecycle",
     )
-    assert {item.signer_id for item in verified} == {"both", "reviewer"}
+    assert tuple(item.signer_id for item in verified) == ("owner", "reviewer")
 
 
-def test_quorum_matching_reassigns_a_multirole_signer() -> None:
-    both_private, both = _key("a-both", ("owner", "reviewer"))
-    owner_private, owner = _key("b-owner", ("owner",))
-    candidate = _candidate()
-    submissions = (
-        _submission(both_private, candidate, signer_id="a-both"),
-        _submission(owner_private, candidate, signer_id="b-owner"),
-    )
+def test_candidate_must_commit_the_fixed_quorum_shape() -> None:
+    owner_private, owner = _key("owner", ("owner",))
+    reviewer_private, reviewer = _key("reviewer", ("reviewer",))
+    del owner_private
+    candidate = _candidate(approval_requirements=(ApprovalRequirement(role="reviewer"),))
+    submission = (_submission(reviewer_private, candidate, signer_id="reviewer"),)
 
-    verified = verify_candidate_approvals(
-        candidate,
-        submissions,
-        principals=_registry(both, owner),
-    )
-
-    assert tuple(item.signer_id for item in verified) == ("a-both", "b-owner")
-
-
-def test_unsatisfied_overlapping_quorum_is_bounded() -> None:
-    candidate = _candidate(
-        approval_requirements=(
-            ApprovalRequirement(role="owner", minimum_distinct_signers=10),
-            ApprovalRequirement(role="reviewer", minimum_distinct_signers=9),
-        )
-    )
-    keys_and_records = tuple(
-        _key(f"both-{index:02d}", ("owner", "reviewer")) for index in range(18)
-    )
-    submissions = tuple(
-        _submission(private, candidate, signer_id=record.principal_id)
-        for private, record in keys_and_records
-    )
-
-    with pytest.raises(ApprovalIntegrityError, match="independent"):
+    with pytest.raises(ApprovalIntegrityError, match="fixed quorum"):
         verify_candidate_approvals(
             candidate,
-            submissions,
-            principals=_registry(*(record for _private, record in keys_and_records)),
+            submission,
+            principals=_registry(owner, reviewer),
+            creator_principal_id="owner",
         )
 
 

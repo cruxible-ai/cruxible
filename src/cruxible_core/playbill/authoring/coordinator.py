@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Callable, Literal
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.attestations import verify_approval
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1, lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
@@ -59,7 +60,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import ApprovalIntegrityError, PlaybillError
 from cruxible_client.contracts.semantic import ContentSpan, SourceMapping
 from cruxible_client.contracts.temporal import format_datetime, parse_datetime, utc_now
 from cruxible_core.playbill.authoring.insertions import (
@@ -1400,35 +1401,50 @@ class AuthoringIntentCoordinator:
         evidence = self.instance.proposal_evidence()
         candidate = evidence.read_candidate(candidate_digest)
         approvals = evidence.read_approvals(candidate_digest)
+        admission = evidence.read_admission(proposal_id)
+        evaluation = evidence.read_evaluation(proposal_id)
+        if evaluation.candidate_digest != candidate_digest:
+            raise RuntimeError("candidate status proposal association is inconsistent")
         generation = self.instance.generation_for_semantic_root(
             candidate.candidate.parent_semantic_root
         )
-        signer_roles = {
-            submission.attestation.signer_id: set(
-                generation.principals.require_active(
-                    submission.attestation.signer_id
-                ).authority_roles
-            )
-            for submission in approvals
-        }
+        principal_lifecycle = all(
+            member.artifact_kind == "principal-lifecycle" for member in candidate.members
+        )
+        invalid_approval = False
+        verified_signers: set[str] = set()
+        for submission in approvals:
+            try:
+                verified = verify_approval(
+                    submission,
+                    candidate=candidate.candidate,
+                    principals=generation.principals,
+                    purpose=("principal-lifecycle" if principal_lifecycle else "ordinary-artifact"),
+                )
+            except ApprovalIntegrityError:
+                invalid_approval = True
+            else:
+                verified_signers.add(verified.signer_id)
         conditions: list[AcceptanceConditionV1] = []
-        approvals_complete = True
-        for requirement in candidate.approval_requirements:
-            count = sum(requirement.role in roles for roles in signer_roles.values())
-            satisfied = count >= requirement.minimum_distinct_signers
-            approvals_complete = approvals_complete and satisfied
+        independent_satisfied = len(verified_signers - {admission.actor_id}) >= 1
+        conditions.append(
+            AcceptanceConditionV1(
+                condition="approval:independent-principal:1",
+                owner="approver",
+                action="Wait for 1 distinct non-creator Principal approval.",
+                satisfied=independent_satisfied,
+            )
+        )
+        approvals_complete = independent_satisfied
+        if principal_lifecycle:
+            actor_binding_satisfied = admission.actor_id in verified_signers
+            approvals_complete = approvals_complete and actor_binding_satisfied
             conditions.append(
                 AcceptanceConditionV1(
-                    condition=(
-                        f"approval:{requirement.role}:{requirement.minimum_distinct_signers}"
-                    ),
+                    condition="principal-lifecycle-actor-binding",
                     owner="approver",
-                    action=(
-                        "Wait for independently submitted approval attestations "
-                        f"from {requirement.minimum_distinct_signers} distinct "
-                        f"{requirement.role} signer(s)."
-                    ),
-                    satisfied=satisfied,
+                    action="The lifecycle actor must sign the exact candidate.",
+                    satisfied=actor_binding_satisfied,
                 )
             )
         conditions.append(
@@ -1442,7 +1458,11 @@ class AuthoringIntentCoordinator:
             )
         )
         return CandidateStatusV1(
-            state=("ready_to_activate" if approvals_complete else "awaiting_external_approval"),
+            state=(
+                "approval_invalid"
+                if invalid_approval
+                else ("ready_to_activate" if approvals_complete else "awaiting_external_approval")
+            ),
             proposal_id=proposal_id,
             candidate_digest=candidate_digest,
             current_accepted_coordinate=AcceptedCoordinate.from_internal(

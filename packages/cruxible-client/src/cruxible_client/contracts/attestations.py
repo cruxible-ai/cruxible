@@ -23,7 +23,11 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError, PrincipalIntegrityError
-from cruxible_client.contracts.governance import governance_identifier
+from cruxible_client.contracts.governance import (
+    PLAYBILL_FIXED_INDEPENDENT_APPROVALS,
+    PLAYBILL_INDEPENDENT_APPROVAL_ROLE,
+    governance_identifier,
+)
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.types import PrincipalRole
 
@@ -188,9 +192,15 @@ def verify_candidate_approvals(
     submissions: tuple[ApprovalSubmission, ...],
     *,
     principals: PrincipalRegistrySnapshot,
+    creator_principal_id: str,
     purpose: ApprovalPurpose = "ordinary-artifact",
 ) -> tuple[VerifiedApproval, ...]:
-    """Verify the exact role quorum with one signer usable for at most one slot."""
+    """Verify the fixed independent-Principal quorum at the candidate coordinate."""
+
+    try:
+        principals.require_active(creator_principal_id)
+    except PrincipalIntegrityError as exc:
+        raise ApprovalIntegrityError(str(exc)) from exc
 
     ordered = tuple(
         sorted(
@@ -215,59 +225,21 @@ def verify_candidate_approvals(
         )
         for submission in submissions
     )
-
-    slots = tuple(
-        role
-        for requirement in candidate.approval_requirements
-        for role in (requirement.role,) * requirement.minimum_distinct_signers
-    )
-    eligible = {
-        role: tuple(
-            index for index, approval in enumerate(verified) if role in approval.signer_roles
-        )
-        for role in dict.fromkeys(slots)
-    }
-
-    # Find a maximum one-to-one slot/signer assignment with deterministic
-    # augmenting paths. This preserves the independent-role semantics without
-    # the exponential worst case of enumerating every possible assignment.
-    slot_to_signer: list[int | None] = [None] * len(slots)
-    signer_to_slot: list[int | None] = [None] * len(verified)
-
-    def augment(root_slot: int) -> bool:
-        queued_slots = [root_slot]
-        seen_slots = {root_slot}
-        seen_signers: set[int] = set()
-        signer_predecessor: dict[int, int] = {}
-        cursor = 0
-
-        while cursor < len(queued_slots):
-            slot = queued_slots[cursor]
-            cursor += 1
-            for signer in eligible.get(slots[slot], ()):
-                if signer in seen_signers:
-                    continue
-                seen_signers.add(signer)
-                signer_predecessor[signer] = slot
-                matched_slot = signer_to_slot[signer]
-                if matched_slot is None:
-                    current_signer = signer
-                    while True:
-                        current_slot = signer_predecessor[current_signer]
-                        displaced_signer = slot_to_signer[current_slot]
-                        slot_to_signer[current_slot] = current_signer
-                        signer_to_slot[current_signer] = current_slot
-                        if displaced_signer is None:
-                            return True
-                        current_signer = displaced_signer
-                if matched_slot not in seen_slots:
-                    seen_slots.add(matched_slot)
-                    queued_slots.append(matched_slot)
-        return False
-
-    if len(slots) > len(verified) or any(not augment(slot) for slot in range(len(slots))):
+    required = candidate.approval_requirements
+    if len(required) != 1 or (
+        required[0].role != PLAYBILL_INDEPENDENT_APPROVAL_ROLE
+        or required[0].minimum_distinct_signers != PLAYBILL_FIXED_INDEPENDENT_APPROVALS
+    ):
+        raise ApprovalIntegrityError("candidate approval requirement is not the fixed quorum")
+    creator_present = any(item.signer_id == creator_principal_id for item in verified)
+    if purpose == "ordinary-artifact" and creator_present:
         raise ApprovalIntegrityError(
-            "verified approvals do not satisfy every independent candidate role"
+            "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve"
+        )
+    independent_count = sum(item.signer_id != creator_principal_id for item in verified)
+    if independent_count < PLAYBILL_FIXED_INDEPENDENT_APPROVALS:
+        raise ApprovalIntegrityError(
+            "verified approvals do not satisfy the fixed independent-Principal quorum"
         )
     return verified
 

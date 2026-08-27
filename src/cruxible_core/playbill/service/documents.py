@@ -23,6 +23,7 @@ from cruxible_client.contracts.documents import (
     render_document,
 )
 from cruxible_client.contracts.errors import (
+    ApprovalIntegrityError,
     DocumentNotFoundError,
     ProposalIntegrityError,
     SettlementIntegrityError,
@@ -288,7 +289,7 @@ def service_submit_playbill_approval(
 ) -> PlaybillApprovalReceipt:
     """Verify and persist only a public attestation under historical key state."""
 
-    _proposal, candidate = _candidate_for_proposal(instance, proposal_id)
+    proposal, candidate = _candidate_for_proposal(instance, proposal_id)
     if attestation.payload_digest != candidate.candidate_digest:
         raise ProposalIntegrityError("attestation payload differs from proposal candidate")
     signing_generation = instance.generation_for_semantic_root(
@@ -301,6 +302,10 @@ def service_submit_playbill_approval(
     principal_lifecycle = all(
         member.artifact_kind == "principal-lifecycle" for member in candidate.members
     )
+    if not principal_lifecycle and attestation.signer_id == proposal.admission.actor_id:
+        raise ApprovalIntegrityError(
+            "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve"
+        )
     verified = verify_approval(
         submission,
         candidate=candidate.candidate,

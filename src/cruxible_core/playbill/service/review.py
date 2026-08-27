@@ -343,11 +343,13 @@ def service_prepare_playbill_approval(
     principal_lifecycle = all(
         member.artifact_kind == "principal-lifecycle" for member in review.complete_members
     )
+    creator_principal_id = str(review.provenance["actor_id"])
+    if not principal_lifecycle and signer_id == creator_principal_id:
+        raise ApprovalIntegrityError(
+            "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve"
+        )
     if not principal_lifecycle and principal.authority_roles == ("recovery",):
         raise ApprovalIntegrityError("recovery principal cannot approve ordinary Documents")
-    required_roles = {item.role for item in review.candidate.approval_requirements}
-    if required_roles.isdisjoint(principal.authority_roles):
-        raise ApprovalIntegrityError("principal cannot satisfy any required approval role")
     return PlaybillApprovalChallenge(
         proposal_id=proposal_id,
         signer_principal=principal,

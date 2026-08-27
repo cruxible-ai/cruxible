@@ -787,6 +787,7 @@ def prepare_generation(
         candidate,
         approval_submissions,
         principals=principals,
+        creator_principal_id=actor_binding.actor_id,
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
     _verify_claim_admission_constraints(candidate, verified_approvals)
