@@ -6,6 +6,8 @@ from __future__ import annotations
 class CoreError(Exception):
     """Base exception for all local and reconstructed Cruxible errors."""
 
+    error_code: str | None = None
+
     def __init__(self, message: str, *, mutation_receipt_id: str | None = None) -> None:
         self.mutation_receipt_id = mutation_receipt_id
         super().__init__(message)
