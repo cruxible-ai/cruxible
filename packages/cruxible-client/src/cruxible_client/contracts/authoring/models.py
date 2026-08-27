@@ -1702,12 +1702,16 @@ def update_insertion_expectation_v2(
 def insertion_prepare_operation_v2_key(
     expectation_id: str,
     observation: PublicationSourceObservationV2,
+    *,
+    live_expectation_digest: str,
 ) -> str:
+    _sha256(live_expectation_digest, label="live publication expectation digest")
     return typed_digest(
         Sha256Value,
         INSERTION_PREPARE_OPERATION_V2_DOMAIN,
         {
             "expectation_id": expectation_id,
+            "live_expectation_digest": live_expectation_digest,
             "observation_digest": publication_source_observation_v2_digest(observation),
         },
     ).tagged

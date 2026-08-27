@@ -213,6 +213,10 @@ class ProjectionMarkerError(PlaybillError):
         super().__init__(f"{self.code}: {message}")
 
 
+class ProjectionBootstrapUnstampedError(ProjectionMarkerError):
+    code = "playbill.projection.bootstrap_unstamped"
+
+
 @dataclass(frozen=True)
 class ParsedProjectionBlock:
     source_id: str
@@ -227,7 +231,9 @@ class ParsedProjectionBlock:
 
     def summary(self) -> ProjectionMarkerSummaryV1:
         if self.stamp is None:
-            raise ProjectionMarkerError("an unstamped bootstrap block is not a declaration")
+            raise ProjectionBootstrapUnstampedError(
+                "an unstamped bootstrap block is not a declaration"
+            )
         return ProjectionMarkerSummaryV1(
             stamp=self.stamp,
             observed_body_digest=self.body_digest,
@@ -384,7 +390,9 @@ def parse_projection_blocks(
         elif allow_bootstrap:
             stamp = None
         else:
-            raise ProjectionMarkerError("an unstamped bootstrap block is not a declaration")
+            raise ProjectionBootstrapUnstampedError(
+                "an unstamped bootstrap block is not a declaration"
+            )
         active = (block_id, stamp, line_start, offset)
     if active is not None:
         raise ProjectionMarkerError("projection block opening has no matching closing marker")
@@ -473,6 +481,7 @@ __all__ = [
     "ParsedProjectionBlock",
     "ProjectionBackingV1",
     "ProjectionBlockStampV1",
+    "ProjectionBootstrapUnstampedError",
     "ProjectionClaimBackingV1",
     "ProjectionMarkerSummaryV1",
     "ProjectionMarkerError",

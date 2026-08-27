@@ -26,7 +26,11 @@ from cruxible_client.contracts.authoring.models import (
     publication_source_observation_v2_digest,
 )
 from cruxible_client.contracts.claims import ClaimArtifactV2, claim_path, parse_claim
-from cruxible_client.contracts.declared_blocks import frame_projection_block
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionBootstrapUnstampedError,
+    frame_projection_block,
+    parse_projection_blocks,
+)
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.insertions import (
@@ -36,6 +40,7 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationClaimNotAccepted,
     PublicationPreparationStale,
     PublicationPrepareOrConfirmRequired,
+    PublicationRevisionLimitExceeded,
     PublicationSourceHasUnrepinnedBlock,
     PublicationTerminalStateRefused,
     build_publication_preparation,
@@ -276,6 +281,8 @@ def test_prepare_refuses_stale_ambiguous_and_marker_incompatible_bodies() -> Non
     bootstrap = (
         b"<!-- playbill:block:draft -->\nunstamped\n<!-- /playbill:block:draft -->\nstatus: \n"
     )
+    with pytest.raises(ProjectionBootstrapUnstampedError):
+        parse_projection_blocks(bootstrap, source_id=expectation.target.source_id)
     with pytest.raises(PublicationSourceHasUnrepinnedBlock, match="block repin"):
         build_publication_preparation(
             expectation,
@@ -322,6 +329,41 @@ def test_reprepare_is_deterministic_and_increments_only_for_a_new_clean_preimage
         )
 
 
+def test_reprepare_has_a_fixed_revision_cap_with_exact_retry_still_allowed() -> None:
+    expectation = _expectation()
+    last_content = b""
+    for revision in range(1, 17):
+        last_content = b"prefix " * revision + b"status: \n"
+        preparation = build_publication_preparation(
+            expectation,
+            observation=_observation(last_content),
+            body=b"ready\n",
+            accepted_coordinate=COORDINATE,
+            accepted_generation=7,
+        )
+        assert preparation.revision == revision
+        expectation = mark_publication_prepared(expectation, preparation=preparation)
+
+    assert (
+        build_publication_preparation(
+            expectation,
+            observation=_observation(last_content),
+            body=b"ready\n",
+            accepted_coordinate=COORDINATE,
+            accepted_generation=7,
+        )
+        == expectation.preparation
+    )
+    with pytest.raises(PublicationRevisionLimitExceeded, match="16-revision limit"):
+        build_publication_preparation(
+            expectation,
+            observation=_observation(b"one more prefix\nstatus: \n"),
+            body=b"ready\n",
+            accepted_coordinate=COORDINATE,
+            accepted_generation=7,
+        )
+
+
 def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
     tmp_path: Path,
 ) -> None:
@@ -357,6 +399,62 @@ def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
         retained_body=b"status: ready\n",
     )
     assert applied.outcome == "applied"
+
+
+def test_stale_prepare_replay_cannot_return_a_superseded_preparation(
+    tmp_path: Path,
+) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    first = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    response_loss_retry = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert response_loss_retry.expectation == first.expectation
+    assert response_loss_retry.preparation == first.preparation
+
+    concurrent = b"concurrent heading\n" + preimage
+    second = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(concurrent),
+    )
+    assert second.preparation is not None and second.preparation.revision == 2
+
+    reverted = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert reverted.preparation is not None and reverted.preparation.revision == 3
+    durable = coordinator.store.get(intent_id, actor_id=actor.actor_id)
+    assert durable.insertion_expectation == reverted.expectation
+
+    applied = apply_playbill_publication(
+        preimage,
+        intent_id=intent_id,
+        expectation=reverted.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=reverted.expectation,
+        observation=_observation(applied.content),
+    )
+    assert confirmation is not None
+    confirmed = coordinator.confirm_insertion(
+        intent_id,
+        actor=actor,
+        observation=confirmation,
+    )
+    assert confirmed.outcome == "bound"
 
 
 def test_prepare_before_claim_acceptance_refuses_without_terminalizing_then_recovers(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from datetime import datetime, timedelta
+from typing import NoReturn
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
@@ -36,6 +37,7 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import CasDigest
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
+    ProjectionBootstrapUnstampedError,
     ProjectionClaimBackingV1,
     ProjectionMarkerError,
     frame_projection_block,
@@ -46,6 +48,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 
 DEFAULT_INSERTION_TOMBSTONE_HORIZON = timedelta(days=30)
+MAX_PUBLICATION_PREPARATION_REVISIONS = 16
 
 
 class InsertionProtocolError(PlaybillError):
@@ -64,6 +67,10 @@ class PublicationNotPrepared(InsertionProtocolError):
 
 class PublicationPreparationStale(InsertionProtocolError):
     code = "playbill.authoring.publication_preparation_stale"
+
+
+class PublicationRevisionLimitExceeded(InsertionProtocolError):
+    code = "playbill.authoring.publication_revision_limit"
 
 
 class PublicationAnchorStale(InsertionProtocolError):
@@ -94,12 +101,12 @@ class PublicationPrepareOrConfirmRequired(InsertionProtocolError):
     code = "playbill.authoring.publication_prepare_or_confirm_required"
 
 
-def _raise(error: type[InsertionProtocolError], message: str) -> None:
+def _raise(error: type[InsertionProtocolError], message: str) -> NoReturn:
     raise error(f"{error.code}: {message}")
 
 
-def _raise_marker_refusal(exc: ProjectionMarkerError) -> None:
-    if "unstamped bootstrap block" in str(exc):
+def _raise_marker_refusal(exc: ProjectionMarkerError) -> NoReturn:
+    if isinstance(exc, ProjectionBootstrapUnstampedError):
         raise PublicationSourceHasUnrepinnedBlock(
             f"{PublicationSourceHasUnrepinnedBlock.code}: run playbill block repin before "
             "publishing into this source"
@@ -253,6 +260,11 @@ def build_publication_preparation(
         and observation.byte_length == prior.preimage_byte_length
     ):
         return prior
+    if prior is not None and prior.revision >= MAX_PUBLICATION_PREPARATION_REVISIONS:
+        _raise(
+            PublicationRevisionLimitExceeded,
+            f"publication reached its {MAX_PUBLICATION_PREPARATION_REVISIONS}-revision limit",
+        )
 
     block_id = (
         prior.block_id if prior is not None else publication_block_id(expectation.expectation_id)
@@ -357,6 +369,11 @@ def mark_publication_prepared(
     *,
     preparation: PublicationPreparationV2,
 ) -> InsertionExpectationV2:
+    if preparation.revision > MAX_PUBLICATION_PREPARATION_REVISIONS:
+        _raise(
+            PublicationRevisionLimitExceeded,
+            f"publication exceeds its {MAX_PUBLICATION_PREPARATION_REVISIONS}-revision limit",
+        )
     if expectation.state == "prepared":
         if expectation.preparation == preparation:
             return expectation
@@ -382,6 +399,8 @@ def mark_publication_prepared(
         _raise(PublicationPreparationStale, "preparation names another expectation")
     if preparation.target_digest != insertion_target_v2_digest(expectation.target):
         _raise(PublicationPreparationStale, "preparation names another insertion target")
+    if preparation.revision != 1:
+        _raise(PublicationPreparationStale, "initial preparation must have revision 1")
     return update_insertion_expectation_v2(
         expectation,
         state="prepared",
@@ -667,6 +686,7 @@ def mark_claim_currency_changed(
 __all__ = [
     "DEFAULT_INSERTION_TOMBSTONE_HORIZON",
     "InsertionProtocolError",
+    "MAX_PUBLICATION_PREPARATION_REVISIONS",
     "PublicationAnchorAmbiguous",
     "PublicationAnchorStale",
     "PublicationBodyNotMarkerCompatible",
@@ -675,6 +695,7 @@ __all__ = [
     "PublicationNotPrepared",
     "PublicationPrepareOrConfirmRequired",
     "PublicationPreparationStale",
+    "PublicationRevisionLimitExceeded",
     "PublicationSourceHasUnrepinnedBlock",
     "PublicationTerminalStateRefused",
     "build_publication_preparation",

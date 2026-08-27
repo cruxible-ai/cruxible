@@ -639,6 +639,7 @@ class AuthoringIntentCoordinator:
         operation_key = insertion_prepare_operation_v2_key(
             expectation.expectation_id,
             observation,
+            live_expectation_digest=expectation.expectation_digest,
         )
         if expectation.state == "bound":
             if exact is None:
