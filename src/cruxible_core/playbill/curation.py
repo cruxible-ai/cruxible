@@ -1010,7 +1010,7 @@ def replay_curation_items(
         if (
             predecessor is None
             or predecessor.pattern_id != item.pattern_id
-            or predecessor.status not in {"accepted_fixed", "quarantined"}
+            or predecessor.status not in {"accepted_fixed", "overruled", "quarantined"}
         ):
             raise ValueError("curation recurrence predecessor is invalid")
     return tuple(projected)

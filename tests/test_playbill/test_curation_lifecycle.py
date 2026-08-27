@@ -20,6 +20,8 @@ from cruxible_core.playbill.curation import (
     CurationEvidenceRefV1,
     build_curation_accepted_fixed,
     build_curation_detection,
+    build_curation_overruled,
+    build_curation_suppressed,
     build_pattern_observation,
     curation_detection_evidence_digest,
     curation_item_id,
@@ -31,6 +33,7 @@ from cruxible_core.playbill.curation_detectors import CurationDetectorResult
 from cruxible_core.playbill.review_operational import ReviewOperationalConcurrentChangeError
 from cruxible_core.service.playbill_curation import (
     PlaybillCurationAcceptFixedRequestV1,
+    PlaybillCurationError,
     PlaybillCurationItemAlreadyResolved,
     PlaybillCurationListRequestV1,
     PlaybillCurationOverruleRequestV1,
@@ -733,6 +736,229 @@ def test_overrule_stays_silent_on_redetection_and_detector_identity_is_versioned
         detections=(other_version_identity,),
     )
     assert [row.pattern_id for row in versioned_result.items] == [other_version_identity.pattern_id]
+
+
+_MATRIX_STATUSES = (
+    "open",
+    "suppressed",
+    "accepted_fixed",
+    "overruled",
+    "quarantined",
+    "accepted_fixed_successor",
+    "quarantined_successor",
+    "quarantined_predecessor_with_successor",
+)
+_MATRIX_ACTIONS = (
+    "overrule",
+    "suppress_item",
+    "suppress_pattern",
+    "accept_fixed",
+    "redetect",
+)
+
+
+def _append_matrix_payload(instance, payload, *, expected: str | None):  # type: ignore[no-untyped-def]
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    return instance.review_operational_store().append(
+        family="curation",
+        partition_id=payload.item_id,
+        event_id=payload.event_id,
+        payload=payload,
+        coordinate=coordinate,
+        generation=0,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=expected,
+    )
+
+
+def _matrix_fixed(item):  # type: ignore[no-untyped-def]
+    return build_curation_accepted_fixed(
+        item_id=item.item_id,
+        expected_latest_event_digest=item.latest_event_digest,
+        actor_principal_id="curator",
+        reason="matrix setup accepted fix",
+        accepted_proposal_id="sha256:" + "2" * 64,
+        accepted_changeset_digest="sha256:" + "3" * 64,
+        resolved_generation=1,
+        affected_members=(
+            CurationAffectedMemberV1(
+                path="claim-types/project.work_item.status.yaml",
+                disposition="replace",
+                predecessor_artifact_digest="sha256:" + "4" * 64,
+                candidate_artifact_digest="sha256:" + "5" * 64,
+            ),
+        ),
+    )
+
+
+def _matrix_scenario(tmp_path: Path, status: str):  # type: ignore[no-untyped-def]
+    if status.startswith("quarantined"):
+        instance, _owner = initialize_local(tmp_path)
+        coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        raw = _legacy_observation(
+            pattern_kind="playbill.curation.provenance_concentration.v1",
+            subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
+            detail={"basis": "effective_supporting_control_components"},
+            old_law={
+                "minimum_live_supported_claims": 2,
+                "effective_supporting_control_components": 1,
+            },
+        )
+        instance.review_operational_store().append(
+            family="curation",
+            partition_id=str(raw["item_id"]),
+            event_id=str(raw["event_id"]),
+            payload=raw,
+            coordinate=coordinate,
+            generation=0,
+            actor_context=_actor(),
+            recorded_at=NOW,
+            expected_latest_event_digest=None,
+        )
+        predecessor = replay_curation_items(
+            instance.review_operational_store().events(family="curation")
+        )[0]
+        if status == "quarantined":
+            return instance, predecessor
+        successor_observation = build_pattern_observation(
+            detection=_provenance_detection(),
+            predecessor_item_id=predecessor.item_id,
+            accepted_generation=1,
+        )
+        _append_matrix_payload(instance, successor_observation, expected=None)
+        items = replay_curation_items(instance.review_operational_store().events(family="curation"))
+        if status == "quarantined_predecessor_with_successor":
+            return instance, next(item for item in items if item.item_id == predecessor.item_id)
+        return instance, next(
+            item for item in items if item.predecessor_item_id == predecessor.item_id
+        )
+
+    instance, item = _seed_item(tmp_path)
+    if status == "open":
+        return instance, item
+    if status == "suppressed":
+        suppressed = build_curation_suppressed(
+            item_id=item.item_id,
+            expected_latest_event_digest=item.latest_event_digest,
+            actor_principal_id="curator",
+            reason="matrix setup suppression",
+            scope="item",
+            until_generation=None,
+        )
+        _append_matrix_payload(instance, suppressed, expected=item.latest_event_digest)
+    elif status in {"accepted_fixed", "accepted_fixed_successor"}:
+        fixed = _matrix_fixed(item)
+        _append_matrix_payload(instance, fixed, expected=item.latest_event_digest)
+        if status == "accepted_fixed_successor":
+            successor_observation = build_pattern_observation(
+                detection=_detection(),
+                predecessor_item_id=item.item_id,
+                accepted_generation=2,
+            )
+            _append_matrix_payload(instance, successor_observation, expected=None)
+    else:
+        assert status == "overruled"
+        overruled = build_curation_overruled(
+            item_id=item.item_id,
+            expected_latest_event_digest=item.latest_event_digest,
+            actor_principal_id="curator",
+            reason="matrix setup overrule",
+        )
+        _append_matrix_payload(instance, overruled, expected=item.latest_event_digest)
+    items = replay_curation_items(instance.review_operational_store().events(family="curation"))
+    if status == "accepted_fixed_successor":
+        return instance, next(item for item in items if item.predecessor_item_id is not None)
+    return instance, next(row for row in items if row.item_id == item.item_id)
+
+
+def _matrix_detection(item):  # type: ignore[no-untyped-def]
+    if item.pattern_kind == "playbill.curation.provenance_concentration.v1":
+        return _provenance_detection(item.subject.name)
+    return _detection(item.subject.name)
+
+
+@pytest.mark.parametrize("status", _MATRIX_STATUSES)
+@pytest.mark.parametrize("action", _MATRIX_ACTIONS)
+def test_every_accepted_public_curation_action_preserves_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    action: str,
+) -> None:
+    instance, target = _matrix_scenario(tmp_path, status)
+    store = instance.review_operational_store()
+    before_count = len(store.events(family="curation"))
+    try:
+        if action == "overrule":
+            service_overrule_playbill_curation(
+                instance,
+                request=PlaybillCurationOverruleRequestV1(
+                    item_id=target.item_id,
+                    expected_latest_event_digest=target.latest_event_digest,
+                    reason=f"matrix {status} overrule",
+                ),
+                actor_context=_actor(),
+            )
+        elif action in {"suppress_item", "suppress_pattern"}:
+            service_suppress_playbill_curation(
+                instance,
+                request=PlaybillCurationSuppressRequestV1(
+                    item_id=target.item_id,
+                    expected_latest_event_digest=target.latest_event_digest,
+                    reason=f"matrix {status} {action}",
+                    scope="item" if action == "suppress_item" else "pattern",
+                ),
+                actor_context=_actor(),
+            )
+        elif action == "accept_fixed":
+            affected = _matrix_fixed(target).affected_members
+            monkeypatch.setattr(
+                "cruxible_core.service.playbill_curation._accepted_change",
+                lambda *args, **kwargs: (
+                    target.first_proposed_generation + 1,
+                    object(),
+                    {},
+                    {},
+                ),
+            )
+            monkeypatch.setattr(
+                "cruxible_core.service.playbill_curation._affected_members",
+                lambda *args, **kwargs: affected,
+            )
+            monkeypatch.setattr(
+                "cruxible_core.service.playbill_curation._related_paths",
+                lambda *args, **kwargs: {affected[0].path},
+            )
+            service_accept_fixed_playbill_curation(
+                instance,
+                request=PlaybillCurationAcceptFixedRequestV1(
+                    item_id=target.item_id,
+                    expected_latest_event_digest=target.latest_event_digest,
+                    reason=f"matrix {status} accepted fix",
+                    accepted_proposal_id="sha256:" + "6" * 64,
+                    accepted_changeset_digest="sha256:" + "7" * 64,
+                ),
+                actor_context=_actor(),
+            )
+        else:
+            assert action == "redetect"
+            _serve_detection(
+                instance,
+                monkeypatch,
+                generation=3,
+                detections=(_matrix_detection(target),),
+            )
+    except PlaybillCurationError:
+        assert len(store.events(family="curation")) == before_count
+
+    after_action_count = len(store.events(family="curation"))
+    if status == "quarantined_predecessor_with_successor" and action == "overrule":
+        assert after_action_count == before_count + 1
+    replayed = replay_curation_items(store.events(family="curation"))
+    listed = _serve_detection(instance, monkeypatch, generation=4, detections=())
+    assert replayed
+    assert listed.tag == "playbill-curation-list-result-v1"
 
 
 def test_curation_list_retries_one_same_generation_operational_conflict(
