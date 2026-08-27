@@ -194,7 +194,9 @@ def error_to_response(exc: CoreError) -> tuple[int, ErrorResponse]:
     """Convert a CoreError into an HTTP status code and structured payload."""
     context: dict[str, Any] = {}
     errors: list[str] = []
-    error_code = getattr(exc, "error_code", None) or getattr(exc, "code", None)
+    error_code = getattr(exc, "error_code", None)
+    if error_code is None and isinstance(exc, InsertionProtocolError):
+        error_code = exc.code
 
     if isinstance(exc, ConfigError | DataValidationError):
         errors = list(exc.errors)

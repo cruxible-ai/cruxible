@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
 from cruxible_client.authoring.examples import claim_flow_a_example
+from cruxible_core.playbill.authoring.insertions import PublicationClaimNotAccepted
 from cruxible_core.playbill.claim_type_inputs import (
     claim_type_input_example,
     lower_claim_type_input,
@@ -22,6 +23,14 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
     compiler_digest="sha256:" + "4" * 64,
 )
 INTENT_ID = "AIT-" + "5" * 32
+
+EMPTY_PUBLICATION_OBSERVATION = {
+    "tag": "playbill-publication-source-observation-v2",
+    "source_id": "repo.work-items",
+    "content_base64": "",
+    "content_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "byte_length": 0,
+}
 
 
 def test_http_compile_and_submit_keep_the_frozen_request_boundary(
@@ -136,6 +145,35 @@ def test_http_input_variants_delegate_without_exposing_a_base(
     assert response.status_code == 200, response.text
     assert seen and seen[0][0] == instance_id
     assert "base" not in response.request.content.decode()
+
+
+def test_http_prepare_route_maps_insertion_protocol_refusal_to_typed_400(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+
+    def prepare_refusal(selected: str, intent_id: str, *, observation: object):
+        assert (selected, intent_id) == (instance_id, INTENT_ID)
+        raise PublicationClaimNotAccepted(
+            "playbill.authoring.publication_claim_not_accepted: Claim is not accepted"
+        )
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_authoring_prepare_publication",
+        prepare_refusal,
+    )
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/prepare",
+        json={
+            "tag": "playbill-insertion-prepare-request-v2",
+            "observation": EMPTY_PUBLICATION_OBSERVATION,
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error_type"] == "PublicationClaimNotAccepted"
+    assert response.json()["error_code"] == "playbill.authoring.publication_claim_not_accepted"
 
 
 def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
