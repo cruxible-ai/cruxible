@@ -25,7 +25,10 @@
     "POST": "PlaybillInsertionAbandonResult"
   },
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm": {
-    "POST": "PlaybillInsertionConfirmResult"
+    "POST": "PlaybillInsertionConfirmResult | PlaybillInsertionConfirmResultV2"
+  },
+  "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/prepare": {
+    "POST": "PlaybillInsertionPrepareResult"
   },
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight": {
     "POST": "PlaybillAuthoringPreflightResult"

@@ -30,6 +30,7 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationAnchorStale,
     PublicationBodyNotMarkerCompatible,
     PublicationPrepareOrConfirmRequired,
+    PublicationTerminalStateRefused,
     build_publication_preparation,
     mark_publication_prepared,
     publication_confirmation_from_source,
@@ -38,7 +39,7 @@ from cruxible_core.playbill.authoring.insertions import (
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from tests.test_playbill._support import initialize_local
-from tests.test_playbill.test_authoring_insertions import _activate
+from tests.test_playbill.test_authoring_insertions import _activate, _successor_payload
 from tests.test_playbill.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
@@ -139,7 +140,24 @@ def _submitted_publication(tmp_path: Path):
     resumed = coordinator.resume(intent.intent_id, actor=actor).intent
     assert resumed.insertion_expectation is not None
     assert resumed.insertion_expectation.state == "pending"
-    return instance, coordinator, actor, intent.intent_id, preimage, clock
+    return instance, owner, coordinator, actor, intent.intent_id, preimage, clock
+
+
+def _final_source(intent_id: str, prepared, preimage: bytes) -> bytes:  # type: ignore[no-untyped-def]
+    assert prepared.preparation is not None
+    preparation = prepared.preparation
+    framed = frame_projection_block(stamp=preparation.stamp, body=b"status: ready\n")
+    offset = preparation.rebased_selector.insertion_offset
+    final = preimage[:offset] + framed + preimage[offset:]
+    assert (
+        publication_confirmation_from_source(
+            intent_id=intent_id,
+            expectation=prepared.expectation,
+            observation=_observation(final),
+        )
+        is not None
+    )
+    return final
 
 
 def test_v2_target_and_source_observation_digest_exact_bytes() -> None:
@@ -271,7 +289,9 @@ def test_reprepare_is_deterministic_and_increments_only_for_a_new_clean_preimage
 def test_pin_15_prepared_status_never_passively_terminalizes_and_exact_confirm_rescues(
     tmp_path: Path,
 ) -> None:
-    instance, coordinator, actor, intent_id, preimage, clock = _submitted_publication(tmp_path)
+    instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
+        tmp_path
+    )
     prepared = coordinator.prepare_publication(
         intent_id,
         actor=actor,
@@ -305,6 +325,107 @@ def test_pin_15_prepared_status_never_passively_terminalizes_and_exact_confirm_r
     accepted_claim = parse_claim(accepted_tree[path], path=path)
     assert isinstance(accepted_claim, ClaimArtifactV2)
     assert all(citation.origin != "self_published" for citation in accepted_claim.backing.citations)
+
+
+def test_prepare_response_loss_and_terminal_conflicts_are_deterministic(tmp_path: Path) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
+        tmp_path
+    )
+    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
+
+    first = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    retry = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+
+    assert first.outcome == retry.outcome == "expired"
+    assert first.expectation == retry.expectation
+    with pytest.raises(PublicationTerminalStateRefused):
+        coordinator.prepare_publication(
+            intent_id,
+            actor=actor,
+            observation=_observation(b"changed source\n"),
+        )
+
+
+def test_exact_postimage_prepare_rescues_after_expiry_and_confirm_retry_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    final = _final_source(intent_id, prepared, preimage)
+    clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
+
+    rescued = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(final),
+    )
+    assert rescued.outcome == "bound"
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=rescued.expectation,
+        observation=_observation(final),
+    )
+    assert confirmation is not None
+    retry = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+    assert retry.outcome == "already_bound"
+
+    wrong = confirmation.model_copy(update={"observed_occurrence_count": 2})
+    with pytest.raises(PublicationTerminalStateRefused):
+        coordinator.confirm_insertion(intent_id, actor=actor, observation=wrong)
+
+
+def test_prepared_currency_change_is_passive_until_exact_confirmation(tmp_path: Path) -> None:
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    final = _final_source(intent_id, prepared, preimage)
+    original = coordinator.store.get(intent_id, actor_id=actor.actor_id)
+    other = AuthoringIntentCoordinator.for_instance(instance)
+    successor = other.create(
+        actor=actor,
+        payload=_successor_payload(original.semantic_identity, value="done"),
+        canonical_timestamp="2026-08-21T12:00:02.000000Z",
+    ).intent
+    submitted = other.submit(successor.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=submitted.status.proposal_id,
+        candidate_digest=submitted.status.candidate_digest,
+    )
+
+    passive = coordinator.resume(intent_id, actor=actor).intent
+    assert passive.insertion_expectation is not None
+    assert passive.insertion_expectation.state == "prepared"
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=passive.insertion_expectation,
+        observation=_observation(final),
+    )
+    assert confirmation is not None
+    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+    assert bound.outcome == "bound"
 
 
 # Kept here so the frozen test module owns one absolute instant used by the

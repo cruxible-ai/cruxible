@@ -149,6 +149,7 @@ GET  /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/status
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/rebase
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/submit
+POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/prepare
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm
 POST /api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/abandon
 GET  /api/v1/{instance_id}/playbill/documents
@@ -228,6 +229,7 @@ cruxible_playbill_authoring_abandon_insertion
 cruxible_playbill_authoring_bind
 cruxible_playbill_authoring_compile
 cruxible_playbill_authoring_confirm_insertion
+cruxible_playbill_authoring_prepare_publication
 cruxible_playbill_authoring_create
 cruxible_playbill_authoring_example
 cruxible_playbill_authoring_get

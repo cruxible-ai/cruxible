@@ -12,6 +12,7 @@
     "playbill_authoring_get",
     "playbill_authoring_list_pending",
     "playbill_authoring_preflight",
+    "playbill_authoring_prepare_publication",
     "playbill_authoring_rebase",
     "playbill_authoring_resume",
     "playbill_authoring_status",
@@ -72,6 +73,6 @@
     "playbill_submit_approval",
     "playbill_whoami"
   ],
-  "http_delegate_count": 70,
-  "mcp_delegate_count": 67
+  "http_delegate_count": 71,
+  "mcp_delegate_count": 68
 }

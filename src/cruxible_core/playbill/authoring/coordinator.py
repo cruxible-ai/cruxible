@@ -626,28 +626,6 @@ class AuthoringIntentCoordinator:
         expectation = current.insertion_expectation
         if not isinstance(expectation, InsertionExpectationV2):
             raise InsertionProtocolError("AuthoringIntent has no publication v2 expectation")
-        if expectation.state == "bound":
-            return InsertionPrepareResultV2(
-                outcome="bound",
-                intent=current,
-                expectation=expectation,
-                preparation=expectation.preparation,
-            )
-        if expectation.state in {"expired", "claim_currency_changed"}:
-            terminal_outcome: Literal["expired", "claim_currency_changed"] = (
-                "expired" if expectation.state == "expired" else "claim_currency_changed"
-            )
-            return InsertionPrepareResultV2(
-                outcome=terminal_outcome,
-                intent=current,
-                expectation=expectation,
-                preparation=expectation.preparation,
-            )
-        if expectation.state == "abandoned":
-            raise PublicationTerminalStateRefused(
-                f"{PublicationTerminalStateRefused.code}: publication is abandoned"
-            )
-
         exact = publication_confirmation_from_source(
             intent_id=intent_id,
             expectation=expectation,
@@ -657,6 +635,56 @@ class AuthoringIntentCoordinator:
             expectation.expectation_id,
             observation,
         )
+        if expectation.state == "bound":
+            if exact is None:
+                raise PublicationTerminalStateRefused(
+                    f"{PublicationTerminalStateRefused.code}: conflicting terminal preparation"
+                )
+            return InsertionPrepareResultV2(
+                outcome="bound",
+                intent=current,
+                expectation=expectation,
+                preparation=expectation.preparation,
+            )
+        if expectation.state in {"expired", "claim_currency_changed", "abandoned"}:
+            replayed = self.store.operation_result(
+                intent_id,
+                actor_id=actor.actor_id,
+                operation_key=operation_key,
+            )
+            replayed_expectation = None if replayed is None else replayed.insertion_expectation
+            before_expectation = before.insertion_expectation
+            if (
+                replayed is None
+                and isinstance(before_expectation, InsertionExpectationV2)
+                and before_expectation.state
+                not in {"bound", "expired", "abandoned", "claim_currency_changed"}
+                and expectation.state in {"expired", "claim_currency_changed"}
+            ):
+                replayed = self.store.transition(
+                    intent_id,
+                    actor_id=actor.actor_id,
+                    operation_key=operation_key,
+                    transform=lambda intent: intent,
+                )
+                replayed_expectation = replayed.insertion_expectation
+            if (
+                replayed is None
+                or not isinstance(replayed_expectation, InsertionExpectationV2)
+                or replayed_expectation.state not in {"expired", "claim_currency_changed"}
+            ):
+                raise PublicationTerminalStateRefused(
+                    f"{PublicationTerminalStateRefused.code}: publication is already terminal"
+                )
+            terminal_outcome: Literal["expired", "claim_currency_changed"] = (
+                "expired" if replayed_expectation.state == "expired" else "claim_currency_changed"
+            )
+            return InsertionPrepareResultV2(
+                outcome=terminal_outcome,
+                intent=replayed,
+                expectation=replayed_expectation,
+                preparation=replayed_expectation.preparation,
+            )
         evaluation_time = self.clock()
         if exact is not None:
 
@@ -892,6 +920,10 @@ class AuthoringIntentCoordinator:
         expectation = current.insertion_expectation
         if not isinstance(expectation, InsertionExpectationV2):
             raise InsertionProtocolError("AuthoringIntent has no publication v2 expectation")
+        operation_key = insertion_confirm_operation_v2_key(
+            expectation.expectation_id,
+            observation,
+        )
         if expectation.state == "bound":
             if not publication_confirmation_matches(expectation, observation):
                 raise PublicationTerminalStateRefused(
@@ -903,6 +935,42 @@ class AuthoringIntentCoordinator:
                 expectation=expectation,
             )
         if expectation.state in {"expired", "claim_currency_changed", "abandoned"}:
+            replayed = self.store.operation_result(
+                intent_id,
+                actor_id=actor.actor_id,
+                operation_key=operation_key,
+            )
+            replayed_expectation = None if replayed is None else replayed.insertion_expectation
+            before_expectation = before.insertion_expectation
+            if (
+                replayed is None
+                and isinstance(before_expectation, InsertionExpectationV2)
+                and before_expectation.state
+                not in {"bound", "expired", "abandoned", "claim_currency_changed"}
+                and expectation.state in {"expired", "claim_currency_changed"}
+            ):
+                replayed = self.store.transition(
+                    intent_id,
+                    actor_id=actor.actor_id,
+                    operation_key=operation_key,
+                    transform=lambda intent: intent,
+                )
+                replayed_expectation = replayed.insertion_expectation
+            if (
+                replayed is not None
+                and isinstance(replayed_expectation, InsertionExpectationV2)
+                and replayed_expectation.state in {"expired", "claim_currency_changed"}
+            ):
+                replayed_outcome: Literal["expired", "claim_currency_changed"] = (
+                    "expired"
+                    if replayed_expectation.state == "expired"
+                    else "claim_currency_changed"
+                )
+                return InsertionConfirmResultV2(
+                    outcome=replayed_outcome,
+                    intent=replayed,
+                    expectation=replayed_expectation,
+                )
             raise PublicationTerminalStateRefused(
                 f"{PublicationTerminalStateRefused.code}: publication is already terminal"
             )
@@ -912,10 +980,6 @@ class AuthoringIntentCoordinator:
             )
 
         evaluation_time = self.clock()
-        operation_key = insertion_confirm_operation_v2_key(
-            expectation.expectation_id,
-            observation,
-        )
         if publication_confirmation_matches(expectation, observation):
 
             def bind(intent: AuthoringIntentV1) -> AuthoringIntentV1:
