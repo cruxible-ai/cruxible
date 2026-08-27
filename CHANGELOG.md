@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Playbill publication confirmations now require their discriminating wire tag.**
+  The confirmation endpoint accepts the explicit v1 or v2 request variants; a
+  legacy v1-shaped body that omits `tag` now receives a typed request refusal
+  instead of being inferred. This is an intentional pre-release behavior change
+  needed to keep the two confirmation protocols unambiguous.
+
 - **Governance: role gates leave the hot path (PC-G12e).** Ordinary governed
   artifacts are now admitted by credential tier, principal identity, and
   semantic law — role labels no longer gate proposal, approval, settlement,

@@ -34,6 +34,7 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationAnchorStale,
     PublicationBodyNotMarkerCompatible,
     PublicationClaimNotAccepted,
+    PublicationPreparationStale,
     PublicationPrepareOrConfirmRequired,
     PublicationSourceHasUnrepinnedBlock,
     PublicationTerminalStateRefused,
@@ -314,6 +315,11 @@ def test_reprepare_is_deterministic_and_increments_only_for_a_new_clean_preimage
     assert revised.revision == 2
     assert revised.preparation_digest != first.preparation_digest
     assert mark_publication_prepared(prepared, preparation=revised).preparation == revised
+    with pytest.raises(PublicationPreparationStale):
+        mark_publication_prepared(
+            prepared,
+            preparation=revised.model_copy(update={"revision": 3}),
+        )
 
 
 def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
