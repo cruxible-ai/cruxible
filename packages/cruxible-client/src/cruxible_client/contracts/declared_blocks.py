@@ -407,6 +407,35 @@ def frame_projection_block(*, stamp: ProjectionBlockStampV1, body: bytes) -> byt
     return framed
 
 
+def assert_projection_block_frame(
+    content: bytes,
+    *,
+    source_id: str,
+    block_id: str,
+    stamp: ProjectionBlockStampV1,
+    body_digest: str,
+    start_byte: int | None = None,
+    end_byte: int | None = None,
+) -> ParsedProjectionBlock:
+    """Return the one exact block or refuse a malformed sanctioned write."""
+
+    matches = tuple(
+        block
+        for block in parse_projection_blocks(content, source_id=source_id)
+        if block.block_id == block_id
+    )
+    if len(matches) != 1:
+        raise ProjectionMarkerError("sanctioned write does not contain exactly one target block")
+    block = matches[0]
+    if block.stamp != stamp or block.body_digest != body_digest:
+        raise ProjectionMarkerError("sanctioned write does not reproduce its committed block")
+    if start_byte is not None and block.opening_start != start_byte:
+        raise ProjectionMarkerError("sanctioned write moved the committed block start")
+    if end_byte is not None and block.closing_end != end_byte:
+        raise ProjectionMarkerError("sanctioned write moved the committed block end")
+    return block
+
+
 def projection_query_semantic_result_digest(result: object) -> str:
     """Commit result meaning only, excluding coordinate, clock, receipt, and prose."""
 
@@ -449,6 +478,7 @@ __all__ = [
     "ProjectionMarkerError",
     "ProjectionQueryBackingV1",
     "ProjectionResolvedParameterBindingV1",
+    "assert_projection_block_frame",
     "frame_projection_block",
     "parse_projection_blocks",
     "projection_parameter_digest",
