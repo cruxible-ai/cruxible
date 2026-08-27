@@ -53,7 +53,7 @@ def test_absent_predicate_is_refused_rather_than_returned_empty(tmp_path: Path) 
         service_get_playbill_claim_type(instance, predicate="project.work_item.absent")
 
 
-def test_new_claim_type_must_materialize_root_namespace_authority(tmp_path: Path) -> None:
+def test_new_claim_type_preserves_but_does_not_enforce_authority_bytes(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     delegated = _claim_type().model_copy(
         update={
@@ -66,7 +66,7 @@ def test_new_claim_type_must_materialize_root_namespace_authority(tmp_path: Path
         }
     )
 
-    refused = service_propose_playbill_claim_type(
+    proposed = service_propose_playbill_claim_type(
         instance,
         claim_type=delegated,
         actor_id="owner",
@@ -74,10 +74,8 @@ def test_new_claim_type_must_materialize_root_namespace_authority(tmp_path: Path
         timestamp=TIMESTAMP,
     )
 
-    assert refused.proposal.candidate is None
-    assert [item.code for item in refused.proposal.evaluation.diagnostics] == [
-        "playbill.claim_type.namespace_authority_mismatch"
-    ]
+    assert proposed.proposal.candidate is not None
+    assert proposed.proposal.evaluation.diagnostics == ()
 
 
 def test_claim_type_read_is_pinned_to_the_requested_accepted_coordinate(tmp_path: Path) -> None:

@@ -587,7 +587,6 @@ class CaptureContractLawResult(_StrictCaptureModel):
         complete = (
             self.artifact_digest is not None
             and self.required_tier is not None
-            and bool(self.approval_scope)
             and not self.diagnostics
         )
         if (self.verdict == "accepted") != complete:
@@ -671,17 +670,6 @@ def evaluate_capture_contract_law(
                     ),
                 ),
             )
-        if not set(actor_roles).intersection(predecessor.contract.authority.propose_roles):
-            return CaptureContractLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.capture_contract.predecessor_authority_missing",
-                        "The actor lacks authority over the predecessor CaptureContract.",
-                        path=path,
-                    ),
-                ),
-            )
     registry_roles = {
         (pin.role, pin.artifact_digest)
         for pin in (
@@ -754,22 +742,11 @@ def evaluate_capture_contract_law(
                 ),
             ),
         )
-    if not set(actor_roles).intersection(contract.authority.propose_roles):
-        return CaptureContractLawResult(
-            verdict="refused",
-            diagnostics=(
-                _diagnostic(
-                    "playbill.capture_contract.actor_unauthorized",
-                    "The request actor lacks authority to propose this CaptureContract.",
-                    path=path,
-                ),
-            ),
-        )
     return CaptureContractLawResult(
         verdict="accepted",
         artifact_digest=capture_contract_digest(contract).tagged,
         required_tier="governed_write",
-        approval_scope=contract.authority.approve_roles,
+        approval_scope=(),
     )
 
 

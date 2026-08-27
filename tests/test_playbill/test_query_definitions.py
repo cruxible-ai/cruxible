@@ -637,17 +637,16 @@ def test_query_definition_law_accepts_a_genesis_declaration_with_resolved_pins()
     assert result.verdict == "accepted"
     assert result.artifact_digest == query_definition_digest(query).tagged
     assert result.required_tier == "governed_write"
-    assert result.approval_scope == ("owner",)
+    assert result.approval_scope == ()
     assert result.diagnostics == ()
 
 
-def test_query_definition_law_refuses_path_pin_authority_and_predecessor_drift() -> None:
+def test_query_definition_law_ignores_roles_but_refuses_path_pin_and_predecessor_drift() -> None:
     query = active_work_query()
     codes: list[str] = []
 
     for candidate, kwargs in (
         (query, {"path": "query-definitions/other.yaml"}),
-        (query, {"actor_roles": ("reader",)}),
         (
             active_work_query(
                 lifecycle=ArtifactLifecycle(
@@ -679,7 +678,6 @@ def test_query_definition_law_refuses_path_pin_authority_and_predecessor_drift()
 
     assert codes == [
         "playbill.query_definition.path_mismatch",
-        "playbill.query_definition.actor_unauthorized",
         "playbill.query_definition.unexpected_predecessor",
         "playbill.query_definition.pin_unresolved",
     ]
@@ -775,9 +773,8 @@ def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> No
         actor_roles=("owner",),
         predecessor=predecessor,
     )
-    assert reauthorized.diagnostics[0].code == (
-        "playbill.query_definition.authority_change_unsupported"
-    )
+    assert reauthorized.verdict == "accepted"
+    assert reauthorized.approval_scope == ()
 
 
 def test_accepted_query_definition_refuses_a_digest_or_path_that_does_not_reproduce() -> None:

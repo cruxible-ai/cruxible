@@ -465,7 +465,7 @@ def evaluate_document_law(
         verdict="accepted",
         envelope_digest=digest,
         required_tier=shell.authority.required_tier,
-        approval_scope=shell.authority.approval_roles,
+        approval_scope=(),
         activation_policy=shell.lifecycle.activation_policy,
     )
 

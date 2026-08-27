@@ -146,7 +146,7 @@ def test_document_acceptance_requires_exact_body_and_predecessor(tmp_path: Path)
     assert accepted.verdict == "accepted"
     assert accepted.envelope_digest == document_digest(initial).tagged
     assert accepted.required_tier == "graph_write"
-    assert accepted.approval_scope == ("owner", "reviewer")
+    assert accepted.approval_scope == ()
     assert accepted.activation_policy == "snapshot"
 
     missing = initial.model_copy(update={"body_digest": "sha256:" + "ff" * 32})

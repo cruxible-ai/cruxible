@@ -32,7 +32,6 @@ from cruxible_client.contracts.discovery import ExpandRequestV1
 from cruxible_client.contracts.errors import (
     ClaimNotFoundError,
     ProposalIntegrityError,
-    SettlementIntegrityError,
 )
 from cruxible_client.contracts.policies import (
     ActorRequirementV1,
@@ -59,7 +58,12 @@ from cruxible_core.service.playbill_claims import (
     service_propose_playbill_claim,
     service_query_playbill_claims,
 )
-from tests.test_playbill._support import FIXED_TIMESTAMP, generate_client, initialize_local
+from tests.test_playbill._support import (
+    FIXED_TIMESTAMP,
+    client_material,
+    generate_client,
+    initialize_local,
+)
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_claims import _claim_type, _subject
 
@@ -185,7 +189,9 @@ def test_subject_level_freeze_policy_refuses_an_adjacent_claim_change(tmp_path: 
     )
 
 
-def test_claim_policy_signer_constraint_is_rechecked_at_settlement(tmp_path: Path) -> None:
+def test_claim_policy_actor_requirement_is_dormant_at_candidate_and_settlement(
+    tmp_path: Path,
+) -> None:
     instance, owner, reviewer = _instance_with_reviewer(tmp_path)
     status_type = _claim_type().model_copy(
         update={
@@ -259,31 +265,19 @@ def test_claim_policy_signer_constraint_is_rechecked_at_settlement(tmp_path: Pat
         for item in candidate.law_evidence
         if item.path == approved.claim_path
     )
-    assert admission[0]["candidate_result"]["required_signers"][0]["roles"] == ["reviewer"]
+    assert admission[0]["candidate_result"]["required_signers"] == []
     base = instance.accepted_coordinate()
     evaluated_oid = approved.proposal.proposal.evaluation.evaluated_tree_oid
     assert evaluated_oid is not None
-    with pytest.raises(SettlementIntegrityError, match="signer constraints are unsatisfied"):
-        instance.prepare_generation(
-            base=base,
-            candidate_tree=instance.proposal_tree(evaluated_oid),
-            candidate=candidate,
-            approvals=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
-            actor_binding=ChangeActorBinding(actor_id="owner"),
-            sequence=2,
-        )
     bundle = instance.prepare_generation(
         base=base,
         candidate_tree=instance.proposal_tree(evaluated_oid),
         candidate=candidate,
-        approvals=(
-            _sign(owner, candidate.candidate_digest, base.semantic_root),
-            _sign(reviewer, candidate.candidate_digest, base.semantic_root),
-        ),
+        approvals=(_sign(reviewer, candidate.candidate_digest, base.semantic_root),),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=2,
     )
-    assert tuple(item.signer_id for item in bundle.approvals) == ("owner", "reviewer")
+    assert tuple(item.signer_id for item in bundle.approvals) == ("reviewer",)
 
 
 def test_one_call_claim_proposal_activation_query_history_explain_and_source(
@@ -308,7 +302,13 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
         base=base,
         candidate_tree=instance.proposal_tree(evaluated_oid),
         candidate=candidate,
-        approvals=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
+        approvals=(
+            _sign(
+                client_material(tmp_path, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=1,
     )
@@ -441,8 +441,8 @@ def test_non_materialized_direct_source_stays_attested_only(tmp_path: Path) -> N
 
 
 def _activate_direct_claim(
-    instance: object,
-    owner: object,
+    instance: PlaybillInstance,
+    _owner: object,
     proposed: object,
     *,
     sequence: int = 1,
@@ -456,7 +456,13 @@ def _activate_direct_claim(
         base=base,
         candidate_tree=instance.proposal_tree(evaluated_oid),
         candidate=candidate,
-        approvals=(_sign(owner, candidate.candidate_digest, base.semantic_root),),
+        approvals=(
+            _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                base.semantic_root,
+            ),
+        ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         sequence=sequence,
     )

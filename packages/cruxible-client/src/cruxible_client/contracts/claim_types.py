@@ -340,11 +340,7 @@ class ClaimTypeLawResult(_StrictClaimTypeModel):
     @model_validator(mode="after")
     def _shape(self) -> "ClaimTypeLawResult":
         if self.verdict == "accepted":
-            if (
-                self.artifact_digest is None
-                or self.required_tier is None
-                or not self.approval_scope
-            ):
+            if self.artifact_digest is None or self.required_tier is None:
                 raise ValueError("accepted ClaimType law result is incomplete")
             if self.diagnostics:
                 raise ValueError("accepted ClaimType law result cannot carry diagnostics")
@@ -405,32 +401,8 @@ def evaluate_claim_type_law(
                         ),
                     ),
                 )
-    roles = set(_actor_roles(principals, actor_id))
     digest = claim_type_digest(claim_type).tagged
     if predecessor is None:
-        root_authority = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
-        if claim_type.authority != root_authority:
-            return ClaimTypeLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.claim_type.namespace_authority_mismatch",
-                        "A new ClaimType must materialize accepted root namespace authority.",
-                        path=path,
-                    ),
-                ),
-            )
-        if not roles.intersection(root_authority.propose_roles):
-            return ClaimTypeLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.claim_type.actor_unauthorized",
-                        "The request actor lacks accepted namespace creation authority.",
-                        path=path,
-                    ),
-                ),
-            )
         if claim_type.lifecycle.state != "live" or claim_type.lifecycle.predecessor_digest:
             return ClaimTypeLawResult(
                 verdict="refused",
@@ -442,7 +414,6 @@ def evaluate_claim_type_law(
                     ),
                 ),
             )
-        approval_scope = root_authority.approve_roles
     else:
         previous = predecessor.claim_type
         if previous.identity != claim_type.identity or predecessor.path != path:
@@ -463,34 +434,6 @@ def evaluate_claim_type_law(
                     _diagnostic(
                         "playbill.claim_type.stale_predecessor",
                         "The ClaimType does not name the exact live predecessor digest.",
-                        path=path,
-                    ),
-                ),
-            )
-        authority_widened = claim_type.authority != previous.authority
-        if authority_widened and (
-            claim_type.authority.propose_roles != previous.authority.propose_roles
-            or not set(previous.authority.approve_roles).issubset(
-                claim_type.authority.approve_roles
-            )
-        ):
-            return ClaimTypeLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.claim_type.authority_change_unsupported",
-                        "ClaimType succession may only widen accepted approval roles.",
-                        path=path,
-                    ),
-                ),
-            )
-        if not roles.intersection(previous.authority.propose_roles):
-            return ClaimTypeLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.claim_type.actor_unauthorized",
-                        "The request actor lacks predecessor proposal authority.",
                         path=path,
                     ),
                 ),
@@ -517,12 +460,11 @@ def evaluate_claim_type_law(
                     ),
                 ),
             )
-        approval_scope = ("owner",) if authority_widened else previous.authority.approve_roles
     return ClaimTypeLawResult(
         verdict="accepted",
         artifact_digest=digest,
         required_tier="governed_write",
-        approval_scope=approval_scope,
+        approval_scope=(),
     )
 
 

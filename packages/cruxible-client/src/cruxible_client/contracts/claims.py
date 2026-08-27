@@ -8,7 +8,7 @@ import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Literal, TypeAlias, cast
+from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -57,12 +57,7 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule_digest,
     evaluate_claim_verdict,
 )
-from cruxible_client.contracts.descriptor_claim_types import DescriptorPredicate
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
-from cruxible_client.contracts.discovery import (
-    DescriptorAuthorityContextV1,
-    evaluate_descriptor_authority,
-)
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.policies import (
@@ -794,7 +789,7 @@ class ClaimLawResult(_StrictClaimModel):
                 self.required_tier,
                 self.evidence,
             )
-        ) and bool(self.approval_scope)
+        )
         if self.verdict == "accepted" and (not complete or self.diagnostics):
             raise ValueError("accepted Claim law result is incomplete")
         if self.verdict == "refused" and complete:
@@ -1081,6 +1076,7 @@ def _is_claim_type_rederivation(
     predecessor: ClaimArtifactAny,
     claim_type_digest: str,
     claim_type_identity: ArtifactIdentity,
+    claim_type_authority: ArtifactAuthority,
 ) -> bool:
     """Recognize the exact machine-generated delta for ClaimType succession."""
 
@@ -1095,6 +1091,7 @@ def _is_claim_type_rederivation(
     )
     return (
         claim.artifact_format == predecessor.artifact_format
+        and claim.authority == claim_type_authority
         and claim.statement == expected_statement
         and claim.backing == predecessor.backing
         and claim.pins == expected_pins
@@ -1331,63 +1328,6 @@ def evaluate_claim_law(
                     str(exc),
                     path=path,
                 )
-    roles: set[str] = set()
-    if actor_id is not None:
-        try:
-            roles = {
-                str(role)
-                for role in principals.require_active(actor_id).authority_roles
-                if role != "daemon"
-            }
-        except Exception:
-            roles = set()
-    if claim.authority != contract.authority:
-        return _diagnostic(
-            "playbill.claim.authority_mismatch",
-            "Claim authority must be derived byte-exactly from its accepted ClaimType.",
-            path=path,
-        )
-    if descriptor:
-        descriptor_authority = evaluate_descriptor_authority(
-            cast(DescriptorPredicate, statement.predicate),
-            DescriptorAuthorityContextV1(
-                actor_roles=tuple(sorted(roles, key=lambda item: item.encode("utf-8"))),
-                target_namespace_roles=subject.authority.propose_roles,
-                recall_descriptor_roles=contract.authority.propose_roles,
-                new_item_namespace_roles=subject.authority.propose_roles,
-                blocking_cross_namespace_roles=(
-                    () if object_subject is None else object_subject.authority.propose_roles
-                ),
-            ),
-        )
-        if descriptor_authority.verdict == "refused":
-            return _diagnostic(
-                descriptor_authority.refusal_code or "playbill.descriptor.authority_refused",
-                "The authenticated actor does not satisfy the descriptor authority floor.",
-                path=path,
-            )
-    if not descriptor and not roles.intersection(claim.authority.propose_roles):
-        required_roles = tuple(
-            sorted(claim.authority.propose_roles, key=lambda item: item.encode("utf-8"))
-        )
-        active_principal_ids = tuple(
-            sorted(
-                (
-                    principal.principal_id
-                    for principal in principals.principals
-                    if principal.status == "active"
-                ),
-                key=lambda item: item.encode("utf-8"),
-            )
-        )
-        return _diagnostic(
-            "playbill.claim.actor_unauthorized",
-            "The authenticated actor "
-            f"{(actor_id or '<absent>')!r} lacks ClaimType-derived proposal authority; "
-            f"required roles={list(required_roles)!r}; "
-            f"active principal ids={list(active_principal_ids)!r}.",
-            path=path,
-        )
     digest = claim_artifact_digest(claim).tagged
     if predecessor is None:
         if claim.lifecycle != ArtifactLifecycle():
@@ -1422,17 +1362,12 @@ def evaluate_claim_law(
             predecessor=predecessor.claim,
             claim_type_digest=claim_type.artifact_digest,
             claim_type_identity=contract.identity,
+            claim_type_authority=contract.authority,
         )
         if predecessor.claim.lifecycle.state == "retired" and not claim_type_rederivation:
             return _diagnostic(
                 "playbill.claim.lifecycle_invalid",
                 "A retired Claim lineage cannot be revived.",
-                path=path,
-            )
-        if claim.authority != predecessor.claim.authority and not claim_type_rederivation:
-            return _diagnostic(
-                "playbill.claim.authority_change_unsupported",
-                "Claim succession cannot weaken or rewrite accepted authority in v1.",
                 path=path,
             )
         if isinstance(predecessor.claim, ClaimArtifactV2) and isinstance(claim, ClaimArtifact):
@@ -1731,7 +1666,7 @@ def evaluate_claim_law(
         artifact_digest=digest,
         statement_digest=statement_digest,
         required_tier="governed_write",
-        approval_scope=claim.authority.approve_roles,
+        approval_scope=(),
         evidence=(
             ClaimLawEvidenceV2(
                 law_digest=law_digest,

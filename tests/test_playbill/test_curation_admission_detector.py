@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from cruxible_client.contracts.claims import LiteralClaimObject
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.service.playbill_claims import service_propose_playbill_claim
@@ -22,17 +23,31 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
     tmp_path: Path,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
+    first_authoring = authoring("wi-44", "ready", with_claim_type=False)
+    second_authoring = authoring("wi-45", "ready", with_claim_type=False)
     first = service_propose_playbill_claim(
         instance,
-        authoring=authoring("wi-44", "ready", with_claim_type=False),
-        actor_id="unregistered",
+        authoring=first_authoring.model_copy(
+            update={
+                "statement": first_authoring.statement.model_copy(
+                    update={"object": LiteralClaimObject(value=1)}
+                )
+            }
+        ),
+        actor_id="owner",
         proposal_name="refused-one",
         timestamp=TIMESTAMP,
     )
     second = service_propose_playbill_claim(
         instance,
-        authoring=authoring("wi-45", "ready", with_claim_type=False),
-        actor_id="unregistered",
+        authoring=second_authoring.model_copy(
+            update={
+                "statement": second_authoring.statement.model_copy(
+                    update={"object": LiteralClaimObject(value=1)}
+                )
+            }
+        ),
+        actor_id="owner",
         proposal_name="refused-two",
         timestamp=TIMESTAMP,
     )
@@ -61,7 +76,7 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
     ]
     assert len(clusters) == 1
     assert clusters[0].subject.qualified == "ClaimType:project.work_item.status"
-    assert clusters[0].detail == {"diagnostic_code": "playbill.claim.actor_unauthorized"}
+    assert clusters[0].detail == {"diagnostic_code": "playbill.claim.literal_schema_invalid"}
     attempts = [ref for ref in clusters[0].latest_evidence_refs if ref.kind == "proposal_attempt"]
     assert len(attempts) == 2
     assert len({ref.identity for ref in attempts}) == 2

@@ -17,6 +17,7 @@ from cruxible_client.contracts.laws import (
     PROCEDURE_LAW,
     PROCEDURE_LAW_V2,
 )
+from cruxible_core.playbill.proposals import ROLE_DEMOTED_MEMBER_FAMILIES
 
 
 def test_document_law_resolves_from_artifact_tag_and_replays_by_exact_digest() -> None:
@@ -85,3 +86,21 @@ def test_claim_type_v1_v3_and_v4_survive_but_removed_v2_has_no_acceptance_law() 
     )
     with pytest.raises(ProposalIntegrityError, match="no acceptance law"):
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-claim-type-v2")
+
+
+def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
+    assert ROLE_DEMOTED_MEMBER_FAMILIES == (
+        "procedure",
+        "exhaust-promotion",
+        "line",
+        "query-definition",
+        "provider",
+        "source-acquisition-policy",
+        "standing-mandate",
+        "capture-contract",
+        "claim",
+        "claim-type",
+        "subject",
+        "document",
+        "principal",
+    )

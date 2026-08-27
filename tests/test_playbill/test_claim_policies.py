@@ -100,12 +100,13 @@ def _context(
     )
 
 
-def test_review_request_policy_uses_parent_query_then_two_phase_signer_law() -> None:
+def test_review_request_policy_keeps_query_law_but_demotes_actor_requirement() -> None:
     candidate = evaluate_claim_admission_candidate(_review_policy(), _context())
 
     assert candidate.verdict == "eligible"
     assert candidate.triggered_transitions == ("approve-transition",)
-    assert tuple(item.requirement_id for item in candidate.required_signers) == ("reviewer-role",)
+    assert candidate.required_signers == ()
+    assert candidate.lineage_creation_actor_id is None
 
     accepted = evaluate_claim_admission_settlement(
         candidate,
@@ -124,17 +125,56 @@ def test_review_request_policy_uses_parent_query_then_two_phase_signer_law() -> 
         (VerifiedPolicySignerV1(signer_id="owner", roles=("reviewer",)),),
         lineage_creation_actor_id="owner",
     )
-    assert creator_signing.verdict == "refused"
-    assert creator_signing.refusal_codes == ("playbill.claim_policy.signer_constraint_unsatisfied",)
+    assert creator_signing.verdict == "satisfied"
 
     substituted_lineage = evaluate_claim_admission_settlement(
         candidate,
         (VerifiedPolicySignerV1(signer_id="owner", roles=("reviewer",)),),
         lineage_creation_actor_id="someone-else",
     )
-    assert substituted_lineage.refusal_codes == (
-        "playbill.claim_policy.lineage_creation_actor_mismatch",
+    assert substituted_lineage.verdict == "satisfied"
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    (
+        ActorRequirementV1(requirement_id="reviewer-role", admission_actor_roles=("impossible",)),
+        ActorRequirementV1(
+            requirement_id="reviewer-role", admission_actor_subjects=("other-subject",)
+        ),
+        ActorRequirementV1(requirement_id="reviewer-role", signer_roles=("impossible",)),
+        ActorRequirementV1(requirement_id="reviewer-role", signer_subjects=("other-subject",)),
+        ActorRequirementV1(
+            requirement_id="reviewer-role", signer_control_domains=("other-domain",)
+        ),
+        ActorRequirementV1(
+            requirement_id="reviewer-role",
+            signer_roles=("impossible",),
+            minimum_distinct_signers=7,
+        ),
+        ActorRequirementV1(
+            requirement_id="reviewer-role",
+            signer_roles=("impossible",),
+            signer_distinct_from_lineage_creation_actor=True,
+        ),
+    ),
+)
+def test_every_actor_requirement_field_is_dormant(
+    requirement: ActorRequirementV1,
+) -> None:
+    policy = _review_policy().model_copy(update={"actor_requirements": (requirement,)})
+
+    candidate = evaluate_claim_admission_candidate(policy, _context())
+    settlement = evaluate_claim_admission_settlement(
+        candidate,
+        (),
+        lineage_creation_actor_id="substituted",
     )
+
+    assert candidate.verdict == "eligible"
+    assert candidate.required_signers == ()
+    assert candidate.lineage_creation_actor_id is None
+    assert settlement.verdict == "satisfied"
 
 
 def test_admission_refuses_truncated_query_freeze_bypass_and_unknown_predicate() -> None:

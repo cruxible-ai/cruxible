@@ -184,11 +184,7 @@ class SubjectLawResult(_StrictSubjectModel):
     @model_validator(mode="after")
     def _shape(self) -> "SubjectLawResult":
         if self.verdict == "accepted":
-            if (
-                self.artifact_digest is None
-                or self.required_tier is None
-                or not self.approval_scope
-            ):
+            if self.artifact_digest is None or self.required_tier is None:
                 raise ValueError("accepted Subject law result is incomplete")
             if self.diagnostics:
                 raise ValueError("accepted Subject law result cannot carry errors")
@@ -237,37 +233,8 @@ def evaluate_subject_law(
             diagnostics=(_diagnostic("playbill.subject.path_mismatch", str(exc), path=path),),
         )
 
-    actor_roles = set(_roles_for_actor(principals, actor_id))
     digest = subject_digest(shell).tagged
     if predecessor is None:
-        # Until governed namespace artifacts land, the accepted root owner role
-        # is the conservative parent namespace law for creation.
-        parent_authority = ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
-        )
-        if shell.authority != parent_authority:
-            return SubjectLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.subject.namespace_authority_mismatch",
-                        "A new Subject must materialize the accepted root namespace authority.",
-                        path=path,
-                    ),
-                ),
-            )
-        if not actor_roles.intersection(parent_authority.propose_roles):
-            return SubjectLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.subject.actor_unauthorized",
-                        "The request actor lacks accepted parent namespace creation authority.",
-                        path=path,
-                    ),
-                ),
-            )
         if shell.lifecycle.predecessor_digest is not None or shell.lifecycle.state != "live":
             return SubjectLawResult(
                 verdict="refused",
@@ -279,7 +246,6 @@ def evaluate_subject_law(
                     ),
                 ),
             )
-        approval_scope = parent_authority.approve_roles
     else:
         previous = predecessor.shell
         if previous.identity != shell.identity or predecessor.path != path:
@@ -300,28 +266,6 @@ def evaluate_subject_law(
                     _diagnostic(
                         "playbill.subject.stale_predecessor",
                         "The proposed Subject does not name the exact live predecessor digest.",
-                        path=path,
-                    ),
-                ),
-            )
-        if shell.authority != previous.authority:
-            return SubjectLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.subject.authority_change_unsupported",
-                        "PC-A1 Subject succession cannot rewrite accepted authority.",
-                        path=path,
-                    ),
-                ),
-            )
-        if not actor_roles.intersection(previous.authority.propose_roles):
-            return SubjectLawResult(
-                verdict="refused",
-                diagnostics=(
-                    _diagnostic(
-                        "playbill.subject.actor_unauthorized",
-                        "The request actor lacks the predecessor's accepted proposal role.",
                         path=path,
                     ),
                 ),
@@ -348,13 +292,11 @@ def evaluate_subject_law(
                     ),
                 ),
             )
-        approval_scope = previous.authority.approve_roles
-
     return SubjectLawResult(
         verdict="accepted",
         artifact_digest=digest,
         required_tier="governed_write",
-        approval_scope=approval_scope,
+        approval_scope=(),
     )
 
 

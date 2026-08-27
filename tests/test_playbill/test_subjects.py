@@ -62,7 +62,7 @@ def _shell(
     )
 
 
-def _accept(instance, owner, shell: SubjectShell, *, name: str = "subject"):
+def _accept(instance, approver, shell: SubjectShell, *, name: str = "subject"):
     inspection = service_propose_playbill_subject(
         instance,
         shell=shell,
@@ -73,7 +73,7 @@ def _accept(instance, owner, shell: SubjectShell, *, name: str = "subject"):
     candidate = inspection.proposal.candidate
     assert candidate is not None
     approval = _sign(
-        owner,
+        approver,
         candidate.candidate_digest,
         candidate.candidate.parent_semantic_root,
     )
@@ -81,7 +81,7 @@ def _accept(instance, owner, shell: SubjectShell, *, name: str = "subject"):
         instance,
         proposal_id=inspection.proposal.admission.proposal_id,
         attestation=approval.attestation,
-        authenticated_submitter="owner",
+        authenticated_submitter=approver.principal.principal_id,
     )
     activated = service_activate_playbill_proposal(
         instance,
@@ -121,12 +121,12 @@ def test_subject_is_identity_only_and_refuses_properties_or_metadata() -> None:
         )
 
 
-def test_transport_capability_cannot_substitute_for_accepted_namespace_authority(
+def test_subject_roles_are_dormant_but_transport_capability_remains_required(
     tmp_path: Path,
 ) -> None:
     instance, _owner, _reviewer = _instance(tmp_path)
     capabilities: tuple[TransportCapability, ...] = ("administer", "propose")
-    refused = service_propose_playbill_subject(
+    accepted = service_propose_playbill_subject(
         instance,
         shell=_shell(),
         actor_id="reviewer",
@@ -134,10 +134,7 @@ def test_transport_capability_cannot_substitute_for_accepted_namespace_authority
         timestamp=TIMESTAMP,
         capabilities=capabilities,
     )
-    assert refused.proposal.candidate is None
-    assert [item.code for item in refused.proposal.evaluation.diagnostics] == [
-        "playbill.subject.actor_unauthorized"
-    ]
+    assert accepted.proposal.candidate is not None
 
     with pytest.raises(ProposalAdmissionError, match="propose capability"):
         service_propose_playbill_subject(
@@ -151,8 +148,8 @@ def test_transport_capability_cannot_substitute_for_accepted_namespace_authority
 
 
 def test_subject_acceptance_rebuild_history_and_explanation(tmp_path: Path) -> None:
-    instance, owner, _reviewer = _instance(tmp_path)
-    _accept(instance, owner, _shell())
+    instance, _owner, reviewer = _instance(tmp_path)
+    _accept(instance, reviewer, _shell())
     accepted = instance.accepted_coordinate()
 
     subject = service_get_playbill_subject(instance, identity=SUBJECT_IDENTITY)
@@ -190,16 +187,16 @@ def test_subject_acceptance_rebuild_history_and_explanation(tmp_path: Path) -> N
 
 
 def test_subject_successor_uses_exact_predecessor_and_projection_revision(tmp_path: Path) -> None:
-    instance, owner, _reviewer = _instance(tmp_path)
+    instance, _owner, reviewer = _instance(tmp_path)
     initial = _shell()
-    _accept(instance, owner, initial)
+    _accept(instance, reviewer, initial)
     retired = _shell(
         lifecycle=ArtifactLifecycle(
             state="retired",
             predecessor_digest=subject_digest(initial).tagged,
         )
     )
-    _accept(instance, owner, retired, name="retire-subject")
+    _accept(instance, reviewer, retired, name="retire-subject")
 
     subject = service_get_playbill_subject(instance, identity=SUBJECT_IDENTITY)
     assert subject.envelope["revision"] == 2

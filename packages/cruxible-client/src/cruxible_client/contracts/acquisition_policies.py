@@ -292,12 +292,6 @@ def evaluate_acquisition_policy_law(
                 "SourceAcquisitionPolicy successor identity or predecessor differs.",
                 path=path,
             )
-        if not set(actor_roles).intersection(predecessor.policy.authority.propose_roles):
-            return _law_refusal(
-                "playbill.acquisition_policy.predecessor_authority_missing",
-                "Actor lacks authority over the predecessor policy.",
-                path=path,
-            )
     if isinstance(policy.coherence, DeclaredSnapshotGroupCoherenceV1):
         required = (
             ("coordinate-grammar", policy.coherence.coordinate_grammar_digest),
@@ -319,17 +313,11 @@ def evaluate_acquisition_policy_law(
                 "proof-adapter pins.",
                 path=path,
             )
-    if not set(actor_roles).intersection(policy.authority.propose_roles):
-        return _law_refusal(
-            "playbill.acquisition_policy.actor_unauthorized",
-            "Actor lacks authority to propose this SourceAcquisitionPolicy.",
-            path=path,
-        )
     return SourceAcquisitionPolicyLawResultV1(
         verdict="accepted",
         artifact_digest=acquisition_policy_digest(policy).tagged,
         required_tier="governed_write",
-        approval_scope=policy.authority.approve_roles,
+        approval_scope=(),
     )
 
 

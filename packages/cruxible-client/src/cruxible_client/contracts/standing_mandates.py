@@ -253,23 +253,11 @@ def evaluate_standing_mandate_law(
                 "StandingMandate successor identity or predecessor differs.",
                 path=path,
             )
-        if not set(actor_roles).intersection(predecessor.mandate.authority.propose_roles):
-            return _law_refusal(
-                "playbill.mandate.predecessor_authority_missing",
-                "Actor lacks authority over the predecessor StandingMandate.",
-                path=path,
-            )
-    if not set(actor_roles).intersection(mandate.authority.propose_roles):
-        return _law_refusal(
-            "playbill.mandate.actor_unauthorized",
-            "Actor lacks authority to propose this StandingMandate.",
-            path=path,
-        )
     return StandingMandateLawResultV1(
         verdict="accepted",
         artifact_digest=standing_mandate_digest(mandate).tagged,
         required_tier="governed_write",
-        approval_scope=mandate.authority.approve_roles,
+        approval_scope=(),
     )
 
 

@@ -226,7 +226,7 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
     )
 
 
-def test_actor_refusal_names_identity_required_roles_and_active_principals(
+def test_preflight_refuses_an_actor_absent_from_the_principal_registry(
     tmp_path: Path,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
@@ -244,8 +244,6 @@ def test_actor_refusal_names_identity_required_roles_and_active_principals(
     diagnostic = next(
         item
         for item in result.frontier.diagnostics
-        if item.code == "playbill.claim.actor_unauthorized"
+        if item.code == "playbill.proposal.creator_principal_invalid"
     )
-    assert "'unregistered-writer'" in diagnostic.message
-    assert "required roles=['owner']" in diagnostic.message
-    assert "active principal ids=['daemon', 'owner']" in diagnostic.message
+    assert "active Principal" in diagnostic.message

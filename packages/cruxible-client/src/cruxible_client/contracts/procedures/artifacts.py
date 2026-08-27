@@ -375,7 +375,6 @@ def evaluate_procedure_law(
                 "A new Procedure cannot name a predecessor.",
                 path=path,
             )
-        required_roles = procedure.authority.propose_roles
     else:
         if procedure.identity != predecessor.procedure.identity:
             return _refusal(
@@ -397,18 +396,11 @@ def evaluate_procedure_law(
                 "Procedure successor does not pin its exact predecessor.",
                 path=path,
             )
-        required_roles = predecessor.procedure.authority.propose_roles
-    if not set(actor_roles).intersection(required_roles):
-        return _refusal(
-            "playbill.procedure.proposer_authority_missing",
-            "Actor lacks a required Procedure proposer role.",
-            path=path,
-        )
     return ProcedureLawResultV1(
         verdict="accepted",
         artifact_digest=procedure_artifact_digest(procedure).tagged,
         required_tier="governed_write",
-        approval_scope=procedure.authority.approve_roles,
+        approval_scope=(),
     )
 
 

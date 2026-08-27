@@ -147,7 +147,7 @@ def test_claim_type_successor_requires_exact_predecessor_digest_shape() -> None:
     assert successor.lifecycle.predecessor_digest == claim_type_digest(claim_type).tagged
 
 
-def test_claim_type_authority_widens_only_and_requires_owner_approval(tmp_path: Path) -> None:
+def test_claim_type_authority_bytes_are_dormant_during_succession(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     original = literal_claim_type()
     predecessor = AcceptedClaimType(
@@ -173,14 +173,14 @@ def test_claim_type_authority_widens_only_and_requires_owner_approval(tmp_path: 
         predecessor=predecessor,
     )
     assert accepted.verdict == "accepted"
-    assert accepted.approval_scope == ("owner",)
+    assert accepted.approval_scope == ()
 
     narrowed = original.model_copy(
         update={
             "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(widened).tagged)
         }
     )
-    refused = evaluate_claim_type_law(
+    narrowed_result = evaluate_claim_type_law(
         narrowed,
         path=predecessor.path,
         principals=instance.accepted_history()[-1].principals,
@@ -191,8 +191,8 @@ def test_claim_type_authority_widens_only_and_requires_owner_approval(tmp_path: 
             artifact_digest=claim_type_digest(widened).tagged,
         ),
     )
-    assert refused.verdict == "refused"
-    assert refused.diagnostics[0].code == "playbill.claim_type.authority_change_unsupported"
+    assert narrowed_result.verdict == "accepted"
+    assert narrowed_result.approval_scope == ()
 
 
 def test_claim_type_v3_adds_only_a_positive_freshness_horizon() -> None:

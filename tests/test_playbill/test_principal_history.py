@@ -230,7 +230,7 @@ def test_owner_rotation_and_recovery_replacement_replay_exact_key_roots(
 def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
     tmp_path: Path,
 ) -> None:
-    instance, owner, _recovery = _cloud_instance(tmp_path)
+    instance, owner, recovery = _cloud_instance(tmp_path)
     reviewer = _replacement_key(
         tmp_path,
         instance,
@@ -240,8 +240,8 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
     )
     instance = _settle_transition(
         instance,
-        actor=owner,
-        approver=_recovery,
+        actor=recovery,
+        approver=owner,
         proposed=reviewer.principal,
         timestamp="2026-08-12T16:00:00.000000Z",
     )
@@ -249,8 +249,8 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
 
     instance = _settle_transition(
         instance,
-        actor=owner,
-        approver=_recovery,
+        actor=reviewer,
+        approver=owner,
         proposed=reviewer.principal.model_copy(update={"status": "revoked"}),
         timestamp="2026-08-12T16:01:00.000000Z",
     )

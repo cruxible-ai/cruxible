@@ -133,8 +133,6 @@ def _validate_client_principals(
         raise PlaybillBootstrapError("bootstrap client principals must begin active")
     if any("daemon" in record.authority_roles for record in ordered):
         raise PlaybillBootstrapError("client principals cannot carry daemon authority")
-    if not any("owner" in record.authority_roles for record in ordered):
-        raise PlaybillBootstrapError("bootstrap requires at least one owner principal")
     recovery_configured = any("recovery" in record.authority_roles for record in ordered)
     if operating_profile == "cloud" and not recovery_configured:
         raise PlaybillBootstrapError("cloud Playbill instances require a recovery principal")

@@ -548,47 +548,12 @@ def evaluate_claim_admission_candidate(
         ):
             refusal_codes.add("playbill.claim_policy.freeze_active")
 
-    actor_by_id = {item.requirement_id: item for item in policy.actor_requirements}
+    actor_requirement_ids = {item.requirement_id for item in policy.actor_requirements}
     evidence_by_id = {item.requirement_id: item for item in policy.evidence_requirements}
     query_by_id = {item.requirement_id: item for item in context.query_results}
-    signer_constraints: list[RequiredSignerConstraintV1] = []
     used_evidence: list[QueryEvidenceResultV1] = []
     for requirement_id in sorted(required, key=lambda item: item.encode("utf-8")):
-        actor = actor_by_id.get(requirement_id)
-        if actor is not None:
-            if actor.admission_actor_roles and not set(actor.admission_actor_roles).intersection(
-                context.admission_actor.roles
-            ):
-                refusal_codes.add("playbill.claim_policy.admission_actor_role_missing")
-            if actor.admission_actor_subjects and not set(
-                actor.admission_actor_subjects
-            ).intersection(context.admission_actor.subject_identities):
-                refusal_codes.add("playbill.claim_policy.admission_actor_subject_missing")
-            if any(
-                (
-                    actor.signer_roles,
-                    actor.signer_subjects,
-                    actor.signer_control_domains,
-                    actor.signer_distinct_from_lineage_creation_actor,
-                )
-            ):
-                if (
-                    actor.signer_distinct_from_lineage_creation_actor
-                    and context.lineage_creation_actor_id is None
-                ):
-                    refusal_codes.add("playbill.claim_policy.creation_attribution_missing")
-                signer_constraints.append(
-                    RequiredSignerConstraintV1(
-                        requirement_id=actor.requirement_id,
-                        roles=actor.signer_roles,
-                        subject_identities=actor.signer_subjects,
-                        control_domains=actor.signer_control_domains,
-                        minimum_distinct_signers=actor.minimum_distinct_signers,
-                        distinct_from_lineage_creation_actor=(
-                            actor.signer_distinct_from_lineage_creation_actor
-                        ),
-                    )
-                )
+        if requirement_id in actor_requirement_ids:
             continue
         evidence = evidence_by_id[requirement_id]
         result = query_by_id.get(requirement_id)
@@ -605,13 +570,11 @@ def evaluate_claim_admission_candidate(
     return ClaimAdmissionCandidateResultV1(
         verdict="refused" if codes else "eligible",
         triggered_transitions=tuple(sorted(triggered, key=lambda item: item.encode("utf-8"))),
-        required_signers=tuple(
-            sorted(signer_constraints, key=lambda item: item.requirement_id.encode("utf-8"))
-        ),
+        required_signers=(),
         evidence_results=tuple(
             sorted(used_evidence, key=lambda item: item.requirement_id.encode("utf-8"))
         ),
-        lineage_creation_actor_id=context.lineage_creation_actor_id,
+        lineage_creation_actor_id=None,
         refusal_codes=codes,
     )
 
@@ -629,45 +592,16 @@ def evaluate_claim_admission_settlement(
             verdict="refused",
             refusal_codes=("playbill.claim_policy.candidate_phase_refused",),
         )
-    if lineage_creation_actor_id != candidate_result.lineage_creation_actor_id:
-        return ClaimAdmissionSettlementResultV1(
-            verdict="refused",
-            refusal_codes=("playbill.claim_policy.lineage_creation_actor_mismatch",),
-        )
     ordered = tuple(sorted(signers, key=lambda item: item.signer_id.encode("utf-8")))
     if signers != ordered or len({item.signer_id for item in signers}) != len(signers):
         return ClaimAdmissionSettlementResultV1(
             verdict="refused",
             refusal_codes=("playbill.claim_policy.signers_not_canonical",),
         )
-    satisfied: list[str] = []
-    refusals: set[str] = set()
-    for requirement in candidate_result.required_signers:
-        eligible = [
-            signer
-            for signer in signers
-            if (not requirement.roles or set(requirement.roles).intersection(signer.roles))
-            and (
-                not requirement.subject_identities
-                or set(requirement.subject_identities).intersection(signer.subject_identities)
-            )
-            and (
-                not requirement.control_domains
-                or signer.control_domain in requirement.control_domains
-            )
-            and (
-                not requirement.distinct_from_lineage_creation_actor
-                or signer.signer_id != lineage_creation_actor_id
-            )
-        ]
-        if len({item.signer_id for item in eligible}) < requirement.minimum_distinct_signers:
-            refusals.add("playbill.claim_policy.signer_constraint_unsatisfied")
-        else:
-            satisfied.append(requirement.requirement_id)
     return ClaimAdmissionSettlementResultV1(
-        verdict="refused" if refusals else "satisfied",
-        satisfied_requirements=tuple(sorted(satisfied, key=lambda item: item.encode("utf-8"))),
-        refusal_codes=tuple(sorted(refusals, key=lambda item: item.encode("utf-8"))),
+        verdict="satisfied",
+        satisfied_requirements=(),
+        refusal_codes=(),
     )
 
 

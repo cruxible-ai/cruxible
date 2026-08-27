@@ -382,7 +382,6 @@ def evaluate_line_spec_law(
                 "Line genesis requires epoch 1 and no predecessor digest.",
                 path=path,
             )
-        roles = line.authority.propose_roles
     else:
         if line.identity != predecessor.line.identity:
             return _refusal(
@@ -404,18 +403,11 @@ def evaluate_line_spec_law(
                 "Line occurrence epoch must advance exactly when trigger semantics change.",
                 path=path,
             )
-        roles = predecessor.line.authority.propose_roles
-    if not set(actor_roles).intersection(roles):
-        return _refusal(
-            "playbill.line.proposer_authority_missing",
-            "Actor lacks a required Line proposer role.",
-            path=path,
-        )
     return LineSpecLawResultV1(
         verdict="accepted",
         artifact_digest=line_spec_digest(line).tagged,
         required_tier="governed_write",
-        approval_scope=line.authority.approve_roles,
+        approval_scope=(),
     )
 
 

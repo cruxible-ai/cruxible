@@ -118,18 +118,18 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     DocumentFormatError,
+    PrincipalIntegrityError,
     ProposalAdmissionError,
     ProposalIntegrityError,
-    PrincipalIntegrityError,
     SubjectFormatError,
 )
 from cruxible_client.contracts.governance import (
+    PLAYBILL_FIXED_INDEPENDENT_APPROVALS,
+    PLAYBILL_INDEPENDENT_APPROVAL_ROLE,
     ActivationPolicy,
     ApprovalRequirement,
     MutationDisposition,
     PermissionTier,
-    PLAYBILL_FIXED_INDEPENDENT_APPROVALS,
-    PLAYBILL_INDEPENDENT_APPROVAL_ROLE,
 )
 from cruxible_client.contracts.laws import (
     PLAYBILL_ACCEPTANCE_LAWS,
@@ -1796,7 +1796,7 @@ def _principal_member(context: _MemberContext) -> _MemberVerdict:
         ),
         candidate_artifact_digest=file_digest(context.content).tagged,
         required_tier="admin",
-        approval_scope=(lifecycle.approval_role,) if lifecycle.approval_role else (),
+        approval_scope=(),
         activation_policy="snapshot",
         result={
             "artifact_digest": file_digest(context.content).tagged,
@@ -1903,6 +1903,23 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_principal_member,
     ),
 )
+ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
+    "procedure",
+    "exhaust-promotion",
+    "line",
+    "query-definition",
+    "provider",
+    "source-acquisition-policy",
+    "standing-mandate",
+    "capture-contract",
+    "claim",
+    "claim-type",
+    "subject",
+    "document",
+    "principal",
+)
+if tuple(kind.name for kind in _MEMBER_KINDS) != ROLE_DEMOTED_MEMBER_FAMILIES:
+    raise RuntimeError("role-demotion inventory must enumerate every candidate member family")
 """Every member kind one change set may contain, and the law that judges it.
 
 The order is the order the evaluator tries patterns in, which is the order the
@@ -2111,6 +2128,23 @@ def _evaluate_scoped_members(
         )
 
     principals = principal_registry_from_tree(current_tree, semantic_root=current.semantic_root)
+    if actor_id is not None:
+        try:
+            principals.require_active(actor_id)
+        except PrincipalIntegrityError:
+            return CandidateEvaluation(
+                candidate_tree,
+                None,
+                (
+                    _diagnostic(
+                        "playbill.proposal.creator_principal_invalid",
+                        "Authenticated actor does not resolve to an active Principal at the "
+                        "accepted coordinate.",
+                        scope[0],
+                    ),
+                ),
+                rebased,
+            )
     actor_roles = _actor_roles(principals, actor_id)
     candidate_states = candidate_dependencies.states
     resolved = _resolved_artifacts(candidate_tree, candidate_states)

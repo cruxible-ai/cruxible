@@ -410,11 +410,7 @@ class QueryDefinitionLawResultV1(_StrictQueryDefinitionModel):
     @model_validator(mode="after")
     def _shape(self) -> "QueryDefinitionLawResultV1":
         if self.verdict == "accepted":
-            if (
-                self.artifact_digest is None
-                or self.required_tier is None
-                or not self.approval_scope
-            ):
+            if self.artifact_digest is None or self.required_tier is None:
                 raise ValueError("accepted QueryDefinition law result is incomplete")
             if self.diagnostics:
                 raise ValueError("accepted QueryDefinition law result cannot carry diagnostics")
@@ -460,7 +456,6 @@ def evaluate_query_definition_law(
                     "A QueryDefinition pin does not resolve at the accepted parent coordinate.",
                     path=path,
                 )
-    roles = set(actor_roles)
     digest = query_definition_digest(query).tagged
     if predecessor is None:
         if query.lifecycle.state != "live" or query.lifecycle.predecessor_digest is not None:
@@ -469,13 +464,6 @@ def evaluate_query_definition_law(
                 "A new QueryDefinition must begin live without a predecessor.",
                 path=path,
             )
-        if not roles.intersection(query.authority.propose_roles):
-            return _refusal(
-                "playbill.query_definition.actor_unauthorized",
-                "The request actor lacks QueryDefinition proposal authority.",
-                path=path,
-            )
-        approval_scope = query.authority.approve_roles
     else:
         previous = predecessor.query
         if previous.identity != query.identity or predecessor.path != path:
@@ -502,24 +490,11 @@ def evaluate_query_definition_law(
                 "A retired QueryDefinition cannot be revived or revised.",
                 path=path,
             )
-        if query.authority != previous.authority:
-            return _refusal(
-                "playbill.query_definition.authority_change_unsupported",
-                "QueryDefinition succession cannot rewrite accepted authority in v1.",
-                path=path,
-            )
-        if not roles.intersection(previous.authority.propose_roles):
-            return _refusal(
-                "playbill.query_definition.actor_unauthorized",
-                "The request actor lacks predecessor proposal authority.",
-                path=path,
-            )
-        approval_scope = previous.authority.approve_roles
     return QueryDefinitionLawResultV1(
         verdict="accepted",
         artifact_digest=digest,
         required_tier="governed_write",
-        approval_scope=approval_scope,
+        approval_scope=(),
     )
 
 

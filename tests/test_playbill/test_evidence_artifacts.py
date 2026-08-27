@@ -24,7 +24,7 @@ from cruxible_core.playbill.service.documents import (
 )
 from cruxible_core.service.playbill_evidence import service_get_playbill_standing_mandate
 from tests.test_playbill._pc_c_support import capture_contract, provider
-from tests.test_playbill._support import initialize_local
+from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_acquisition_policies import _policy, _rule
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_claims import _claim_type
@@ -66,12 +66,16 @@ def test_evidence_artifacts_share_acceptance_closure_and_projection(tmp_path: Pa
         "source-acquisition-policy",
         "standing-mandate",
     }
-    approval = _sign(owner, proposed.candidate.candidate_digest, base.semantic_root)
+    approval = _sign(
+        client_material(tmp_path, instance),
+        proposed.candidate.candidate_digest,
+        base.semantic_root,
+    )
     service_submit_playbill_approval(
         instance,
         proposal_id=proposed.admission.proposal_id,
         attestation=approval.attestation,
-        authenticated_submitter="owner",
+        authenticated_submitter="reviewer",
     )
     activated = service_activate_playbill_proposal(
         instance,

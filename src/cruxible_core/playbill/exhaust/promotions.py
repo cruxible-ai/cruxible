@@ -442,7 +442,7 @@ def evaluate_exhaust_promotion_law(
         verdict="accepted",
         artifact_digest=exhaust_promotion_digest(promotion),
         required_tier="governed_write",
-        approval_scope=promotion.authority.approve_roles,
+        approval_scope=(),
         activation_policy="snapshot",
     )
 
@@ -470,13 +470,6 @@ def evaluate_exhaust_promotion_acceptance(
                 "promotion.predecessor_mismatch",
                 "Promotion successor identity or predecessor differs.",
             )
-        if not set(actor_roles).intersection(predecessor.promotion.authority.propose_roles):
-            return _refused(
-                "promotion.predecessor_authority_missing",
-                "Actor lacks authority over the predecessor promotion.",
-            )
-    if not set(actor_roles).intersection(promotion.authority.propose_roles):
-        return _refused("promotion.actor_unauthorized", "Actor cannot propose this promotion.")
     if operational_result.verdict != "accepted":
         return operational_result
     expected_digest = exhaust_promotion_digest(promotion)
@@ -488,7 +481,7 @@ def evaluate_exhaust_promotion_acceptance(
     return operational_result.model_copy(
         update={
             "required_tier": "governed_write",
-            "approval_scope": promotion.authority.approve_roles,
+            "approval_scope": (),
             "activation_policy": "snapshot",
         }
     )

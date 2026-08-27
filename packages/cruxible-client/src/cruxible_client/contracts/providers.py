@@ -254,12 +254,6 @@ def evaluate_provider_law(
                 "Provider successor does not pin the exact predecessor.",
                 path=path,
             )
-        if not set(actor_roles).intersection(predecessor.provider.authority.propose_roles):
-            return _law_refusal(
-                "playbill.provider.predecessor_authority_missing",
-                "Actor lacks authority over the predecessor Provider.",
-                path=path,
-            )
     pinned_contracts = {
         pin.artifact_digest for pin in provider.pins if pin.role == "capture-contract"
     }
@@ -269,17 +263,11 @@ def evaluate_provider_law(
             "Provider CaptureContract declarations require exact governed pins.",
             path=path,
         )
-    if not set(actor_roles).intersection(provider.authority.propose_roles):
-        return _law_refusal(
-            "playbill.provider.actor_unauthorized",
-            "Actor lacks authority to propose this Provider.",
-            path=path,
-        )
     return ProviderLawResultV1(
         verdict="accepted",
         artifact_digest=provider_digest(provider).tagged,
         required_tier="governed_write",
-        approval_scope=provider.authority.approve_roles,
+        approval_scope=(),
     )
 
 
