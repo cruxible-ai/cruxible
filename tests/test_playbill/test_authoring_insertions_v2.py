@@ -10,6 +10,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.authoring.insertions import (
+    PlaybillInsertionApplyError,
+    apply_playbill_publication,
+)
 from cruxible_client.contracts.authoring.models import (
     InsertionAnchorWindowV1,
     InsertionTargetV2,
@@ -29,6 +33,7 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationAnchorAmbiguous,
     PublicationAnchorStale,
     PublicationBodyNotMarkerCompatible,
+    PublicationClaimNotAccepted,
     PublicationPrepareOrConfirmRequired,
     PublicationTerminalStateRefused,
     build_publication_preparation,
@@ -101,7 +106,7 @@ def _expectation():
     )
 
 
-def _submitted_publication(tmp_path: Path):
+def _submitted_publication(tmp_path: Path, *, activate_claim: bool = True):
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
     clock = [datetime(2026, 8, 22, 12, tzinfo=UTC)]
@@ -131,15 +136,18 @@ def _submitted_publication(tmp_path: Path):
     submitted = coordinator.submit(intent.intent_id, actor=actor)
     assert submitted.status.proposal_id is not None
     assert submitted.status.candidate_digest is not None
-    _activate(
-        instance,
-        owner,
-        proposal_id=submitted.status.proposal_id,
-        candidate_digest=submitted.status.candidate_digest,
-    )
+    if activate_claim:
+        _activate(
+            instance,
+            owner,
+            proposal_id=submitted.status.proposal_id,
+            candidate_digest=submitted.status.candidate_digest,
+        )
     resumed = coordinator.resume(intent.intent_id, actor=actor).intent
     assert resumed.insertion_expectation is not None
-    assert resumed.insertion_expectation.state == "pending"
+    assert resumed.insertion_expectation.state == (
+        "pending" if activate_claim else "awaiting_claim_acceptance"
+    )
     return instance, owner, coordinator, actor, intent.intent_id, preimage, clock
 
 
@@ -225,7 +233,16 @@ def test_prepare_frames_the_accepted_body_and_exact_source_reproduces_confirmati
     assert preparation.revision == 1
     assert preparation.block_start_byte == opening == len(b"status: \n")
     assert confirmation is not None
-    assert publication_confirmation_matches(prepared, confirmation)
+    assert publication_confirmation_matches(
+        prepared,
+        confirmation,
+        intent_id="AIT-" + "b" * 32,
+    )
+    assert not publication_confirmation_matches(
+        prepared,
+        confirmation,
+        intent_id="AIT-" + "c" * 32,
+    )
 
 
 def test_prepare_refuses_stale_ambiguous_and_marker_incompatible_bodies() -> None:
@@ -284,6 +301,77 @@ def test_reprepare_is_deterministic_and_increments_only_for_a_new_clean_preimage
     assert retry == first
     assert revised.revision == 2
     assert revised.preparation_digest != first.preparation_digest
+    assert mark_publication_prepared(prepared, preparation=revised).preparation == revised
+
+
+def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
+    tmp_path: Path,
+) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    first = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    concurrent = b"concurrent heading\n" + preimage
+    with pytest.raises(PlaybillInsertionApplyError, match="preimage"):
+        apply_playbill_publication(
+            concurrent,
+            intent_id=intent_id,
+            expectation=first.expectation.model_dump(mode="json"),
+            retained_body=b"status: ready\n",
+        )
+
+    revised = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(concurrent),
+    )
+    assert revised.outcome == "prepared"
+    assert revised.preparation is not None
+    assert revised.preparation.revision == 2
+    applied = apply_playbill_publication(
+        concurrent,
+        intent_id=intent_id,
+        expectation=revised.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    assert applied.outcome == "applied"
+
+
+def test_prepare_before_claim_acceptance_refuses_without_terminalizing_then_recovers(
+    tmp_path: Path,
+) -> None:
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path, activate_claim=False
+    )
+    with pytest.raises(PublicationClaimNotAccepted):
+        coordinator.prepare_publication(
+            intent_id,
+            actor=actor,
+            observation=_observation(preimage),
+        )
+    unchanged = coordinator.store.get(intent_id, actor_id=actor.actor_id)
+    assert unchanged.insertion_expectation is not None
+    assert unchanged.insertion_expectation.state == "awaiting_claim_acceptance"
+    assert unchanged.candidate_status.proposal_id is not None
+    assert unchanged.candidate_status.candidate_digest is not None
+
+    _activate(
+        instance,
+        owner,
+        proposal_id=unchanged.candidate_status.proposal_id,
+        candidate_digest=unchanged.candidate_status.candidate_digest,
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.outcome == "prepared"
+    assert prepared.expectation.state == "prepared"
 
 
 def test_pin_15_prepared_status_never_passively_terminalizes_and_exact_confirm_rescues(

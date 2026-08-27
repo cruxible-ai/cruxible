@@ -349,7 +349,20 @@ def mark_publication_prepared(
     if expectation.state == "prepared":
         if expectation.preparation == preparation:
             return expectation
-        _raise(PublicationPreparationStale, "another durable preparation already won")
+        prior = expectation.preparation
+        if (
+            prior is not None
+            and preparation.expectation_id == expectation.expectation_id
+            and preparation.target_digest == insertion_target_v2_digest(expectation.target)
+            and preparation.block_id == prior.block_id
+            and preparation.revision == prior.revision + 1
+        ):
+            return update_insertion_expectation_v2(
+                expectation,
+                state="prepared",
+                preparation=preparation,
+            )
+        _raise(PublicationPreparationStale, "unrelated durable preparation cannot replace prior")
     if expectation.state != "pending":
         if expectation.state == "awaiting_claim_acceptance":
             _raise(PublicationClaimNotAccepted, "the governed Claim is not accepted")
@@ -368,13 +381,16 @@ def mark_publication_prepared(
 def publication_confirmation_matches(
     expectation: InsertionExpectationV2,
     observation: InsertionConfirmationObservationV2,
+    *,
+    intent_id: str,
 ) -> bool:
     preparation = expectation.preparation
     if preparation is None:
         return False
     summary = observation.marker_summary
     return (
-        observation.expectation_id == expectation.expectation_id
+        observation.intent_id == intent_id
+        and observation.expectation_id == expectation.expectation_id
         and observation.preparation_digest == preparation.preparation_digest
         and observation.source_id == preparation.source_id
         and observation.final_postimage_digest == preparation.final_postimage_digest
@@ -472,7 +488,11 @@ def mark_publication_bound(
         return expectation
     if expectation.state != "prepared":
         _raise(PublicationNotPrepared, "publication has no durable preparation")
-    if not publication_confirmation_matches(expectation, observation):
+    if not publication_confirmation_matches(
+        expectation,
+        observation,
+        intent_id=intent.intent_id,
+    ):
         _raise(PublicationConfirmationMismatch, "observation differs from exact preparation")
     return _terminal_v2(intent, expectation, state="bound", finalized_at=finalized_at)
 

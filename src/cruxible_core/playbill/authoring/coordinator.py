@@ -79,6 +79,7 @@ from cruxible_client.contracts.source_references import CasSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, parse_datetime, utc_now
 from cruxible_core.playbill.authoring.insertions import (
     InsertionProtocolError,
+    PublicationClaimNotAccepted,
     PublicationConfirmationMismatch,
     PublicationNotPrepared,
     PublicationPrepareOrConfirmRequired,
@@ -626,6 +627,10 @@ class AuthoringIntentCoordinator:
         expectation = current.insertion_expectation
         if not isinstance(expectation, InsertionExpectationV2):
             raise InsertionProtocolError("AuthoringIntent has no publication v2 expectation")
+        if expectation.state == "awaiting_claim_acceptance":
+            raise PublicationClaimNotAccepted(
+                f"{PublicationClaimNotAccepted.code}: the governed Claim is not accepted"
+            )
         exact = publication_confirmation_from_source(
             intent_id=intent_id,
             expectation=expectation,
@@ -739,11 +744,6 @@ class AuthoringIntentCoordinator:
                 intent=terminal,
                 expectation=terminal_expectation,
                 preparation=terminal_expectation.preparation,
-            )
-        if expectation.state == "awaiting_claim_acceptance":
-            raise InsertionProtocolError(
-                "playbill.authoring.publication_claim_not_accepted: "
-                "the governed Claim is not accepted"
             )
         current_claim = self._current_claim(current)
         if current_claim is None:
@@ -925,7 +925,11 @@ class AuthoringIntentCoordinator:
             observation,
         )
         if expectation.state == "bound":
-            if not publication_confirmation_matches(expectation, observation):
+            if not publication_confirmation_matches(
+                expectation,
+                observation,
+                intent_id=intent_id,
+            ):
                 raise PublicationTerminalStateRefused(
                     f"{PublicationTerminalStateRefused.code}: conflicting terminal confirmation"
                 )
@@ -980,7 +984,11 @@ class AuthoringIntentCoordinator:
             )
 
         evaluation_time = self.clock()
-        if publication_confirmation_matches(expectation, observation):
+        if publication_confirmation_matches(
+            expectation,
+            observation,
+            intent_id=intent_id,
+        ):
 
             def bind(intent: AuthoringIntentV1) -> AuthoringIntentV1:
                 live = intent.insertion_expectation
