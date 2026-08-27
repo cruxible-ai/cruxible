@@ -513,6 +513,7 @@ def _accept_tree(instance, owner, tree, *, timestamp: str, proposal_name: str) -
             ),
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=len(instance.accepted_history()),
     )
     publisher = instance.activation_publisher()

@@ -226,6 +226,10 @@ def verify_candidate_approvals(
         for submission in submissions
     )
     required = candidate.approval_requirements
+    # The fixed constant is intentionally checked against the committed record
+    # bytes. Changing it in place makes all existing candidates fail closed;
+    # future policy variability therefore requires a versioned governed-policy
+    # artifact rather than a bare constant change.
     if len(required) != 1 or (
         required[0].role != PLAYBILL_INDEPENDENT_APPROVAL_ROLE
         or required[0].minimum_distinct_signers != PLAYBILL_FIXED_INDEPENDENT_APPROVALS

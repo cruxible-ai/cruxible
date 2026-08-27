@@ -480,6 +480,7 @@ def _activate(instance, owner, candidate, evaluated_oid, *, sequence: int) -> No
             ),
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=sequence,
     )
     publisher = instance.activation_publisher()

@@ -41,6 +41,7 @@ def _accepted_document(tmp_path: Path):
             actor_id="owner",
             source_compilation_digest="sha256:" + "77" * 32,
         ),
+        proposal_actor_id="owner",
         sequence=1,
     )
     publisher = instance.activation_publisher()

@@ -96,6 +96,7 @@ def test_v2_changeset_keeps_frozen_candidate_and_approval_preimages(tmp_path: Pa
         approval_submissions=(approval,),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=1,
     )
 
@@ -147,6 +148,7 @@ def test_claim_type_v2_generation_projects_and_replays_after_restart(tmp_path: P
         ),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=1,
     )
     publisher = instance.activation_publisher()
@@ -235,6 +237,7 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
         ),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=1,
     )
 

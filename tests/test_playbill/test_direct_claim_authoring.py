@@ -275,6 +275,7 @@ def test_claim_policy_actor_requirement_is_dormant_at_candidate_and_settlement(
         candidate=candidate,
         approvals=(_sign(reviewer, candidate.candidate_digest, base.semantic_root),),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=2,
     )
     assert tuple(item.signer_id for item in bundle.approvals) == ("reviewer",)
@@ -310,6 +311,7 @@ def test_one_call_claim_proposal_activation_query_history_explain_and_source(
             ),
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=1,
     )
     publisher = instance.activation_publisher()
@@ -464,6 +466,7 @@ def _activate_direct_claim(
             ),
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=sequence,
     )
     publisher = instance.activation_publisher()

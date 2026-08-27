@@ -356,6 +356,7 @@ def service_activate_playbill_proposal(
             actor_id=proposal.admission.actor_id,
             source_compilation_digest=proposal.admission.source_compilation_digest,
         ),
+        proposal_actor_id=proposal.admission.actor_id,
         sequence=instance.accepted_history()[-1].sequence + 1,
     )
     publisher = instance.activation_publisher()

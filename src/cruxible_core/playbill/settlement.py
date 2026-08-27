@@ -732,6 +732,7 @@ def prepare_generation(
     approval_submissions: tuple[ApprovalSubmission, ...],
     bodies: BodyVerifierProtocol,
     actor_binding: ChangeActorBinding,
+    proposal_actor_id: str,
     sequence: int,
     laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     mandate_digest: str | None = None,
@@ -740,6 +741,10 @@ def prepare_generation(
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
+    if actor_binding.actor_id != proposal_actor_id:
+        raise SettlementIntegrityError(
+            "settlement actor binding differs from the proposal admission actor"
+        )
     if ledger.object_format() != base.git_object_format:
         raise SettlementIntegrityError("settlement base object format differs from ledger")
     if ledger.read_main() != base.git_oid:

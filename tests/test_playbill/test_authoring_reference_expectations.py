@@ -69,6 +69,7 @@ def _accept_subject_successor(
             ),
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=2,
     )
     projection = instance.activation_publisher().prebuild(bundle, base=base)

@@ -55,13 +55,13 @@ from cruxible_core.playbill.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
+from cruxible_core.playbill.principal_lifecycle import ordinary_approval_capable
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
     AssemblerResult,
     projection_manifest_name,
 )
-from cruxible_core.playbill.principal_lifecycle import ordinary_approval_capable
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
 from cruxible_core.playbill.proposals import (
     ExhaustPromotionVerifierProtocol,
@@ -678,6 +678,7 @@ class PlaybillInstance:
         candidate: CandidateRecordAnyVersion,
         approvals: tuple[ApprovalSubmission, ...],
         actor_binding: ChangeActorBinding,
+        proposal_actor_id: str,
         sequence: int,
     ) -> VerifiedGenerationBundle:
         """Construct one verified generation without exposing the Git ledger to surfaces."""
@@ -690,6 +691,7 @@ class PlaybillInstance:
             approval_submissions=approvals,
             bodies=self.body_store(),
             actor_binding=actor_binding,
+            proposal_actor_id=proposal_actor_id,
             sequence=sequence,
             promotion_verifier=self._promotion_verifier,
         )

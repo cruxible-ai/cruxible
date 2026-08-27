@@ -104,6 +104,7 @@ def activate(
             ),
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=sequence,
     )
     publisher = instance.activation_publisher()
@@ -202,6 +203,7 @@ def accept_proposal(
             ),
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=sequence,
     )
     publisher = instance.activation_publisher()

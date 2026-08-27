@@ -171,6 +171,7 @@ def test_prepare_generation_binds_complete_change_set_without_advancing_main(
             actor_id="owner",
             source_compilation_digest="sha256:" + "77" * 32,
         ),
+        proposal_actor_id="owner",
         sequence=1,
     )
 
@@ -192,6 +193,30 @@ def test_prepare_generation_binds_complete_change_set_without_advancing_main(
     assert bundle.generation_root.tagged != base.generation_root
 
 
+def test_prepare_generation_binds_settlement_actor_to_proposal_admission(
+    tmp_path: Path,
+) -> None:
+    instance, _owner, reviewer = _instance(tmp_path)
+    base, tree, candidate = _candidate(instance)
+    submissions = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
+
+    with pytest.raises(
+        SettlementIntegrityError,
+        match="settlement actor binding differs from the proposal admission actor",
+    ):
+        prepare_generation(
+            instance._ledger,
+            base=base,
+            candidate_tree=tree,
+            candidate=candidate,
+            approval_submissions=submissions,
+            bodies=instance.body_store(),
+            actor_binding=ChangeActorBinding(actor_id="reviewer"),
+            proposal_actor_id="owner",
+            sequence=1,
+        )
+
+
 def test_prebuild_is_unserved_until_winning_cas_then_switches_atomically(
     tmp_path: Path,
 ) -> None:
@@ -206,6 +231,7 @@ def test_prebuild_is_unserved_until_winning_cas_then_switches_atomically(
         approval_submissions=submissions,
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=1,
     )
     publication = Path(instance.inspect().storage_directories["projections"])
@@ -272,6 +298,7 @@ def test_two_candidates_from_one_base_leave_one_winner_and_no_loser_projection(
             approval_submissions=submissions,
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
+            proposal_actor_id="owner",
             sequence=1,
         )
 
@@ -321,6 +348,7 @@ def test_prepare_generation_refuses_tampered_law_or_candidate_tree(tmp_path: Pat
             approval_submissions=submissions,
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
+            proposal_actor_id="owner",
             sequence=1,
         )
 
@@ -333,6 +361,7 @@ def test_prepare_generation_refuses_tampered_law_or_candidate_tree(tmp_path: Pat
             approval_submissions=submissions,
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
+            proposal_actor_id="owner",
             sequence=1,
         )
 
@@ -458,6 +487,7 @@ def test_qualified_git_formats_preserve_candidate_changeset_and_semantic_root(
                 approval_submissions=submissions,
                 bodies=bodies,
                 actor_binding=ChangeActorBinding(actor_id="owner"),
+                proposal_actor_id="owner",
                 sequence=1,
             )
         )

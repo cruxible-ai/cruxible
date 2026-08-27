@@ -475,6 +475,7 @@ class _Builder:
             approval_submissions=(self._sign(evaluation.candidate.candidate_digest),),
             bodies=self.instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
+            proposal_actor_id="owner",
             sequence=sequence,
         )
         parent_generation_root = self.base.generation_root

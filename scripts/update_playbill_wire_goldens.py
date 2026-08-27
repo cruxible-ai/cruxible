@@ -34,6 +34,8 @@ def _update_changeset() -> None:
     )
     if not isinstance(record, ChangeSetRecordV3):
         raise TypeError("the v3 ChangeSet golden did not parse as ChangeSetRecordV3")
+    # This patch hand-mirrors the approval_requirements bytes produced by
+    # settlement; it must move in lockstep with settlement's fixed requirement.
     updated = record.model_copy(
         update={
             "approval_requirements": (

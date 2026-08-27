@@ -411,6 +411,7 @@ def test_activation_writes_a_checkpoint_on_its_configured_stride(tmp_path: Path)
         approval_submissions=approvals,
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=1,
     )
     projections = Path(instance.inspect().storage_directories["projections"])

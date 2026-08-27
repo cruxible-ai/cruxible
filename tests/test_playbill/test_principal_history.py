@@ -178,6 +178,7 @@ def _settle_transition(
         ),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id=actor.principal.principal_id),
+        proposal_actor_id=actor.principal.principal_id,
         sequence=instance._recovered.head.sequence + 1,
     )
     publisher = instance.activation_publisher()
@@ -240,6 +241,7 @@ def test_owner_rotation_and_recovery_replacement_replay_exact_key_roots(
             ),
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="recovery"),
+            proposal_actor_id="recovery",
             sequence=3,
         )
 
@@ -289,6 +291,7 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
             approval_submissions=submissions,
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
+            proposal_actor_id="owner",
             sequence=3,
         )
 

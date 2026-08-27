@@ -60,6 +60,7 @@ def _prepared(tmp_path: Path):
         approval_submissions=approvals,
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=1,
     )
     return instance, base, bundle
@@ -172,6 +173,7 @@ def test_restart_collects_crash_residue_from_generation_construction(
             approval_submissions=approvals,
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
+            proposal_actor_id="owner",
             sequence=1,
             crash_hook=crash,
         )
@@ -225,6 +227,7 @@ def test_restart_finishes_losing_cas_orphan_cleanup(tmp_path: Path, phase: str) 
             approval_submissions=approvals,
             bodies=instance.body_store(),
             actor_binding=ChangeActorBinding(actor_id="owner"),
+            proposal_actor_id="owner",
             sequence=1,
         )
 

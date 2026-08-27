@@ -112,6 +112,7 @@ def _activate(
             ),
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
         sequence=sequence,
     )
     publisher = instance.activation_publisher()
