@@ -8,25 +8,34 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.curation import (
+    CURATION_DETECTOR_LAW_DIGEST_DOMAIN,
+    CURATION_PATTERN_ID_DOMAIN,
     CurationAffectedMemberV1,
     CurationDetectorCoverageV1,
     CurationEvidenceRefV1,
     build_curation_accepted_fixed,
     build_curation_detection,
     build_pattern_observation,
+    curation_detection_evidence_digest,
     curation_item_id,
+    curation_observation_id,
+    detector_law_digest,
     replay_curation_items,
 )
 from cruxible_core.playbill.curation_detectors import CurationDetectorResult
 from cruxible_core.playbill.review_operational import ReviewOperationalConcurrentChangeError
 from cruxible_core.service.playbill_curation import (
+    PlaybillCurationAcceptFixedRequestV1,
+    PlaybillCurationItemAlreadyResolved,
     PlaybillCurationListRequestV1,
     PlaybillCurationOverruleRequestV1,
     PlaybillCurationSuppressRequestV1,
+    service_accept_fixed_playbill_curation,
     service_list_playbill_curation,
     service_overrule_playbill_curation,
     service_suppress_playbill_curation,
@@ -89,6 +98,178 @@ def _seed_item(tmp_path: Path):  # type: ignore[no-untyped-def]
     )
     item = replay_curation_items(instance.review_operational_store().events(family="curation"))[0]
     return instance, item
+
+
+def _legacy_observation(
+    *,
+    pattern_kind: str,
+    subject: ArtifactIdentity,
+    detail: dict[str, object],
+    old_law: dict[str, object],
+) -> dict[str, object]:
+    coverage = CurationDetectorCoverageV1(
+        pattern_kind=pattern_kind,  # type: ignore[arg-type]
+        status="complete",
+        evaluated_fact_count=2,
+    )
+    refs = (
+        CurationEvidenceRefV1(
+            kind="accepted_artifact",
+            identity=subject.qualified,
+            generation=0,
+        ),
+    )
+    pattern_id = typed_digest(
+        Sha256Value,
+        CURATION_PATTERN_ID_DOMAIN,
+        {
+            "pattern_kind": pattern_kind,
+            "subject": subject.model_dump(mode="json"),
+            "detail": detail,
+        },
+    ).tagged
+    law_digest = typed_digest(
+        Sha256Value,
+        CURATION_DETECTOR_LAW_DIGEST_DOMAIN,
+        {"pattern_kind": pattern_kind, "law": old_law},
+    ).tagged
+    assert law_digest != detector_law_digest(pattern_kind)  # type: ignore[arg-type]
+    evidence_digest = curation_detection_evidence_digest(
+        pattern_id=pattern_id,
+        detector_law_digest_value=law_digest,
+        coverage=coverage,
+        evidence_refs=refs,
+    )
+    item_id = curation_item_id(pattern_id=pattern_id, predecessor_item_id=None)
+    observation_id = curation_observation_id(
+        item_id=item_id,
+        accepted_generation=0,
+        detection_evidence_digest=evidence_digest,
+    )
+    return {
+        "tag": "playbill-curation-pattern-observed-v1",
+        "event_id": observation_id,
+        "observation_id": observation_id,
+        "item_id": item_id,
+        "predecessor_item_id": None,
+        "pattern_id": pattern_id,
+        "pattern_kind": pattern_kind,
+        "subject": subject.model_dump(mode="json"),
+        "detail": detail,
+        "detector_law_digest": law_digest,
+        "detection_evidence_digest": evidence_digest,
+        "evidence_refs": [item.model_dump(mode="json") for item in refs],
+        "coverage": coverage.model_dump(mode="json"),
+        "accepted_generation": 0,
+    }
+
+
+def test_changed_detector_laws_quarantine_old_items_without_bricking_curation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, healthy = _seed_item(tmp_path)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    legacy = (
+        _legacy_observation(
+            pattern_kind="playbill.curation.admission_failure_cluster.v1",
+            subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.priority"),
+            detail={"diagnostic_code": "playbill.claim.literal_schema_invalid"},
+            old_law={
+                "minimum_distinct_durable_attempts": 2,
+                "discriminator": "diagnostic_code",
+            },
+        ),
+        _legacy_observation(
+            pattern_kind="playbill.curation.provenance_concentration.v1",
+            subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.owner"),
+            detail={"basis": "effective_supporting_control_components"},
+            old_law={
+                "minimum_live_supported_claims": 2,
+                "effective_supporting_control_components": 1,
+            },
+        ),
+        _legacy_observation(
+            pattern_kind="playbill.curation.duplicate_statement_lineages.v1",
+            subject=ArtifactIdentity(kind="ClaimType", name="project.work_item.assignee"),
+            detail={"statement_digest": "sha256:" + "a" * 64},
+            old_law={
+                "minimum_distinct_claim_identities": 2,
+                "comparison": "exact_claim_statement_digest",
+            },
+        ),
+    )
+    for raw in legacy:
+        instance.review_operational_store().append(
+            family="curation",
+            partition_id=str(raw["item_id"]),
+            event_id=str(raw["event_id"]),
+            payload=raw,
+            coordinate=coordinate,
+            generation=0,
+            actor_context=_actor(),
+            recorded_at=NOW,
+            expected_latest_event_digest=None,
+        )
+
+    result = _serve_detection(
+        instance,
+        monkeypatch,
+        generation=1,
+        detections=(_detection(),),
+    )
+
+    by_status = {item.status: [] for item in result.items}
+    for item in result.items:
+        by_status[item.status].append(item)
+    assert [item.item_id for item in by_status["open"]] == [healthy.item_id]
+    quarantined = tuple(by_status["quarantined"])
+    assert len(quarantined) == 3
+    assert {item.pattern_kind for item in quarantined} == {
+        "playbill.curation.admission_failure_cluster.v1",
+        "playbill.curation.provenance_concentration.v1",
+        "playbill.curation.duplicate_statement_lineages.v1",
+    }
+    assert all(item.quarantine_reason == "detector_law_unreproducible" for item in quarantined)
+    assert all(
+        item.current_detector_law_digest == detector_law_digest(item.pattern_kind)
+        and item.current_detector_law_digest != item.detector_law_digest
+        for item in quarantined
+    )
+
+    suppressed = service_suppress_playbill_curation(
+        instance,
+        request=PlaybillCurationSuppressRequestV1(
+            item_id=quarantined[0].item_id,
+            expected_latest_event_digest=quarantined[0].latest_event_digest,
+            reason="quarantine reviewed later",
+            scope="item",
+        ),
+        actor_context=_actor(),
+    )
+    assert suppressed.item.status == "quarantined"
+    overruled = service_overrule_playbill_curation(
+        instance,
+        request=PlaybillCurationOverruleRequestV1(
+            item_id=quarantined[1].item_id,
+            expected_latest_event_digest=quarantined[1].latest_event_digest,
+            reason="old detector law is no longer applicable",
+        ),
+        actor_context=_actor(),
+    )
+    assert overruled.item.status == "overruled"
+    with pytest.raises(PlaybillCurationItemAlreadyResolved, match="quarantined"):
+        service_accept_fixed_playbill_curation(
+            instance,
+            request=PlaybillCurationAcceptFixedRequestV1(
+                item_id=quarantined[2].item_id,
+                expected_latest_event_digest=quarantined[2].latest_event_digest,
+                reason="must not resolve an unreproducible detector law as fixed",
+                accepted_proposal_id="sha256:" + "b" * 64,
+                accepted_changeset_digest="sha256:" + "c" * 64,
+            ),
+            actor_context=_actor(),
+        )
 
 
 def test_redetection_reuses_item_and_accept_fixed_recurrence_mints_linked_successor(

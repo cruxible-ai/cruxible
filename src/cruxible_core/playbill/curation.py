@@ -264,13 +264,28 @@ def curation_pattern_id(
 ) -> str:
     normalized = _canonical_detail(detail)
     _validate_pattern_detail(pattern_kind, normalized)
+    return _curation_pattern_id_from_normalized(
+        pattern_kind=pattern_kind,
+        subject=subject,
+        detail=normalized,
+    )
+
+
+def _curation_pattern_id_from_normalized(
+    *,
+    pattern_kind: CurationPatternKind,
+    subject: ArtifactIdentity,
+    detail: dict[str, object],
+) -> str:
+    """Reproduce an already-canonical historical preimage without current-law policy."""
+
     return typed_digest(
         Sha256Value,
         CURATION_PATTERN_ID_DOMAIN,
         {
             "pattern_kind": pattern_kind,
             "subject": subject.model_dump(mode="json"),
-            "detail": normalized,
+            "detail": detail,
         },
     ).tagged
 
@@ -468,6 +483,106 @@ class CurationPatternObservedV1(_StrictCurationModel):
         if self.event_id != expected or self.observation_id != expected:
             raise ValueError("curation observation ID does not reproduce")
         return self
+
+
+class _RecordedCurationPatternObservedV1(_StrictCurationModel):
+    """Historical observation whose recorded law may predate the running detector."""
+
+    tag: Literal["playbill-curation-pattern-observed-v1"]
+    event_id: str
+    observation_id: str
+    item_id: str
+    predecessor_item_id: str | None
+    pattern_id: str
+    pattern_kind: CurationPatternKind
+    subject: ArtifactIdentity
+    detail: dict[str, object]
+    detector_law_digest: str
+    detection_evidence_digest: str
+    evidence_refs: tuple[CurationEvidenceRefV1, ...]
+    coverage: CurationDetectorCoverageV1
+    accepted_generation: int = Field(ge=0)
+
+    @field_validator(
+        "event_id",
+        "observation_id",
+        "item_id",
+        "predecessor_item_id",
+        "pattern_id",
+        "detector_law_digest",
+        "detection_evidence_digest",
+    )
+    @classmethod
+    def _digest(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def _detail(cls, value: object) -> dict[str, object]:
+        return _canonical_detail(value)
+
+    @field_validator("evidence_refs")
+    @classmethod
+    def _evidence(
+        cls, value: tuple[CurationEvidenceRefV1, ...]
+    ) -> tuple[CurationEvidenceRefV1, ...]:
+        encoded = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
+        if encoded != tuple(sorted(set(encoded))):
+            raise ValueError("curation evidence references must be byte-sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _reproduces_recorded_bytes(self) -> _RecordedCurationPatternObservedV1:
+        if self.coverage.pattern_kind != self.pattern_kind:
+            raise ValueError("curation detection coverage names another detector")
+        if self.pattern_id != _curation_pattern_id_from_normalized(
+            pattern_kind=self.pattern_kind,
+            subject=self.subject,
+            detail=self.detail,
+        ):
+            raise ValueError("recorded curation pattern ID does not reproduce")
+        if self.detection_evidence_digest != curation_detection_evidence_digest(
+            pattern_id=self.pattern_id,
+            detector_law_digest_value=self.detector_law_digest,
+            coverage=self.coverage,
+            evidence_refs=self.evidence_refs,
+        ):
+            raise ValueError("recorded curation detection evidence digest does not reproduce")
+        if self.item_id != curation_item_id(
+            pattern_id=self.pattern_id,
+            predecessor_item_id=self.predecessor_item_id,
+        ):
+            raise ValueError("recorded curation item ID does not reproduce")
+        expected = curation_observation_id(
+            item_id=self.item_id,
+            accepted_generation=self.accepted_generation,
+            detection_evidence_digest=self.detection_evidence_digest,
+        )
+        if self.event_id != expected or self.observation_id != expected:
+            raise ValueError("recorded curation observation ID does not reproduce")
+        return self
+
+
+def _parse_pattern_observation(
+    payload: dict[str, object],
+) -> CurationPatternObservedV1:
+    try:
+        return CurationPatternObservedV1.model_validate(payload)
+    except ValueError as current_error:
+        try:
+            recorded = _RecordedCurationPatternObservedV1.model_validate(payload)
+        except ValueError:
+            raise current_error
+        if recorded.detector_law_digest == detector_law_digest(recorded.pattern_kind):
+            raise current_error
+        return CurationPatternObservedV1.model_construct(
+            **{
+                field_name: getattr(recorded, field_name)
+                for field_name in CurationPatternObservedV1.model_fields
+            }
+        )
 
 
 def build_pattern_observation(
@@ -725,7 +840,7 @@ class CurationItemV1(_StrictCurationModel):
     subject: ArtifactIdentity
     detail: dict[str, object]
     detector_law_digest: str
-    status: Literal["open", "overruled", "accepted_fixed"]
+    status: Literal["open", "quarantined", "overruled", "accepted_fixed"]
     first_proposed_generation: int = Field(ge=0)
     last_observed_generation: int = Field(ge=0)
     resolved_at_generation: int | None = Field(default=None, ge=0)
@@ -737,6 +852,8 @@ class CurationItemV1(_StrictCurationModel):
     suppressions: tuple[CurationSuppressionV1, ...] = ()
     accepted_proposal_id: str | None = None
     accepted_changeset_digest: str | None = None
+    quarantine_reason: Literal["detector_law_unreproducible"] | None = None
+    current_detector_law_digest: str | None = None
 
     @field_validator(
         "item_id",
@@ -747,12 +864,24 @@ class CurationItemV1(_StrictCurationModel):
         "latest_event_digest",
         "accepted_proposal_id",
         "accepted_changeset_digest",
+        "current_detector_law_digest",
     )
     @classmethod
     def _digests(cls, value: str | None) -> str | None:
         if value is not None:
             Sha256Value.from_tagged(value)
         return value
+
+    @model_validator(mode="after")
+    def _quarantine_shape(self) -> CurationItemV1:
+        quarantined_law = self.quarantine_reason is not None
+        if quarantined_law != (self.current_detector_law_digest is not None):
+            raise ValueError("curation quarantine fields must appear together")
+        if self.status == "quarantined" and not quarantined_law:
+            raise ValueError("quarantined curation item must name its detector-law mismatch")
+        if quarantined_law and self.current_detector_law_digest == self.detector_law_digest:
+            raise ValueError("curation quarantine requires distinct recorded and current laws")
+        return self
 
     def suppressed_at(self, generation: int, *, all_items: tuple[CurationItemV1, ...]) -> bool:
         for owner in all_items:
@@ -772,6 +901,8 @@ class CurationItemV1(_StrictCurationModel):
 
 
 def parse_curation_payload(payload: dict[str, object]) -> CurationOperationalPayload:
+    if payload.get("tag") == "playbill-curation-pattern-observed-v1":
+        return _parse_pattern_observation(payload)
     return _CURATION_PAYLOAD_ADAPTER.validate_python(payload)
 
 
@@ -793,9 +924,13 @@ def replay_curation_items(
         first_payload = rows[0][1]
         if not isinstance(first_payload, CurationPatternObservedV1):
             raise ValueError("curation item must begin with a detector observation")
+        current_law_digest = detector_law_digest(first_payload.pattern_kind)
+        quarantined_law = first_payload.detector_law_digest != current_law_digest
         observations = 0
         last_observation = first_payload
-        status: Literal["open", "overruled", "accepted_fixed"] = "open"
+        status: Literal["open", "quarantined", "overruled", "accepted_fixed"] = (
+            "quarantined" if quarantined_law else "open"
+        )
         resolved_at: int | None = None
         suppressions: list[CurationSuppressionV1] = []
         accepted_proposal_id: str | None = None
@@ -804,7 +939,7 @@ def replay_curation_items(
             if payload.item_id != item_id:
                 raise ValueError("curation payload names another partition item")
             if isinstance(payload, CurationPatternObservedV1):
-                if status != "open":
+                if status not in {"open", "quarantined"}:
                     raise ValueError("resolved curation item received another observation")
                 if (
                     payload.pattern_id != first_payload.pattern_id
@@ -812,12 +947,13 @@ def replay_curation_items(
                     or payload.subject != first_payload.subject
                     or payload.detail != first_payload.detail
                     or payload.predecessor_item_id != first_payload.predecessor_item_id
+                    or payload.detector_law_digest != first_payload.detector_law_digest
                 ):
                     raise ValueError("curation item observation changed stable identity")
                 observations += 1
                 last_observation = payload
             elif isinstance(payload, CurationSuppressedV1):
-                if status != "open":
+                if status not in {"open", "quarantined"}:
                     raise ValueError("resolved curation item cannot be suppressed")
                 suppressions.append(
                     CurationSuppressionV1(
@@ -829,11 +965,13 @@ def replay_curation_items(
                     )
                 )
             elif isinstance(payload, CurationOverruledV1):
-                if status != "open":
+                if status not in {"open", "quarantined"}:
                     raise ValueError("curation item was resolved more than once")
                 status = "overruled"
                 resolved_at = event.accepted_generation
             else:
+                if status == "quarantined":
+                    raise ValueError("quarantined curation item cannot be accepted fixed")
                 if status != "open":
                     raise ValueError("curation item was resolved more than once")
                 status = "accepted_fixed"
@@ -861,6 +999,8 @@ def replay_curation_items(
                 suppressions=tuple(suppressions),
                 accepted_proposal_id=accepted_proposal_id,
                 accepted_changeset_digest=accepted_changeset_digest,
+                quarantine_reason=("detector_law_unreproducible" if quarantined_law else None),
+                current_detector_law_digest=(current_law_digest if quarantined_law else None),
             )
         )
 

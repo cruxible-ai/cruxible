@@ -641,7 +641,7 @@ def service_list_playbill_curation(
             key=lambda item: (item.first_proposed_generation, item.item_id),
         )
         current = None if not lineage else lineage[-1]
-        if current is not None and current.status == "overruled":
+        if current is not None and current.status in {"overruled", "quarantined"}:
             continue
         predecessor = (
             current.item_id
@@ -686,7 +686,7 @@ def service_list_playbill_curation(
                     )
                 )
                 current = None if not refreshed else refreshed[-1]
-                if current is not None and current.status == "overruled":
+                if current is not None and current.status in {"overruled", "quarantined"}:
                     break
                 predecessor = (
                     current.item_id
@@ -716,7 +716,8 @@ def service_list_playbill_curation(
             (
                 item
                 for item in all_items
-                if item.status == "open" and not item.suppressed_at(generation, all_items=all_items)
+                if item.status in {"open", "quarantined"}
+                and not item.suppressed_at(generation, all_items=all_items)
             ),
             key=lambda item: (
                 item.pattern_kind.encode("ascii"),
@@ -749,11 +750,16 @@ def service_list_playbill_curation(
     )
 
 
-def _open_item(instance: PlaybillInstance, item_id: str) -> CurationItemV1:
+def _open_item(
+    instance: PlaybillInstance,
+    item_id: str,
+    *,
+    allow_quarantined: bool = False,
+) -> CurationItemV1:
     item = next((item for item in _replay_items(instance) if item.item_id == item_id), None)
     if item is None:
         raise PlaybillCurationItemNotFound(f"curation item does not exist: {item_id}")
-    if item.status != "open":
+    if item.status != "open" and not (allow_quarantined and item.status == "quarantined"):
         raise PlaybillCurationItemAlreadyResolved(
             f"curation item is already {item.status}: {item_id}"
         )
@@ -778,7 +784,7 @@ def service_overrule_playbill_curation(
     request: PlaybillCurationOverruleRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
-    item = _open_item(instance, request.item_id)
+    item = _open_item(instance, request.item_id, allow_quarantined=True)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     generation = _generation(instance, coordinate)
     payload = build_curation_overruled(
@@ -808,7 +814,7 @@ def service_suppress_playbill_curation(
     request: PlaybillCurationSuppressRequestV1,
     actor_context: GovernedActorContext,
 ) -> PlaybillCurationActionResultV1:
-    item = _open_item(instance, request.item_id)
+    item = _open_item(instance, request.item_id, allow_quarantined=True)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     generation = _generation(instance, coordinate)
     if request.until_generation is not None and request.until_generation < generation:
