@@ -34,6 +34,7 @@ playbill authoring confirm-insertion
 playbill authoring create
 playbill authoring get
 playbill authoring list
+playbill authoring prepare-publication
 playbill authoring preflight
 playbill authoring rebase
 playbill authoring resume

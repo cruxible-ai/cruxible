@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -22,7 +23,11 @@ from cruxible_client.authoring.blocks import (
     assert_independent_projection_evidence,
     repin_projection_block,
 )
-from cruxible_client.authoring.insertions import apply_playbill_insertion
+from cruxible_client.authoring.insertions import (
+    apply_playbill_insertion,
+    apply_playbill_publication,
+    replace_publication_file,
+)
 from cruxible_client.authoring.sdk_types import (
     AccessProfile,
     ActivationPolicy,
@@ -80,6 +85,7 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV2,
     ClaimDependencyDraftsV1,
     ProcedureAuthoringPayloadV2,
+    PublicationSourceObservationV2,
     SelfSourceBodyV1,
     authoring_program_digest,
 )
@@ -619,11 +625,71 @@ class Publication:
     def state(self) -> str:
         return str(self._expectation.get("state", "terminal"))
 
-    def apply(self) -> Publication:
+    def _path(self) -> Path:
+        target = self._expectation.get("target")
         patch = self._expectation.get("patch")
-        if not isinstance(patch, Mapping) or not isinstance(patch.get("source_id"), str):
+        source = target if isinstance(target, Mapping) else patch
+        if not isinstance(source, Mapping) or not isinstance(source.get("source_id"), str):
             raise ValueError("insertion expectation omitted its source")
-        path = self._intent._playbill._sources.path_for_source(str(patch["source_id"]))
+        return self._intent._playbill._sources.path_for_source(str(source["source_id"]))
+
+    def prepare(self) -> Publication:
+        if self._expectation.get("tag") != "playbill-insertion-expectation-v2":
+            return self
+        path = self._path()
+        content = path.read_bytes()
+        target = cast(Mapping[str, object], self._expectation["target"])
+        observation = PublicationSourceObservationV2(
+            source_id=cast(str, target["source_id"]),
+            content_base64=base64.b64encode(content).decode("ascii"),
+            content_digest="sha256:" + hashlib.sha256(content).hexdigest(),
+            byte_length=len(content),
+        )
+        result = self._intent._playbill._client.prepare_playbill_authoring_publication(
+            self._intent._playbill._instance_id,
+            self._intent.intent_id,
+            observation=observation.model_dump(mode="json"),
+        )
+        self._intent._raw = result.intent
+        self._expectation = result.expectation
+        return self
+
+    def apply(self) -> Publication:
+        if self._expectation.get("tag") == "playbill-insertion-expectation-v2":
+            self.prepare()
+            if self.state == "bound":
+                return self
+            if self.state != "prepared":
+                raise ValueError(f"publication cannot apply from state {self.state!r}")
+            path = self._path()
+            payload = self._intent._draft.payload
+            if not isinstance(payload, ClaimAuthoringPayloadV2) or not isinstance(
+                payload.source, SelfSourceBodyV1
+            ):
+                raise ValueError("publication requires a retained self-source body")
+            expected = path.read_bytes()
+            application = apply_playbill_publication(
+                expected,
+                intent_id=self._intent.intent_id,
+                expectation=self._expectation,
+                retained_body=payload.source.content,
+            )
+            if application.outcome == "applied":
+                replace_publication_file(
+                    path,
+                    expected=expected,
+                    replacement=application.content,
+                )
+            result = self._intent._playbill._client.confirm_playbill_authoring_insertion(
+                self._intent._playbill._instance_id,
+                self._intent.intent_id,
+                observation=application.observation,
+            )
+            self._intent._raw = result.intent
+            self._expectation = result.expectation
+            return self
+
+        path = self._path()
         payload = self._intent._draft.payload
         if not isinstance(payload, ClaimAuthoringPayloadV2) or not isinstance(
             payload.source, SelfSourceBodyV1

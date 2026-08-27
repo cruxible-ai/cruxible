@@ -40,6 +40,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillInitRequest,
     PlaybillInsertionAbandonRequest,
     PlaybillInsertionConfirmRequest,
+    PlaybillInsertionPrepareRequest,
     PlaybillNextRequest,
     PlaybillProposalReadmitRequest,
     PlaybillProposeClaimRequest,
@@ -741,14 +742,32 @@ async def authoring_intent_status(
 
 
 @router.post(
+    "/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/prepare",
+    response_model=contracts.PlaybillInsertionPrepareResult,
+)
+async def prepare_authoring_publication(
+    instance_id: str,
+    intent_id: str,
+    req: PlaybillInsertionPrepareRequest,
+) -> contracts.PlaybillInsertionPrepareResult:
+    return playbill_api.playbill_authoring_prepare_publication(
+        resolve_server_instance_id(instance_id),
+        intent_id,
+        observation=req.observation,
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm",
-    response_model=contracts.PlaybillInsertionConfirmResult,
+    response_model=(
+        contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2
+    ),
 )
 async def confirm_authoring_insertion(
     instance_id: str,
     intent_id: str,
     req: PlaybillInsertionConfirmRequest,
-) -> contracts.PlaybillInsertionConfirmResult:
+) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
     return playbill_api.playbill_authoring_confirm_insertion(
         resolve_server_instance_id(instance_id),
         intent_id,

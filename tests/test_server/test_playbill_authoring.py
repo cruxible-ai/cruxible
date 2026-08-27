@@ -470,6 +470,18 @@ def test_http_insertion_confirm_and_abandon_are_typed(
             expectation={"state": "abandoned"},
         )
 
+    def prepare_stub(selected: str, intent_id: str, *, observation: object):
+        assert selected == instance_id
+        assert intent_id == INTENT_ID
+        seen.append("prepare")
+        return contracts.PlaybillInsertionPrepareResult(
+            tag="playbill-insertion-prepare-result-v2",
+            outcome="prepared",
+            intent={"intent_id": intent_id},
+            expectation={"state": "prepared"},
+            preparation={"preparation_digest": "sha256:" + "7" * 64},
+        )
+
     monkeypatch.setattr(
         "cruxible_core.runtime.playbill_api.playbill_authoring_confirm_insertion",
         confirm_stub,
@@ -477,6 +489,10 @@ def test_http_insertion_confirm_and_abandon_are_typed(
     monkeypatch.setattr(
         "cruxible_core.runtime.playbill_api.playbill_authoring_abandon_insertion",
         abandon_stub,
+    )
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_authoring_prepare_publication",
+        prepare_stub,
     )
     confirmed = client.post(
         f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/confirm",
@@ -486,7 +502,23 @@ def test_http_insertion_confirm_and_abandon_are_typed(
         f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/abandon",
         json={"tag": "playbill-insertion-abandon-request-v1"},
     )
+    prepared = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/prepare",
+        json={
+            "tag": "playbill-insertion-prepare-request-v2",
+            "observation": {
+                "tag": "playbill-publication-source-observation-v2",
+                "source_id": "repo.work-items",
+                "content_base64": "",
+                "content_digest": (
+                    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                ),
+                "byte_length": 0,
+            },
+        },
+    )
 
-    assert confirmed.status_code == abandoned.status_code == 200
+    assert confirmed.status_code == prepared.status_code == abandoned.status_code == 200
     assert confirmed.json()["outcome"] == "stale_target"
-    assert seen == ["confirm", "abandon"]
+    assert prepared.json()["outcome"] == "prepared"
+    assert seen == ["confirm", "abandon", "prepare"]

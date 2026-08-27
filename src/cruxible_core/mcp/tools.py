@@ -431,9 +431,22 @@ def register_tools(
         instance_id: str,
         intent_id: str,
         observation: dict[str, Any],
-    ) -> contracts.PlaybillInsertionConfirmResult:
-        """Confirm a client-applied insertion and govern its copy citation."""
+    ) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
+        """Confirm an exact client-applied v1 insertion or v2 stamped publication."""
         return handlers.handle_playbill_authoring_confirm_insertion(
+            instance_id,
+            intent_id,
+            observation,
+        )
+
+    @_tool
+    def cruxible_playbill_authoring_prepare_publication(
+        instance_id: str,
+        intent_id: str,
+        observation: dict[str, Any],
+    ) -> contracts.PlaybillInsertionPrepareResult:
+        """Prepare an exact Claim-backed publication from fresh whole-source bytes."""
+        return handlers.handle_playbill_authoring_prepare_publication(
             instance_id,
             intent_id,
             observation,

@@ -341,6 +341,22 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
     calls: list[tuple[str, object]] = []
 
     class StubClient:
+        def prepare_playbill_authoring_publication(
+            self,
+            instance_id: str,
+            intent_id: str,
+            *,
+            observation: dict[str, object],
+        ) -> contracts.PlaybillInsertionPrepareResult:
+            calls.append((intent_id, observation))
+            return contracts.PlaybillInsertionPrepareResult(
+                tag="playbill-insertion-prepare-result-v2",
+                outcome="prepared",
+                intent={"intent_id": intent_id},
+                expectation={"state": "prepared"},
+                preparation={"preparation_digest": "sha256:" + "7" * 64},
+            )
+
         def confirm_playbill_authoring_insertion(
             self,
             instance_id: str,
@@ -380,10 +396,18 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
         cli,
         [*common, "confirm-insertion", INTENT_ID, str(observation), "--json"],
     )
+    prepared = runner.invoke(
+        cli,
+        [*common, "prepare-publication", INTENT_ID, str(observation), "--json"],
+    )
     abandoned = runner.invoke(cli, [*common, "abandon-insertion", INTENT_ID, "--json"])
 
-    assert confirmed.exit_code == abandoned.exit_code == 0
-    assert calls == [(INTENT_ID, OBSERVATION), (INTENT_ID, "abandon")]
+    assert confirmed.exit_code == prepared.exit_code == abandoned.exit_code == 0
+    assert calls == [
+        (INTENT_ID, OBSERVATION),
+        (INTENT_ID, OBSERVATION),
+        (INTENT_ID, "abandon"),
+    ]
 
 
 def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:

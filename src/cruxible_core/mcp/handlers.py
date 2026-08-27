@@ -33,6 +33,8 @@ from cruxible_client.authoring.sources import (
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.models import (
     InsertionConfirmationObservationV1,
+    InsertionConfirmationObservationV2,
+    PublicationSourceObservationV2,
 )
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
@@ -912,8 +914,12 @@ def handle_playbill_authoring_confirm_insertion(
     instance_id: str,
     intent_id: str,
     observation: dict[str, Any],
-) -> contracts.PlaybillInsertionConfirmResult:
-    request = InsertionConfirmationObservationV1.model_validate(observation)
+) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
+    request = (
+        InsertionConfirmationObservationV2.model_validate(observation)
+        if observation.get("tag") == "playbill-insertion-confirmation-observation-v2"
+        else InsertionConfirmationObservationV1.model_validate(observation)
+    )
     return _dispatch_remote_or_local(
         lambda client: client.confirm_playbill_authoring_insertion(
             instance_id,
@@ -926,6 +932,27 @@ def handle_playbill_authoring_confirm_insertion(
             observation=request,
         ),
         operation_name="cruxible_playbill_authoring_confirm_insertion",
+    )
+
+
+def handle_playbill_authoring_prepare_publication(
+    instance_id: str,
+    intent_id: str,
+    observation: dict[str, Any],
+) -> contracts.PlaybillInsertionPrepareResult:
+    request = PublicationSourceObservationV2.model_validate(observation)
+    return _dispatch_remote_or_local(
+        lambda client: client.prepare_playbill_authoring_publication(
+            instance_id,
+            intent_id,
+            observation=request.model_dump(mode="json"),
+        ),
+        lambda: playbill_api.playbill_authoring_prepare_publication(
+            instance_id,
+            intent_id,
+            observation=request,
+        ),
+        operation_name="cruxible_playbill_authoring_prepare_publication",
     )
 
 

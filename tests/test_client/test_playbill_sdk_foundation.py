@@ -63,6 +63,7 @@ def test_workspace_selector_lowers_evidence_and_insertion_from_exact_bytes(
         operation=InsertionOperation.AFTER,
         anchor="within 48 hours",
     ).target(b" (governed)")
+    assert insertion.tag == "playbill-insertion-target-v2"
     assert insertion.operation == "insert_after"
     assert insertion.selector.insertion_offset == content.index(b"within 48 hours") + 15
 

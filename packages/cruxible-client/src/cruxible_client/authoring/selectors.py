@@ -12,7 +12,7 @@ import yaml
 from cruxible_client.authoring.sdk_types import InsertionOperation, SourceSelectionError
 from cruxible_client.contracts.authoring.models import (
     InsertionAnchorWindowV1,
-    InsertionTargetV1,
+    InsertionTargetV2,
     WorkingAnchorWindowV1,
     WorkingDigestCoordinateV1,
     WorkingSelectionObservationV1,
@@ -114,27 +114,27 @@ class InsertionSelection:
     start_byte: int
     end_byte: int
 
-    def target(self, inserted: bytes) -> InsertionTargetV1:
+    def target(self, inserted: bytes) -> InsertionTargetV2:
+        """Freeze only the initial source and selector; publication frames after acceptance."""
+
+        del inserted
         if self.operation is InsertionOperation.BEFORE:
             offset = self.start_byte
-            postimage = self.content[:offset] + inserted + self.content[offset:]
         elif self.operation is InsertionOperation.AFTER:
             offset = self.end_byte
-            postimage = self.content[:offset] + inserted + self.content[offset:]
         elif self.operation is InsertionOperation.REPLACE:
             offset = self.start_byte
-            postimage = self.content[: self.start_byte] + inserted + self.content[self.end_byte :]
         else:
             offset = len(self.content)
-            postimage = self.content + inserted
         anchor = self.content[self.start_byte : self.end_byte]
-        return InsertionTargetV1(
+        return InsertionTargetV2(
             source_id=self.source_id,
             coordinate=WorkingDigestCoordinateV1(
                 source_content_digest=_digest(self.content),
                 source_byte_length=len(self.content),
             ),
-            preimage_digest=_digest(self.content),
+            initial_preimage_digest=_digest(self.content),
+            initial_preimage_byte_length=len(self.content),
             selector=InsertionAnchorWindowV1(
                 anchor_content_base64=base64.b64encode(anchor).decode("ascii"),
                 anchor_bytes_digest=_digest(anchor),
@@ -144,8 +144,6 @@ class InsertionSelection:
                 observed_occurrence_count=1,
             ),
             operation=self.operation.value,
-            postimage_digest=_digest(postimage),
-            postimage_byte_length=len(postimage),
         )
 
 
