@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -17,20 +17,27 @@ from cruxible_client.contracts.documents import (
     parse_document,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.subjects import subject_digest, subject_path
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.curation import (
+    CurationAcceptedFixedV1,
     CurationDetectorCoverageV1,
     CurationEvidenceRefV1,
     build_curation_detection,
     build_pattern_observation,
+    replay_curation_items,
 )
 from cruxible_core.playbill.service.documents import service_propose_playbill_document
+from cruxible_core.playbill.service.subjects import service_propose_playbill_subject
 from cruxible_core.service.playbill_curation import (
     PlaybillCurationAcceptFixedRequestV1,
+    PlaybillCurationListRequestV1,
     PlaybillCurationResolvingChangeUnrelated,
     service_accept_fixed_playbill_curation,
+    service_list_playbill_curation,
 )
-from tests.test_playbill._knowledge_loop_support import accept_proposal
+from tests.test_playbill._knowledge_loop_support import accept_proposal, subject_shell
 from tests.test_playbill._support import initialize_local
 
 NOW = datetime(2026, 8, 26, 18, tzinfo=UTC)
@@ -199,3 +206,102 @@ def test_accept_fixed_refuses_an_unrelated_accepted_changeset(tmp_path: Path) ->
             ),
             actor_context=_actor(),
         )
+
+
+def test_dead_vocabulary_auto_resolves_to_the_accepted_retirement_changeset(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    initial = subject_shell("wi-dead")
+    first = service_propose_playbill_subject(
+        instance,
+        shell=initial,
+        actor_id="owner",
+        proposal_name="dead-subject-initial",
+        timestamp="2026-08-26T18:00:00.000000Z",
+    )
+    accept_proposal(instance, owner, first, sequence=1)
+    coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    path = subject_path(initial.subject_kind, initial.subject_id)
+    detection = build_curation_detection(
+        pattern_kind="playbill.curation.dead_vocabulary.v1",
+        subject=initial.identity,
+        detail={"artifact_family": "Subject"},
+        coverage=CurationDetectorCoverageV1(
+            pattern_kind="playbill.curation.dead_vocabulary.v1",
+            status="complete",
+            evaluated_fact_count=1,
+        ),
+        evidence_refs=(
+            CurationEvidenceRefV1(
+                kind="accepted_artifact",
+                identity=initial.identity.qualified,
+                path=path,
+                generation=1,
+                artifact_digest=subject_digest(initial).tagged,
+            ),
+        ),
+    )
+    observation = build_pattern_observation(
+        detection=detection,
+        predecessor_item_id=None,
+        accepted_generation=1,
+    )
+    instance.review_operational_store().append(
+        family="curation",
+        partition_id=observation.item_id,
+        event_id=observation.event_id,
+        payload=observation,
+        coordinate=coordinate,
+        generation=1,
+        actor_context=_actor(),
+        recorded_at=NOW,
+        expected_latest_event_digest=None,
+    )
+    retired = initial.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=subject_digest(initial).tagged,
+            )
+        }
+    )
+    retirement = service_propose_playbill_subject(
+        instance,
+        shell=retired,
+        actor_id="owner",
+        proposal_name="dead-subject-retirement",
+        timestamp="2026-08-26T18:01:00.000000Z",
+    )
+    accept_proposal(instance, owner, retirement, sequence=2)
+    record = instance.accepted_history()[-1].record
+    assert record is not None
+
+    listed = service_list_playbill_curation(
+        instance,
+        request=PlaybillCurationListRequestV1(
+            evaluation_time=NOW,
+            access_profile=CoverageAccessProfileV1(profile_id="test-curation"),
+        ),
+        actor_context=_actor(),
+    )
+
+    assert observation.item_id not in {item.item_id for item in listed.items}
+    item = next(
+        item
+        for item in replay_curation_items(
+            instance.review_operational_store().events(family="curation")
+        )
+        if item.item_id == observation.item_id
+    )
+    assert item.status == "accepted_fixed"
+    assert item.resolved_at_generation == 2
+    assert item.accepted_proposal_id == retirement.proposal.admission.proposal_id
+    assert item.accepted_changeset_digest == record.changeset_digest
+    accepted_event = CurationAcceptedFixedV1.model_validate(
+        instance.review_operational_store().events(family="curation")[-1][1]
+    )
+    assert any(
+        member.path == path and member.disposition == "retire"
+        for member in accepted_event.affected_members
+    )

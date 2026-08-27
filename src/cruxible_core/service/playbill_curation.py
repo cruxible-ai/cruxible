@@ -441,6 +441,126 @@ def _replay_items(instance: PlaybillInstance) -> tuple[CurationItemV1, ...]:
         raise ReviewOperationalStoreError("curation event replay is invalid") from exc
 
 
+def _accepted_retirement_for_item(
+    instance: PlaybillInstance,
+    item: CurationItemV1,
+) -> (
+    tuple[
+        int,
+        str,
+        ChangeSetRecordAnyVersion,
+        dict[str, bytes],
+        dict[str, bytes],
+    ]
+    | None
+):
+    """Find the first accepted proposal/ChangeSet that retires this exact subject."""
+
+    history = instance.accepted_history()
+    evaluations_by_candidate: dict[str, list[str]] = {}
+    for evaluation in instance.proposal_evidence().list_evaluations():
+        if evaluation.verdict == "candidate" and evaluation.candidate_digest is not None:
+            evaluations_by_candidate.setdefault(evaluation.candidate_digest, []).append(
+                evaluation.proposal_id
+            )
+    for index, accepted in enumerate(history[1:], start=1):
+        if accepted.sequence < item.first_proposed_generation or accepted.record is None:
+            continue
+        parent_tree = instance.tree_at(history[index - 1].oid)
+        candidate_tree = instance.tree_at(accepted.oid)
+        affected = _affected_members(
+            accepted.record,
+            parent_tree=parent_tree,
+            candidate_tree=candidate_tree,
+        )
+        related = _related_paths(item, tree=parent_tree) | _related_paths(item, tree=candidate_tree)
+        if not any(
+            member.disposition == "retire" and member.path in related for member in affected
+        ):
+            continue
+        proposal_ids = tuple(
+            sorted(
+                set(evaluations_by_candidate.get(accepted.record.candidate_digest, ())),
+                key=lambda value: value.encode("ascii"),
+            )
+        )
+        if not proposal_ids:
+            # Imported ledgers can preserve the accepted receipt without local
+            # proposal exhaust.  Do not invent a resolving proposal identity.
+            continue
+        return (
+            accepted.sequence,
+            proposal_ids[0],
+            accepted.record,
+            parent_tree,
+            candidate_tree,
+        )
+    return None
+
+
+def _auto_resolve_retired_dead_vocabulary(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedCoordinate,
+    generation: int,
+    actor_context: GovernedActorContext,
+    recorded_at: datetime,
+) -> None:
+    """Close dead-vocabulary rows whose exact artifact was retired by succession."""
+
+    store = instance.review_operational_store()
+    candidates = tuple(
+        item
+        for item in _replay_items(instance)
+        if item.status == "open" and item.pattern_kind == "playbill.curation.dead_vocabulary.v1"
+    )
+    for candidate in candidates:
+        resolution = _accepted_retirement_for_item(instance, candidate)
+        if resolution is None:
+            continue
+        resolved_generation, proposal_id, record, parent_tree, candidate_tree = resolution
+        affected = _affected_members(
+            record,
+            parent_tree=parent_tree,
+            candidate_tree=candidate_tree,
+        )
+        current = candidate
+        for attempt in range(2):
+            payload = build_curation_accepted_fixed(
+                item_id=current.item_id,
+                expected_latest_event_digest=current.latest_event_digest,
+                actor_principal_id=record.actor_binding.actor_id,
+                reason="accepted succession retired the dead-vocabulary artifact",
+                accepted_proposal_id=proposal_id,
+                accepted_changeset_digest=record.changeset_digest,
+                resolved_generation=resolved_generation,
+                affected_members=affected,
+            )
+            try:
+                store.append(
+                    family="curation",
+                    partition_id=current.item_id,
+                    event_id=payload.event_id,
+                    payload=payload,
+                    coordinate=coordinate,
+                    generation=generation,
+                    actor_context=actor_context,
+                    recorded_at=recorded_at,
+                    expected_latest_event_digest=current.latest_event_digest,
+                )
+                break
+            except ReviewOperationalConcurrentChangeError:
+                if attempt == 1:
+                    raise
+                refreshed = next(
+                    (item for item in _replay_items(instance) if item.item_id == current.item_id),
+                    None,
+                )
+                if refreshed is None or refreshed.status != "open":
+                    break
+                current = refreshed
+
+
 def service_list_playbill_curation(
     instance: PlaybillInstance,
     *,
@@ -583,6 +703,13 @@ def service_list_playbill_curation(
                     if current is None or current.status == "accepted_fixed"
                     else current.latest_event_digest
                 )
+    _auto_resolve_retired_dead_vocabulary(
+        instance,
+        coordinate=coordinate,
+        generation=generation,
+        actor_context=actor_context,
+        recorded_at=request.evaluation_time,
+    )
     all_items = _replay_items(instance)
     items = tuple(
         sorted(
