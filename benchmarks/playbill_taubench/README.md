@@ -43,15 +43,17 @@ from recipe import bootstrap, seed, export_arm_surface, build_arm, run_turn, run
 
 ## What each step does
 
-1. **`bootstrap`** — `playbill host create` then `playbill init`. The server URL
-   is required, never inferred, so two arms cannot silently seed against
+1. **`bootstrap`** — `playbill host create` then `playbill init`, generating the
+   `operator` creator and an independent `reviewer` in client custody. The server
+   URL is required, never inferred, so two arms cannot silently seed against
    different worlds.
 2. **`seed`** — `playbill seed apply --plan`, then for each planned group:
    `apply --group`, `proposal approve`, `proposal activate`. The loop is the
    harness's, because approval and activation are separate governed acts and the
-   seed command performs neither. One proposal per invocation, because a
-   proposal settles against the base it was admitted at and two proposals opened
-   against one head cannot both activate.
+   seed command performs neither. The independent `reviewer` signs every seed
+   proposal; the `operator` creator never self-approves. One proposal per
+   invocation, because a proposal settles against the base it was admitted at
+   and two proposals opened against one head cannot both activate.
 3. **`export_arm_surface`** — `playbill floor export`, producing the pointer-model
    floor-v2 artifacts and §11.6.3 coverage boundary in one greppable tree. The
    unshipped native markdown projection is deliberately not part of either arm.

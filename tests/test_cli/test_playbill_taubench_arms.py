@@ -230,7 +230,7 @@ def test_the_same_event_stream_produces_cards_in_arm_four_and_none_in_arm_three(
     # Arm 4 reads the governed span as exact, then sees it drift on the edit.
     read = _entry(fourth, "read")
     assert read["result"] is not None
-    assert read["result"].tag == "playbill-coverage-result-v2"
+    assert read["result"].tag == "playbill-coverage-result-v3"
     assert read["result"].summary.exact == 1
     assert read["model_visible_output"].startswith(read["original_output"])
     assert "exact  external:corpus.handbook.md" in read["model_visible_output"]

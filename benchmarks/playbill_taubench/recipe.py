@@ -48,10 +48,12 @@ import argparse
 import hashlib
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+
+from pydantic import TypeAdapter
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 for _candidate in (REPOSITORY_ROOT, REPOSITORY_ROOT / "src"):
@@ -69,7 +71,7 @@ from cruxible_core.cli.commands import _common  # noqa: E402
 from cruxible_core.cli.context import load_cli_context  # noqa: E402
 from cruxible_core.cli.main import cli  # noqa: E402
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1  # noqa: E402
-from cruxible_core.playbill.coverage.contracts import CoverageResultV2  # noqa: E402
+from cruxible_core.playbill.coverage.contracts import CoverageResultAny  # noqa: E402
 from cruxible_core.playbill.coverage.middleware import (  # noqa: E402
     CONFIG_RELATIVE_PATH,
     CoverageMiddlewareV1,
@@ -85,7 +87,8 @@ from cruxible_core.playbill.coverage.middleware import (  # noqa: E402
 from cruxible_core.playbill.projection import AcceptedCoordinate  # noqa: E402
 
 BUNDLE_DIR = Path(__file__).resolve().parent / "seed-example"
-SIGNER_ID = "operator"
+CREATOR_ID = "operator"
+SIGNER_ID = "reviewer"
 RUN_EVALUATION_TIME = "2026-08-20T12:00:00+00:00"
 """A fixed evaluation label recorded in the run manifest."""
 
@@ -100,6 +103,7 @@ ARM_LABELS: dict[int, str] = {
 }
 
 ArmNumber = Literal[1, 2, 3, 4]
+ARM_NUMBERS: tuple[ArmNumber, ...] = (1, 2, 3, 4)
 
 
 # -- the resolver embedding -------------------------------------------------
@@ -114,12 +118,12 @@ ArmNumber = Literal[1, 2, 3, 4]
 def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV2:
+    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultAny:
         answered = client.resolve_playbill_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
         )
-        return CoverageResultV2.model_validate(answered.result)
+        return TypeAdapter(CoverageResultAny).validate_python(answered.result)
 
     return resolve
 
@@ -184,7 +188,16 @@ def bootstrap(*, key_dir: Path, server_url: str) -> str:
     """
 
     host = run_cli_json("--server-url", server_url, "playbill", "host", "create")
-    run_cli_json("playbill", "init", "--key-dir", str(key_dir), "--principal-id", SIGNER_ID)
+    run_cli_json(
+        "playbill",
+        "init",
+        "--key-dir",
+        str(key_dir),
+        "--principal-id",
+        CREATOR_ID,
+        "--reviewer-key-dir",
+        str(key_dir),
+    )
     return str(host["instance_id"])
 
 
@@ -460,7 +473,7 @@ def run_turn(setup: ArmSetupV1) -> tuple[dict[str, Any], ...]:
 
         raw = event.original_output
         cards: tuple[str, ...] = ()
-        result: CoverageResultV2 | None = None
+        result: CoverageResultAny | None = None
         if setup.deliver_coverage:
             assert setup.middleware is not None
             delivery = setup.middleware.after_tool(event)
@@ -497,7 +510,7 @@ def run_manifest(
     instance_id: str,
     seeded: dict[str, Any],
     surface: Path,
-    transcripts: dict[int, tuple[dict[str, Any], ...]],
+    transcripts: Mapping[ArmNumber, tuple[dict[str, Any], ...]],
     bundle_dir: Path = BUNDLE_DIR,
     evaluation_time: str = RUN_EVALUATION_TIME,
 ) -> dict[str, Any]:
@@ -577,7 +590,7 @@ def run_all(root: Path, *, server_url: str) -> dict[str, Any]:
 
     setups = {
         arm: build_arm(arm, root=root, surface=surface if arm in {3, 4} else None)
-        for arm in (1, 2, 3, 4)
+        for arm in ARM_NUMBERS
     }
     transcripts = {arm: run_turn(setup) for arm, setup in setups.items()}
     manifest = run_manifest(
