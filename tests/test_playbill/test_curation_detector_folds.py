@@ -47,6 +47,7 @@ from cruxible_core.playbill.curation import (
     CurationPatternKind,
 )
 from cruxible_core.playbill.curation_detectors import (
+    _active_writing_principal_count,
     _curation_history_index,
     _CurationHistoryIndex,
     _dead_vocabulary,
@@ -321,6 +322,25 @@ def test_provenance_concentration_is_silent_for_a_single_active_writer() -> None
 
     assert coverage.evaluated_fact_count == 2
     assert detected == ()
+
+
+def test_active_writer_join_excludes_daemon_recovery_and_revoked_principals() -> None:
+    principals = (
+        SimpleNamespace(status="active", authority_roles=("daemon",)),
+        SimpleNamespace(status="active", authority_roles=("owner",)),
+        SimpleNamespace(status="active", authority_roles=("recovery",)),
+        SimpleNamespace(status="revoked", authority_roles=("reviewer",)),
+    )
+    fake = SimpleNamespace(
+        accepted_history=lambda: (
+            SimpleNamespace(
+                oid="accepted",
+                principals=SimpleNamespace(principals=principals),
+            ),
+        )
+    )
+
+    assert _active_writing_principal_count(fake, git_oid="accepted") == 1  # type: ignore[arg-type]
 
 
 def test_freshness_calibration_uses_changed_commitment_intervals_without_recommendation() -> None:

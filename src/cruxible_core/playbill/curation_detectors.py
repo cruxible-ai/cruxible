@@ -648,8 +648,8 @@ def _admission_failures(
             if resolved is None:
                 coverage.omit("admission_subject_unresolved")
                 continue
-            subject, direction = resolved
-            attempts[(subject.qualified, diagnostic.code, direction)][attempt_id] = (
+            proposal_subject, direction = resolved
+            attempts[(proposal_subject.qualified, diagnostic.code, direction)][attempt_id] = (
                 CurationEvidenceRefV1(
                     kind="proposal_attempt",
                     identity=attempt_id,
@@ -670,33 +670,34 @@ def _admission_failures(
         if preflight is None or not preflight.frontier.diagnostics:
             continue
         payload = event.intent.payload
+        authoring_subject: ArtifactIdentity | None
         if isinstance(payload, ClaimAuthoringPayloadV1):
-            subject = ArtifactIdentity(kind="ClaimType", name=payload.statement.predicate)
+            authoring_subject = ArtifactIdentity(kind="ClaimType", name=payload.statement.predicate)
         elif isinstance(payload, ProcedureAuthoringPayloadV1):
             name = payload.definition.get("name")
-            subject = (
+            authoring_subject = (
                 ArtifactIdentity(kind="Procedure", name=name) if isinstance(name, str) else None
             )
         else:  # pragma: no cover - frozen authoring payload union
-            subject = None
+            authoring_subject = None
         for authoring_diagnostic in preflight.frontier.diagnostics:
             coverage.evaluated += 1
-            if subject is None:
+            if authoring_subject is None:
                 coverage.omit("admission_subject_unresolved")
                 continue
             attempt_id = preflight.certificate.certificate_digest
-            attempts[(subject.qualified, authoring_diagnostic.code, "payload_side")][attempt_id] = (
-                CurationEvidenceRefV1(
-                    kind="authoring_attempt",
-                    identity=attempt_id,
-                    event_digest=event.event_digest,
-                    facts={
-                        "diagnostic_code": authoring_diagnostic.code,
-                        "refusal_direction": "payload_side",
-                        "frontier_digest": preflight.frontier.digest,
-                        "intent_id": event.intent.intent_id,
-                    },
-                )
+            attempts[(authoring_subject.qualified, authoring_diagnostic.code, "payload_side")][
+                attempt_id
+            ] = CurationEvidenceRefV1(
+                kind="authoring_attempt",
+                identity=attempt_id,
+                event_digest=event.event_digest,
+                facts={
+                    "diagnostic_code": authoring_diagnostic.code,
+                    "refusal_direction": "payload_side",
+                    "frontier_digest": preflight.frontier.digest,
+                    "intent_id": event.intent.intent_id,
+                },
             )
 
     frozen_coverage = coverage.freeze()

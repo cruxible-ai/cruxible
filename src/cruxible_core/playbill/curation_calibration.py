@@ -57,6 +57,8 @@ AUDIT_CONSUMPTION_STAKE_WEIGHT = 1
 # Change weakness weights only after comparing each mechanical signal with review yield.
 AUDIT_WEAKNESS_BASE = 1
 AUDIT_WEAKNESS_SIGNAL_WEIGHT = 1
+# Change only if the audited row model adds or removes a mechanical weakness signal.
+AUDIT_WEAKNESS_SIGNAL_COUNT = 4
 # Change only if one effective control component ceases to mean zero corroboration.
 AUDIT_CORROBORATED_CONTROL_COMPONENT_MINIMUM = 2
 # Change only from measured capture-expiry lead time needed by reviewers.

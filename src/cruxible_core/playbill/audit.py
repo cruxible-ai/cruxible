@@ -31,7 +31,9 @@ from cruxible_core.playbill.curation_calibration import (
     AUDIT_RANK_STALENESS_WEIGHT,
     AUDIT_RANK_WEAKNESS_WEIGHT,
     AUDIT_STAKE_BASE,
+    AUDIT_STALENESS_BASE,
     AUDIT_WEAKNESS_BASE,
+    AUDIT_WEAKNESS_SIGNAL_COUNT,
     AUDIT_WEAKNESS_SIGNAL_WEIGHT,
 )
 from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
@@ -144,16 +146,19 @@ class AuditEvidenceRefV1(_StrictAuditModel):
 class AuditClaimFactorsV1(_StrictAuditModel):
     unique_dependent_count: int = Field(ge=0)
     qualifying_consumption_touch_count: int = Field(ge=0)
-    stake: int = Field(ge=1)
+    stake: int = Field(ge=AUDIT_STAKE_BASE)
     single_source: bool
     proposer_observed_only: bool
     zero_corroboration: bool
     near_freshness_horizon: bool
-    weakness: int = Field(ge=1, le=5)
+    weakness: int = Field(
+        ge=AUDIT_WEAKNESS_BASE,
+        le=AUDIT_WEAKNESS_BASE + AUDIT_WEAKNESS_SIGNAL_COUNT * AUDIT_WEAKNESS_SIGNAL_WEIGHT,
+    )
     first_accepted_generation: int = Field(ge=0)
     last_independent_verification_generation: int = Field(ge=0)
     never_verified: bool
-    staleness: int = Field(ge=1)
+    staleness: int = Field(ge=AUDIT_STALENESS_BASE)
 
     @model_validator(mode="after")
     def _arithmetic(self) -> AuditClaimFactorsV1:
@@ -191,7 +196,16 @@ class AuditClaimRowV1(_StrictAuditModel):
     verdict: str
     currency: str
     factors: AuditClaimFactorsV1
-    rank_score: int = Field(ge=1)
+    rank_score: int = Field(
+        ge=(
+            AUDIT_RANK_STAKE_WEIGHT
+            * AUDIT_STAKE_BASE
+            * AUDIT_RANK_WEAKNESS_WEIGHT
+            * AUDIT_WEAKNESS_BASE
+            * AUDIT_RANK_STALENESS_WEIGHT
+            * AUDIT_STALENESS_BASE
+        )
+    )
     evidence_refs: tuple[AuditEvidenceRefV1, ...]
 
     @field_validator("claim_artifact_digest", "claim_statement_digest")
