@@ -33,9 +33,11 @@ coordinates.
 ## Review, approval, and activation
 
 Review renders the exact candidate and readable evidence. Approval signs a
-frozen challenge containing the candidate digest and coordinate context.
-Activation independently verifies approvals and advances accepted state by
-compare-and-set.
+frozen challenge containing the candidate digest and coordinate context; these
+attestations are voluntary by default. Activation verifies any recorded
+approvals and advances accepted state by compare-and-set. Organizational
+authorization belongs to repository ref governance rather than an in-daemon
+quorum.
 
 This separation prevents review UI, signatures, or storage from becoming hidden
 mutation paths.
@@ -60,7 +62,7 @@ Revocation and rotation change principal state prospectively while key history
 keeps older signatures verifiable.
 
 A runtime bearer credential is not a Playbill principal. It authorizes transport
-operations; the principal authorizes a governed judgment.
+operations; the principal identifies and attributes a governed act.
 
 ## Document
 

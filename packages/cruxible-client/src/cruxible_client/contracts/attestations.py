@@ -24,7 +24,6 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError, PrincipalIntegrityError
 from cruxible_client.contracts.governance import (
-    PLAYBILL_FIXED_INDEPENDENT_APPROVALS,
     PLAYBILL_INDEPENDENT_APPROVAL_ROLE,
     governance_identifier,
 )
@@ -195,7 +194,7 @@ def verify_candidate_approvals(
     creator_principal_id: str,
     purpose: ApprovalPurpose = "ordinary-artifact",
 ) -> tuple[VerifiedApproval, ...]:
-    """Verify the fixed independent-Principal quorum at the candidate coordinate."""
+    """Verify voluntary approvals and any committed nondefault requirements."""
 
     try:
         principals.require_active(creator_principal_id)
@@ -225,25 +224,62 @@ def verify_candidate_approvals(
         )
         for submission in submissions
     )
-    required = candidate.approval_requirements
-    # The fixed constant is intentionally checked against the committed record
-    # bytes. Changing it in place makes all existing candidates fail closed;
-    # future policy variability therefore requires a versioned governed-policy
-    # artifact rather than a bare constant change.
-    if len(required) != 1 or (
-        required[0].role != PLAYBILL_INDEPENDENT_APPROVAL_ROLE
-        or required[0].minimum_distinct_signers != PLAYBILL_FIXED_INDEPENDENT_APPROVALS
-    ):
-        raise ApprovalIntegrityError("candidate approval requirement is not the fixed quorum")
     creator_present = any(item.signer_id == creator_principal_id for item in verified)
-    if purpose == "ordinary-artifact" and creator_present:
+    if creator_present:
         raise ApprovalIntegrityError(
             "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve"
         )
-    independent_count = sum(item.signer_id != creator_principal_id for item in verified)
-    if independent_count < PLAYBILL_FIXED_INDEPENDENT_APPROVALS:
+
+    slots = tuple(
+        role
+        for requirement in candidate.approval_requirements
+        for role in (requirement.role,) * requirement.minimum_distinct_signers
+    )
+    eligible = {
+        role: tuple(
+            index
+            for index, approval in enumerate(verified)
+            if role == PLAYBILL_INDEPENDENT_APPROVAL_ROLE or role in approval.signer_roles
+        )
+        for role in dict.fromkeys(slots)
+    }
+    slot_to_signer: list[int | None] = [None] * len(slots)
+    signer_to_slot: list[int | None] = [None] * len(verified)
+
+    def augment(root_slot: int) -> bool:
+        queued_slots = [root_slot]
+        seen_slots = {root_slot}
+        seen_signers: set[int] = set()
+        signer_predecessor: dict[int, int] = {}
+        cursor = 0
+
+        while cursor < len(queued_slots):
+            slot = queued_slots[cursor]
+            cursor += 1
+            for signer in eligible.get(slots[slot], ()):
+                if signer in seen_signers:
+                    continue
+                seen_signers.add(signer)
+                signer_predecessor[signer] = slot
+                matched_slot = signer_to_slot[signer]
+                if matched_slot is None:
+                    current_signer = signer
+                    while True:
+                        current_slot = signer_predecessor[current_signer]
+                        displaced_signer = slot_to_signer[current_slot]
+                        slot_to_signer[current_slot] = current_signer
+                        signer_to_slot[current_signer] = current_slot
+                        if displaced_signer is None:
+                            return True
+                        current_signer = displaced_signer
+                if matched_slot not in seen_slots:
+                    seen_slots.add(matched_slot)
+                    queued_slots.append(matched_slot)
+        return False
+
+    if len(slots) > len(verified) or any(not augment(slot) for slot in range(len(slots))):
         raise ApprovalIntegrityError(
-            "verified approvals do not satisfy the fixed independent-Principal quorum"
+            "verified approvals do not satisfy every independent candidate requirement"
         )
     return verified
 

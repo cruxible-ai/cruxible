@@ -133,7 +133,7 @@ uv run cruxible server start \
 ~~~
 
 In another shell, authorize the bootstrap session, allocate a host, and create
-client-held owner and independent-reviewer keys outside the workspace:
+a client-held owner key outside the workspace:
 
 ~~~bash
 export CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
@@ -142,21 +142,22 @@ export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat /tmp/cruxible-playbill-bootstrap)"
 uv run cruxible playbill host create --instance-id playbill-demo
 uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
-  --principal-id bootstrap-admin \
-  --reviewer-key-dir /tmp/cruxible-playbill-reviewer
+  --principal-id bootstrap-admin
 uv run cruxible playbill document list
 ~~~
 
-The init command prints both private-key paths. The daemon receives the public
-keys only. See the [Quickstart](docs/quickstart.md) for a complete
-Document proposal and activation.
+The init command prints the private-key path. The daemon receives the public key
+only. Pass optional `--reviewer-key-dir DIR` to generate an independent reviewer
+for voluntary approval attestations. See the [Quickstart](docs/quickstart.md)
+for a complete Document proposal and activation.
 
 ## Security boundaries
 
 Runtime bearer credentials and Playbill principals solve different problems:
 
 - bearer credentials authorize transport operations and carry a capability tier;
-- Playbill principals authorize governed judgments at exact candidate digests;
+- Playbill principals identify and attribute governed acts at exact coordinates;
+- repository ref governance supplies organizational authorization;
 - owner/reviewer/recovery private keys remain in client custody;
 - the daemon has a separate instance-specific key for ledger mechanics;
 - source compilation happens client-side, so the daemon never dereferences a

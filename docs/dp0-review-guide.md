@@ -630,11 +630,12 @@ singular propose operation for it and no plural one.
 **Why applying is one group per invocation.** This was measured, not assumed:
 opening two proposals against one accepted head and activating both fails with
 `settlement base is not the current main ref`. A plan is therefore a *sequence*,
-and the caller must approve and activate each group before submitting the next.
-Approval and activation are separate governed acts and this command performs
-neither; `--plan` prints the whole grouping offline and reaches no daemon, and a
-harness loops plan → apply → approve → activate over the printed group ids.
-`benchmarks/playbill_taubench/recipe.py:seed` is that loop, committed.
+and the caller must activate each group before submitting the next. Approval is
+an optional governed attestation and activation is the state-changing act; this
+command performs neither. `--plan` prints the whole grouping offline and reaches
+no daemon. The committed TauBench harness deliberately records a voluntary
+approval while it loops plan → apply → approve → activate over the printed group
+ids; a creator-suffices harness may loop plan → apply → activate instead.
 
 **Refusals defer to the laws.** The one thing checked at plan time is the case
 the propose operation would refuse anyway and that is cheaper to say early: two

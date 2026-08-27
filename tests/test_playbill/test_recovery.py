@@ -49,20 +49,21 @@ class SimulatedCrash(RuntimeError):
 
 
 def _prepared(tmp_path: Path):
-    instance, owner, reviewer = _instance(tmp_path)
+    instance, _owner, _reviewer = _instance(tmp_path)
     base, tree, candidate = _candidate(instance)
-    approvals = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
     bundle = prepare_generation(
         instance._ledger,
         base=base,
         candidate_tree=tree,
         candidate=candidate,
-        approval_submissions=approvals,
+        approval_submissions=(),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
         sequence=1,
     )
+    assert bundle.record.approval_requirements == ()
+    assert bundle.record.approvals == ()
     return instance, base, bundle
 
 

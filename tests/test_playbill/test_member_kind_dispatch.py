@@ -128,11 +128,11 @@ def test_a_principal_change_bundled_with_an_artifact_is_not_recognized(tmp_path:
     """A key transition may not ride along with artifact edits.
 
     Whether a change set is a principal-lifecycle transition decides which
-    approval purpose it is verified under and whether its actor must
-    cryptographically approve it. That question is answered by "is every member a
-    principal record", so a change set that is only partly one must never be
-    acceptable -- it was refused when principals had their own single-member
-    evaluator, and it is refused now that they are a member kind like any other.
+    voluntary-approval purpose applies. That question is answered by "is every
+    member a principal record", so a change set that is only partly one must
+    never be acceptable -- it was refused when principals had their own
+    single-member evaluator, and it is refused now that they are a member kind
+    like any other.
     """
 
     instance, _owner = initialize_local(tmp_path)

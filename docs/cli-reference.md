@@ -64,16 +64,17 @@ Allocates an empty daemon-owned host and remembers it.
 ## playbill init
 
 ~~~text
-cruxible playbill init --key-dir DIR --reviewer-key-dir DIR
+cruxible playbill init --key-dir DIR [--reviewer-key-dir DIR]
   [--principal-id ID]
   [--recovery-key-dir DIR]
   [--recovery-principal-id ID]
   [--profile local|cloud]
 ~~~
 
-Generates client-held owner and independent-reviewer principal keys outside the
-workspace and bootstraps the ledger with public principal records. The optional
-recovery key is lifecycle-only and does not replace the independent reviewer.
+Generates a client-held owner key outside the workspace and bootstraps the ledger
+with its public principal record. `--reviewer-key-dir` optionally generates an
+independent reviewer for voluntary approval attestations. The optional recovery
+key remains lifecycle-only.
 
 ## playbill body
 
@@ -573,11 +574,11 @@ cruxible playbill principal recover ...
 Registration, rotation, revocation, and recovery are governed principal-change
 proposals. `principal add` generates the Ed25519 private key exclusively in the
 client-held `--key-dir` outside the current workspace and sends only its public
-principal record. An existing owner must approve the resulting proposal with
-`playbill proposal approve`, then activate it with `playbill proposal activate`;
-registration neither grants authority immediately nor sends a private key to the
-daemon. `--role` is explicit and may be `owner`, `reviewer`, or `recovery`.
-Recovery cannot approve ordinary Document candidates.
+principal record. Activate the resulting proposal with `playbill proposal
+activate`; registration neither grants authority immediately nor sends a private
+key to the daemon. A non-creator may record a voluntary approval first. `--role`
+is explicit and may be `owner`, `reviewer`, or `recovery`. Recovery cannot
+approve ordinary Document candidates.
 
 ## playbill sources
 

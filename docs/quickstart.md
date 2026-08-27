@@ -36,20 +36,18 @@ instance:
 uv run cruxible playbill host create --instance-id playbill-demo
 ~~~
 
-Initialize Playbill and generate independent owner and reviewer keys outside
-the repository:
+Initialize Playbill and generate an owner key outside the repository:
 
 ~~~bash
 uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
-  --principal-id bootstrap-admin \
-  --reviewer-key-dir /tmp/cruxible-playbill-reviewer
+  --principal-id bootstrap-admin
 ~~~
 
-The private keys remain in their client custody directories. The daemon receives
-only the public principal records. Two ordinary-approval-capable Principals are
-present at genesis, so the creator can obtain the required independent approval
-without a principal-lifecycle bootstrap dance.
+The private key remains in its client custody directory. The daemon receives
+only the public principal record. Pass optional `--reviewer-key-dir DIR` to
+generate a second Principal when the organization wants to record voluntary
+independent approvals.
 
 ## Govern a Document
 
@@ -84,14 +82,10 @@ uv run cruxible playbill document propose \
   --json
 ~~~
 
-Copy the proposal ID from the response, then review, approve, and activate:
+Copy the proposal ID from the response, then review and activate:
 
 ~~~bash
 uv run cruxible playbill proposal review PROPOSAL_ID
-uv run cruxible playbill proposal approve PROPOSAL_ID \
-  --signer-id reviewer \
-  --key /tmp/cruxible-playbill-reviewer/reviewer.ed25519 \
-  --yes
 uv run cruxible playbill proposal activate PROPOSAL_ID
 ~~~
 
@@ -104,8 +98,9 @@ uv run cruxible playbill explain document:demo-policy --detail evidence
 uv run cruxible playbill document history document:demo-policy
 ~~~
 
-Storing body bytes was inert. Proposing created a frozen candidate. Signing
-approved exactly that candidate. Only activation changed accepted state.
+Storing body bytes was inert. Proposing created a frozen candidate. A voluntary
+non-creator approval, when supplied, signs exactly that candidate. Only
+activation changed accepted state.
 
 ## Source catalogs
 

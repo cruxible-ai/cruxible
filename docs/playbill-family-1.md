@@ -18,9 +18,9 @@ compatibility layer.
    deterministically evaluates an immutable candidate.
 3. Review exposes candidate digest, semantic parent, settlement base, complete
    member enumeration, required approvals, and permission-filtered diff.
-4. proposal approve fetches the exact challenge and signs it with a client-held
-   Ed25519 key. The daemon receives only the public attestation.
-5. proposal activate independently verifies approvals, prebuilds the
+4. proposal approve optionally records a non-creator signature over the exact
+   challenge. The daemon receives only the public attestation.
+5. proposal activate verifies any recorded approvals, prebuilds the
    projection, and advances accepted state by parent-bound compare-and-set.
 6. Reads, history, and explain bind to Git OID, semantic root, generation root,
    and compiler digest.

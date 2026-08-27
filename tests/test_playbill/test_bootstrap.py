@@ -167,9 +167,7 @@ def test_workspace_edits_cannot_move_ledger_or_verified_coordinates(tmp_path: Pa
     assert after.generation_root == before.generation_root
 
 
-def test_bootstrap_requires_two_distinct_ordinary_approval_principals(
-    tmp_path: Path,
-) -> None:
+def test_bootstrap_accepts_one_owner_and_optional_recovery(tmp_path: Path) -> None:
     managed = tmp_path / "managed-single-client"
     owner = generate_client(
         tmp_path,
@@ -178,35 +176,38 @@ def test_bootstrap_requires_two_distinct_ordinary_approval_principals(
         roles=("owner",),
     )
 
-    with pytest.raises(
-        PlaybillBootstrapError,
-        match="playbill.bootstrap.independent_quorum_unconstructible",
-    ):
-        PlaybillInstance.initialize(
-            managed,
-            instance_id="inst_single_client",
-            client_principals=(owner.principal,),
-            workspace_roots=(tmp_path / "workspace",),
-            timestamp=FIXED_TIMESTAMP,
-        )
+    instance = PlaybillInstance.initialize(
+        managed,
+        instance_id="inst_single_client",
+        client_principals=(owner.principal,),
+        workspace_roots=(tmp_path / "workspace",),
+        timestamp=FIXED_TIMESTAMP,
+    )
+    assert instance.inspect().recovery_posture == "narrowed-no-recovery"
 
+    recovery_tmp = tmp_path / "with-recovery"
+    recovery_tmp.mkdir()
+    managed_with_recovery = recovery_tmp / "managed-owner-recovery"
+    recovery_owner = generate_client(
+        recovery_tmp,
+        managed_root=managed_with_recovery,
+        principal_id="owner",
+        roles=("owner",),
+    )
     recovery = generate_client(
-        tmp_path,
-        managed_root=managed,
+        recovery_tmp,
+        managed_root=managed_with_recovery,
         principal_id="recovery",
         roles=("recovery",),
     )
-    with pytest.raises(
-        PlaybillBootstrapError,
-        match="ordinary-approval-capable.*recovery and daemon principals do not count",
-    ):
-        PlaybillInstance.initialize(
-            managed,
-            instance_id="inst_owner_recovery_deadlock",
-            client_principals=(owner.principal, recovery.principal),
-            workspace_roots=(tmp_path / "workspace",),
-            timestamp=FIXED_TIMESTAMP,
-        )
+    recovered = PlaybillInstance.initialize(
+        managed_with_recovery,
+        instance_id="inst_owner_recovery",
+        client_principals=(recovery_owner.principal, recovery.principal),
+        workspace_roots=(recovery_tmp / "workspace-recovery",),
+        timestamp=FIXED_TIMESTAMP,
+    )
+    assert recovered.inspect().recovery_posture == "recovery-configured"
 
 
 def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> None:
@@ -217,17 +218,11 @@ def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> N
         principal_id="owner",
         roles=("owner",),
     )
-    reviewer = generate_client(
-        tmp_path,
-        managed_root=managed,
-        principal_id="reviewer",
-        roles=("reviewer",),
-    )
     with pytest.raises(PlaybillBootstrapError, match="recovery"):
         PlaybillInstance.initialize(
             managed,
             instance_id="inst_cloud",
-            client_principals=(owner.principal, reviewer.principal),
+            client_principals=(owner.principal,),
             workspace_roots=(tmp_path / "workspace",),
             operating_profile="cloud",
             timestamp=FIXED_TIMESTAMP,
@@ -242,7 +237,7 @@ def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> N
     instance = PlaybillInstance.initialize(
         managed,
         instance_id="inst_cloud",
-        client_principals=(owner.principal, reviewer.principal, recovery.principal),
+        client_principals=(owner.principal, recovery.principal),
         workspace_roots=(tmp_path / "workspace",),
         operating_profile="cloud",
         timestamp=FIXED_TIMESTAMP,

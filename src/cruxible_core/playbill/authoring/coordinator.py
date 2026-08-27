@@ -1412,7 +1412,7 @@ class AuthoringIntentCoordinator:
             member.artifact_kind == "principal-lifecycle" for member in candidate.members
         )
         invalid_approval = False
-        verified_signers: set[str] = set()
+        verified_signers: dict[str, set[str]] = {}
         for submission in approvals:
             try:
                 verified = verify_approval(
@@ -1424,36 +1424,37 @@ class AuthoringIntentCoordinator:
             except ApprovalIntegrityError:
                 invalid_approval = True
             else:
-                verified_signers.add(verified.signer_id)
+                if verified.signer_id == admission.actor_id:
+                    invalid_approval = True
+                verified_signers[verified.signer_id] = set(verified.signer_roles)
         conditions: list[AcceptanceConditionV1] = []
-        independent_satisfied = len(verified_signers - {admission.actor_id}) >= 1
-        conditions.append(
-            AcceptanceConditionV1(
-                condition="approval:independent-principal:1",
-                owner="approver",
-                action="Wait for 1 distinct non-creator Principal approval.",
-                satisfied=independent_satisfied,
+        approvals_complete = True
+        for requirement in candidate.approval_requirements:
+            count = sum(
+                requirement.role == "independent-principal" or requirement.role in roles
+                for roles in verified_signers.values()
             )
-        )
-        approvals_complete = independent_satisfied
-        if principal_lifecycle:
-            actor_binding_satisfied = admission.actor_id in verified_signers
-            approvals_complete = approvals_complete and actor_binding_satisfied
+            satisfied = count >= requirement.minimum_distinct_signers
+            approvals_complete = approvals_complete and satisfied
             conditions.append(
                 AcceptanceConditionV1(
-                    condition="principal-lifecycle-actor-binding",
+                    condition=(
+                        f"approval:{requirement.role}:{requirement.minimum_distinct_signers}"
+                    ),
                     owner="approver",
-                    action="The lifecycle actor must sign the exact candidate.",
-                    satisfied=actor_binding_satisfied,
+                    action=(
+                        "Wait for independently submitted approval attestations "
+                        f"from {requirement.minimum_distinct_signers} distinct "
+                        f"{requirement.role} signer(s)."
+                    ),
+                    satisfied=satisfied,
                 )
             )
         conditions.append(
             AcceptanceConditionV1(
                 condition="activation",
                 owner="daemon",
-                action=(
-                    "Activate the fully approved candidate through the existing settlement path."
-                ),
+                action="Activate the candidate through the existing settlement path.",
                 satisfied=False,
             )
         )

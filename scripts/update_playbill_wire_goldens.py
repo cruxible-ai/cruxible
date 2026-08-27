@@ -6,7 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-from cruxible_client.contracts.governance import ApprovalRequirement
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.query.indexes import (
     DISCOVERY_JSONL_NAME,
@@ -34,18 +33,10 @@ def _update_changeset() -> None:
     )
     if not isinstance(record, ChangeSetRecordV3):
         raise TypeError("the v3 ChangeSet golden did not parse as ChangeSetRecordV3")
-    # This patch hand-mirrors the approval_requirements bytes produced by
-    # settlement; it must move in lockstep with settlement's fixed requirement.
-    updated = record.model_copy(
-        update={
-            "approval_requirements": (
-                ApprovalRequirement(
-                    role="independent-principal",
-                    minimum_distinct_signers=1,
-                ),
-            )
-        }
-    )
+    # The fixture deliberately retains an explicit nondefault requirement to
+    # prove the dormant matcher and wire remain readable. Newly compiled
+    # candidates emit no requirements by default.
+    updated = record
     updated = updated.model_copy(update={"changeset_digest": change_set_digest(updated).tagged})
     canonical = render_change_set(updated)
     reparsed = parse_change_set_record(canonical, path="changesets/golden.json")

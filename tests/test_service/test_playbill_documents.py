@@ -203,10 +203,10 @@ def test_service_refusal_and_coordinate_mixing_are_typed(tmp_path: Path) -> None
         )
 
 
-def test_service_owner_rotation_and_scoped_recovery_use_public_approval_path(
+def test_service_owner_rotation_and_recovery_accept_optional_noncreator_approval(
     tmp_path: Path,
 ) -> None:
-    instance, owner, recovery = _cloud_instance(tmp_path)
+    instance, _owner, recovery = _cloud_instance(tmp_path)
     rotated_owner = _replacement_key(
         tmp_path,
         instance,
@@ -222,24 +222,20 @@ def test_service_owner_rotation_and_scoped_recovery_use_public_approval_path(
         timestamp="2026-08-13T12:01:00.000000Z",
     ).proposal
     assert rotated.candidate is not None
+    with pytest.raises(ApprovalIntegrityError, match="creator_forbidden"):
+        service_prepare_playbill_approval(
+            instance,
+            proposal_id=rotated.admission.proposal_id,
+            signer_id="owner",
+            access=BodyAccessContext(principal_id="owner"),
+        )
     rotation_challenge = service_prepare_playbill_approval(
         instance,
         proposal_id=rotated.admission.proposal_id,
-        signer_id="owner",
-        access=BodyAccessContext(principal_id="owner"),
+        signer_id="recovery",
+        access=BodyAccessContext(principal_id="recovery"),
     )
     rotation_signature = _sign(
-        owner,
-        rotation_challenge.statement.payload_digest,
-        rotation_challenge.statement.signing_semantic_root,
-    )
-    service_submit_playbill_approval(
-        instance,
-        proposal_id=rotated.admission.proposal_id,
-        attestation=rotation_signature.attestation,
-        authenticated_submitter="owner",
-    )
-    rotation_independent = _sign(
         recovery,
         rotation_challenge.statement.payload_digest,
         rotation_challenge.statement.signing_semantic_root,
@@ -247,7 +243,7 @@ def test_service_owner_rotation_and_scoped_recovery_use_public_approval_path(
     service_submit_playbill_approval(
         instance,
         proposal_id=rotated.admission.proposal_id,
-        attestation=rotation_independent.attestation,
+        attestation=rotation_signature.attestation,
         authenticated_submitter="recovery",
     )
     service_activate_playbill_proposal(instance, proposal_id=rotated.admission.proposal_id)
@@ -278,21 +274,10 @@ def test_service_owner_rotation_and_scoped_recovery_use_public_approval_path(
     recovery_challenge = service_prepare_playbill_approval(
         instance,
         proposal_id=recovered.admission.proposal_id,
-        signer_id="recovery",
-        access=BodyAccessContext(principal_id="recovery"),
+        signer_id="owner",
+        access=BodyAccessContext(principal_id="owner"),
     )
     recovery_signature = _sign(
-        recovery,
-        recovery_challenge.statement.payload_digest,
-        recovery_challenge.statement.signing_semantic_root,
-    )
-    service_submit_playbill_approval(
-        instance,
-        proposal_id=recovered.admission.proposal_id,
-        attestation=recovery_signature.attestation,
-        authenticated_submitter="recovery",
-    )
-    recovery_independent = _sign(
         rotated_owner,
         recovery_challenge.statement.payload_digest,
         recovery_challenge.statement.signing_semantic_root,
@@ -300,7 +285,7 @@ def test_service_owner_rotation_and_scoped_recovery_use_public_approval_path(
     service_submit_playbill_approval(
         instance,
         proposal_id=recovered.admission.proposal_id,
-        attestation=recovery_independent.attestation,
+        attestation=recovery_signature.attestation,
         authenticated_submitter="owner",
     )
     service_activate_playbill_proposal(instance, proposal_id=recovered.admission.proposal_id)

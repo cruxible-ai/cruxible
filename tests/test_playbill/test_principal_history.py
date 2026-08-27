@@ -167,15 +167,7 @@ def _settle_transition(
         base=base,
         candidate_tree=tree,
         candidate=candidate,
-        approval_submissions=tuple(
-            sorted(
-                (
-                    _sign(actor, candidate.candidate_digest, base.semantic_root),
-                    _sign(approver, candidate.candidate_digest, base.semantic_root),
-                ),
-                key=lambda item: item.attestation.signer_id,
-            )
-        ),
+        approval_submissions=(_sign(approver, candidate.candidate_digest, base.semantic_root),),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(actor_id=actor.principal.principal_id),
         proposal_actor_id=actor.principal.principal_id,

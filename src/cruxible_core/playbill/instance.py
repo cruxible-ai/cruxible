@@ -55,7 +55,6 @@ from cruxible_core.playbill.keys import (
     public_key_hex_from_private_file,
     raw_public_key_hex_from_openssh,
 )
-from cruxible_core.playbill.principal_lifecycle import ordinary_approval_capable
 from cruxible_core.playbill.projection import (
     AcceptedCoordinate,
     AcceptedProjectionCoordinate,
@@ -124,13 +123,8 @@ def _validate_client_principals(
     identifiers = [record.principal_id for record in ordered]
     if identifiers != sorted(set(identifiers)):
         raise PlaybillBootstrapError("bootstrap client principals must be unique")
-    ordinary_approvers = tuple(record for record in ordered if ordinary_approval_capable(record))
-    if len(ordinary_approvers) < 2:
-        raise PlaybillBootstrapError(
-            "playbill.bootstrap.independent_quorum_unconstructible: bootstrap requires at "
-            "least two distinct active ordinary-approval-capable client principals; "
-            "recovery and daemon principals do not count"
-        )
+    if not ordered:
+        raise PlaybillBootstrapError("bootstrap requires at least one client principal")
     if not any("owner" in record.authority_roles for record in ordered):
         raise PlaybillBootstrapError("bootstrap requires at least one owner principal")
     if any(record.principal_id == "daemon" for record in ordered):

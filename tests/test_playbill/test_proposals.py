@@ -110,10 +110,7 @@ def test_store_then_propose_creates_complete_candidate_without_changing_main(
         "timestamp": TIMESTAMP,
     }
     assert result.candidate.required_tier == "graph_write"
-    assert tuple(
-        (item.role, item.minimum_distinct_signers)
-        for item in result.candidate.approval_requirements
-    ) == (("independent-principal", 1),)
+    assert result.candidate.approval_requirements == ()
     assert result.candidate.activation_policy == "snapshot"
     assert result.candidate.members[0].artifact_kind == "document"
     assert result.candidate.members[0].law_identifier == "playbill.document.v1"

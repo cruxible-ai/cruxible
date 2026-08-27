@@ -44,9 +44,7 @@ def _key(principal_id: str, roles: tuple[str, ...]):
 def _candidate(
     *,
     parent: str = ROOT,
-    approval_requirements: tuple[ApprovalRequirement, ...] = (
-        ApprovalRequirement(role="independent-principal"),
-    ),
+    approval_requirements: tuple[ApprovalRequirement, ...] = (),
 ) -> CandidateRecord:
     semantic = SemanticCandidate(
         parent_semantic_root=parent,
@@ -173,7 +171,7 @@ def test_tampered_stale_foreign_revoked_and_recovery_approvals_refuse() -> None:
         )
 
 
-def test_one_noncreator_principal_satisfies_fixed_quorum_regardless_of_role() -> None:
+def test_noncreator_voluntary_approval_verifies_without_default_requirement() -> None:
     owner_private, owner = _key("owner", ("owner",))
     reviewer_private, reviewer = _key("reviewer", ("reviewer",))
     candidate = _candidate()
@@ -188,7 +186,7 @@ def test_one_noncreator_principal_satisfies_fixed_quorum_regardless_of_role() ->
     assert tuple(item.signer_id for item in verified) == ("reviewer",)
 
 
-def test_ordinary_creator_cannot_satisfy_or_join_the_fixed_quorum() -> None:
+def test_creator_cannot_submit_or_join_voluntary_approvals() -> None:
     owner_private, owner = _key("owner", ("owner",))
     reviewer_private, reviewer = _key("reviewer", ("reviewer",))
     candidate = _candidate()
@@ -219,12 +217,12 @@ def test_ordinary_creator_cannot_satisfy_or_join_the_fixed_quorum() -> None:
         )
 
 
-def test_principal_lifecycle_requires_creator_signature_plus_independent_principal() -> None:
+def test_principal_lifecycle_refuses_creator_but_accepts_noncreator_approval() -> None:
     owner_private, owner = _key("owner", ("owner",))
     reviewer_private, reviewer = _key("reviewer", ("reviewer",))
     candidate = _candidate()
     creator = _submission(owner_private, candidate, signer_id="owner")
-    with pytest.raises(ApprovalIntegrityError, match="independent-Principal"):
+    with pytest.raises(ApprovalIntegrityError, match="creator_forbidden"):
         verify_candidate_approvals(
             candidate,
             (creator,),
@@ -232,15 +230,7 @@ def test_principal_lifecycle_requires_creator_signature_plus_independent_princip
             creator_principal_id="owner",
             purpose="principal-lifecycle",
         )
-    approvals = tuple(
-        sorted(
-            (
-                creator,
-                _submission(reviewer_private, candidate, signer_id="reviewer"),
-            ),
-            key=lambda item: item.attestation.signer_id,
-        )
-    )
+    approvals = (_submission(reviewer_private, candidate, signer_id="reviewer"),)
     verified = verify_candidate_approvals(
         candidate,
         approvals,
@@ -248,23 +238,29 @@ def test_principal_lifecycle_requires_creator_signature_plus_independent_princip
         creator_principal_id="owner",
         purpose="principal-lifecycle",
     )
-    assert tuple(item.signer_id for item in verified) == ("owner", "reviewer")
+    assert tuple(item.signer_id for item in verified) == ("reviewer",)
 
 
-def test_candidate_must_commit_the_fixed_quorum_shape() -> None:
+def test_nondefault_committed_requirement_uses_dormant_matcher() -> None:
     owner_private, owner = _key("owner", ("owner",))
     reviewer_private, reviewer = _key("reviewer", ("reviewer",))
     del owner_private
     candidate = _candidate(approval_requirements=(ApprovalRequirement(role="reviewer"),))
-    submission = (_submission(reviewer_private, candidate, signer_id="reviewer"),)
-
-    with pytest.raises(ApprovalIntegrityError, match="fixed quorum"):
+    with pytest.raises(ApprovalIntegrityError, match="independent candidate requirement"):
         verify_candidate_approvals(
             candidate,
-            submission,
+            (),
             principals=_registry(owner, reviewer),
             creator_principal_id="owner",
         )
+    submission = (_submission(reviewer_private, candidate, signer_id="reviewer"),)
+    verified = verify_candidate_approvals(
+        candidate,
+        submission,
+        principals=_registry(owner, reviewer),
+        creator_principal_id="owner",
+    )
+    assert tuple(item.signer_id for item in verified) == ("reviewer",)
 
 
 def test_principal_role_model_prevents_recovery_or_daemon_authority_expansion() -> None:

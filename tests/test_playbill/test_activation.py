@@ -156,16 +156,15 @@ def _sign(
 def test_prepare_generation_binds_complete_change_set_without_advancing_main(
     tmp_path: Path,
 ) -> None:
-    instance, owner, reviewer = _instance(tmp_path)
+    instance, _owner, _reviewer = _instance(tmp_path)
     base, tree, candidate = _candidate(instance)
-    submissions = (_sign(reviewer, candidate.candidate_digest, base.semantic_root),)
 
     bundle = prepare_generation(
         instance._ledger,
         base=base,
         candidate_tree=tree,
         candidate=candidate,
-        approval_submissions=submissions,
+        approval_submissions=(),
         bodies=instance.body_store(),
         actor_binding=ChangeActorBinding(
             actor_id="owner",
@@ -182,6 +181,9 @@ def test_prepare_generation_binds_complete_change_set_without_advancing_main(
     assert instance._ledger.verify_commit(bundle.oid)
     assert bundle.record.candidate == candidate.candidate
     assert bundle.record.candidate_digest == candidate.candidate_digest
+    assert bundle.record.approval_requirements == ()
+    assert bundle.record.approvals == ()
+    assert bundle.approvals == ()
     assert change_set_digest(bundle.record).tagged == bundle.record.changeset_digest
     assert bundle.record_path == "changesets/cs-00000000000000000001.json"
     stored_tree = instance._ledger.read_tree(bundle.oid)

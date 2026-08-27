@@ -2,7 +2,7 @@
 
 This is the TauBench-runnable surface, written as the harness recipe it has to
 support: allocate a host, bootstrap it, seed a ClaimType, a Subject, two Claims,
-and a named entrypoint through the governed propose/approve/activate loop, then
+and a named entrypoint through the governed propose/activate loop, then
 read the resulting accepted state back through every read the loop publishes --
 query execution with its receipt, semantic discovery, bounded expansion, and the
 deterministic floor.
@@ -43,7 +43,6 @@ from tests.test_playbill.test_claims import _claim_type
 
 CREATOR_ID = "operator"
 RECOVERY_ID = "recovery"
-SIGNER_ID = "reviewer"
 
 
 class _Cli:
@@ -51,7 +50,6 @@ class _Cli:
 
     def __init__(self, runner: CliRunner, key_dir: Path) -> None:
         self._runner = runner
-        self.private_key = key_dir / f"{SIGNER_ID}.ed25519"
         self.creator_private_key = key_dir / f"{CREATOR_ID}.ed25519"
         self.recovery_private_key = key_dir / f"{RECOVERY_ID}.ed25519"
 
@@ -64,26 +62,14 @@ class _Cli:
         return json.loads(self.run(*args, "--json").stdout)
 
     def accept(self, proposal_id: str) -> dict[str, Any]:
-        """Approve with the client-held key and settle, exactly as an operator does."""
+        """Activate the admitted candidate, exactly as an operator does."""
 
-        self.run(
-            "playbill",
-            "proposal",
-            "approve",
-            proposal_id,
-            "--signer-id",
-            SIGNER_ID,
-            "--key",
-            str(self.private_key),
-            "--yes",
-            "--json",
-        )
         activated = self.json("playbill", "proposal", "activate", proposal_id)
         assert activated["status"] == "accepted", activated
         return activated
 
     def bootstrap(self, tmp_path: Path) -> dict[str, Any]:
-        """Bootstrap the documented owner/reviewer/recovery custody shape."""
+        """Bootstrap the documented owner plus optional recovery custody shape."""
 
         custody = tmp_path / "custody"
         recovery_custody = tmp_path / "recovery-custody"
@@ -94,8 +80,6 @@ class _Cli:
             str(custody),
             "--principal-id",
             CREATOR_ID,
-            "--reviewer-key-dir",
-            str(custody),
             "--recovery-key-dir",
             str(recovery_custody),
             "--recovery-principal-id",
@@ -171,7 +155,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert host["status"] == "created"
     initialized = cruxible.bootstrap(tmp_path)
     assert initialized["instance_id"] == host["instance_id"]
-    assert cruxible.private_key.is_file()
+    assert cruxible.creator_private_key.is_file()
 
     # 2. Seed the predicate vocabulary.
     claim_type = _claim_type()

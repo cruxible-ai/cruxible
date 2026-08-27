@@ -796,12 +796,6 @@ def prepare_generation(
         purpose="principal-lifecycle" if principal_lifecycle else "ordinary-artifact",
     )
     _verify_claim_admission_constraints(candidate, verified_approvals)
-    if principal_lifecycle and actor_binding.actor_id not in {
-        approval.signer_id for approval in verified_approvals
-    }:
-        raise SettlementIntegrityError(
-            "principal lifecycle actor must cryptographically approve the transition"
-        )
     binding = SettlementBinding(
         c_s_digest=candidate.candidate_digest,
         base_oid=base.git_oid,

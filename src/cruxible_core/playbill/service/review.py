@@ -344,7 +344,7 @@ def service_prepare_playbill_approval(
         member.artifact_kind == "principal-lifecycle" for member in review.complete_members
     )
     creator_principal_id = str(review.provenance["actor_id"])
-    if not principal_lifecycle and signer_id == creator_principal_id:
+    if signer_id == creator_principal_id:
         raise ApprovalIntegrityError(
             "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve"
         )
@@ -375,9 +375,12 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
         "Approve requires: graph_write",
         "Activate requires: graph_write",
         "Required approvals: "
-        + ", ".join(
-            f"{item.minimum_distinct_signers} {item.role}"
-            for item in review.candidate.approval_requirements
+        + (
+            ", ".join(
+                f"{item.minimum_distinct_signers} {item.role}"
+                for item in review.candidate.approval_requirements
+            )
+            or "none"
         ),
     ]
     for document in review.documents:

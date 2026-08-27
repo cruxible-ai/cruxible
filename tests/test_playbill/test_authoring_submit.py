@@ -44,17 +44,12 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     retry = coordinator.submit(intent.intent_id, actor=actor)
 
     assert retry.status == first.status
-    assert first.status.state == "awaiting_external_approval"
+    assert first.status.state == "ready_to_activate"
     assert first.status.proposal_id is not None
     assert first.status.candidate_digest is not None
     assert first.status.path_to_acceptance[-1].condition == "activation"
     assert first.status.path_to_acceptance[-1].satisfied is False
-    assert first.status.path_to_acceptance[0].model_dump() == {
-        "condition": "approval:independent-principal:1",
-        "owner": "approver",
-        "action": "Wait for 1 distinct non-creator Principal approval.",
-        "satisfied": False,
-    }
+    assert tuple(item.condition for item in first.status.path_to_acceptance) == ("activation",)
 
     creator_approval = _sign(
         owner,
@@ -150,7 +145,7 @@ def test_submit_response_loss_recovers_the_same_proposal(tmp_path: Path) -> None
         intent.intent_id,
         actor=actor,
     )
-    assert resumed.status.state == "awaiting_external_approval"
+    assert resumed.status.state == "ready_to_activate"
     assert resumed.status.proposal_id is not None
     event_paths = tuple(
         (exhaust / "authoring-intents" / intent.intent_id / "events").glob("*.json")

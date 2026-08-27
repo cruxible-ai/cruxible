@@ -124,8 +124,6 @@ from cruxible_client.contracts.errors import (
     SubjectFormatError,
 )
 from cruxible_client.contracts.governance import (
-    PLAYBILL_FIXED_INDEPENDENT_APPROVALS,
-    PLAYBILL_INDEPENDENT_APPROVAL_ROLE,
     ActivationPolicy,
     ApprovalRequirement,
     MutationDisposition,
@@ -2323,14 +2321,8 @@ def _multi_member_evidence(
 
 
 def _approval_requirements(accepted: list[_AcceptedMember]) -> tuple[ApprovalRequirement, ...]:
-    if not accepted:
-        raise ProposalIntegrityError("a candidate approval requirement needs one member")
-    return (
-        ApprovalRequirement(
-            role=PLAYBILL_INDEPENDENT_APPROVAL_ROLE,
-            minimum_distinct_signers=PLAYBILL_FIXED_INDEPENDENT_APPROVALS,
-        ),
-    )
+    del accepted
+    return ()
 
 
 def _law_digests(accepted: list[_AcceptedMember]) -> dict[str, str]:

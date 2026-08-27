@@ -350,8 +350,8 @@ def create_host(instance_id: str | None, output_json: bool) -> None:
 @click.option("--principal-id", default="bootstrap-admin", show_default=True)
 @click.option(
     "--reviewer-key-dir",
-    required=True,
-    help="Independent reviewer custody directory outside the workspace.",
+    default=None,
+    help="Optional independent reviewer custody directory outside the workspace.",
 )
 @click.option("--recovery-key-dir", default=None, help="Optional offline recovery custody dir.")
 @click.option("--recovery-principal-id", default="recovery", show_default=True)
@@ -361,13 +361,13 @@ def create_host(instance_id: str | None, output_json: bool) -> None:
 def init_playbill(
     key_dir: str,
     principal_id: str,
-    reviewer_key_dir: str,
+    reviewer_key_dir: str | None,
     recovery_key_dir: str | None,
     recovery_principal_id: str,
     profile: str,
     output_json: bool,
 ) -> None:
-    """Create client owner/reviewer/recovery keys, then bootstrap daemon state."""
+    """Create client owner and optional reviewer/recovery keys, then bootstrap daemon state."""
 
     workspace = Path.cwd().resolve()
     owner = generate_client_principal_key(
@@ -376,13 +376,19 @@ def init_playbill(
         authority_roles=("owner",),
         forbidden_roots=(workspace,),
     )
-    reviewer = generate_client_principal_key(
-        Path(reviewer_key_dir).expanduser(),
-        principal_id="reviewer",
-        authority_roles=("reviewer",),
-        forbidden_roots=(workspace,),
+    reviewer = (
+        generate_client_principal_key(
+            Path(reviewer_key_dir).expanduser(),
+            principal_id="reviewer",
+            authority_roles=("reviewer",),
+            forbidden_roots=(workspace,),
+        )
+        if reviewer_key_dir is not None
+        else None
     )
-    principals = [owner.principal, reviewer.principal]
+    principals = [owner.principal]
+    if reviewer is not None:
+        principals.append(reviewer.principal)
     if recovery_key_dir is not None:
         recovery = generate_client_principal_key(
             Path(recovery_key_dir).expanduser(),
@@ -405,8 +411,9 @@ def init_playbill(
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
     click.echo(f"Owner public key: {owner.principal.public_key}")
     click.echo(f"Owner private key retained locally at: {owner.private_key_path}")
-    click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
-    click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
+    if reviewer is not None:
+        click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
+        click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
 
 
 @playbill_group.group("body")

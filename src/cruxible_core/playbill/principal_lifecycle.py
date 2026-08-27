@@ -49,17 +49,6 @@ def _actor(
         return None
 
 
-def ordinary_approval_capable(principal: PrincipalRecord) -> bool:
-    """Return whether one accepted Principal can satisfy ordinary approval."""
-
-    return (
-        principal.status == "active"
-        and principal.principal_id != "daemon"
-        and principal.authority_roles != ("recovery",)
-        and principal.authority_roles != ("daemon",)
-    )
-
-
 def _classify(
     previous: PrincipalRecord | None,
     proposed: PrincipalRecord,
@@ -153,17 +142,6 @@ def evaluate_principal_lifecycle(
             "playbill.principal.last_recovery",
             "A recovery-configured instance must retain an active recovery principal.",
         )
-    ordinary_approvers = tuple(
-        principal
-        for principal in proposed_registry.principals
-        if ordinary_approval_capable(principal)
-    )
-    if len(ordinary_approvers) < 2:
-        return _refused(
-            "playbill.principal.independent_quorum_unconstructible",
-            "A principal transition must retain at least two active ordinary-approval-capable "
-            "client Principals; recovery and daemon Principals do not count.",
-        )
     return PrincipalLifecycleEvaluation(action=action)
 
 
@@ -171,5 +149,4 @@ __all__ = [
     "PrincipalLifecycleAction",
     "PrincipalLifecycleEvaluation",
     "evaluate_principal_lifecycle",
-    "ordinary_approval_capable",
 ]
