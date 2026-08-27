@@ -58,6 +58,7 @@ from tests.test_playbill._knowledge_loop_support import (
     work_item_query,
 )
 from tests.test_playbill.test_query_execution_service import _instance_with_query
+from tests.test_playbill.test_reverse_drift_next import _published_world, _retire
 
 NOW = datetime(2026, 8, 16, 21, tzinfo=UTC)
 BODY = "sha256:" + hashlib.sha256(b"status: ready\n").hexdigest()
@@ -270,6 +271,50 @@ def test_missing_hidden_or_incomplete_backing_omits_the_entire_block_without_dis
         ),
     ):
         assert _projection_rows(accepted_world, request) == ()
+
+
+def test_retired_claim_backing_requires_depublication_without_access_disclosure(
+    tmp_path: Path,
+) -> None:
+    instance, owner, claim_id = _published_world(tmp_path)
+    backing = _claim_backing(instance)
+    assert backing.identity.name == claim_id
+    request = _request(instance, backing=(backing,))
+    assert _projection_rows(instance, request) == ()
+
+    _retire(instance, owner, claim_id)
+    retired_request = request.model_copy(
+        update={"at": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
+    )
+    (row,) = _projection_rows(instance, retired_request)
+    assert row.reason == "projection_backing_stale"
+    assert row.subject_identity == "corpus.runbook#status"
+    assert row.related_identities == (backing.identity.qualified,)
+    assert row.detail["retired_backings"] == [backing.identity.qualified]
+    assert row.repair.operation == "playbill.block.repin"
+    assert row.repair.required_change == "depublish_retired_backing_block"
+
+    assert retired_request.workspace_observation is not None
+    assert retired_request.workspace_observation.source_observations is not None
+    source = retired_request.workspace_observation.source_observations[0]
+    depublished = retired_request.model_copy(
+        update={
+            "workspace_observation": retired_request.workspace_observation.model_copy(
+                update={
+                    "source_observations": (source.model_copy(update={"marker_summaries": ()}),)
+                }
+            )
+        }
+    )
+    assert _projection_rows(instance, depublished) == ()
+    access_hidden = retired_request.model_copy(
+        update={
+            "access_profile": retired_request.access_profile.model_copy(
+                update={"permitted_access_classes": ("public",)}
+            )
+        }
+    )
+    assert _projection_rows(instance, access_hidden) == ()
 
 
 def test_query_backing_stales_only_when_its_semantic_result_changes(

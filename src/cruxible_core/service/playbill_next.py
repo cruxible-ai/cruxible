@@ -1842,6 +1842,7 @@ def _projection_items(
     if not sources:
         return ()
 
+    tree = instance.tree_at(coordinate.git_oid)
     facts = build_accepted_query_facts(instance, coordinate=coordinate)
     subjects = {subject.path: subject for subject in facts.subjects}
     providers = {provider.identity.qualified: provider for provider in facts.providers}
@@ -1851,10 +1852,25 @@ def _projection_items(
         for marker in source.marker_summaries:
             visible = True
             stale: list[str] = []
+            retired: list[str] = []
             for backing in marker.stamp.backing:
                 if isinstance(backing, ProjectionClaimBackingV1):
                     claim = claims.get(backing.identity.qualified)
-                    if claim is None or (
+                    if claim is None:
+                        path = claim_path(backing.identity.name)
+                        raw = tree.get(path)
+                        if (
+                            raw is not None
+                            and parse_claim(raw, path=path).lifecycle.state == "retired"
+                        ):
+                            retired.append(backing.identity.qualified)
+                            continue
+                        visible = False
+                        break
+                    if claim.accepted.claim.lifecycle.state == "retired":
+                        retired.append(backing.identity.qualified)
+                        continue
+                    if (
                         claim_row_visibility(
                             claim,
                             subject=subjects.get(claim.subject_path),
@@ -1923,6 +1939,27 @@ def _projection_items(
                             operation="playbill.block.repin",
                             target=target,
                             required_change="verify_alignment_then_repin_or_edit",
+                            arguments=arguments,
+                        ),
+                    )
+                )
+            if retired:
+                related = tuple(sorted(retired, key=lambda value: value.encode("utf-8")))
+                items.append(
+                    _item(
+                        severity="repair",
+                        reason="projection_backing_stale",
+                        subject_identity=target,
+                        related_identities=related,
+                        detail={
+                            "source_id": source.source_id,
+                            "block_id": marker.stamp.block_id,
+                            "retired_backings": list(related),
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.block.repin",
+                            target=target,
+                            required_change="depublish_retired_backing_block",
                             arguments=arguments,
                         ),
                     )
