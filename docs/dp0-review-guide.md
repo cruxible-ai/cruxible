@@ -48,6 +48,7 @@ playbill claim history
 playbill claim list
 playbill claim propose
 playbill claim propose-batch
+playbill claim retire
 playbill claim-type get
 playbill claim-type list
 playbill claim-type migrate
@@ -183,6 +184,7 @@ GET  /api/v1/{instance_id}/playbill/claims
 GET  /api/v1/{instance_id}/playbill/claims/{identity}
 GET  /api/v1/{instance_id}/playbill/claims/{identity}/history
 POST /api/v1/{instance_id}/playbill/claims/{identity}/explanation
+POST /api/v1/{instance_id}/playbill/claims/{claim_id}/retire
 POST /api/v1/{instance_id}/playbill/queries/proposals
 GET  /api/v1/{instance_id}/playbill/queries
 GET  /api/v1/{instance_id}/playbill/queries/{name}
@@ -254,6 +256,7 @@ cruxible_playbill_list_claim_types
 cruxible_playbill_get_claim_type
 cruxible_playbill_propose_claim
 cruxible_playbill_propose_claims
+cruxible_playbill_claim_retire
 cruxible_playbill_list_claims
 cruxible_playbill_get_claim
 cruxible_playbill_claim_history

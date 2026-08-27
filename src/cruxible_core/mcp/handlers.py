@@ -35,6 +35,7 @@ from cruxible_client.contracts.authoring.models import (
     InsertionConfirmationObservationV1,
 )
 from cruxible_client.contracts.claim_types import ClaimType
+from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -82,6 +83,7 @@ _AUTHORING_INPUT: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringInputV1)
 _CLAIM_TYPE_MIGRATION: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
     ClaimTypeMigrationRequest
 )
+_CLAIM_RETIRE = TypeAdapter(ClaimRetireRequestV1)
 
 
 class _LocalFloorClient:
@@ -739,6 +741,27 @@ def handle_playbill_propose_claim(
             proposal_name=proposal_name,
         ),
         operation_name="cruxible_playbill_propose_claim",
+    )
+
+
+def handle_playbill_retire_claim(
+    instance_id: str,
+    claim_id: str,
+    request: dict[str, Any],
+) -> contracts.PlaybillClaimRetireResponse:
+    retirement = _CLAIM_RETIRE.validate_python(request)
+    return _dispatch_remote_or_local(
+        lambda client: client.retire_playbill_claim(
+            instance_id,
+            claim_id,
+            request=retirement.model_dump(mode="json"),
+        ),
+        lambda: playbill_api.playbill_retire_claim(
+            instance_id,
+            claim_id,
+            request=retirement,
+        ),
+        operation_name="cruxible_playbill_claim_retire",
     )
 
 

@@ -98,6 +98,11 @@ from cruxible_client.contracts.claims import (
     ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
+    ClaimArtifactV3,
+    ClaimRetireDependentV1,
+    ClaimRetirementReason,
+    ClaimRetireRequestV1,
+    ClaimUnsupportedFormatError,
     LiteralClaimObject,
 )
 from cruxible_client.contracts.declared_blocks import ProjectionBlockStampV1
@@ -253,7 +258,16 @@ def _claim_from_public_view(view: api.PlaybillClaimViewV2) -> ClaimArtifactAny:
         and isinstance(artifact_format, str)
     ):
         raise ValueError("Claim read lacks its complete canonical artifact")
-    model = ClaimArtifactV2 if artifact_format == "playbill-claim-v2" else ClaimArtifact
+    if artifact_format == "playbill-claim-v1":
+        model: type[ClaimArtifact] | type[ClaimArtifactV2] | type[ClaimArtifactV3] = ClaimArtifact
+    elif artifact_format == "playbill-claim-v2":
+        model = ClaimArtifactV2
+    elif artifact_format == "playbill-claim-v3":
+        model = ClaimArtifactV3
+    else:
+        raise ClaimUnsupportedFormatError(
+            f"{ClaimUnsupportedFormatError.error_code}: {artifact_format!r}"
+        )
     return _CLAIM_ADAPTER.validate_python(
         model.model_validate(
             {
@@ -267,6 +281,11 @@ def _claim_from_public_view(view: api.PlaybillClaimViewV2) -> ClaimArtifactAny:
                 "authority": lifecycle.get("authority"),
                 "pins": lifecycle.get("pins"),
                 "lifecycle": lifecycle.get("lifecycle"),
+                **(
+                    {"retirement": lifecycle.get("retirement")}
+                    if artifact_format == "playbill-claim-v3"
+                    else {}
+                ),
             }
         )
     )
@@ -1123,6 +1142,33 @@ class Playbill:
             DiagnosticSourceMap(
                 entries_for_keywords(builder="claim", emitted=emitted, sites=sites)
             ),
+        )
+
+    def retire_claim(
+        self,
+        claim: str | ClaimRef,
+        *,
+        reason: ClaimRetirementReason,
+        mode: Literal["preflight", "submit"] = "preflight",
+        effective_until: datetime | None = None,
+        dependents: Sequence[ClaimRetireDependentV1] = (),
+    ) -> api.PlaybillClaimRetireResponse:
+        """Preflight or submit one attributed, dependency-closed Claim retirement."""
+
+        claim_address = _address(claim, RefKind.CLAIM)
+        coordinate = claim.coordinate if isinstance(claim, ClaimRef) else self.coordinate
+        request = ClaimRetireRequestV1(
+            mode=mode,
+            claim_ref=claim_address,
+            reason=reason,
+            effective_until=effective_until,
+            expected_coordinate=coordinate,
+            dependents=tuple(dependents),
+        )
+        return self._client.retire_playbill_claim(
+            self._instance_id,
+            claim_address.removeprefix("Claim:"),
+            request=request.model_dump(mode="json"),
         )
 
     def procedure(

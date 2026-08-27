@@ -324,6 +324,15 @@ def register_tools(
         return handlers.handle_playbill_propose_claim(instance_id, authoring, proposal_name)
 
     @_tool
+    def cruxible_playbill_claim_retire(
+        instance_id: str,
+        claim_id: str,
+        request: dict[str, Any],
+    ) -> contracts.PlaybillClaimRetireResponse:
+        """Preflight or submit one attributed Claim retirement closure."""
+        return handlers.handle_playbill_retire_claim(instance_id, claim_id, request)
+
+    @_tool
     def cruxible_playbill_propose_claims(
         instance_id: str,
         authorings: list[dict[str, Any]],

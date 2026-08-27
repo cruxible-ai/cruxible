@@ -43,6 +43,7 @@ from cruxible_client.authoring.sources import (
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillSinceRequestInvalid
 from cruxible_client.contracts.primitives import canonical_json
@@ -211,6 +212,7 @@ _AUTHORING_INPUT_ADAPTER: TypeAdapter[AuthoringInputV1] = TypeAdapter(AuthoringI
 _CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdapter(
     ClaimTypeMigrationRequest
 )
+_CLAIM_RETIRE_ADAPTER = TypeAdapter(ClaimRetireRequestV1)
 
 
 def _authoring_examples_for(payload: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1231,6 +1233,29 @@ def propose_claims(authorings: tuple[str, ...], proposal_name: str, output_json:
             proposal_name=proposal_name,
         ),
         command_name="playbill claim propose-batch",
+    )
+    _emit_json(result.model_dump(mode="json"))
+
+
+@claim_group.command("retire")
+@click.argument("claim_id")
+@click.argument("request_file", type=click.Path(exists=True, dir_okay=False))
+@json_option
+@handle_errors
+def retire_claim(claim_id: str, request_file: str, output_json: bool) -> None:
+    """Preflight or submit one attributed Claim retirement closure."""
+
+    try:
+        request = _CLAIM_RETIRE_ADAPTER.validate_python(_read_mapping(request_file))
+    except ValidationError as exc:
+        raise click.ClickException(f"Invalid Claim retirement: {exc}") from exc
+    result = _server_call(
+        lambda client, instance_id: client.retire_playbill_claim(
+            instance_id,
+            claim_id,
+            request=request.model_dump(mode="json"),
+        ),
+        command_name="playbill claim retire",
     )
     _emit_json(result.model_dump(mode="json"))
 

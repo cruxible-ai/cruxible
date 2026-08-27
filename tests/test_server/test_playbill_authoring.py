@@ -135,6 +135,51 @@ def test_http_input_variants_delegate_without_exposing_a_base(
 
     assert response.status_code == 200, response.text
     assert seen and seen[0][0] == instance_id
+
+
+def test_http_claim_retire_route_delegates_the_typed_request(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    client, instance_id, _private_key = playbill_http
+    seen: list[object] = []
+
+    def retire_stub(selected: str, claim_id: str, *, request: object):
+        seen.append((selected, claim_id, request))
+        return contracts.PlaybillClaimRetirePreflight(
+            operation_digest="sha256:" + "1" * 64,
+            coordinate=COORDINATE,
+            root_identity={"kind": "Claim", "name": claim_id},
+            root_predecessor_digest="sha256:" + "2" * 64,
+            reason="was-rescinded",
+            effective_until=None,
+            required_dependents=[],
+            diagnostics=[],
+            submit_ready=True,
+        )
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_retire_claim",
+        retire_stub,
+    )
+    claim_id = "CLM-0123456789abcdef0123456789abcdef"
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/claims/{claim_id}/retire",
+        json={
+            "tag": "playbill-claim-retire-request-v1",
+            "mode": "preflight",
+            "claim_ref": f"Claim:{claim_id}",
+            "reason": "was-rescinded",
+            "effective_until": None,
+            "expected_coordinate": COORDINATE.model_dump(mode="json"),
+            "dependents": [],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["submit_ready"] is True
+    assert seen[0][0:2] == (instance_id, claim_id)  # type: ignore[index]
+    assert getattr(seen[0][2], "tag") == "playbill-claim-retire-request-v1"  # type: ignore[index]
     assert "base" not in response.request.content.decode()
 
 

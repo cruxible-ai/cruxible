@@ -85,6 +85,7 @@ def test_admin_default_profile_is_exactly_the_writer_path(
         "cruxible_playbill_proposal_list",
         "cruxible_playbill_proposal_readmit",
         "cruxible_playbill_claim_type_migrate",
+        "cruxible_playbill_claim_retire",
         "cruxible_playbill_submit_approval",
         "cruxible_playbill_activate",
     }
@@ -114,6 +115,7 @@ def test_state_authoring_and_review_profiles_separate_proposal_from_settlement(
     assert "cruxible_playbill_authoring_compile" in authoring
     assert "cruxible_playbill_authoring_bind" in authoring
     assert "cruxible_playbill_claim_type_migrate" in authoring
+    assert "cruxible_playbill_claim_retire" in authoring
     assert "cruxible_playbill_proposal_readmit" in authoring
     assert "cruxible_playbill_authoring_submit" in authoring
     assert "cruxible_playbill_authoring_confirm_insertion" in authoring

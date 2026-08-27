@@ -245,6 +245,69 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
     assert json.loads(result.stdout)["lint"]["warnings"] == [warning]
 
 
+def test_cli_claim_retire_passes_the_model_validated_request(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    claim_id = "CLM-0123456789abcdef0123456789abcdef"
+    payload = tmp_path / "retire.json"
+    payload.write_text(
+        json.dumps(
+            {
+                "tag": "playbill-claim-retire-request-v1",
+                "mode": "preflight",
+                "claim_ref": f"Claim:{claim_id}",
+                "reason": "was-rescinded",
+                "effective_until": None,
+                "expected_coordinate": COORDINATE.model_dump(mode="json"),
+                "dependents": [],
+            }
+        )
+    )
+
+    class StubClient:
+        def retire_playbill_claim(
+            self,
+            instance_id: str,
+            selected_claim_id: str,
+            *,
+            request: dict[str, object],
+        ) -> contracts.PlaybillClaimRetireResponse:
+            assert (instance_id, selected_claim_id) == ("inst_authoring", claim_id)
+            assert request["reason"] == "was-rescinded"
+            return contracts.PlaybillClaimRetirePreflight(
+                operation_digest="sha256:" + "8" * 64,
+                coordinate=COORDINATE,
+                root_identity={"kind": "Claim", "name": claim_id},
+                root_predecessor_digest="sha256:" + "9" * 64,
+                reason="was-rescinded",
+                effective_until=None,
+                required_dependents=[],
+                diagnostics=[],
+                submit_ready=True,
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "claim",
+            "retire",
+            claim_id,
+            str(payload),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["submit_ready"] is True
+
+
 def test_cli_status_is_a_read_and_emits_no_write_target(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     class StubClient:
         def playbill_authoring_intent_status(

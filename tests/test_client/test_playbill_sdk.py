@@ -59,6 +59,7 @@ class _Client:
         self.coverage_observations: object | None = None
         self.curation_actions: list[tuple[str, dict[str, object]]] = []
         self.audit_request: dict[str, object] | None = None
+        self.retirement_request: dict[str, object] | None = None
 
     def search_playbill(self, _instance_id: str, **values: object) -> api.PlaybillSearchResult:
         return api.PlaybillSearchResult(
@@ -150,6 +151,26 @@ class _Client:
                 omission_reasons=[],
             ),
             result_digest="sha256:" + "7" * 64,
+        )
+
+    def retire_playbill_claim(
+        self,
+        _instance_id: str,
+        claim_id: str,
+        *,
+        request: dict[str, object],
+    ) -> api.PlaybillClaimRetireResponse:
+        self.retirement_request = {"claim_id": claim_id, **request}
+        return api.PlaybillClaimRetirePreflight(
+            operation_digest="sha256:" + "8" * 64,
+            coordinate=_COORDINATE,
+            root_identity={"kind": "Claim", "name": claim_id},
+            root_predecessor_digest="sha256:" + "9" * 64,
+            reason=request["reason"],  # type: ignore[arg-type]
+            effective_until=request.get("effective_until"),  # type: ignore[arg-type]
+            required_dependents=[],
+            diagnostics=[],
+            submit_ready=True,
         )
 
     def _curation_action(
@@ -383,6 +404,37 @@ def test_sdk_declared_block_forbids_evidence_but_allows_explicit_copy(
     assert copy.payload.citation_role == "copy"
     # Raw-wire callers remain the explicitly accepted, documented residual.
     assert selection.observation().selected_content
+
+
+def test_sdk_retirement_owns_claim_ref_and_coordinate_plumbing(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+
+    result = pb.retire_claim(
+        "Claim:CLM-0123456789abcdef0123456789abcdef",
+        reason="was-wrong",
+        mode="submit",
+    )
+
+    assert result.tag == "playbill-claim-retire-preflight-v1"
+    assert client.retirement_request == {
+        "claim_id": "CLM-0123456789abcdef0123456789abcdef",
+        "tag": "playbill-claim-retire-request-v1",
+        "mode": "submit",
+        "claim_ref": "Claim:CLM-0123456789abcdef0123456789abcdef",
+        "reason": "was-wrong",
+        "effective_until": None,
+        "expected_coordinate": AcceptedCoordinate.model_validate(
+            _COORDINATE.model_dump(mode="json")
+        ).model_dump(mode="json"),
+        "dependents": [],
+    }
 
 
 def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(

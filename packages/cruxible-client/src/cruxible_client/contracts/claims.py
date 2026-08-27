@@ -656,9 +656,7 @@ def parse_claim(content: bytes, *, path: str) -> ClaimArtifactAny:
     elif declared == "playbill-claim-v3":
         model = ClaimArtifactV3
     else:
-        raise ClaimUnsupportedFormatError(
-            f"{ClaimUnsupportedFormatError.error_code}: {declared!r}"
-        )
+        raise ClaimUnsupportedFormatError(f"{ClaimUnsupportedFormatError.error_code}: {declared!r}")
     try:
         claim = model.model_validate(payload)
     except ValidationError as exc:

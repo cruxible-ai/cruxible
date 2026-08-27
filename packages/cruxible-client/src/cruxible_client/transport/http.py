@@ -18,6 +18,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCreateRequestV2,
     AuthoringIntentCreateRequestV3,
 )
+from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
 from cruxible_client.errors import (
     ConfigError,
@@ -30,6 +31,9 @@ from cruxible_client.errors import (
 ModelT = TypeVar("ModelT", bound=BaseModel)
 _CLAIM_TYPE_MIGRATION_RESPONSE: TypeAdapter[contracts.PlaybillClaimTypeMigrationResponse] = (
     TypeAdapter(contracts.PlaybillClaimTypeMigrationResponse)
+)
+_CLAIM_RETIRE_RESPONSE: TypeAdapter[contracts.PlaybillClaimRetireResponse] = TypeAdapter(
+    contracts.PlaybillClaimRetireResponse
 )
 
 
@@ -674,6 +678,21 @@ class CruxibleClient:
             ),
         )
         return self._parse_model(response, contracts.PlaybillClaimBatchProposal)
+
+    def retire_playbill_claim(
+        self,
+        instance_id: str,
+        claim_id: str,
+        *,
+        request: Mapping[str, Any],
+    ) -> contracts.PlaybillClaimRetireResponse:
+        typed_request = ClaimRetireRequestV1.model_validate(request)
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claims/{claim_id}/retire",
+            json=typed_request.model_dump(mode="json"),
+        )
+        self._check_error(response)
+        return _CLAIM_RETIRE_RESPONSE.validate_python(response.json())
 
     def create_playbill_authoring_intent(
         self,

@@ -106,7 +106,7 @@ NextReason: TypeAlias = PlaybillNextReason
 NextRepairOperation = Literal[
     "playbill.authoring.create",
     "playbill.authoring.bind",
-    "playbill.claim_type.migrate",
+    "playbill.claim.retire",
     "playbill.floor.export",
     "playbill.block.repin",
     "playbill.document.propose",
@@ -1625,6 +1625,7 @@ def _citation_drift_item(
         detail["observed_window_digest"] = observed_window_digest
     if commitment.lineage_note is not None:
         detail["lineage_note"] = commitment.lineage_note
+    gone = drift_state == "gone"
     return _item(
         severity="repair",
         reason="citation_drifted",
@@ -1632,13 +1633,21 @@ def _citation_drift_item(
         related_identities=(commitment.citation_id,),
         detail=detail,
         repair=PlaybillNextRepairV1(
-            operation="playbill.authoring.bind",
+            operation="playbill.claim.retire" if gone else "playbill.authoring.bind",
             target=commitment.claim_identity,
-            required_change="adjudicate_citation_drift",
+            required_change=(
+                "retire_claim_with_attribution" if gone else "adjudicate_citation_drift"
+            ),
             arguments={
                 "claim_id": commitment.claim_identity.removeprefix("Claim:"),
-                "citation_id": commitment.citation_id,
-                **({} if source_id is None else {"source_id": source_id}),
+                **(
+                    {"expected_coordinate": coordinate.model_dump(mode="json")}
+                    if gone
+                    else {
+                        "citation_id": commitment.citation_id,
+                        **({} if source_id is None else {"source_id": source_id}),
+                    }
+                ),
             },
         ),
     )

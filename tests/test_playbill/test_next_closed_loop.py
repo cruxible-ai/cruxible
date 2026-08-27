@@ -31,6 +31,7 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import (
+    ClaimRetireRequestV1,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_citation_references,
@@ -54,6 +55,7 @@ from cruxible_client.contracts.source_references import ExternalSourceReferenceV
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
@@ -70,7 +72,11 @@ from cruxible_core.playbill.coverage.contracts import (
 from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.service.documents import service_propose_playbill_document
+from cruxible_core.playbill.service.documents import (
+    service_activate_playbill_proposal,
+    service_propose_playbill_document,
+    service_submit_playbill_approval,
+)
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_claims import (
     DirectClaimAuthoringV1,
@@ -162,6 +168,12 @@ EXPECTED_OPERATIONS = {
     "claim_attestation_threshold_met": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
 }
+
+
+def _expected_operation(key: ClosedLoopKey) -> str:
+    if key == ("citation_drifted", "gone"):
+        return "playbill.claim.retire"
+    return EXPECTED_OPERATIONS[key[0]]
 
 
 def _access() -> CoverageAccessProfileV1:
@@ -590,7 +602,7 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     )
     key = ("citation_drifted", "changed")
     row = _row_by_key(instance, key, before)
-    assert row.repair.operation == EXPECTED_OPERATIONS["citation_drifted"]
+    assert row.repair.operation == _expected_operation(key)
     assert row.repair.required_change == "adjudicate_citation_drift"
 
     activate(instance, owner, successor, sequence=3)
@@ -734,8 +746,54 @@ def _citation_drifted_v4(
         workspace=PlaybillNextWorkspaceObservationV1(source_observations=(before_observation,)),
     )
     row = _row_by_key(instance, key, before)
-    assert row.repair.operation == EXPECTED_OPERATIONS["citation_drifted"]
-    assert row.repair.required_change == "adjudicate_citation_drift"
+    assert row.repair.operation == _expected_operation(key)
+    assert row.repair.required_change == (
+        "retire_claim_with_attribution" if drift_state == "gone" else "adjudicate_citation_drift"
+    )
+
+    if drift_state == "gone":
+        coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+        retirement = service_retire_claim(
+            instance,
+            claim_id=current.identity.name,
+            request=ClaimRetireRequestV1(
+                mode="submit",
+                claim_ref=current.identity.qualified,
+                reason="was-rescinded",
+                expected_coordinate=coordinate,
+            ),
+            actor=AuthenticatedActor(actor_id="owner"),
+        )
+        assert isinstance(retirement, ClaimRetireResultV1)
+        assert retirement.proposal is not None
+        proposal = retirement.proposal.proposal
+        candidate = proposal.candidate
+        assert candidate is not None
+        if candidate.approval_requirements:
+            approval = _sign(
+                client_material(instance.root.parent, instance),
+                candidate.candidate_digest,
+                instance.accepted_coordinate().semantic_root,
+            )
+            service_submit_playbill_approval(
+                instance,
+                proposal_id=proposal.admission.proposal_id,
+                attestation=approval.attestation,
+                authenticated_submitter="owner",
+            )
+        assert (
+            service_activate_playbill_proposal(
+                instance,
+                proposal_id=proposal.admission.proposal_id,
+            ).status
+            == "accepted"
+        )
+        _assert_key_gone(
+            instance,
+            key,
+            _request(instance, workspace=before.workspace_observation),
+        )
+        return
 
     source_body = instance.body_store().store(b"status: blocked\n")
     successor = service_propose_playbill_claim(

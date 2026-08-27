@@ -92,6 +92,51 @@ def test_client_preserves_migration_lint_without_changing_candidate_fields() -> 
     assert result.lint.warnings == [warning]
 
 
+def test_client_parses_v3_attributed_retirement_result_and_warning() -> None:
+    warning = {
+        "code": "playbill.claim_type.invalidation_deprecated",
+        "field_path": "$.dependents[0].disposition",
+        "repair_operation": "playbill.claim_type.migrate",
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                **_result(),
+                "tag": "playbill-claim-type-migration-result-v3",
+                "dependents": [
+                    {
+                        "identity": {"kind": "Claim", "name": "CLM-" + "2" * 32},
+                        "disposition": "retire",
+                        "claim_retirement_reason": "was-wrong",
+                        "claim_effective_until": None,
+                    }
+                ],
+                "warnings": [warning],
+            },
+        )
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = client.migrate_playbill_claim_type(
+        "inst",
+        request={
+            "tag": "playbill-claim-type-migration-request-v3",
+            "mode": "submit",
+            "successor": {"predicate": "project.work_item.status"},
+            "dependents": [],
+        },
+    )
+
+    assert result.tag == "playbill-claim-type-migration-result-v3"
+    assert result.warnings == [warning]
+
+
 def test_client_preserves_expert_claim_type_proposal_lint() -> None:
     warning = {
         "code": "playbill.claim_type.evidence_policy_admits_no_accepted_contract",
