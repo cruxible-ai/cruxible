@@ -287,9 +287,9 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
 
     human, payload = _resolve(cruxible, workspace)
 
-    assert payload["tag"] == "playbill-coverage-result-v2"
+    assert payload["tag"] == "playbill-coverage-result-v3"
     assert payload["summary"] == {
-        "tag": "playbill-coverage-batch-summary-v2",
+        "tag": "playbill-coverage-batch-summary-v3",
         "exact": 0,
         "drifted": 0,
         "candidate": 1,
@@ -424,7 +424,7 @@ def test_cli_delivers_exact_then_relocated_exact_then_drifted_for_a_foreign_sour
     drifted = _card_for(drifted_payload, FOREIGN_SOURCE)
 
     assert drifted_payload["summary"] == {
-        "tag": "playbill-coverage-batch-summary-v2",
+        "tag": "playbill-coverage-batch-summary-v3",
         "exact": 0,
         "drifted": 1,
         "candidate": 0,

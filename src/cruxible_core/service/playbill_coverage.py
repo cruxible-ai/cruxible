@@ -25,7 +25,7 @@ access classes would be a request that could widen its own disclosure, and
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
@@ -350,9 +350,10 @@ def _citation_window_observations(
             end = citation.byte_length
             if isinstance(envelope.source, ExternalSourceReferenceV1):
                 selector = envelope.source.selector
-                if isinstance(selector, dict):
-                    raw_start = selector.get("start_byte")
-                    raw_end = selector.get("end_byte")
+                if isinstance(selector, Mapping):
+                    window = selector.get("working_selection", selector)
+                    raw_start = window.get("start_byte") if isinstance(window, Mapping) else None
+                    raw_end = window.get("end_byte") if isinstance(window, Mapping) else None
                     if isinstance(raw_start, int) and isinstance(raw_end, int):
                         start, end = raw_start, raw_end
             addressable = observed is not None and end <= observed.byte_length

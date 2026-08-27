@@ -148,6 +148,7 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
             return contracts.PlaybillCoverageResult(
                 coordinate=COORDINATE,
                 result={
+                    "tag": "playbill-coverage-result-v3",
                     "at": COORDINATE.model_dump(mode="json"),
                     "access_profile": {
                         "tag": "playbill-coverage-access-profile-v1",
@@ -157,11 +158,14 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
                     },
                     "spans": [
                         {
+                            "tag": "playbill-coverage-span-result-v3",
                             "request": {"source": source["source"]},
                             "health": "complete",
                             "ambiguous_occurrence_count": 0,
                             "omitted_card_count": 0,
                             "cards": [],
+                            "commitment_scan_proofs": [],
+                            "citation_window_observations": [],
                         }
                     ],
                 },
@@ -178,9 +182,10 @@ def test_cli_curation_list_enriches_a_real_catalog_and_declared_block_for_text_a
             assert instance_id == "inst"
             assert isinstance(workspace_observation, dict)
             (source,) = workspace_observation["source_observations"]
-            assert source["tag"] == "playbill-next-source-observation-v3"
+            assert source["tag"] == "playbill-next-source-observation-v4"
             assert source["document_id"] == "runbook"
-            assert source["scan_complete"] is True
+            assert source["scan_notes"] == []
+            assert source["commitment_scan_proofs"] == []
             assert len(source["marker_summaries"]) == 1
             PlaybillCurationListRequestV1.model_validate(
                 {

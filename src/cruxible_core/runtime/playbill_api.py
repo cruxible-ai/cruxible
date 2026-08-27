@@ -1546,7 +1546,7 @@ def playbill_resolve_coverage(
     budget: CoverageCardBudgetV1 | None = None,
     scan_budget: CoverageScanBudgetV1 | None = None,
 ) -> contracts.PlaybillCoverageResult:
-    """Resolve one batch of working-set observations into a `CoverageResultV1`.
+    """Resolve one batch of working-set observations into the current coverage result.
 
     The one vendor-neutral coverage operation of §11.7. Every request form it
     has to serve -- a file read with a line/range selection, a grep result
