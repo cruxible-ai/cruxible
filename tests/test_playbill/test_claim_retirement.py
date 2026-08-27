@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -465,6 +465,66 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
         )
 
 
+@pytest.mark.parametrize("leaf_retirement", ["attributed-v3", "legacy-v2"])
+def test_terminal_replay_uses_only_the_original_retirement_changeset(
+    tmp_path: Path,
+    leaf_retirement: str,
+) -> None:
+    instance, owner, _root_id, middle_id, leaf_id = _accepted_dependency_world(tmp_path)
+    actor = AuthenticatedActor(actor_id="owner")
+    if leaf_retirement == "attributed-v3":
+        leaf_request = _request(instance, mode="submit")
+        leaf_result = service_retire_claim(
+            instance,
+            claim_id=leaf_id,
+            request=leaf_request,
+            actor=actor,
+        )
+        assert isinstance(leaf_result, ClaimRetireResultV1)
+        _activate(instance, owner, leaf_result)
+    else:
+        tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+        leaf = parse_claim(tree[claim_path(leaf_id)], path=claim_path(leaf_id))
+        legacy_leaf = leaf.model_copy(
+            update={
+                "lifecycle": ArtifactLifecycle(
+                    state="retired",
+                    predecessor_digest=claim_artifact_digest(leaf).tagged,
+                )
+            }
+        )
+        tree[claim_path(leaf_id)] = render_claim(legacy_leaf)
+        _accept_tree(
+            instance,
+            owner,
+            tree,
+            timestamp=TIMESTAMP,
+            proposal_name="legacy-retire-leaf",
+        )
+
+    middle_request = _request(instance, mode="submit")
+    middle_result = service_retire_claim(
+        instance,
+        claim_id=middle_id,
+        request=middle_request,
+        actor=actor,
+    )
+    assert isinstance(middle_result, ClaimRetireResultV1)
+    assert [item.artifact_identity.name for item in middle_result.retirements] == [middle_id]
+    _activate(instance, owner, middle_result)
+
+    replayed = service_retire_claim(
+        instance,
+        claim_id=middle_id,
+        request=middle_request,
+        actor=actor,
+    )
+    assert isinstance(replayed, ClaimRetireResultV1)
+    assert replayed.outcome == "already_retired"
+    assert replayed.operation_digest == middle_result.operation_digest
+    assert replayed.retirements == middle_result.retirements
+
+
 def test_retire_refuses_stale_coordinate_and_extra_dependent(tmp_path: Path) -> None:
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
     actor = AuthenticatedActor(actor_id="owner")
@@ -500,6 +560,24 @@ def test_retire_refuses_stale_coordinate_and_extra_dependent(tmp_path: Path) -> 
                     ),
                 ),
             ),
+            actor=actor,
+        )
+
+
+def test_terminal_replay_refuses_a_different_coordinate(tmp_path: Path) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    actor = AuthenticatedActor(actor_id="owner")
+    request = _request(instance, mode="submit")
+    result = service_retire_claim(instance, claim_id=claim_id, request=request, actor=actor)
+    assert isinstance(result, ClaimRetireResultV1)
+    _activate(instance, owner, result)
+
+    changed_coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+    with pytest.raises(ClaimRetireClosureMismatch, match="no accepted retirement follows"):
+        service_retire_claim(
+            instance,
+            claim_id=claim_id,
+            request=request.model_copy(update={"expected_coordinate": changed_coordinate}),
             actor=actor,
         )
 

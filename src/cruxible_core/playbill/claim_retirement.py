@@ -272,6 +272,118 @@ def _candidate(
     return candidate_tree, results
 
 
+def _accepted_retirement_operation(
+    instance: PlaybillInstance,
+    *,
+    claim_path_value: str,
+    request: ClaimRetireRequestV1,
+) -> tuple[ClaimRetireDependentV1, tuple[ClaimRetirementResultItemV1, ...]]:
+    """Recover exactly the retirement ChangeSet immediately after its bound coordinate."""
+
+    try:
+        parent_coordinate = instance.coordinate_for_oid(request.expected_coordinate.git_oid)
+    except PlaybillFormatError as exc:
+        raise ClaimRetireStale(
+            f"{ClaimRetireStale.error_code}: expected coordinate is not accepted history"
+        ) from exc
+    if request.expected_coordinate != AcceptedCoordinate.from_internal(parent_coordinate):
+        raise ClaimRetireStale(
+            f"{ClaimRetireStale.error_code}: expected coordinate does not reproduce"
+        )
+
+    history = instance.accepted_history()
+    parent_index = next(
+        index
+        for index, generation in enumerate(history)
+        if generation.oid == parent_coordinate.git_oid
+    )
+    if parent_index + 1 >= len(history):
+        raise ClaimRetireClosureMismatch(
+            f"{ClaimRetireClosureMismatch.error_code}: no accepted retirement follows the "
+            "operation coordinate"
+        )
+    generation = history[parent_index + 1]
+    record = generation.record
+    if record is None:
+        raise ClaimRetireClosureMismatch(
+            f"{ClaimRetireClosureMismatch.error_code}: retirement generation lacks a ChangeSet"
+        )
+    parent_tree = instance.tree_at(parent_coordinate.git_oid)
+    candidate_tree = instance.tree_at(generation.oid)
+    retired: dict[str, tuple[ClaimArtifactAny, ClaimArtifactV3]] = {}
+    for member in record.members:
+        if not member.path.startswith("claims/") or member.path not in candidate_tree:
+            continue
+        predecessor_content = parent_tree.get(member.path)
+        if predecessor_content is None:
+            continue
+        predecessor = parse_claim(predecessor_content, path=member.path)
+        successor = parse_claim(candidate_tree[member.path], path=member.path)
+        if (
+            isinstance(successor, ClaimArtifactV3)
+            and predecessor.lifecycle.state == "live"
+            and successor.lifecycle.predecessor_digest == claim_artifact_digest(predecessor).tagged
+        ):
+            retired[successor.identity.qualified] = (predecessor, successor)
+
+    root_pair = next(
+        (
+            pair
+            for pair in retired.values()
+            if claim_path(pair[1].identity.name) == claim_path_value
+        ),
+        None,
+    )
+    if root_pair is None:
+        raise ClaimRetireClosureMismatch(
+            f"{ClaimRetireClosureMismatch.error_code}: bound ChangeSet did not retire the Claim"
+        )
+    root_predecessor, root_successor = root_pair
+    supplied = {item.artifact_identity.qualified: item for item in request.dependents}
+    expected_dependents = set(retired) - {root_successor.identity.qualified}
+    if set(supplied) != expected_dependents:
+        raise ClaimRetireClosureMismatch(
+            f"{ClaimRetireClosureMismatch.error_code}: accepted retirement closure differs"
+        )
+
+    root_request = ClaimRetireDependentV1(
+        artifact_identity=root_successor.identity,
+        predecessor_digest=claim_artifact_digest(root_predecessor).tagged,
+        reason=request.reason,
+        effective_until=request.effective_until,
+    )
+    entries = {root_successor.identity.qualified: root_request, **supplied}
+    results: list[ClaimRetirementResultItemV1] = []
+    for identity in sorted(retired, key=lambda item: item.encode("utf-8")):
+        predecessor, successor = retired[identity]
+        entry = entries[identity]
+        expected_effective_until = (
+            predecessor.statement.effective_until
+            if entry.effective_until is None
+            else entry.effective_until
+        )
+        if (
+            entry.artifact_identity != successor.identity
+            or entry.predecessor_digest != claim_artifact_digest(predecessor).tagged
+            or entry.reason != successor.retirement.reason
+            or expected_effective_until != successor.statement.effective_until
+        ):
+            raise ClaimRetireClosureMismatch(
+                f"{ClaimRetireClosureMismatch.error_code}: accepted retirement attribution "
+                f"differs for {identity}"
+            )
+        results.append(
+            ClaimRetirementResultItemV1(
+                artifact_identity=successor.identity,
+                predecessor_digest=entry.predecessor_digest,
+                reason=successor.retirement.reason,
+                effective_until=successor.statement.effective_until,
+                successor_digest=claim_artifact_digest(successor).tagged,
+            )
+        )
+    return root_request, tuple(results)
+
+
 def service_retire_claim(
     instance: PlaybillInstance,
     *,
@@ -293,75 +405,11 @@ def service_retire_claim(
         raise ClaimRetireError(f"Claim not found: {claim_id}")
     claim = parse_claim(content, path=path)
     if isinstance(claim, ClaimArtifactV3) and claim.lifecycle.state == "retired":
-        root_predecessor = claim.lifecycle.predecessor_digest
-        if root_predecessor is None:
-            raise ClaimRetireError("accepted Claim v3 lacks its predecessor digest")
-        if (
-            claim.retirement.reason != request.reason
-            or request.effective_until is not None
-            and claim.statement.effective_until != request.effective_until
-        ):
-            raise ClaimRetireClosureMismatch(
-                f"{ClaimRetireClosureMismatch.error_code}: accepted retirement attribution differs"
-            )
-        root = ClaimRetireDependentV1(
-            artifact_identity=claim.identity,
-            predecessor_digest=root_predecessor,
-            reason=request.reason,
-            effective_until=request.effective_until,
+        root, terminal_retirements = _accepted_retirement_operation(
+            instance,
+            claim_path_value=path,
+            request=request,
         )
-        closure = reverse_pin_closure(
-            tree,
-            root=claim.identity,
-            include=lambda state: state.artifact_kind == "claim",
-            claim_identity_by_digest=_claim_identity_by_digest(instance, coordinate=coordinate),
-        )
-        accepted_dependents: dict[str, ClaimArtifactV3] = {}
-        for item in closure:
-            dependent = parse_claim(tree[item.state.path], path=item.state.path)
-            if not isinstance(dependent, ClaimArtifactV3):
-                raise ClaimRetireClosureMismatch(
-                    f"{ClaimRetireClosureMismatch.error_code}: accepted dependent "
-                    f"{dependent.identity.qualified} is not an attributed retirement"
-                )
-            accepted_dependents[dependent.identity.qualified] = dependent
-        terminal_supplied = {item.artifact_identity.qualified: item for item in request.dependents}
-        if set(terminal_supplied) != set(accepted_dependents):
-            raise ClaimRetireClosureMismatch(
-                f"{ClaimRetireClosureMismatch.error_code}: accepted retirement closure differs"
-            )
-        for identity, dependent in accepted_dependents.items():
-            entry = terminal_supplied[identity]
-            if (
-                dependent.lifecycle.predecessor_digest != entry.predecessor_digest
-                or dependent.retirement.reason != entry.reason
-                or entry.effective_until is not None
-                and dependent.statement.effective_until != entry.effective_until
-            ):
-                raise ClaimRetireClosureMismatch(
-                    f"{ClaimRetireClosureMismatch.error_code}: accepted retirement attribution "
-                    f"differs for {identity}"
-                )
-        terminal_retirements: dict[str, ClaimRetirementResultItemV1] = {
-            claim.identity.qualified: ClaimRetirementResultItemV1(
-                artifact_identity=claim.identity,
-                predecessor_digest=root_predecessor,
-                reason=claim.retirement.reason,
-                effective_until=claim.statement.effective_until,
-                successor_digest=claim_artifact_digest(claim).tagged,
-            ),
-        }
-        for identity, dependent in accepted_dependents.items():
-            predecessor_digest = dependent.lifecycle.predecessor_digest
-            if predecessor_digest is None:
-                raise ClaimRetireError("accepted Claim v3 lacks its predecessor digest")
-            terminal_retirements[identity] = ClaimRetirementResultItemV1(
-                artifact_identity=dependent.identity,
-                predecessor_digest=predecessor_digest,
-                reason=dependent.retirement.reason,
-                effective_until=dependent.statement.effective_until,
-                successor_digest=claim_artifact_digest(dependent).tagged,
-            )
         return ClaimRetireResultV1(
             outcome="already_retired",
             operation_digest=_operation_digest(
@@ -371,13 +419,7 @@ def service_retire_claim(
                 dependents=request.dependents,
             ),
             coordinate=PlaybillAcceptedCoordinate.from_internal(current),
-            retirements=tuple(
-                terminal_retirements[identity]
-                for identity in sorted(
-                    terminal_retirements,
-                    key=lambda item: item.encode("utf-8"),
-                )
-            ),
+            retirements=terminal_retirements,
         )
     if claim.lifecycle.state == "retired":
         raise ClaimRetireError("historical unattributed retirement is already terminal")
