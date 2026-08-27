@@ -42,7 +42,7 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactAny,
-    ClaimArtifactV2,
+    ClaimArtifactV3,
     ClaimBacking,
     ClaimBackingV2,
     ClaimLawEvidenceAny,
@@ -261,6 +261,10 @@ def service_prepare_claim_attestation(
     coordinate = _resolve_coordinate(instance, at)
     tree = instance.tree_at(coordinate.git_oid)
     accepted = _accepted_claim(tree, claim_identity)
+    if isinstance(accepted.claim, ClaimArtifactV3):
+        raise ProposalIntegrityError(
+            "an attributed retired Claim is terminal and cannot accept new attestation backing"
+        )
     subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
     statement = ClaimAttestationStatement(
         instance_id=coordinate.instance_id,
@@ -316,6 +320,10 @@ def service_propose_claim_attestation(
         raise ProposalIntegrityError("ClaimAttestation proposals require the current accepted base")
     tree = instance.tree_at(coordinate.git_oid)
     accepted = _accepted_claim(tree, claim_identity)
+    if isinstance(accepted.claim, ClaimArtifactV3):
+        raise ProposalIntegrityError(
+            "an attributed retired Claim is terminal and cannot accept new attestation backing"
+        )
     subject_content_digest, object_content_digest = _referent_digests(tree, accepted.claim)
     principals = principal_registry_from_tree(tree, semantic_root=coordinate.semantic_root)
     providers = accepted_claim_providers(tree)
@@ -364,11 +372,13 @@ def service_propose_claim_attestation(
     new_capture_digests = set(attestation.capture_digests) - set(
         accepted.claim.backing.capture_digests
     )
-    if isinstance(accepted.claim, ClaimArtifactV2) and new_capture_digests:
+    if isinstance(accepted.claim.backing, ClaimBackingV2) and new_capture_digests:
         raise ProposalIntegrityError(
             "a v2 Claim must attach new attestation Captures through explicit citations"
         )
-    backing_type = ClaimBackingV2 if isinstance(accepted.claim, ClaimArtifactV2) else ClaimBacking
+    backing_type = (
+        ClaimBackingV2 if isinstance(accepted.claim.backing, ClaimBackingV2) else ClaimBacking
+    )
     backing_payload = {
         "referent_context": accepted.claim.backing.referent_context.model_copy(
             update={"observed_at": attestation.observed_at}
@@ -393,7 +403,7 @@ def service_propose_claim_attestation(
         "reducer_digest": accepted.claim.backing.reducer_digest,
         "source_mappings": accepted.claim.backing.source_mappings,
     }
-    if isinstance(accepted.claim, ClaimArtifactV2):
+    if isinstance(accepted.claim.backing, ClaimBackingV2):
         backing_payload["citations"] = accepted.claim.backing.citations
     successor = accepted.claim.model_copy(
         update={

@@ -106,6 +106,26 @@ def test_readmit_and_migration_delegate_to_existing_client_routes(
                 ),
             )
 
+        def retire_playbill_claim(
+            self,
+            instance_id: str,
+            claim_id: str,
+            *,
+            request: dict[str, Any],
+        ) -> contracts.PlaybillClaimRetireResponse:
+            calls.append(f"retire:{claim_id}:{request['reason']}")
+            return contracts.PlaybillClaimRetirePreflight(
+                operation_digest="sha256:" + "7" * 64,
+                coordinate=_coordinate(),
+                root_identity={"kind": "Claim", "name": claim_id},
+                root_predecessor_digest="sha256:" + "8" * 64,
+                reason="was-wrong",
+                effective_until=None,
+                required_dependents=[],
+                diagnostics=[],
+                submit_ready=True,
+            )
+
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
     readmitted = handlers.handle_playbill_readmit_proposal("inst_test", "proposal-1")
     migrated = handlers.handle_playbill_migrate_claim_type(
@@ -116,10 +136,23 @@ def test_readmit_and_migration_delegate_to_existing_client_routes(
             "dependents": [],
         },
     )
+    claim_id = "CLM-0123456789abcdef0123456789abcdef"
+    retired = handlers.handle_playbill_retire_claim(
+        "inst_test",
+        claim_id,
+        {
+            "tag": "playbill-claim-retire-request-v1",
+            "mode": "preflight",
+            "reason": "was-wrong",
+            "expected_coordinate": _coordinate().model_dump(mode="json"),
+        },
+    )
 
     assert readmitted.source_proposal_id == "proposal-1"
     assert migrated.dependents == []
+    assert retired.submit_ready is True
     assert calls == [
         "readmit:proposal-1",
         "migrate:playbill-claim-type-migration-request-v1",
+        f"retire:{claim_id}:was-wrong",
     ]

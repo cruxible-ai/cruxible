@@ -1044,7 +1044,9 @@ class AuthoringIntentCoordinator:
             origin="self_published",
         )
         prior_citations = (
-            current_claim.backing.citations if isinstance(current_claim, ClaimArtifactV2) else ()
+            current_claim.backing.citations
+            if isinstance(current_claim.backing, ClaimBackingV2)
+            else ()
         )
         source_mapping = SourceMapping(
             subject=claim_statement_address(claim_path(intent.semantic_identity)),
@@ -1308,7 +1310,9 @@ class AuthoringIntentCoordinator:
                 expectation,
                 finalized_at=self._protocol_time(intent),
             )
-        elif expectation.state == "confirming" and isinstance(current_claim, ClaimArtifactV2):
+        elif expectation.state == "confirming" and isinstance(
+            current_claim.backing, ClaimBackingV2
+        ):
             if expectation.citation_id is not None and any(
                 item.citation_id == expectation.citation_id
                 for item in current_claim.backing.citations

@@ -114,7 +114,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",
         "playbill.authoring.bind",
-        "playbill.claim_type.migrate",
+        "playbill.claim.retire",
         "playbill.floor.export",
         "playbill.block.repin",
         "playbill.document.propose",

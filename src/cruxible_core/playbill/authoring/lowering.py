@@ -43,6 +43,7 @@ from cruxible_client.contracts.claims import (
     CitationRole,
     ClaimArtifactAny,
     ClaimArtifactV2,
+    ClaimArtifactV3,
     ClaimBackingV2,
     ClaimReferentContext,
     ClaimStatement,
@@ -426,6 +427,15 @@ def _lower_claim(
     predecessor: ClaimArtifactAny | None = None
     if path in candidate_base_tree:
         predecessor = parse_claim(candidate_base_tree[path], path=path)
+        if isinstance(predecessor, ClaimArtifactV3):
+            _refuse(
+                "playbill.authoring.claim_terminal",
+                "claim_ref",
+                "An attributed retired Claim is terminal and cannot be authored again.",
+                repair_kind="omit_claim_ref",
+                repair_description="Mint a new Claim lineage instead of reviving a retired one.",
+                replacement=None,
+            )
     elif payload.claim_ref is not None:
         _refuse(
             "playbill.authoring.claim_predecessor_not_found",
@@ -479,7 +489,9 @@ def _lower_claim(
         origin=citation_origin,
     )
     predecessor_citations = (
-        predecessor.backing.citations if isinstance(predecessor, ClaimArtifactV2) else ()
+        predecessor.backing.citations
+        if predecessor is not None and isinstance(predecessor.backing, ClaimBackingV2)
+        else ()
     )
     capture_digests = tuple(
         sorted(

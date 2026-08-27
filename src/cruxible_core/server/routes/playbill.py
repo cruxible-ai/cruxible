@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter
 
 from cruxible_client import contracts
+from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
@@ -571,6 +572,22 @@ async def propose_claims(
         authorings=req.authorings,
         proposal_name=req.proposal_name,
         base=req.base,
+    )
+
+
+@router.post(
+    "/{instance_id}/playbill/claims/{claim_id}/retire",
+    response_model=contracts.PlaybillClaimRetireResponse,
+)
+async def retire_claim(
+    instance_id: str,
+    claim_id: str,
+    req: ClaimRetireRequestV1,
+) -> contracts.PlaybillClaimRetireResponse:
+    return playbill_api.playbill_retire_claim(
+        resolve_server_instance_id(instance_id),
+        claim_id,
+        request=req,
     )
 
 

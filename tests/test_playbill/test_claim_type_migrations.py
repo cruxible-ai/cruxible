@@ -33,6 +33,7 @@ from cruxible_client.contracts.claim_verdicts import (
     claim_adjudication_rule_digest,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifactV3,
     claim_artifact_digest,
     claim_path,
     parse_claim,
@@ -49,13 +50,16 @@ from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lower_cla
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeDependentDispositionV2,
+    ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationDependentSetMismatch,
     ClaimTypeMigrationError,
     ClaimTypeMigrationIncomplete,
     ClaimTypeMigrationPreflightV1,
     ClaimTypeMigrationRequestV1,
     ClaimTypeMigrationRequestV2,
+    ClaimTypeMigrationRequestV3,
     ClaimTypeMigrationResultV2,
+    ClaimTypeMigrationResultV3,
     service_migrate_claim_type,
 )
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
@@ -280,23 +284,32 @@ def test_migration_refuses_an_omitted_current_dependent(tmp_path: Path) -> None:
         )
 
 
-def test_invalidation_normalizes_to_a_retired_candidate_member(tmp_path: Path) -> None:
+def test_v3_invalidation_normalizes_to_attributed_retirement_with_warning(
+    tmp_path: Path,
+) -> None:
     instance, claim_id, _owner = _accepted_claim_world(tmp_path)
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV1(
+        request=ClaimTypeMigrationRequestV3(
+            mode="submit",
             successor=_successor(instance),
             dependents=(
-                ClaimTypeDependentDispositionV1(
-                    claim_id=claim_id,
+                ClaimTypeDependentDispositionV3(
+                    identity=ArtifactIdentity(kind="Claim", name=claim_id),
                     disposition="invalidation",
+                    claim_retirement_reason="was-wrong",
                 ),
             ),
         ),
         actor=AuthenticatedActor(actor_id="owner"),
     )
 
+    assert isinstance(result, ClaimTypeMigrationResultV3)
     assert result.dependents[0].disposition == "retire"
+    assert result.dependents[0].claim_retirement_reason == "was-wrong"
+    assert [warning.code for warning in result.warnings] == [
+        "playbill.claim_type.invalidation_deprecated"
+    ]
     tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
     assert tree_oid is not None
     claim = parse_claim(
@@ -304,6 +317,44 @@ def test_invalidation_normalizes_to_a_retired_candidate_member(tmp_path: Path) -
         path=claim_path(claim_id),
     )
     assert claim.lifecycle.state == "retired"
+    assert isinstance(claim, ClaimArtifactV3)
+    assert claim.retirement.reason == "was-wrong"
+
+
+@pytest.mark.parametrize("request_version", ["v1", "v2"])
+def test_legacy_migration_cannot_retire_a_live_claim_without_attribution(
+    tmp_path: Path,
+    request_version: str,
+) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    identity = ArtifactIdentity(kind="Claim", name=claim_id)
+    if request_version == "v1":
+        request = ClaimTypeMigrationRequestV1(
+            successor=_successor(instance),
+            dependents=(
+                ClaimTypeDependentDispositionV1(
+                    claim_id=claim_id,
+                    disposition="retire",
+                ),
+            ),
+        )
+    else:
+        request = ClaimTypeMigrationRequestV2(
+            mode="submit",
+            successor=_successor(instance),
+            dependents=(
+                ClaimTypeDependentDispositionV2(
+                    identity=identity,
+                    disposition="retire",
+                ),
+            ),
+        )
+    with pytest.raises(ClaimTypeMigrationError, match="retirement_reason_required"):
+        service_migrate_claim_type(
+            instance,
+            request=request,
+            actor=AuthenticatedActor(actor_id="owner"),
+        )
 
 
 def test_v1_refuses_when_complete_closure_contains_a_query_definition(tmp_path: Path) -> None:
@@ -390,16 +441,29 @@ def _decision_only_successor(instance, *, enum: list[str]):  # type: ignore[no-u
 
 
 def _activate_migration(instance, owner, successor, dependents):  # type: ignore[no-untyped-def]
+    v3_dependents = tuple(
+        ClaimTypeDependentDispositionV3(
+            identity=item.identity,
+            disposition=item.disposition,
+            successor=item.successor,
+            claim_retirement_reason=(
+                "was-rescinded"
+                if item.identity.kind == "Claim" and item.disposition in {"retire", "invalidation"}
+                else None
+            ),
+        )
+        for item in dependents
+    )
     result = service_migrate_claim_type(
         instance,
-        request=ClaimTypeMigrationRequestV2(
+        request=ClaimTypeMigrationRequestV3(
             mode="submit",
             successor=successor,
-            dependents=dependents,
+            dependents=v3_dependents,
         ),
         actor=AuthenticatedActor(actor_id="owner"),
     )
-    assert isinstance(result, ClaimTypeMigrationResultV2)
+    assert isinstance(result, ClaimTypeMigrationResultV3)
     candidate = result.proposal.proposal.candidate
     assert candidate is not None
     approval = _sign(
@@ -794,6 +858,7 @@ def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
     )
     before_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     before = parse_claim(before_tree[claim_path(claim_id)], path=claim_path(claim_id))
+    assert isinstance(before, ClaimArtifactV3)
     assert before.lifecycle.state == "retired"
     successor = _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
         update={"attestation_consequence_policy": _policy(2)}

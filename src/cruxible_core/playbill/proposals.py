@@ -89,11 +89,13 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
+    ClaimArtifactV3,
     ClaimFormatError,
     ExactContentClaimObject,
     LiteralClaimObject,
     SubjectClaimObject,
     claim_artifact_digest,
+    claim_retirement_pin_digest_updates,
     claim_statement_address,
     claim_statement_digest,
     evaluate_claim_law,
@@ -2151,6 +2153,48 @@ def _evaluate_scoped_members(
     claim_admission_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     claim_admission_digests_by_path: dict[str, tuple[str, ...]] = {}
     diagnostics: list[CompilerDiagnostic] = []
+    scope_set = set(scope)
+    for path in scope:
+        parent_content = current_tree.get(path)
+        candidate_content = candidate_tree.get(path)
+        if parent_content is None or candidate_content is None or not path.startswith("claims/"):
+            continue
+        previous_claim = parse_claim(parent_content, path=path)
+        candidate_claim = parse_claim(candidate_content, path=path)
+        if not isinstance(candidate_claim, ClaimArtifactV3):
+            continue
+        for previous_pin, candidate_pin in claim_retirement_pin_digest_updates(
+            candidate_claim,
+            predecessor=previous_claim,
+        ):
+            target_path = candidate_dependencies.paths_by_identity.get(
+                candidate_pin.target.qualified
+            )
+            target = None if target_path is None else candidate_states.get(target_path)
+            parent_target_path = parent.dependencies.paths_by_identity.get(
+                previous_pin.target.qualified
+            )
+            parent_target = (
+                None
+                if parent_target_path is None
+                else parent.dependencies.states.get(parent_target_path)
+            )
+            if (
+                target_path not in scope_set
+                or target is None
+                or target.artifact_kind != "claim"
+                or target.artifact_digest != candidate_pin.artifact_digest
+                or parent_target is None
+                or parent_target.artifact_digest != previous_pin.artifact_digest
+            ):
+                diagnostics.append(
+                    _diagnostic(
+                        "playbill.claim.retirement_pin_delta_invalid",
+                        "A retirement may update a Claim-target pin digest only when the "
+                        "exact target changes in the same complete ChangeSet.",
+                        path,
+                    )
+                )
     if actor_id is not None:
         (
             claim_admission_by_path,

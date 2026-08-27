@@ -6,9 +6,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
+    ArtifactLifecycle,
     ArtifactPin,
 )
 from cruxible_client.contracts.candidates import CandidateRecordV3
@@ -24,10 +27,13 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifact,
+    ClaimArtifactV3,
     ClaimBacking,
     ClaimLawEvidenceV1,
     ClaimReferentContext,
+    ClaimRetirementAttributionV1,
     ClaimStatement,
+    ClaimUnsupportedFormatError,
     LiteralClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -54,6 +60,7 @@ from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-16T18:30:00.000000Z"
 OBSERVED_AT = datetime(2026, 8, 16, 18, 30, tzinfo=timezone.utc)
@@ -208,6 +215,46 @@ def test_claim_identity_sharding_and_three_digest_layers(tmp_path: Path) -> None
     assert claim_artifact_digest(stronger_backing) != claim_artifact_digest(claim)
 
 
+def test_claim_v3_digest_commits_retirement_attribution_without_moving_v1() -> None:
+    predecessor = _claim(
+        claim_id="CLM-0123456789abcdef0123456789abcdef",
+        capture_digest="sha256:" + "11" * 32,
+        source_digest="sha256:" + "22" * 32,
+        source_length=1,
+    )
+    predecessor_digest = claim_artifact_digest(predecessor)
+    rescinded = ClaimArtifactV3(
+        identity=predecessor.identity,
+        statement=predecessor.statement,
+        backing=predecessor.backing,
+        authority=predecessor.authority,
+        pins=predecessor.pins,
+        lifecycle=ArtifactLifecycle(
+            state="retired",
+            predecessor_digest=predecessor_digest.tagged,
+        ),
+        retirement=ClaimRetirementAttributionV1(reason="was-rescinded"),
+    )
+    wrong = rescinded.model_copy(
+        update={"retirement": ClaimRetirementAttributionV1(reason="was-wrong")}
+    )
+
+    assert parse_claim(render_claim(rescinded), path=claim_path(rescinded.identity.name)) == (
+        rescinded
+    )
+    assert claim_artifact_digest(rescinded) != claim_artifact_digest(wrong)
+    assert claim_artifact_digest(predecessor) == predecessor_digest
+
+
+def test_unknown_claim_wire_has_a_typed_format_refusal() -> None:
+    claim_id = "CLM-0123456789abcdef0123456789abcdef"
+    with pytest.raises(ClaimUnsupportedFormatError, match="playbill.claim.format_unsupported"):
+        parse_claim(
+            b'{"artifact_format":"playbill-claim-v999"}\n',
+            path=claim_path(claim_id),
+        )
+
+
 def test_direct_capture_contract_envelope_and_claim_match_frozen_golden(
     tmp_path: Path,
 ) -> None:
@@ -312,3 +359,72 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
     )
     assert claim_evidence.initial_verdict == "supported"
     assert claim_evidence.evidence_basis == ("direct",)
+
+
+def test_v1_claim_successor_preserves_the_base_accepted_authority_change_shape(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    claim_id = "CLM-abcdefabcdefabcdefabcdefabcdefab"
+    capture = build_direct_claim_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=claim_id,
+        value="ready",
+        rationale="Seed the v1 succession law.",
+        observed_at=OBSERVED_AT,
+        accepted_coordinate=AcceptedCoordinate.from_internal(base),
+    )
+    assert capture.envelope.commitment.byte_length is not None
+    predecessor = _claim(
+        claim_id=claim_id,
+        capture_digest=capture.capture_digest,
+        source_digest=capture.source_body_digest,
+        source_length=capture.envelope.commitment.byte_length,
+    )
+    shell = _subject()
+    tree = {
+        **instance.tree_at(base.git_oid),
+        subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
+        "claim-types/project.work_item/status.yaml": render_claim_type(_claim_type()),
+        capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
+            render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
+        ),
+        claim_path(claim_id): render_claim(predecessor),
+    }
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name="v1-authority-seed",
+    )
+
+    accepted = instance.accepted_coordinate()
+    successor = predecessor.model_copy(
+        update={
+            "authority": ArtifactAuthority(
+                propose_roles=("owner",),
+                approve_roles=("owner", "reviewer"),
+            ),
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_artifact_digest(predecessor).tagged
+            ),
+        }
+    )
+    successor_tree = instance.tree_at(accepted.git_oid)
+    successor_tree[claim_path(claim_id)] = render_claim(successor)
+    evaluated = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/v1-authority-successor",
+            proposed_base_oid=accepted.git_oid,
+        ),
+        candidate_tree=successor_tree,
+        timestamp=TIMESTAMP,
+    )
+    assert evaluated.candidate is not None
+    assert "playbill.claim.authority_change_unsupported" not in {
+        item.code for item in evaluated.evaluation.diagnostics
+    }

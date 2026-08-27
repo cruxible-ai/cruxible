@@ -49,7 +49,7 @@
     "GET": "PlaybillClaimTypeList"
   },
   "/api/v1/{instance_id}/playbill/claim-types/migrations": {
-    "POST": "PlaybillClaimTypeMigrationResult | PlaybillClaimTypeMigrationPreflight | PlaybillClaimTypeMigrationResultV2"
+    "POST": "PlaybillClaimTypeMigrationResult | PlaybillClaimTypeMigrationPreflight | PlaybillClaimTypeMigrationResultV2 | PlaybillClaimTypeMigrationResultV3"
   },
   "/api/v1/{instance_id}/playbill/claim-types/proposals": {
     "POST": "PlaybillProposalInspection | PlaybillClaimTypeInputProposalResult"
@@ -65,6 +65,9 @@
   },
   "/api/v1/{instance_id}/playbill/claims/proposals/batch": {
     "POST": "PlaybillClaimBatchProposal"
+  },
+  "/api/v1/{instance_id}/playbill/claims/{claim_id}/retire": {
+    "POST": "PlaybillClaimRetirePreflight | PlaybillClaimRetireResult"
   },
   "/api/v1/{instance_id}/playbill/claims/{identity}": {
     "GET": "PlaybillClaimViewV2"

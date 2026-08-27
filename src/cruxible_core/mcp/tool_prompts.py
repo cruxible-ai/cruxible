@@ -117,6 +117,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_propose_claims": (
         "Use when several Claims must be admitted together or not at all."
     ),
+    "cruxible_playbill_claim_retire": (
+        "Use when one Claim and its transitive Claim dependents must retire with explicit "
+        "attribution in one governed ChangeSet."
+    ),
     "cruxible_playbill_authoring_create": (
         "Use when you need a durable machine-owned intent before iterating on a governed write."
     ),

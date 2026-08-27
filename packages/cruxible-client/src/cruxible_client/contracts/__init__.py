@@ -423,6 +423,7 @@ class PlaybillClaimTypeMigrationResult(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -438,6 +439,7 @@ class PlaybillClaimTypeMigrationPreflight(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     successor_artifact_digest: str
     dependents: list[dict[str, Any]]
+    warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -453,6 +455,23 @@ class PlaybillClaimTypeMigrationResultV2(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    warnings: list[dict[str, Any]] = []
+    lint: PlaybillClaimTypeProposalLint | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+
+class PlaybillClaimTypeMigrationResultV3(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-type-migration-result-v3"] = (
+        "playbill-claim-type-migration-result-v3"
+    )
+    operation_digest: str
+    dependents: list[dict[str, Any]]
+    proposal: PlaybillProposalInspection
+    warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -463,6 +482,7 @@ PlaybillClaimTypeMigrationResponse: TypeAlias = (
     PlaybillClaimTypeMigrationResult
     | PlaybillClaimTypeMigrationPreflight
     | PlaybillClaimTypeMigrationResultV2
+    | PlaybillClaimTypeMigrationResultV3
 )
 
 
@@ -544,6 +564,7 @@ class PlaybillClaimProposal(BaseModel):
     observed_at: str
     existing_statements: list[dict[str, Any]]
     handoffs: list[dict[str, Any]]
+    warnings: list[dict[str, Any]] = []
 
 
 class PlaybillAuthoredClaim(BaseModel):
@@ -559,6 +580,7 @@ class PlaybillAuthoredClaim(BaseModel):
     observed_at: str
     existing_statements: list[dict[str, Any]]
     handoffs: list[dict[str, Any]]
+    warnings: list[dict[str, Any]] = []
 
 
 class PlaybillClaimBatchProposal(BaseModel):
@@ -569,6 +591,35 @@ class PlaybillClaimBatchProposal(BaseModel):
     )
     proposal: PlaybillProposalInspection
     claims: list[PlaybillAuthoredClaim]
+
+
+class PlaybillClaimRetirePreflight(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-retire-preflight-v1"] = "playbill-claim-retire-preflight-v1"
+    operation_digest: str
+    coordinate: PlaybillAcceptedCoordinate
+    root_identity: dict[str, Any]
+    root_predecessor_digest: str
+    reason: Literal["was-rescinded", "was-wrong"]
+    effective_until: str | None
+    required_dependents: list[dict[str, Any]]
+    diagnostics: list[dict[str, Any]]
+    submit_ready: bool
+
+
+class PlaybillClaimRetireResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-claim-retire-result-v1"] = "playbill-claim-retire-result-v1"
+    outcome: Literal["preflight", "proposed", "already_retired"]
+    operation_digest: str
+    coordinate: PlaybillAcceptedCoordinate
+    retirements: list[dict[str, Any]]
+    proposal: PlaybillProposalInspection | None = None
+
+
+PlaybillClaimRetireResponse: TypeAlias = PlaybillClaimRetirePreflight | PlaybillClaimRetireResult
 
 
 class PlaybillClaimExplanation(BaseModel):

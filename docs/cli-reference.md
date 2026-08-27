@@ -131,6 +131,7 @@ dependent the request names; it never authors retirement decisions from diagnost
 ~~~text
 cruxible playbill claim propose --authoring FILE --name NAME
 cruxible playbill claim propose-batch --authoring FILE [--authoring FILE ...] --name NAME
+cruxible playbill claim retire IDENTITY REQUEST_FILE
 cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
 cruxible playbill claim get IDENTITY
 cruxible playbill claim history IDENTITY
@@ -140,8 +141,11 @@ cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 propose creates one inert Capture and one dependency-closed Claim in a single
 governed proposal. propose-batch does the same for several Claims at once, and
 the whole set is admitted as one generation or none of it is -- use it when a
-Claim is only meaningful beside its siblings. explain returns the verdict
-together with the law evidence and source handles it was computed from.
+Claim is only meaningful beside its siblings. `retire` preflights or submits one
+attributed retirement over the complete dependent Claim closure; the request
+must name every dependent reason and never receives a daemon-synthesized end
+time. explain returns the verdict together with the law evidence and source
+handles it was computed from.
 
 ## playbill authoring
 
