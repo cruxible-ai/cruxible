@@ -2141,8 +2141,8 @@ class InsertionPrepareResultV2(_StrictAuthoringModel):
             sorted(
                 set(value),
                 key=lambda item: (
-                    item.source_id.encode("utf-8"),
                     item.code.encode("ascii"),
+                    item.source_id.encode("utf-8"),
                     item.citation_ids,
                 ),
             )
