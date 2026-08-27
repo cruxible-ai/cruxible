@@ -33,7 +33,11 @@ from cruxible_core.playbill.audit import (
     audit_row_order,
     build_reverse_dependency_index,
 )
-from cruxible_core.playbill.consumption import consumption_aggregate
+from cruxible_core.playbill.consumption import (
+    ConsumptionContextV1,
+    consumption_aggregate,
+    record_consumption,
+)
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     LogicalSourceIdentityV1,
@@ -46,6 +50,7 @@ from cruxible_core.playbill.query.impact import (
 from cruxible_core.service.playbill_audit import (
     PlaybillAuditCursorInvalid,
     PlaybillAuditRequestV1,
+    _audit_consumption_touch_counts,
     _AuditHistoryIndex,
     _history_index,
     _logical_source_keys,
@@ -53,6 +58,8 @@ from cruxible_core.service.playbill_audit import (
     completed_audit_runs,
     service_playbill_audit,
 )
+from cruxible_core.service.playbill_query import build_accepted_query_facts
+from tests.test_playbill._knowledge_loop_support import seed_claims
 from tests.test_playbill._modeling_parity_support import claim_fact, facts, subject
 from tests.test_playbill._support import initialize_local
 
@@ -186,10 +193,136 @@ def test_failed_fold_writes_no_completed_run(
     def fail(_instance):  # type: ignore[no-untyped-def]
         raise RuntimeError("rank fold failed")
 
-    monkeypatch.setattr("cruxible_core.service.playbill_audit.consumption_aggregate", fail)
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_audit._audit_consumption_touch_counts", fail
+    )
     with pytest.raises(RuntimeError, match="rank fold failed"):
         service_playbill_audit(instance, request=_request(), actor_context=_actor())
     assert completed_audit_runs(instance) == ()
+
+
+def test_audit_caps_self_heating_without_changing_receipts_or_other_consumers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner = seed_claims(tmp_path)
+    facts_at_head = build_accepted_query_facts(
+        instance,
+        coordinate=instance.accepted_coordinate(),
+    )
+    claim = facts_at_head.claims[0].accepted
+    artifact = (claim.claim.identity, claim.artifact_digest)
+    history = instance.accepted_history()
+    first_generation = history[1]
+    first_coordinate = AcceptedCoordinate(
+        git_oid=first_generation.oid,
+        semantic_root=first_generation.semantic_root.tagged,
+        generation_root=first_generation.generation_root.tagged,
+        compiler_digest=instance.descriptor.compiler.rule_digest,
+    )
+    head_coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
+
+    def context(reader: str, profile: str) -> ConsumptionContextV1:
+        return ConsumptionContextV1(
+            actor_context=GovernedActorContext(
+                actor_type="service_account",
+                actor_id=reader,
+                org_id="org-test",
+                operation_id=f"op-{reader}-{profile}",
+                timestamp=NOW,
+            ),
+            access_profile_id=profile,
+        )
+
+    # The same reader at the historical coordinate is one touch.  At the head,
+    # operation and profile multiplicity collapse to one separate touch.
+    record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.claim.get",
+        coordinate=first_coordinate,
+        artifacts=(artifact,),
+    )
+    head_first = record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.claim.get",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    head_retry = record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.claim.get",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.search.match",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    record_consumption(
+        instance,
+        context=context("reader-a", "alternate-instance-profile"),
+        operation="playbill.search.match",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    # A different reader and a successor digest each contribute one.
+    record_consumption(
+        instance,
+        context=context("reader-b", "instance"),
+        operation="playbill.claim.get",
+        coordinate=head_coordinate,
+        artifacts=(artifact,),
+    )
+    successor_digest = typed_digest(
+        Sha256Value,
+        "playbill-audit-successor-fixture-v1",
+        {"predecessor": claim.artifact_digest},
+    ).tagged
+    record_consumption(
+        instance,
+        context=context("reader-a", "instance"),
+        operation="playbill.claim.get",
+        coordinate=head_coordinate,
+        artifacts=((claim.claim.identity, successor_digest),),
+    )
+
+    assert head_first == head_retry
+    raw_before = instance.review_operational_store().events(family="consumption")
+    aggregate_before = consumption_aggregate(instance)
+    assert aggregate_before.artifacts[0].qualifying_touch_count == 6
+    assert _audit_consumption_touch_counts(instance) == {claim.claim.identity.qualified: 4}
+
+    store = instance.review_operational_store()
+    original_events = store.events
+    consumption_reads = 0
+
+    def counted_events(*, family=None):  # type: ignore[no-untyped-def]
+        nonlocal consumption_reads
+        if family == "consumption":
+            consumption_reads += 1
+        return original_events(family=family)
+
+    monkeypatch.setattr(instance, "review_operational_store", lambda: store)
+    monkeypatch.setattr(store, "events", counted_events)
+    accepted_before = instance.accepted_coordinate()
+    first = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+    second = service_playbill_audit(instance, request=_request(), actor_context=_actor())
+
+    row = next(item for item in first.rows if item.claim_identity == claim.claim.identity)
+    assert row.factors.qualifying_consumption_touch_count == 4
+    assert first.model_dump(mode="json") == second.model_dump(mode="json")
+    assert consumption_reads == 2  # exactly once per complete audit fold
+    assert instance.accepted_coordinate() == accepted_before
+    assert store.events(family="consumption") == raw_before
+    assert consumption_aggregate(instance) == aggregate_before
+    assert store.events(family="curation") == ()
+    assert len(completed_audit_runs(instance)) == 1
 
 
 def test_byte_budget_records_exact_omission_without_skipping_the_row(

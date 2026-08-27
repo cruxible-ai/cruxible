@@ -51,7 +51,11 @@ from cruxible_core.playbill.audit import (
     build_audit_run,
     build_reverse_dependency_index,
 )
-from cruxible_core.playbill.consumption import consumption_aggregate
+from cruxible_core.playbill.consumption import (
+    QUALIFYING_CONSUMPTION_OPERATIONS,
+    ConsumptionEpochV1,
+    ConsumptionReceiptV1,
+)
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.coverage.indexes import accepted_logical_source
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -210,6 +214,42 @@ def _operational_input_head(instance: PlaybillInstance) -> ReviewOperationalHead
         initialized_generation=(head.initialized_generation if partitions else None),
         partitions=partitions,
     )
+
+
+def _audit_consumption_touch_counts(instance: PlaybillInstance) -> dict[str, int]:
+    """Fold raw verified receipts under audit's per-reader demand cap."""
+
+    events = instance.review_operational_store().events(family="consumption")
+    epoch: ConsumptionEpochV1 | None = None
+    touches: dict[str, set[tuple[str, bytes, bytes, str]]] = {}
+    for _event, payload in events:
+        if payload.get("tag") == "playbill-consumption-epoch-v1":
+            parsed_epoch = ConsumptionEpochV1.model_validate(payload)
+            if epoch is not None and parsed_epoch != epoch:
+                raise ReviewOperationalStoreError("consumption epoch is not unique")
+            epoch = parsed_epoch
+            continue
+        if payload.get("tag") != "playbill-consumption-receipt-v1":
+            raise ReviewOperationalStoreError("consumption partition has an unknown payload")
+        receipt = ConsumptionReceiptV1.model_validate(payload)
+        if receipt.operation not in QUALIFYING_CONSUMPTION_OPERATIONS:
+            continue
+        identity = receipt.response_artifact_identity
+        # Operation is absent so one reader cannot heat an artifact by trying
+        # more verbs.  Access profile is also absent: it is delivery/visibility
+        # context, not an independent reader-demand signal, so profile changes
+        # must not reheat the same reader/coordinate/artifact.
+        key = (
+            receipt.reader_principal_id,
+            canonical_bytes(receipt.accepted_coordinate.model_dump(mode="json")),
+            canonical_bytes(identity.model_dump(mode="json")),
+            receipt.response_artifact_digest,
+        )
+        touches.setdefault(identity.qualified, set()).add(key)
+    return {
+        identity: len(touches[identity])
+        for identity in sorted(touches, key=lambda item: item.encode("utf-8"))
+    }
 
 
 def _record_claim_law_evidence(record: object) -> tuple[tuple[str, ClaimLawEvidenceAny], ...]:
@@ -650,11 +690,7 @@ def _service_playbill_audit(
         facts=facts,
         claim_lineages=history.claim_lineages,
     )
-    aggregate = consumption_aggregate(instance)
-    consumption = {
-        item.artifact_identity.qualified: item.qualifying_touch_count
-        for item in aggregate.artifacts
-    }
+    consumption = _audit_consumption_touch_counts(instance)
     ranked = tuple(
         sorted(
             (
