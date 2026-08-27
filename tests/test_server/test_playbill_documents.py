@@ -116,6 +116,18 @@ def test_http_document_lifecycle_and_explanation(
     )
 
 
+def test_http_activation_refuses_a_malformed_proposal_id_as_typed_400(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _ = playbill_http
+
+    response = client.post(f"/api/v1/{instance_id}/playbill/proposals/bogus-no-prefix/activate")
+
+    assert response.status_code == 400
+    assert response.json()["error_type"] == "ProposalActivationRequestInvalid"
+    assert response.json()["error_code"] == ("playbill.proposal.activation_request_invalid")
+
+
 def test_http_models_refuse_private_key_and_local_path_inputs(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:

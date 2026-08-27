@@ -410,6 +410,14 @@ def test_client_speaks_typed_publication_prepare_and_confirm_v2_requests() -> No
                     "intent": {"intent_id": INTENT_ID},
                     "expectation": expectation.model_dump(mode="json"),
                     "preparation": preparation.model_dump(mode="json"),
+                    "warnings": [
+                        {
+                            "tag": "playbill-publication-prepare-warning-v1",
+                            "code": ("playbill.authoring.publication_citation_anchor_collision"),
+                            "source_id": "repo.work-items",
+                            "citation_ids": ["sha256:" + "9" * 64],
+                        }
+                    ],
                 },
             )
         return httpx.Response(
@@ -431,6 +439,7 @@ def test_client_speaks_typed_publication_prepare_and_confirm_v2_requests() -> No
     )
 
     assert prepared.outcome == "prepared"
+    assert prepared.warnings[0].citation_ids == ["sha256:" + "9" * 64]
     assert confirmed.outcome == "bound"
     assert json.loads(captured[0].content)["tag"] == "playbill-insertion-prepare-request-v2"
     assert json.loads(captured[1].content)["tag"] == "playbill-insertion-confirm-request-v2"
@@ -449,3 +458,13 @@ def test_removed_brief_has_no_sdk_export_builder_or_authoring_union_arm() -> Non
     assert not hasattr(Playbill, "brief")
     with pytest.raises(ValidationError):
         TypeAdapter(AuthoringInputV1).validate_python({"kind": "brief"})
+
+
+def test_publication_warning_client_mirror_refuses_non_sha256_citation_ids() -> None:
+    with pytest.raises(ValidationError, match="sha256"):
+        cruxible_client.contracts.PlaybillPublicationPrepareWarning(
+            tag="playbill-publication-prepare-warning-v1",
+            code="playbill.authoring.publication_citation_anchor_collision",
+            source_id="repo.work-items",
+            citation_ids=["not-a-digest"],
+        )

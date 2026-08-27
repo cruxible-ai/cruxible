@@ -563,6 +563,14 @@ def test_http_insertion_confirm_and_abandon_are_typed(
             intent={"intent_id": intent_id},
             expectation={"state": "prepared"},
             preparation={"preparation_digest": "sha256:" + "7" * 64},
+            warnings=[
+                contracts.PlaybillPublicationPrepareWarning(
+                    tag="playbill-publication-prepare-warning-v1",
+                    code="playbill.authoring.publication_citation_anchor_collision",
+                    source_id="repo.work-items",
+                    citation_ids=["sha256:" + "8" * 64],
+                )
+            ],
         )
 
     monkeypatch.setattr(
@@ -604,4 +612,5 @@ def test_http_insertion_confirm_and_abandon_are_typed(
     assert confirmed.status_code == prepared.status_code == abandoned.status_code == 200
     assert confirmed.json()["outcome"] == "stale_target"
     assert prepared.json()["outcome"] == "prepared"
+    assert prepared.json()["warnings"][0]["citation_ids"] == ["sha256:" + "8" * 64]
     assert seen == ["confirm", "abandon", "prepare"]

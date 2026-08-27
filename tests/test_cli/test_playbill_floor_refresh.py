@@ -12,6 +12,7 @@ from click.testing import CliRunner
 
 from cruxible_client import contracts
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.errors import ProposalActivationRequestInvalid
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import cli
 
@@ -203,6 +204,34 @@ def test_lost_cas_retry_safely_refreshes_the_current_floor(
     assert payload["status"] == "lost_cas"
     assert payload["floor_refresh"]["status"] == "refreshed"
     assert (workspace / "playbill-floor/cards/fresh.json").exists()
+
+
+def test_activation_renders_malformed_proposal_id_as_typed_refusal(
+    monkeypatch,  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    save_cli_context(CliContextState(server_url="http://test", instance_id="inst_test"))
+
+    class StubClient:
+        def activate_playbill_proposal(
+            self, _instance_id: str, _proposal_id: str
+        ) -> contracts.PlaybillActivationReceipt:
+            raise ProposalActivationRequestInvalid(
+                "playbill.proposal.activation_request_invalid: proposal_id must be a "
+                "canonical sha256 digest"
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        ["playbill", "proposal", "activate", "bogus-no-prefix", "--json"],
+    )
+
+    assert result.exit_code == 1
+    assert "ProposalActivationRequestInvalid" in result.output
+    assert "playbill.proposal.activation_request_invalid" in result.output
 
 
 def test_floor_symlink_may_not_escape_the_workspace(

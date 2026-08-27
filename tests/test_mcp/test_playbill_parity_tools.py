@@ -8,8 +8,12 @@ from typing import Any
 from cruxible_client import contracts
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import ClaimInput
+from cruxible_core.cli.commands.playbill import _cli_claim_type_input_example
 from cruxible_core.mcp import handlers
-from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
+from cruxible_core.playbill.claim_type_inputs import (
+    claim_type_input_example,
+    defaulted_claim_type_input_example,
+)
 
 
 def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
@@ -26,6 +30,55 @@ def test_examples_are_the_model_factories_not_copied_literals() -> None:
 
     assert result.payload == authoring_example("claim-flow-a").model_dump(mode="json")
     assert result.name == "claim-flow-a"
+
+
+def test_claim_type_example_has_cli_mcp_factory_parity() -> None:
+    result = handlers.handle_playbill_authoring_example("claim-type")
+
+    assert result.payload == defaulted_claim_type_input_example().model_dump(mode="json")
+    assert result.payload == _cli_claim_type_input_example().model_dump(mode="json")
+    assert result.payload["predicate"] == authoring_example("claim-flow-a").predicate
+    assert result.payload["anticipated_source_ids"] == ["repo.replace-me"]
+    assert result.name == "claim-type"
+
+
+def test_publication_prepare_handler_preserves_advisory_warnings(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    warning = contracts.PlaybillPublicationPrepareWarning(
+        tag="playbill-publication-prepare-warning-v1",
+        code="playbill.authoring.publication_citation_anchor_collision",
+        source_id="repo.work-items",
+        citation_ids=["sha256:" + "8" * 64],
+    )
+
+    def stub(_instance_id: str, _intent_id: str, *, observation: object):
+        assert observation is not None
+        return contracts.PlaybillInsertionPrepareResult(
+            tag="playbill-insertion-prepare-result-v2",
+            outcome="prepared",
+            intent={"intent_id": "AIT-" + "1" * 32},
+            expectation={"state": "prepared"},
+            preparation={"preparation_digest": "sha256:" + "7" * 64},
+            warnings=[warning],
+        )
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_api.playbill_authoring_prepare_publication", stub
+    )
+    result = handlers.handle_playbill_authoring_prepare_publication(
+        "inst",
+        "AIT-" + "1" * 32,
+        {
+            "tag": "playbill-publication-source-observation-v2",
+            "source_id": "repo.work-items",
+            "content_base64": "",
+            "content_digest": (
+                "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            ),
+            "byte_length": 0,
+        },
+    )
+
+    assert result.warnings == [warning]
 
 
 def test_flow_a_bind_reads_workspace_and_sends_only_the_lowered_payload(

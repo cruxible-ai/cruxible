@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import (
@@ -20,6 +21,9 @@ from cruxible_client import (
     ReferentSensitivity,
     SubjectRef,
 )
+from cruxible_client.authoring.bind import bind_working_selection_input
+from cruxible_client.authoring.examples import authoring_example
+from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_client.contracts.artifacts import (
     ArtifactAuthority,
     ArtifactIdentity,
@@ -54,7 +58,10 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjectionV1,
     QuerySubjectFieldRefV1,
 )
+from cruxible_client.contracts.subjects import SubjectShell
+from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
+from cruxible_core.playbill.claim_type_inputs import defaulted_claim_type_input_example
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 
 AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
@@ -529,6 +536,156 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     )
     after_successor = pb.next(expiring_within=Duration.days(count=7))
     assert all(item["reason"] != "citation_drifted" for item in after_successor.items)
+
+
+def test_sdk_retirement_replay_survives_a_fresh_http_client_process_boundary(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+) -> None:
+    http, instance_id, private_key_path = playbill_http
+    workspace = tmp_path / "retirement-replay-world"
+    workspace.mkdir()
+    _catalog(workspace)
+
+    def fresh_playbill() -> Playbill:
+        transport = CruxibleClient(base_url="http://cruxible")
+        transport._client = http  # type: ignore[assignment]
+        return Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+
+    author = fresh_playbill()
+    subject = author.subject(
+        subject="secops.policy/patch-sla",
+        authority=AUTHORITY,
+        pins=(),
+        lifecycle=ArtifactLifecycle(),
+    )
+    claim_type = author.claim_type(
+        predicate="secops.policy.patch_sla",
+        subject_kinds=("secops.policy",),
+        object_kind=ClaimObjectKind.LITERAL,
+        value_schema={"type": "integer"},
+        object_subject_kinds=(),
+        cardinality=Cardinality.ONE,
+        permitted_roles=(ClaimRole.NORMATIVE,),
+        referent_sensitivity=ReferentSensitivity.IDENTITY,
+        sources=("corpus.vuln-response-runbook",),
+        admission_policy=ClaimAdmissionPolicyV1(),
+        resolution_policy=ClaimResolutionPolicyV1(
+            cardinality="one",
+            eligible_verdicts=("supported",),
+            selector="only_contender",
+        ),
+        authority=AUTHORITY,
+        pins=(),
+        evidence_freshness=None,
+    )
+    intent = author.claim(
+        subject=subject.address,
+        predicate=claim_type.predicate,
+        value=48,
+        role=ClaimRole.NORMATIVE,
+        rationale="The runbook records the accepted patch deadline.",
+        supported_by=author.file("corpus/vuln-response-runbook.md").anchor("forty-eight hours"),
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        publish_to=None,
+        subject_definition=subject,
+        claim_type_definition=claim_type,
+    ).prepare()
+    assert not intent.refused, intent.diagnostics
+    intent.submit()
+    proposal_id = intent.status().proposal_id
+    assert proposal_id is not None
+    _approve_and_activate(http, instance_id, private_key_path, proposal_id)
+    claim_id = str(intent._raw["semantic_identity"])
+
+    submitter = fresh_playbill()
+    proposed = submitter.retire_claim(claim_id, reason="was-wrong", mode="submit")
+    assert proposed.outcome == "proposed"
+    assert proposed.proposal is not None
+    retirement_proposal_id = proposed.proposal.proposal["admission"]["proposal_id"]
+    _approve_and_activate(http, instance_id, private_key_path, retirement_proposal_id)
+
+    first_replay = fresh_playbill().retire_claim(claim_id, reason="was-wrong", mode="submit")
+    second_replay = fresh_playbill().retire_claim(claim_id, reason="was-wrong", mode="submit")
+    assert first_replay.outcome == "already_retired"
+    assert first_replay.model_dump(mode="json") == second_replay.model_dump(mode="json")
+    assert first_replay.operation_digest == proposed.operation_digest
+
+    with pytest.raises(CoreError) as mismatch:
+        fresh_playbill().retire_claim(claim_id, reason="was-rescinded", mode="submit")
+    assert mismatch.value.error_code == "playbill.claim.retire_closure_mismatch"
+
+
+def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    http, instance_id, private_key_path = playbill_http
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+
+    subject = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name="project.work_item/replace-me"),
+        subject_kind="project.work_item",
+        subject_id="replace-me",
+        authority=AUTHORITY,
+    )
+    subject_proposal = transport.propose_playbill_subject(
+        instance_id,
+        shell=subject.model_dump(mode="json"),
+        proposal_name="example-subject",
+    )
+    _approve_and_activate(
+        http,
+        instance_id,
+        private_key_path,
+        subject_proposal.proposal["admission"]["proposal_id"],
+    )
+
+    claim_type_input = defaulted_claim_type_input_example()
+    claim_type_proposal = transport.propose_playbill_claim_type_input(
+        instance_id,
+        input=claim_type_input.model_dump(mode="json"),
+        proposal_name="example-claim-type",
+    )
+    _approve_and_activate(
+        http,
+        instance_id,
+        private_key_path,
+        claim_type_proposal.proposal.proposal["admission"]["proposal_id"],
+    )
+
+    claim_input = ClaimInput.model_validate(
+        authoring_example("claim-flow-a").model_dump(mode="json")
+    )
+    assert claim_input.predicate == claim_type_input.predicate
+    bound = bind_working_selection_input(
+        claim_input,
+        content=b"status: replace-me\n",
+        anchor="replace-me",
+    )
+    compiled = transport.compile_playbill_authoring(
+        instance_id,
+        payload=bound.model_dump(mode="json"),
+    )
+    assert compiled.verdict == "passed", compiled.frontier
+    intent_id = str(compiled.certificate["intent_id"])
+    submitted = transport.submit_playbill_authoring_intent(instance_id, intent_id)
+    assert submitted.status.proposal_id is not None
+    _approve_and_activate(
+        http,
+        instance_id,
+        private_key_path,
+        submitted.status.proposal_id,
+    )
+
+    claim_id = str(submitted.intent["semantic_identity"])
+    explained = transport.explain_playbill_claim(instance_id, claim_id)
+    assert explained.verdict["verdict"] == "supported"
 
 
 def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(

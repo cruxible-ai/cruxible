@@ -8,6 +8,7 @@ import json
 import os
 import re
 import time
+from collections import OrderedDict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -89,7 +90,12 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     authoring_program_digest,
 )
-from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
+from cruxible_client.contracts.canonical import (
+    CanonicalValue,
+    Sha256Value,
+    normalize_canonical,
+    typed_digest,
+)
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
     foreign_source_capture_contract,
@@ -123,6 +129,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import format_datetime
+from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 
 SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
@@ -138,6 +145,9 @@ _SUBJECT_RE = re.compile(
     r"(?P<identifier>[a-z][a-z0-9_.-]{0,255})$"
 )
 _CLAIM_ADAPTER: TypeAdapter[ClaimArtifactAny] = TypeAdapter(ClaimArtifactAny)
+_RETIRE_CLOSURE_MISMATCH_CODE = "playbill.claim.retire_closure_mismatch"
+_CLAIM_RETIRE_OPERATION_DOMAIN = "playbill-claim-retire-operation-v1"
+_RETIREMENT_SUBMISSION_CACHE_LIMIT = 128
 
 
 def _coordinate(value: api.PlaybillAcceptedCoordinate | Mapping[str, object]) -> AcceptedCoordinate:
@@ -780,6 +790,9 @@ class Playbill:
         self._access_profile = access_profile
         self._clock = clock
         self._coordinate: AcceptedCoordinate | None = None
+        self._retirement_submissions: OrderedDict[str, tuple[ClaimRetireRequestV1, str]] = (
+            OrderedDict()
+        )
 
     @classmethod
     def connect(
@@ -1231,11 +1244,143 @@ class Playbill:
             expected_coordinate=coordinate,
             dependents=tuple(dependents),
         )
-        return self._client.retire_playbill_claim(
-            self._instance_id,
-            claim_address.removeprefix("Claim:"),
-            request=request.model_dump(mode="json"),
+        claim_id = claim_address.removeprefix("Claim:")
+        try:
+            result = self._client.retire_playbill_claim(
+                self._instance_id,
+                claim_id,
+                request=request.model_dump(mode="json"),
+            )
+        except CoreError as original:
+            if (
+                isinstance(claim, ClaimRef)
+                or mode != "submit"
+                or getattr(original, "error_code", None) != _RETIRE_CLOSURE_MISMATCH_CODE
+            ):
+                raise
+            try:
+                history = self._client.playbill_claim_history(self._instance_id, claim_id)
+                cached = self._retirement_submissions.get(claim_id)
+                if cached is None:
+                    submitted_request, submitted_operation_digest = (
+                        self._retirement_submission_from_history(
+                            claim_id=claim_id,
+                            request=request,
+                            entries=history.entries,
+                        )
+                    )
+                else:
+                    self._retirement_submissions.move_to_end(claim_id)
+                    submitted_request, submitted_operation_digest = cached
+                replay_request = request.model_copy(
+                    update={"expected_coordinate": submitted_request.expected_coordinate}
+                )
+                if replay_request != submitted_request:
+                    raise ValueError("retirement request differs from submitted operation")
+                replayed = self._client.retire_playbill_claim(
+                    self._instance_id,
+                    claim_id,
+                    request=replay_request.model_dump(mode="json"),
+                )
+            except (CoreError, KeyError, TypeError, ValueError):
+                raise original from None
+            if (
+                getattr(replayed, "outcome", None) != "already_retired"
+                or replayed.operation_digest != submitted_operation_digest
+            ):
+                raise original
+            self._retirement_submissions.pop(claim_id, None)
+            return replayed
+        if mode == "submit" and getattr(result, "outcome", None) == "proposed":
+            self._retirement_submissions[claim_id] = (request, result.operation_digest)
+            self._retirement_submissions.move_to_end(claim_id)
+            while len(self._retirement_submissions) > _RETIREMENT_SUBMISSION_CACHE_LIMIT:
+                self._retirement_submissions.popitem(last=False)
+        return result
+
+    def _retirement_submission_from_history(
+        self,
+        *,
+        claim_id: str,
+        request: ClaimRetireRequestV1,
+        entries: Sequence[Mapping[str, Any]],
+    ) -> tuple[ClaimRetireRequestV1, str]:
+        """Recover one accepted retirement's original request coordinate and digest."""
+
+        retirement = next(
+            (entry for entry in entries if entry.get("lifecycle_state") == "retired"),
+            None,
         )
+        if retirement is None:
+            raise ValueError("accepted Claim history has no retirement")
+        candidate_digest = retirement.get("candidate_digest")
+        predecessor_digest = retirement.get("predecessor_digest")
+        if not isinstance(candidate_digest, str) or not isinstance(predecessor_digest, str):
+            raise ValueError("accepted retirement history lacks candidate evidence")
+
+        proposals = self._client.list_playbill_proposals(self._instance_id, status="settled")
+        matches = tuple(
+            entry
+            for entry in proposals.entries
+            if entry.candidate_digest == candidate_digest and entry.terminal_reason == "accepted"
+        )
+        if len(matches) != 1:
+            raise ValueError("accepted retirement candidate does not name one proposal")
+        inspection = self._client.inspect_playbill_proposal(
+            self._instance_id, matches[0].proposal_id
+        )
+        proposal = inspection.proposal
+        admission = proposal.get("admission")
+        candidate = proposal.get("candidate")
+        if not isinstance(admission, Mapping) or not isinstance(candidate, Mapping):
+            raise ValueError("accepted retirement proposal evidence is incomplete")
+        if candidate.get("candidate_digest") != candidate_digest:
+            raise ValueError("accepted retirement proposal candidate differs from history")
+
+        law_evidence = candidate.get("law_evidence")
+        if not isinstance(law_evidence, list) or not law_evidence:
+            raise ValueError("accepted retirement candidate lacks law coordinates")
+        coordinates = {
+            json.dumps(item.get("evaluation_coordinate"), sort_keys=True, separators=(",", ":"))
+            for item in law_evidence
+            if isinstance(item, Mapping) and isinstance(item.get("evaluation_coordinate"), Mapping)
+        }
+        if len(coordinates) != 1:
+            raise ValueError("accepted retirement candidate mixes law coordinates")
+        coordinate_payload = json.loads(next(iter(coordinates)))
+        coordinate_payload["tag"] = "playbill-accepted-coordinate-v1"
+        coordinate = AcceptedCoordinate.model_validate(coordinate_payload)
+        if admission.get("proposed_base_oid") != coordinate.git_oid:
+            raise ValueError("accepted retirement proposal base differs from its law coordinate")
+
+        actor_id = admission.get("actor_id")
+        target_ref = admission.get("target_ref")
+        if not isinstance(actor_id, str) or not isinstance(target_ref, str):
+            raise ValueError("accepted retirement proposal lacks operation attribution")
+        target_prefix = f"refs/proposals/{actor_id}/claim-retire-"
+        if not target_ref.startswith(target_prefix):
+            raise ValueError("accepted retirement proposal has another operation family")
+        operation_digest = "sha256:" + target_ref.removeprefix(target_prefix)
+        Sha256Value.from_tagged(operation_digest)
+        root = ClaimRetireDependentV1(
+            artifact_identity=ArtifactIdentity(kind="Claim", name=claim_id),
+            predecessor_digest=predecessor_digest,
+            reason=request.reason,
+            effective_until=request.effective_until,
+        )
+        reproduced = typed_digest(
+            Sha256Value,
+            _CLAIM_RETIRE_OPERATION_DOMAIN,
+            {
+                "actor_principal_id": actor_id,
+                "expected_accepted_coordinate": coordinate.model_dump(mode="json"),
+                "root": root.model_dump(mode="json"),
+                "dependents": [item.model_dump(mode="json") for item in request.dependents],
+            },
+        ).tagged
+        if reproduced != operation_digest:
+            raise ValueError("retirement request differs from accepted operation")
+        return request.model_copy(update={"expected_coordinate": coordinate}), operation_digest
 
     def procedure(
         self,

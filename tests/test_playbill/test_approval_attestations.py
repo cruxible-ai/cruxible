@@ -191,7 +191,10 @@ def test_creator_cannot_submit_or_join_voluntary_approvals() -> None:
     reviewer_private, reviewer = _key("reviewer", ("reviewer",))
     candidate = _candidate()
     creator = _submission(owner_private, candidate, signer_id="owner")
-    with pytest.raises(ApprovalIntegrityError, match="creator_forbidden"):
+    with pytest.raises(
+        ApprovalIntegrityError,
+        match="creator_forbidden.*playbill proposal activate",
+    ):
         verify_candidate_approvals(
             candidate,
             (creator,),

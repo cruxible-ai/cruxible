@@ -90,6 +90,7 @@ from cruxible_core.service.playbill_evidence import (
     service_evaluate_playbill_claim_verdict,
 )
 from cruxible_core.service.playbill_query import build_accepted_query_facts
+from cruxible_core.service.playbill_search import claim_resolution_statuses
 
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
 NEXT_RESULT_DIGEST_DOMAIN = "playbill-next-result-v1"
@@ -892,6 +893,10 @@ def _claim_items(
                         "currency": verdict.currency,
                         "predicate": claim.statement.predicate,
                         "verdict": verdict.verdict,
+                        "policy_hint": (
+                            "Review the ClaimType evidence_admission_policy; empty or "
+                            "mismatched rules commonly leave a Claim uncovered."
+                        ),
                     },
                     repair=PlaybillNextRepairV1(
                         operation="playbill.authoring.bind",
@@ -1842,19 +1847,39 @@ def _projection_items(
     if not sources:
         return ()
 
+    tree = instance.tree_at(coordinate.git_oid)
     facts = build_accepted_query_facts(instance, coordinate=coordinate)
     subjects = {subject.path: subject for subject in facts.subjects}
     providers = {provider.identity.qualified: provider for provider in facts.providers}
     claims = {row.accepted.claim.identity.qualified: row for row in facts.claims}
+    resolution_statuses = claim_resolution_statuses(
+        instance,
+        claims=tuple(row.accepted.claim for row in facts.claims),
+        at=PlaybillAcceptedCoordinate.from_internal(coordinate),
+        evaluation_time=evaluation_time,
+    )
     items: list[PlaybillNextItemV1] = []
     for source in sources:
         for marker in source.marker_summaries:
             visible = True
             stale: list[str] = []
+            retired: list[str] = []
+            overturned: list[str] = []
             for backing in marker.stamp.backing:
                 if isinstance(backing, ProjectionClaimBackingV1):
                     claim = claims.get(backing.identity.qualified)
-                    if claim is None or (
+                    if claim is None:
+                        path = claim_path(backing.identity.name)
+                        raw = tree.get(path)
+                        if (
+                            raw is not None
+                            and parse_claim(raw, path=path).lifecycle.state == "retired"
+                        ):
+                            retired.append(backing.identity.qualified)
+                            continue
+                        visible = False
+                        break
+                    if (
                         claim_row_visibility(
                             claim,
                             subject=subjects.get(claim.subject_path),
@@ -1866,6 +1891,9 @@ def _projection_items(
                     ):
                         visible = False
                         break
+                    if resolution_statuses[claim.accepted.claim.identity.name] == "overturned":
+                        overturned.append(backing.identity.qualified)
+                        continue
                     if claim.accepted.statement_digest != backing.statement_digest:
                         stale.append(backing.identity.qualified)
                 elif isinstance(backing, ProjectionQueryBackingV1):
@@ -1923,6 +1951,48 @@ def _projection_items(
                             operation="playbill.block.repin",
                             target=target,
                             required_change="verify_alignment_then_repin_or_edit",
+                            arguments=arguments,
+                        ),
+                    )
+                )
+            if retired:
+                related = tuple(sorted(retired, key=lambda value: value.encode("utf-8")))
+                items.append(
+                    _item(
+                        severity="repair",
+                        reason="projection_backing_stale",
+                        subject_identity=target,
+                        related_identities=related,
+                        detail={
+                            "source_id": source.source_id,
+                            "block_id": marker.stamp.block_id,
+                            "retired_backings": list(related),
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.block.repin",
+                            target=target,
+                            required_change="depublish_retired_backing_block",
+                            arguments=arguments,
+                        ),
+                    )
+                )
+            if overturned:
+                related = tuple(sorted(overturned, key=lambda value: value.encode("utf-8")))
+                items.append(
+                    _item(
+                        severity="repair",
+                        reason="projection_backing_stale",
+                        subject_identity=target,
+                        related_identities=related,
+                        detail={
+                            "source_id": source.source_id,
+                            "block_id": marker.stamp.block_id,
+                            "overturned_backings": list(related),
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.block.repin",
+                            target=target,
+                            required_change="depublish_overturned_backing_block",
                             arguments=arguments,
                         ),
                     )

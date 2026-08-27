@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Protocol
 
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -78,12 +79,15 @@ def _resolution_key(claim: ClaimArtifactAny) -> bytes:
     )
 
 
-def _claim_resolution_statuses(
+def claim_resolution_statuses(
     instance: PlaybillInstance,
     *,
     claims: tuple[ClaimArtifactAny, ...],
-    request: PlaybillSearchRequestV1,
+    at: PlaybillAcceptedCoordinate,
+    evaluation_time: datetime,
 ) -> dict[str, SearchStatus]:
+    """Derive each Claim's resolution status at one accepted coordinate."""
+
     live_groups: dict[bytes, list[ClaimArtifactAny]] = defaultdict(list)
     statuses: dict[str, SearchStatus] = {}
     for claim in claims:
@@ -98,8 +102,8 @@ def _claim_resolution_statuses(
             instance,
             subject=first.statement.subject,
             predicate=first.statement.predicate,
-            at=_accepted_coordinate(request),
-            evaluation_time=request.evaluation_time,
+            at=at,
+            evaluation_time=evaluation_time,
         )
         groups_by_qualifier: dict[str | None, list[ClaimArtifactAny]] = defaultdict(list)
         for claim in group:
@@ -149,7 +153,12 @@ def _claim_rows(
         include_retired=True,
     )
     claims = tuple(_claim_from_view(view) for view in listed.claims)
-    statuses = _claim_resolution_statuses(instance, claims=claims, request=request)
+    statuses = claim_resolution_statuses(
+        instance,
+        claims=claims,
+        at=_accepted_coordinate(request),
+        evaluation_time=request.evaluation_time,
+    )
     rows: list[PlaybillSearchRowV1] = []
     for claim in claims:
         kind: SearchKind = "claim"
@@ -468,5 +477,6 @@ def service_search_playbill(
 __all__ = [
     "DemandSearchProviderProtocol",
     "PlaybillSearchError",
+    "claim_resolution_statuses",
     "service_search_playbill",
 ]

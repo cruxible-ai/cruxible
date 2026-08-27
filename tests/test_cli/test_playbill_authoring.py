@@ -153,7 +153,10 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
             input: dict[str, object],
             proposal_name: str,
         ) -> contracts.PlaybillClaimTypeInputProposalResult:
-            assert (instance_id, proposal_name) == ("inst_authoring", "warn")
+            assert (instance_id, proposal_name) == (
+                "inst_authoring",
+                "project.work_item.replace_me",
+            )
             assert input["anticipated_source_ids"] == ["corpus.runbook"]
             return contracts.PlaybillClaimTypeInputProposalResult(
                 proposal=contracts.PlaybillProposalInspection(
@@ -176,14 +179,83 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
             "propose",
             "--input",
             str(payload),
-            "--name",
-            "warn",
             "--json",
         ],
     )
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["lint"]["warnings"] == [warning]
+
+
+def test_cli_examples_are_supported_and_schema_discoverable() -> None:
+    runner = CliRunner()
+
+    claim_type = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
+    retirement = runner.invoke(cli, ["playbill", "claim", "retire", "--example"])
+    create_help = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
+
+    assert claim_type.exit_code == 0, claim_type.output
+    claim_type_payload = json.loads(claim_type.stdout)
+    (rule,) = claim_type_payload["evidence_admission_policy"]["rules"]
+    assert rule["evidence_kinds"] == ["self_asserted"]
+    assert rule["capture_contract_digests"][0].startswith("sha256:")
+    assert claim_type_payload["predicate"] == "project.work_item.status"
+    assert claim_type_payload["anticipated_source_ids"] == ["repo.replace-me"]
+    assert "evidence_admission_policy.rules" in claim_type.stderr
+    assert "anticipated_source_ids" in claim_type.stderr
+
+    assert retirement.exit_code == 0, retirement.output
+    retirement_payload = json.loads(retirement.stdout)
+    assert retirement_payload["tag"] == "playbill-claim-retire-request-v1"
+    assert retirement_payload["mode"] == "preflight"
+    assert retirement_payload["expected_coordinate"]["tag"] == ("playbill-accepted-coordinate-v1")
+
+    assert create_help.exit_code == 0, create_help.output
+    assert "PAYLOAD_FILE" in create_help.output
+
+
+def test_cli_refused_stale_preflight_teaches_rebase_not_resume(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    old_coordinate = COORDINATE.model_copy(update={"git_oid": "a" * 40})
+
+    class StubClient:
+        def preflight_playbill_authoring_intent(
+            self, _instance_id: str, _intent_id: str
+        ) -> contracts.PlaybillAuthoringPreflightResult:
+            return contracts.PlaybillAuthoringPreflightResult(
+                verdict="refused",
+                certificate={
+                    "accepted_coordinate": COORDINATE.model_dump(mode="json"),
+                },
+                frontier={"diagnostics": []},
+            )
+
+        def get_playbill_authoring_intent(
+            self, _instance_id: str, _intent_id: str
+        ) -> contracts.PlaybillAuthoringIntentView:
+            return contracts.PlaybillAuthoringIntentView(
+                intent={"base_coordinate": old_coordinate.model_dump(mode="json")}
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "authoring",
+            "preflight",
+            INTENT_ID,
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert f"playbill authoring rebase {INTENT_ID}" in result.stderr
+    assert "resume does not advance" in result.stderr
 
 
 def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
@@ -418,6 +490,14 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
                 intent={"intent_id": intent_id},
                 expectation={"state": "prepared"},
                 preparation={"preparation_digest": "sha256:" + "7" * 64},
+                warnings=[
+                    contracts.PlaybillPublicationPrepareWarning(
+                        tag="playbill-publication-prepare-warning-v1",
+                        code="playbill.authoring.publication_citation_anchor_collision",
+                        source_id="repo.work-items",
+                        citation_ids=["sha256:" + "8" * 64],
+                    )
+                ],
             )
 
         def confirm_playbill_authoring_insertion(
@@ -466,6 +546,7 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
     abandoned = runner.invoke(cli, [*common, "abandon-insertion", INTENT_ID, "--json"])
 
     assert confirmed.exit_code == prepared.exit_code == abandoned.exit_code == 0
+    assert json.loads(prepared.stdout)["warnings"][0]["citation_ids"] == ["sha256:" + "8" * 64]
     assert calls == [
         (INTENT_ID, OBSERVATION),
         (INTENT_ID, OBSERVATION),

@@ -8,6 +8,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.primitives import canonical_json
 
 RuntimeCredentialPermissionMode = Literal[
@@ -775,6 +776,25 @@ class PlaybillInsertionPrepareResult(BaseModel):
     intent: dict[str, Any]
     expectation: dict[str, Any]
     preparation: dict[str, Any] | None = None
+    warnings: list["PlaybillPublicationPrepareWarning"] = Field(default_factory=list)
+
+
+class PlaybillPublicationPrepareWarning(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-publication-prepare-warning-v1"]
+    code: Literal["playbill.authoring.publication_citation_anchor_collision"]
+    source_id: str
+    citation_ids: list[str] = Field(min_length=1)
+
+    @field_validator("citation_ids")
+    @classmethod
+    def _citation_ids(cls, value: list[str]) -> list[str]:
+        if value != sorted(set(value), key=lambda item: item.encode("ascii")):
+            raise ValueError("publication warning citation IDs must be sorted and unique")
+        for item in value:
+            Sha256Value.from_tagged(item)
+        return value
 
 
 class PlaybillInsertionConfirmResultV2(BaseModel):

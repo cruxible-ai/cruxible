@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.claims import claim_artifact_digest
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBackingV1,
@@ -57,7 +58,10 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_claims import _claim_type
 from tests.test_playbill.test_query_execution_service import _instance_with_query
+from tests.test_playbill.test_reverse_drift_next import _published_world, _retire
 
 NOW = datetime(2026, 8, 16, 21, tzinfo=UTC)
 BODY = "sha256:" + hashlib.sha256(b"status: ready\n").hexdigest()
@@ -259,7 +263,6 @@ def test_missing_hidden_or_incomplete_backing_omits_the_entire_block_without_dis
     )
 
     for request in (
-        _request(accepted_world, backing=(visible,), dirty=True, permitted=("public",)),
         _request(accepted_world, backing=(visible, hidden), dirty=True),
         _request(accepted_world, backing=(visible,), dirty=True, complete=False),
         _request(
@@ -270,6 +273,118 @@ def test_missing_hidden_or_incomplete_backing_omits_the_entire_block_without_dis
         ),
     ):
         assert _projection_rows(accepted_world, request) == ()
+
+
+def test_subject_gated_claim_backing_omits_its_marker_under_instance_access(
+    accepted_world: PlaybillInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = build_accepted_query_facts
+
+    def without_visible_subjects(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
+        return original(*args, **kwargs).model_copy(update={"subjects": ()})  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next.build_accepted_query_facts",
+        without_visible_subjects,
+    )
+    request = _request(
+        accepted_world,
+        backing=(_claim_backing(accepted_world),),
+        dirty=True,
+        permitted=("instance",),
+    )
+
+    assert _projection_rows(accepted_world, request) == ()
+
+
+def test_retired_claim_backing_requires_depublication_without_access_disclosure(
+    tmp_path: Path,
+) -> None:
+    instance, owner, claim_id = _published_world(tmp_path)
+    backing = _claim_backing(instance)
+    assert backing.identity.name == claim_id
+    request = _request(instance, backing=(backing,))
+    assert _projection_rows(instance, request) == ()
+
+    _retire(instance, owner, claim_id)
+    retired_request = request.model_copy(
+        update={"at": AcceptedCoordinate.from_internal(instance.accepted_coordinate())}
+    )
+    (row,) = _projection_rows(instance, retired_request)
+    assert row.reason == "projection_backing_stale"
+    assert row.subject_identity == "corpus.runbook#status"
+    assert row.related_identities == (backing.identity.qualified,)
+    assert row.detail["retired_backings"] == [backing.identity.qualified]
+    assert row.repair.operation == "playbill.block.repin"
+    assert row.repair.required_change == "depublish_retired_backing_block"
+
+    assert retired_request.workspace_observation is not None
+    assert retired_request.workspace_observation.source_observations is not None
+    source = retired_request.workspace_observation.source_observations[0]
+    depublished = retired_request.model_copy(
+        update={
+            "workspace_observation": retired_request.workspace_observation.model_copy(
+                update={
+                    "source_observations": (source.model_copy(update={"marker_summaries": ()}),)
+                }
+            )
+        }
+    )
+    assert _projection_rows(instance, depublished) == ()
+    access_hidden = retired_request.model_copy(
+        update={
+            "access_profile": retired_request.access_profile.model_copy(
+                update={"permitted_access_classes": ("public",)}
+            )
+        }
+    )
+    assert _projection_rows(instance, access_hidden) == ()
+
+
+def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    base_type = _claim_type()
+    claim_type = base_type.model_copy(
+        update={
+            "cardinality": "many",
+            "resolution_policy": base_type.resolution_policy.model_copy(
+                update={
+                    "cardinality": "many",
+                    "eligible_verdicts": ("contradicted",),
+                    "selector": "all",
+                }
+            ),
+        }
+    )
+    direct = authoring("wi-42", "ready", with_claim_type=False)
+    direct = direct.model_copy(
+        update={
+            "statement": direct.statement.model_copy(
+                update={"claim_type_digest": claim_type_digest(claim_type).tagged}
+            ),
+            "claim_type_artifact": claim_type,
+        }
+    )
+    proposed = service_propose_playbill_claim(
+        instance,
+        authoring=direct,
+        actor_id="owner",
+        proposal_name="projection-overturned-claim",
+        timestamp=TIMESTAMP,
+    )
+    activate(instance, owner, proposed, sequence=1)
+    overturned = _claim_from_view(service_list_playbill_claims(instance).claims[0])
+    backing = ProjectionClaimBackingV1(
+        identity=overturned.identity,
+        statement_digest=proposed.statement_digest,
+    )
+
+    (row,) = _projection_rows(instance, _request(instance, backing=(backing,)))
+    assert row.reason == "projection_backing_stale"
+    assert row.related_identities == (backing.identity.qualified,)
+    assert row.detail["overturned_backings"] == [backing.identity.qualified]
+    assert row.repair.required_change == "depublish_overturned_backing_block"
 
 
 def test_query_backing_stales_only_when_its_semantic_result_changes(
