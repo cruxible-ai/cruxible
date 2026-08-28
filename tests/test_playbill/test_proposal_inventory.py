@@ -57,7 +57,6 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
             body_digest="sha256:" + "f" * 64,
             authority=DocumentAuthority(
                 required_tier="graph_write",
-                approval_roles=("owner",),
             ),
             governance_scope=("project:playbill",),
             lifecycle=DocumentLifecycle(revision=1),

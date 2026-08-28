@@ -47,7 +47,7 @@ from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
-from cruxible_client.contracts.types import PrincipalRecord, PrincipalRole
+from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 from cruxible_client.errors import DataValidationError
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
@@ -399,8 +399,8 @@ def create_host(instance_id: str | None, output_json: bool) -> None:
 @click.option("--principal-id", default="bootstrap-admin", show_default=True)
 @click.option(
     "--reviewer-key-dir",
-    default=None,
-    help="Optional independent reviewer custody directory outside the workspace.",
+    required=True,
+    help="Independent second ordinary-principal custody directory outside the workspace.",
 )
 @click.option("--recovery-key-dir", default=None, help="Optional offline recovery custody dir.")
 @click.option("--recovery-principal-id", default="recovery", show_default=True)
@@ -410,39 +410,33 @@ def create_host(instance_id: str | None, output_json: bool) -> None:
 def init_playbill(
     key_dir: str,
     principal_id: str,
-    reviewer_key_dir: str | None,
+    reviewer_key_dir: str,
     recovery_key_dir: str | None,
     recovery_principal_id: str,
     profile: str,
     output_json: bool,
 ) -> None:
-    """Create client owner and optional reviewer/recovery keys, then bootstrap daemon state."""
+    """Create two ordinary client keys and optional recovery custody, then bootstrap."""
 
     workspace = Path.cwd().resolve()
     owner = generate_client_principal_key(
         Path(key_dir).expanduser(),
         principal_id=principal_id,
-        authority_roles=("owner",),
+        kind="ordinary",
         forbidden_roots=(workspace,),
     )
-    reviewer = (
-        generate_client_principal_key(
-            Path(reviewer_key_dir).expanduser(),
-            principal_id="reviewer",
-            authority_roles=("reviewer",),
-            forbidden_roots=(workspace,),
-        )
-        if reviewer_key_dir is not None
-        else None
+    reviewer = generate_client_principal_key(
+        Path(reviewer_key_dir).expanduser(),
+        principal_id="reviewer",
+        kind="ordinary",
+        forbidden_roots=(workspace,),
     )
-    principals = [owner.principal]
-    if reviewer is not None:
-        principals.append(reviewer.principal)
+    principals = [owner.principal, reviewer.principal]
     if recovery_key_dir is not None:
         recovery = generate_client_principal_key(
             Path(recovery_key_dir).expanduser(),
             principal_id=recovery_principal_id,
-            authority_roles=("recovery",),
+            kind="recovery",
             forbidden_roots=(workspace,),
         )
         principals.append(recovery.principal)
@@ -460,9 +454,8 @@ def init_playbill(
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
     click.echo(f"Owner public key: {owner.principal.public_key}")
     click.echo(f"Owner private key retained locally at: {owner.private_key_path}")
-    if reviewer is not None:
-        click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
-        click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
+    click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
+    click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
 
 
 @playbill_group.group("body")
@@ -963,7 +956,7 @@ def propose_sources(
 
 @playbill_group.group("principal")
 def principal_group() -> None:
-    """List and govern owner/reviewer/recovery public keys."""
+    """List and govern ordinary/recovery public keys."""
 
 
 @principal_group.command("list")
@@ -980,12 +973,11 @@ def list_principals(output_json: bool) -> None:
 @principal_group.command("add")
 @click.argument("principal_id")
 @click.option(
-    "--role",
-    "roles",
-    type=click.Choice(("owner", "reviewer", "recovery")),
-    multiple=True,
-    required=True,
-    help="Explicit authority role; repeat only for a legal owner/reviewer combination.",
+    "--kind",
+    type=click.Choice(("ordinary", "recovery")),
+    default="ordinary",
+    show_default=True,
+    help="Closed principal kind; daemon is instance-owned.",
 )
 @click.option("--key-dir", required=True)
 @click.option("--name", "proposal_name", required=True)
@@ -993,18 +985,14 @@ def list_principals(output_json: bool) -> None:
 @handle_errors
 def add_principal(
     principal_id: str,
-    roles: tuple[str, ...],
+    kind: str,
     key_dir: str,
     proposal_name: str,
     output_json: bool,
 ) -> None:
-    """Generate a client-held key and propose owner-approved principal registration."""
+    """Generate a client-held key and propose principal registration."""
 
-    if len(set(roles)) != len(roles):
-        raise click.BadParameter(
-            "principal authority roles must not be repeated", param_hint="--role"
-        )
-    authority_roles = cast(tuple[PrincipalRole, ...], tuple(sorted(roles)))
+    principal_kind = cast(PrincipalKind, kind)
     try:
         ref_name = canonical_proposal_ref_name(proposal_name)
     except ValueError as exc:
@@ -1017,7 +1005,7 @@ def add_principal(
         material = generate_client_principal_key(
             Path(key_dir).expanduser(),
             principal_id=principal_id,
-            authority_roles=authority_roles,
+            kind=principal_kind,
             forbidden_roots=(Path.cwd(),),
         )
         return client.propose_playbill_principal_change(
@@ -1045,7 +1033,7 @@ def _principal_successor(
         material = generate_client_principal_key(
             Path(key_dir).expanduser(),
             principal_id=target_id,
-            authority_roles=target.authority_roles,
+            kind=target.kind,
             forbidden_roots=(Path.cwd(),),
         )
         return client.propose_playbill_principal_change(

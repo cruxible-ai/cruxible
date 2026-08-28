@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
@@ -31,14 +31,6 @@ def descriptor_claim_type(predicate: DescriptorPredicate) -> ClaimType:
     """Expand one reviewed descriptor seed into its complete ordinary ClaimType."""
 
     relation = predicate in {"semantic.distinct_from", "semantic.related_to"}
-    authority = ArtifactAuthority(
-        propose_roles=(
-            ("owner", "tagger")
-            if predicate in {"semantic.related_to", "semantic.tag"}
-            else ("owner",)
-        ),
-        approve_roles=("owner",),
-    )
     capture_digest = capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
     return ClaimType(
         identity=ArtifactIdentity(kind="ClaimType", name=predicate),
@@ -75,7 +67,6 @@ def descriptor_claim_type(predicate: DescriptorPredicate) -> ClaimType:
             eligible_verdicts=("supported",),
             selector="all",
         ),
-        authority=authority,
     )
 
 

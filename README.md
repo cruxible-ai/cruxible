@@ -142,14 +142,15 @@ export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat /tmp/cruxible-playbill-bootstrap)"
 uv run cruxible playbill host create --instance-id playbill-demo
 uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
+  --reviewer-key-dir /tmp/cruxible-playbill-reviewer \
   --principal-id bootstrap-admin
 uv run cruxible playbill document list
 ~~~
 
-The init command prints the private-key path. The daemon receives the public key
-only. Pass optional `--reviewer-key-dir DIR` to generate an independent reviewer
-for voluntary approval attestations. See the [Quickstart](docs/quickstart.md)
-for a complete Document proposal and activation.
+The init command prints both private-key paths. The daemon receives only the two
+public ordinary-principal records. `--reviewer-key-dir DIR` is required so the
+genesis registry has independent client custody. See the
+[Quickstart](docs/quickstart.md) for a complete Document proposal and activation.
 
 ## Security boundaries
 

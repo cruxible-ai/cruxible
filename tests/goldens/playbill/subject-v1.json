@@ -1,15 +1,7 @@
 {
-  "artifact_digest": "sha256:3cbc34b2e69cc6b6e55c2ef14b47f2e109549d80b6b8fae7cbfe9bfd3974ec6e",
+  "artifact_digest": "sha256:1ea2129d38c4a67085a03887df28055b1d8c3df408fd66047d25736a2db9c3ae",
   "wire": {
     "artifact_format": "playbill-subject-v1",
-    "authority": {
-      "approve_roles": [
-        "owner"
-      ],
-      "propose_roles": [
-        "owner"
-      ]
-    },
     "identity": {
       "kind": "Subject",
       "name": "project.work_item/wi-123"

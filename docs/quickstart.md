@@ -41,13 +41,14 @@ Initialize Playbill and generate an owner key outside the repository:
 ~~~bash
 uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
+  --reviewer-key-dir /tmp/cruxible-playbill-reviewer \
   --principal-id bootstrap-admin
 ~~~
 
-The private key remains in its client custody directory. The daemon receives
-only the public principal record. Pass optional `--reviewer-key-dir DIR` to
-generate a second Principal when the organization wants to record voluntary
-independent approvals.
+Both private keys remain in their client custody directories. The daemon
+receives only the two public ordinary-principal records. The required
+`--reviewer-key-dir DIR` establishes independent custody at genesis; either
+ordinary principal may later record a voluntary approval.
 
 ## Govern a Document
 

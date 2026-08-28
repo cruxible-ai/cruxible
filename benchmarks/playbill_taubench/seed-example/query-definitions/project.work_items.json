@@ -1,13 +1,5 @@
 {
   "artifact_format": "playbill-query-definition-v1",
-  "authority": {
-    "approve_roles": [
-      "owner"
-    ],
-    "propose_roles": [
-      "owner"
-    ]
-  },
   "dedupe": "subject",
   "default_budgets": {
     "max_paths": null,
@@ -58,7 +50,7 @@
   "parameters": [],
   "pins": [
     {
-      "artifact_digest": "sha256:dcbc9d7eed4c631d427d49fd8bce593f6fd4ad37714bc1f25caae86d60d8d064",
+      "artifact_digest": "sha256:b284bc52c8697c597357a13e4489d29566285d47caa9736b23411e22eea48f8a",
       "role": "claim-type",
       "target": {
         "kind": "ClaimType",

@@ -29,7 +29,6 @@ def _accept_document(client: TestClient, instance_id: str, key_path: Path) -> di
         body_digest=stored.json()["digest"],
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner",),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),

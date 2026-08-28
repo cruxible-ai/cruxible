@@ -64,17 +64,17 @@ Allocates an empty daemon-owned host and remembers it.
 ## playbill init
 
 ~~~text
-cruxible playbill init --key-dir DIR [--reviewer-key-dir DIR]
+cruxible playbill init --key-dir DIR --reviewer-key-dir DIR
   [--principal-id ID]
   [--recovery-key-dir DIR]
   [--recovery-principal-id ID]
   [--profile local|cloud]
 ~~~
 
-Generates a client-held owner key outside the workspace and bootstraps the ledger
-with its public principal record. `--reviewer-key-dir` optionally generates an
-independent reviewer for voluntary approval attestations. The optional recovery
-key remains lifecycle-only.
+Generates two client-held ordinary keys outside the workspace and bootstraps the
+ledger with their public principal records. `--reviewer-key-dir` is required and
+names the independent second custody directory. The optional recovery key
+remains lifecycle-only.
 
 ## playbill body
 
@@ -438,7 +438,7 @@ exits nonzero; the daemon never receives the workspace path.
 
 ~~~text
 cruxible playbill principal list
-cruxible playbill principal add PRINCIPAL_ID --role reviewer --key-dir DIR --name NAME
+cruxible playbill principal add PRINCIPAL_ID --kind ordinary --key-dir DIR --name NAME
 cruxible playbill principal rotate ...
 cruxible playbill principal revoke ...
 cruxible playbill principal recover ...
@@ -456,9 +456,9 @@ actor> --key <that actor's current private key> --yes`, then
 the signer is the actor performing the operation, never the new or
 locked-out principal. Registration neither
 grants authority immediately nor sends a private key to the daemon. Other
-non-creator principals may record additional voluntary approvals. `--role`
-is explicit and may be `owner`, `reviewer`, or `recovery`. Recovery cannot
-approve ordinary Document candidates.
+non-creator principals may record additional voluntary approvals. `--kind`
+is explicit and may be `ordinary` or `recovery`; the daemon kind is
+instance-owned. Recovery principals cannot approve ordinary Document candidates.
 
 ## playbill sources
 

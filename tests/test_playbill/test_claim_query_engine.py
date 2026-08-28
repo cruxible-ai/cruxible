@@ -79,7 +79,6 @@ from cruxible_core.playbill.query.engine import (
     resolve_query_parameters,
 )
 from tests.test_playbill.test_query_definitions import (
-    OWNER_AUTHORITY,
     REVIEWER_PREDICATE,
     STATUS_PREDICATE,
     accepted_query,
@@ -108,7 +107,6 @@ def subject(kind: str, identifier: str) -> AcceptedSubject:
         identity=ArtifactIdentity(kind="Subject", name=f"{kind}/{identifier}"),
         subject_kind=kind,
         subject_id=identifier,
-        authority=OWNER_AUTHORITY,
     )
     return AcceptedSubject(
         path=subject_path(kind, identifier),
@@ -157,7 +155,6 @@ def claim_fact(
                 observed_at=NOW,
             ),
         ),
-        authority=OWNER_AUTHORITY,
         pins=(ArtifactPin(role="claim-type", target=contract.identity, artifact_digest=digest),),
     )
     return ClaimFactRowV1(
@@ -304,7 +301,6 @@ def typed_item_query(
         ),
         default_budgets=QueryBudgetsV1(max_results=10, max_traversal_depth=0),
         maximum_budgets=QueryBudgetsV1(max_results=50, max_traversal_depth=0),
-        authority=OWNER_AUTHORITY,
         pins=(claim_type_pin_for(predicate, object_kind=object_kind),),
     )
 
@@ -344,7 +340,6 @@ def all_items_query(**overrides: object) -> QueryDefinitionV1:
         ),
         "default_budgets": QueryBudgetsV1(max_results=10, max_traversal_depth=0),
         "maximum_budgets": QueryBudgetsV1(max_results=50, max_traversal_depth=0),
-        "authority": OWNER_AUTHORITY,
         "pins": (
             ArtifactPin(
                 role="claim-type",

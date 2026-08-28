@@ -37,7 +37,6 @@ from cruxible_client.contracts.query.grammar import (
 from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 from tests.test_playbill._modeling_parity_support import (
     EVALUATION_TIME,
-    PARITY_AUTHORITY,
     claim_fact,
     claim_type_pin,
     facts,
@@ -261,7 +260,6 @@ def work_queue_query() -> QueryDefinitionV1:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
         maximum_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
-        authority=PARITY_AUTHORITY,
         pins=_work_item_pins(WI_PRIORITY, WI_STATUS, WI_SUMMARY, WI_TITLE, WI_TYPE),
     )
 
@@ -317,7 +315,6 @@ def _note_query(
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
         maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
-        authority=PARITY_AUTHORITY,
         pins=(
             claim_type_pin(
                 SN_ABOUT_WORK_ITEM,
@@ -391,7 +388,6 @@ def work_item_status_query() -> QueryDefinitionV1:
         evaluation_policy=_ONE_POLICY,
         default_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
-        authority=PARITY_AUTHORITY,
         pins=_work_item_pins(WI_STATUS),
     )
 
@@ -493,7 +489,6 @@ def notes_without_review_query() -> QueryDefinitionV1:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
         maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
-        authority=PARITY_AUTHORITY,
         pins=(
             claim_type_pin(
                 SN_ABOUT_REVIEW_REQUEST,
@@ -569,7 +564,6 @@ def notes_on_open_review_query() -> QueryDefinitionV1:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=2),
         maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=2),
-        authority=PARITY_AUTHORITY,
         pins=(
             claim_type_pin(RR_STATUS, subject_kinds=(REVIEW_REQUEST,)),
             claim_type_pin(
@@ -665,7 +659,6 @@ def work_items_for_area_query() -> QueryDefinitionV1:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
         maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
-        authority=PARITY_AUTHORITY,
         pins=(
             claim_type_pin(
                 WI_TARGETS_AREA,
@@ -789,7 +782,6 @@ def incident_work_items_query() -> QueryDefinitionV1:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
         maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=1),
-        authority=PARITY_AUTHORITY,
         pins=(
             claim_type_pin(
                 SWI_ADDRESSES_INCIDENT,
@@ -855,7 +847,6 @@ def open_incidents_by_severity_query() -> QueryDefinitionV1:
         evaluation_policy=_MANY_POLICY,
         default_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=0),
         maximum_budgets=QueryBudgetsV1(max_results=200, max_traversal_depth=0),
-        authority=PARITY_AUTHORITY,
         pins=(
             claim_type_pin(INC_SEVERITY, subject_kinds=(INCIDENT,)),
             claim_type_pin(INC_STATUS, subject_kinds=(INCIDENT,)),

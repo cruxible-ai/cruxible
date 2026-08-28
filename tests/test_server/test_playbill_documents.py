@@ -43,7 +43,7 @@ def test_http_document_lifecycle_and_explanation(
         title="Playbill design",
         media_type="text/markdown",
         body_digest=body_digest,
-        authority=DocumentAuthority(required_tier="graph_write", approval_roles=("owner",)),
+        authority=DocumentAuthority(required_tier="graph_write"),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),
     )
@@ -153,7 +153,7 @@ def test_principal_display_name_is_sanitized_and_invalid_ref_is_a_typed_400(
     principal = PrincipalRecord(
         principal_id="reviewer",
         public_key="1" * 64,
-        authority_roles=("reviewer",),
+        kind="ordinary",
     )
     proposed = client.post(
         f"/api/v1/{instance_id}/playbill/principals/proposals",
@@ -209,7 +209,7 @@ def test_residual_proposal_ref_validation_is_a_typed_http_400(
         title="Residual validation",
         media_type="text/markdown",
         body_digest=body.digest,
-        authority=DocumentAuthority(required_tier="graph_write", approval_roles=("owner",)),
+        authority=DocumentAuthority(required_tier="graph_write"),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),
     )
@@ -262,7 +262,6 @@ def test_http_permission_modes_separate_read_store_propose_approval_and_activati
         body_digest=stored.json()["digest"],
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner",),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),

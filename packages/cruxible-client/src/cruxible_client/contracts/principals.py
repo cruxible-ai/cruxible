@@ -35,9 +35,7 @@ class PrincipalRegistrySnapshot(BaseModel):
         identifiers = [principal.principal_id for principal in self.principals]
         if identifiers != sorted(set(identifiers), key=lambda item: item.encode("utf-8")):
             raise ValueError("principal registry must be sorted and unique")
-        daemon = [
-            principal for principal in self.principals if "daemon" in principal.authority_roles
-        ]
+        daemon = [principal for principal in self.principals if principal.kind == "daemon"]
         if len(daemon) != 1 or daemon[0].principal_id != "daemon":
             raise ValueError("principal registry requires exactly the daemon principal")
         public_keys = [principal.public_key for principal in self.principals]

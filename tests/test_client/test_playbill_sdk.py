@@ -24,7 +24,6 @@ from cruxible_client.authoring.blocks import (
 )
 from cruxible_client.authoring.sdk_types import IncompatibleDaemonVersion
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
 )
@@ -242,7 +241,6 @@ entries:
     media_type: text/markdown
     compiler_profile: document-v1
     required_tier: governed_write
-    approval_roles: [owner]
     governance_scope: [Document:runbook]
 """,
         encoding="utf-8",
@@ -696,10 +694,8 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
         workspace=tmp_path,
         clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
     )
-    authority = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
     subject = pb.subject(
         subject="secops.policy/patch-sla",
-        authority=authority,
         pins=(),
         lifecycle=ArtifactLifecycle(),
     )
@@ -719,7 +715,6 @@ def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
             eligible_verdicts=("supported",),
             selector="only_contender",
         ),
-        authority=authority,
         pins=(),
         evidence_freshness=None,
     )
@@ -761,7 +756,6 @@ def test_claim_type_builder_selects_v4_for_attestation_consequences(tmp_path: Pa
         workspace=tmp_path,
         clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
     )
-    authority = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
     policy = ClaimAttestationConsequencePolicyV1(
         rules=(
             ClaimAttestationConsequenceRuleV1(
@@ -788,7 +782,6 @@ def test_claim_type_builder_selects_v4_for_attestation_consequences(tmp_path: Pa
             eligible_verdicts=("supported",),
             selector="only_contender",
         ),
-        authority=authority,
         pins=(),
         evidence_freshness=None,
         attestation_consequence_policy=policy,

@@ -72,8 +72,8 @@ def _canonical_tuple(values: tuple[object, ...], *, label: str) -> tuple[object,
     return normalized
 
 
-class EvidenceRequirementV1(_StrictPolicyModel):
-    tag: Literal["playbill-evidence-requirement-v1"] = "playbill-evidence-requirement-v1"
+class CorroborationRequirementV1(_StrictPolicyModel):
+    tag: Literal["playbill-corroboration-requirement-v1"] = "playbill-corroboration-requirement-v1"
     requirement_id: str
     query_definition_digest: str
     min_count: int = Field(ge=1)
@@ -81,7 +81,7 @@ class EvidenceRequirementV1(_StrictPolicyModel):
     @field_validator("requirement_id")
     @classmethod
     def _requirement_id(cls, value: str) -> str:
-        return governance_identifier(value, label="evidence requirement_id")
+        return governance_identifier(value, label="corroboration requirement_id")
 
     @field_validator("query_definition_digest")
     @classmethod
@@ -129,14 +129,14 @@ class FreezeRequirementV1(_StrictPolicyModel):
 
 
 PolicyRequirementV1 = Annotated[
-    EvidenceRequirementV1 | FreezeRequirementV1,
+    CorroborationRequirementV1 | FreezeRequirementV1,
     Field(discriminator="tag"),
 ]
 
 
 class ClaimAdmissionPolicyV1(_StrictPolicyModel):
     tag: Literal["playbill-claim-admission-policy-v1"] = "playbill-claim-admission-policy-v1"
-    evidence_requirements: tuple[EvidenceRequirementV1, ...] = ()
+    corroboration_requirements: tuple[CorroborationRequirementV1, ...] = ()
     freeze_requirements: tuple[FreezeRequirementV1, ...] = ()
 
     @model_validator(mode="after")
@@ -144,7 +144,7 @@ class ClaimAdmissionPolicyV1(_StrictPolicyModel):
         groups = tuple(
             tuple(item.requirement_id for item in group)
             for group in (
-                self.evidence_requirements,
+                self.corroboration_requirements,
                 self.freeze_requirements,
             )
         )
@@ -250,23 +250,72 @@ class ClaimEvidenceAdmissionPolicyV1(_StrictPolicyModel):
         return value
 
 
-class QueryEvidenceResultV1(_StrictPolicyModel):
+class ClaimCorroborationResultV1(_StrictPolicyModel):
+    tag: Literal["playbill-claim-corroboration-result-v1"] = (
+        "playbill-claim-corroboration-result-v1"
+    )
     requirement_id: str
     query_definition_digest: str
+    parameter_digest: str
     result_digest: str
-    matching_count: int = Field(ge=0)
-    truncated: bool = False
+    query_verdict: Literal["completed", "refused"]
+    query_refusal_code: str | None = None
+    observed_count: int = Field(ge=0)
+    truncated: bool
+    satisfied: bool
 
     @field_validator("requirement_id")
     @classmethod
     def _requirement_id(cls, value: str) -> str:
-        return governance_identifier(value, label="query evidence requirement_id")
+        return governance_identifier(value, label="claim corroboration requirement_id")
 
-    @field_validator("query_definition_digest", "result_digest")
+    @field_validator("query_definition_digest", "parameter_digest", "result_digest")
     @classmethod
     def _digest(cls, value: str) -> str:
         Sha256Value.from_tagged(value)
         return value
+
+    @model_validator(mode="after")
+    def _verdict_shape(self) -> "ClaimCorroborationResultV1":
+        if (self.query_verdict == "refused") != (self.query_refusal_code is not None):
+            raise ValueError("a refused corroboration query names exactly one refusal code")
+        if self.query_verdict == "refused" and (self.observed_count != 0 or self.satisfied):
+            raise ValueError("a refused corroboration query observes no rows and is unsatisfied")
+        return self
+
+
+class ClaimAdmissionEvaluationAccountV1(_StrictPolicyModel):
+    tag: Literal["playbill-claim-admission-evaluation-account-v1"] = (
+        "playbill-claim-admission-evaluation-account-v1"
+    )
+    claim_path: str
+    claim_type_identity: str
+    claim_type_digest: str
+    policy_digest: str
+    corroboration_results: tuple[ClaimCorroborationResultV1, ...] = ()
+    satisfied: bool
+
+    @field_validator("claim_type_digest", "policy_digest")
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @field_validator("corroboration_results")
+    @classmethod
+    def _results(
+        cls, value: tuple[ClaimCorroborationResultV1, ...]
+    ) -> tuple[ClaimCorroborationResultV1, ...]:
+        ids = tuple(item.requirement_id for item in value)
+        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("corroboration results must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _satisfaction(self) -> "ClaimAdmissionEvaluationAccountV1":
+        if self.satisfied and not all(item.satisfied for item in self.corroboration_results):
+            raise ValueError("a satisfied admission account cannot contain an unsatisfied result")
+        return self
 
 
 class ClaimAdmissionCandidateContextV1(_StrictPolicyModel):
@@ -274,7 +323,7 @@ class ClaimAdmissionCandidateContextV1(_StrictPolicyModel):
     declared_predicates: tuple[str, ...]
     parent_values: dict[str, tuple[object, ...]]
     candidate_values: dict[str, tuple[object, ...]]
-    query_results: tuple[QueryEvidenceResultV1, ...] = ()
+    corroboration_results: tuple[ClaimCorroborationResultV1, ...] = ()
 
     @field_validator("declared_predicates")
     @classmethod
@@ -292,14 +341,14 @@ class ClaimAdmissionCandidateContextV1(_StrictPolicyModel):
             result[predicate] = _canonical_tuple(value[predicate], label="projected values")
         return result
 
-    @field_validator("query_results")
+    @field_validator("corroboration_results")
     @classmethod
-    def _query_results(
-        cls, value: tuple[QueryEvidenceResultV1, ...]
-    ) -> tuple[QueryEvidenceResultV1, ...]:
+    def _corroboration_results(
+        cls, value: tuple[ClaimCorroborationResultV1, ...]
+    ) -> tuple[ClaimCorroborationResultV1, ...]:
         ids = tuple(item.requirement_id for item in value)
         if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("query evidence results must be sorted and unique")
+            raise ValueError("claim corroboration results must be sorted and unique")
         return value
 
 
@@ -308,7 +357,7 @@ class ClaimAdmissionCandidateResultV1(_StrictPolicyModel):
         "playbill-claim-admission-candidate-result-v1"
     )
     verdict: Literal["eligible", "refused"]
-    evidence_results: tuple[QueryEvidenceResultV1, ...] = ()
+    corroboration_results: tuple[ClaimCorroborationResultV1, ...] = ()
     refusal_codes: tuple[str, ...] = ()
 
 
@@ -316,13 +365,28 @@ def evaluate_claim_admission_candidate(
     policy: ClaimAdmissionPolicyV1,
     context: ClaimAdmissionCandidateContextV1,
 ) -> ClaimAdmissionCandidateResultV1:
-    """Evaluate freeze requirements while query-backed evidence remains dormant."""
+    """Evaluate deterministic corroboration and freeze requirements together."""
 
     declared = set(context.declared_predicates)
     policy_predicates = {item.while_predicate for item in policy.freeze_requirements} | {
         predicate for item in policy.freeze_requirements for predicate in item.frozen_predicates
     }
     refusal_codes: set[str] = set()
+    results_by_id = {item.requirement_id: item for item in context.corroboration_results}
+    for requirement in policy.corroboration_requirements:
+        result = results_by_id.get(requirement.requirement_id)
+        if result is None or result.query_definition_digest != requirement.query_definition_digest:
+            refusal_codes.add("playbill.claim.corroboration_query_unresolved")
+            continue
+        expected_satisfied = (
+            result.query_verdict == "completed" and result.observed_count >= requirement.min_count
+        )
+        if result.satisfied != expected_satisfied:
+            raise ValueError("corroboration result satisfaction does not reproduce")
+        elif result.query_verdict == "refused":
+            refusal_codes.add("playbill.claim.corroboration_query_refused")
+        elif not result.satisfied:
+            refusal_codes.add("playbill.claim.corroboration_insufficient")
     if policy_predicates - declared:
         refusal_codes.add("playbill.claim_policy.unknown_predicate")
 
@@ -343,7 +407,7 @@ def evaluate_claim_admission_candidate(
     codes = tuple(sorted(refusal_codes, key=lambda item: item.encode("utf-8")))
     return ClaimAdmissionCandidateResultV1(
         verdict="refused" if codes else "eligible",
-        evidence_results=(),
+        corroboration_results=context.corroboration_results,
         refusal_codes=codes,
     )
 
@@ -603,9 +667,10 @@ __all__ = [
     "ClaimResolutionResultV1",
     "ClaimVerdict",
     "EvidenceAdmissionInputV1",
-    "EvidenceRequirementV1",
+    "ClaimAdmissionEvaluationAccountV1",
+    "ClaimCorroborationResultV1",
+    "CorroborationRequirementV1",
     "FreezeRequirementV1",
-    "QueryEvidenceResultV1",
     "ResolutionContenderV1",
     "evaluate_claim_admission_candidate",
     "evaluate_claim_evidence_admission",

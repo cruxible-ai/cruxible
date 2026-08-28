@@ -36,7 +36,7 @@ def _key(principal_id: str, roles: tuple[str, ...]):
     record = PrincipalRecord(
         principal_id=principal_id,
         public_key=private.public_key().public_bytes_raw().hex(),
-        authority_roles=roles,
+        kind=roles[0] if roles[0] in {"daemon", "recovery"} else "ordinary",
     )
     return private, record
 
@@ -252,8 +252,11 @@ def test_nondefault_committed_requirement_refuses_at_the_wire_boundary() -> None
         _candidate(approval_requirements=(ApprovalRequirement(role="reviewer"),))
 
 
-def test_principal_role_model_prevents_recovery_or_daemon_authority_expansion() -> None:
-    with pytest.raises(ValueError, match="recovery authority"):
-        _key("recovery", ("owner", "recovery"))
-    with pytest.raises(ValueError, match="daemon authority"):
-        _key("daemon", ("daemon", "owner"))
+def test_principal_kind_is_closed_and_retired_role_wire_refuses() -> None:
+    _, ordinary = _key("ordinary", ("owner",))
+    payload = ordinary.model_dump(mode="json")
+    payload["authority_roles"] = ["owner"]
+    with pytest.raises(ValueError, match="authority_roles"):
+        PrincipalRecord.model_validate(payload)
+    with pytest.raises(ValueError, match="kind"):
+        PrincipalRecord.model_validate({**ordinary.model_dump(mode="json"), "kind": "owner"})

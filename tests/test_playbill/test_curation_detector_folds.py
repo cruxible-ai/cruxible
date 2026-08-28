@@ -358,10 +358,10 @@ def test_provenance_concentration_is_silent_for_a_single_active_writer() -> None
 
 def test_active_writer_join_excludes_daemon_recovery_and_revoked_principals() -> None:
     principals = (
-        SimpleNamespace(status="active", authority_roles=("daemon",)),
-        SimpleNamespace(status="active", authority_roles=("owner",)),
-        SimpleNamespace(status="active", authority_roles=("recovery",)),
-        SimpleNamespace(status="revoked", authority_roles=("reviewer",)),
+        SimpleNamespace(status="active", kind="daemon"),
+        SimpleNamespace(status="active", kind="ordinary"),
+        SimpleNamespace(status="active", kind="recovery"),
+        SimpleNamespace(status="revoked", kind="ordinary"),
     )
     fake = SimpleNamespace(
         accepted_history=lambda: (

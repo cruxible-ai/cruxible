@@ -25,7 +25,7 @@ def test_client_signer_failure_stops_before_attestation_submission() -> None:
                 "signer_principal": {
                     "principal_id": "owner",
                     "public_key": "a" * 64,
-                    "authority_roles": ["owner"],
+                    "kind": "ordinary",
                     "status": "active",
                 },
                 "signer_key_history_ref": "principals/owner.yaml@" + COORDINATE["semantic_root"],

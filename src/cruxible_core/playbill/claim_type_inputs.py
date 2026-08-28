@@ -7,7 +7,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
 )
@@ -64,7 +63,6 @@ class ClaimTypeInputV1(_StrictClaimTypeInputModel):
     evidence_admission_policy: dict[str, object]
     admission_policy: dict[str, object]
     resolution_policy: dict[str, object]
-    authority: ArtifactAuthority
     pins: tuple[dict[str, object], ...] = ()
     evidence_freshness: ClaimEvidenceFreshnessV1 | None = Field(
         default=None,
@@ -152,7 +150,7 @@ def claim_type_input_example() -> ClaimTypeInputV1:
         permitted_roles=("normative", "observation"),
         evidence_admission_policy={"rules": []},
         admission_policy={
-            "evidence_requirements": [],
+            "corroboration_requirements": [],
             "freeze_requirements": [],
         },
         resolution_policy={
@@ -163,10 +161,6 @@ def claim_type_input_example() -> ClaimTypeInputV1:
             "selector": "only_contender",
             "conflict_result": "unresolved",
         },
-        authority=ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
-        ),
     )
 
 

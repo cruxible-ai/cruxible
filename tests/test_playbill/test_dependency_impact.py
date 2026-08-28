@@ -79,7 +79,6 @@ from tests.test_playbill.test_claim_query_engine import (
 )
 from tests.test_playbill.test_line_specs import _accepted_procedure, _line
 from tests.test_playbill.test_query_definitions import (
-    OWNER_AUTHORITY,
     STATUS_PREDICATE,
     accepted_query,
     active_work_query,
@@ -136,7 +135,6 @@ def _claim(
             input_claim_digests=input_digests,
             reducer_digest=REDUCER_DIGEST if input_digests else None,
         ),
-        authority=OWNER_AUTHORITY,
         pins=(ArtifactPin(role="claim-type", target=contract.identity, artifact_digest=digest),),
         lifecycle=lifecycle,
     )

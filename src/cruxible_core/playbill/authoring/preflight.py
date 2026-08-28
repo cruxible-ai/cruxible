@@ -556,6 +556,7 @@ def compute_preflight(
                 rebased=base.git_oid != current.git_oid,
                 actor_id=actor.actor_id,
                 promotion_verifier=service.promotion_verifier,
+                query_facts_provider=service.query_facts_provider,
             )
             evaluated_tree = evaluation.tree
             diagnostics.extend(_compiler_diagnostic(item) for item in evaluation.diagnostics)

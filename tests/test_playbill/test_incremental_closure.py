@@ -15,7 +15,6 @@ from __future__ import annotations
 import random
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -44,11 +43,10 @@ def _subject(
         identity=ArtifactIdentity(kind="Subject", name=f"project.work_item/{name}"),
         subject_kind="project.work_item",
         subject_id=name,
-        authority=ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",) if revision == 0 else ("owner", "reviewer"),
+        lifecycle=ArtifactLifecycle(
+            state="retired" if retired else "live",
+            predecessor_digest=(f"sha256:{revision:064x}" if revision else None),
         ),
-        lifecycle=ArtifactLifecycle(state="retired") if retired else ArtifactLifecycle(),
         pins=pins,
     )
 

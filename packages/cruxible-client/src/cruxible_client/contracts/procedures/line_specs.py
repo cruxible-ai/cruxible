@@ -10,7 +10,6 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -140,7 +139,6 @@ class LineSpecV1(_StrictLineModel):
     requested_terminal_rung: Literal[1, 2, 3]
     budgets: object
     epsilon: object
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -321,7 +319,6 @@ def evaluate_line_spec_law(
     line: LineSpecV1,
     *,
     path: str,
-    actor_roles: tuple[str, ...],
     procedure: AcceptedProcedureV1,
     interface_digests: dict[str, str],
     predecessor: AcceptedLineSpecV1 | None,

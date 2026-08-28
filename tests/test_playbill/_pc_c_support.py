@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
@@ -95,7 +94,6 @@ def capture_contract(
         provenance_rule_digest=provenance,
         evidence_kinds=("database_record",),
         source_subject_mapping_digest=mapping,
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=tuple(sorted(registry_pins, key=lambda item: (item.role, item.target.qualified))),
     )
 
@@ -118,7 +116,6 @@ def provider(
             ),
         ),
         capture_contract_digests=(capture_contract_digest(contract).tagged,),
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=(
             ArtifactPin(
                 role="capture-contract",

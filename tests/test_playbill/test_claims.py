@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -67,7 +66,6 @@ from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-16T18:30:00.000000Z"
 OBSERVED_AT = datetime(2026, 8, 16, 18, 30, tzinfo=timezone.utc)
-AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
 
 
 def _subject() -> SubjectShell:
@@ -75,7 +73,6 @@ def _subject() -> SubjectShell:
         identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-42"),
         subject_kind="project.work_item",
         subject_id="wi-42",
-        authority=AUTHORITY,
     )
 
 
@@ -107,7 +104,6 @@ def _claim_type() -> ClaimType:
             eligible_verdicts=("supported",),
             selector="only_contender",
         ),
-        authority=AUTHORITY,
     )
 
 
@@ -160,7 +156,6 @@ def _claim(
                 ),
             ),
         ),
-        authority=AUTHORITY,
         pins=tuple(
             sorted(
                 (
@@ -238,7 +233,6 @@ def test_claim_v3_digest_commits_retirement_attribution_without_moving_v2() -> N
         identity=predecessor.identity,
         statement=predecessor.statement,
         backing=predecessor.backing,
-        authority=predecessor.authority,
         pins=predecessor.pins,
         lifecycle=ArtifactLifecycle(
             state="retired",
@@ -290,7 +284,6 @@ def test_claim_v3_preserves_all_legacy_v1_backing_read_and_evidence_laws(
         identity=predecessor.identity,
         statement=predecessor.statement,
         backing=legacy_backing,
-        authority=predecessor.authority,
         pins=predecessor.pins,
         lifecycle=ArtifactLifecycle(
             state="retired",
@@ -433,10 +426,6 @@ def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
     accepted = instance.accepted_coordinate()
     successor = predecessor.model_copy(
         update={
-            "authority": ArtifactAuthority(
-                propose_roles=("owner",),
-                approve_roles=("owner", "reviewer"),
-            ),
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=claim_artifact_digest(predecessor).tagged
             ),
@@ -500,10 +489,6 @@ def test_service_claim_history_returns_each_accepted_lineage_entry(tmp_path: Pat
     accepted = instance.accepted_coordinate()
     successor = predecessor.model_copy(
         update={
-            "authority": ArtifactAuthority(
-                propose_roles=("owner",),
-                approve_roles=("owner", "reviewer"),
-            ),
             "lifecycle": ArtifactLifecycle(
                 predecessor_digest=claim_artifact_digest(predecessor).tagged
             ),

@@ -391,7 +391,6 @@ def _successor_claim(
     return claim.model_copy(
         update={
             "statement": statement,
-            "authority": successor_type.authority,
             "pins": tuple(pins),
             "lifecycle": ArtifactLifecycle(
                 state=(
@@ -560,7 +559,6 @@ def _canonical_successor_bytes(
                 identity=current_claim.identity,
                 statement=statement,
                 backing=current_claim.backing,
-                authority=successor_type.authority,
                 pins=pins,
                 lifecycle=ArtifactLifecycle(
                     state="retired",
@@ -597,8 +595,6 @@ def _canonical_successor_bytes(
                 ),
                 "predecessor_digest": current.artifact_digest,
             }
-        if current.artifact_kind == "claim":
-            payload["authority"] = successor_type.authority.model_dump(mode="json")
         if current.artifact_kind == "procedure":
             try:
                 definition = ProcedureDefinitionV3.model_validate(payload["definition"])
@@ -985,6 +981,7 @@ def _service_migrate_claim_type_v2(
         rebased=False,
         actor_id=actor.actor_id,
         promotion_verifier=instance.proposal_service().promotion_verifier,
+        query_facts_provider=instance.proposal_service().query_facts_provider,
     )
     if evaluation.candidate is None:
         diagnostics = tuple(item.code for item in evaluation.diagnostics)
@@ -1075,6 +1072,7 @@ def _service_migrate_claim_type_v3(
         rebased=False,
         actor_id=actor.actor_id,
         promotion_verifier=instance.proposal_service().promotion_verifier,
+        query_facts_provider=instance.proposal_service().query_facts_provider,
     )
     if evaluation.candidate is None:
         diagnostics = tuple(item.code for item in evaluation.diagnostics)

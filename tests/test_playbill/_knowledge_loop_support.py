@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import (
     DirectForeignSourceSelectionV1,
     capture_contract_digest,
@@ -49,7 +49,6 @@ EVALUATION_TIME = "2026-08-16T21:00:00+00:00"
 SUBJECT_KIND = "project.work_item"
 PREDICATE = "project.work_item.status"
 QUERY_NAME = "project.work_items"
-AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
 
 
 def subject_shell(subject_id: str) -> SubjectShell:
@@ -59,7 +58,6 @@ def subject_shell(subject_id: str) -> SubjectShell:
         identity=ArtifactIdentity(kind="Subject", name=f"{SUBJECT_KIND}/{subject_id}"),
         subject_kind=SUBJECT_KIND,
         subject_id=subject_id,
-        authority=AUTHORITY,
     )
 
 
@@ -225,7 +223,6 @@ def work_item_query(
         ),
         default_budgets=QueryBudgetsV1(max_results=10, max_traversal_depth=0),
         maximum_budgets=QueryBudgetsV1(max_results=50, max_traversal_depth=0),
-        authority=AUTHORITY,
         pins=(
             ArtifactPin(
                 role="claim-type",

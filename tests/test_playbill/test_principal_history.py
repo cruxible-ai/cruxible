@@ -33,7 +33,7 @@ def _static_principal(principal_id: str, roles: tuple[str, ...]) -> PrincipalRec
     return PrincipalRecord(
         principal_id=principal_id,
         public_key=(principal_id.encode().hex() + "00" * 32)[:64],
-        authority_roles=roles,
+        kind=roles[0] if roles[0] in {"daemon", "recovery"} else "ordinary",
     )
 
 
@@ -95,7 +95,7 @@ def test_principal_proposal_refuses_a_public_key_duplicated_from_the_registry(
     mallory = PrincipalRecord(
         principal_id="mallory",
         public_key=daemon.public_key,
-        authority_roles=("reviewer",),
+        kind="ordinary",
     )
     tree = {
         **instance._ledger.read_tree(base.git_oid),
@@ -171,7 +171,7 @@ def _replacement_key(
     return generate_client_principal_key(
         tmp_path / custody_name,
         principal_id=principal_id,
-        authority_roles=roles,
+        kind="recovery" if roles == ("recovery",) else "ordinary",
         forbidden_roots=(instance.root, tmp_path / "workspace"),
     )
 
@@ -318,6 +318,30 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
         principal_id="reviewer",
         roles=("reviewer",),
     )
+    newcomer = _replacement_key(
+        tmp_path,
+        instance,
+        custody_name="new-reviewer-custody",
+        principal_id="new-reviewer",
+        roles=("reviewer",),
+    )
+    base = instance.accepted_coordinate()
+    recovery_attempt = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="recovery"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/recovery/register-new-reviewer",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree={
+            **instance.tree_at(base.git_oid),
+            "principals/new-reviewer.yaml": render_principal(newcomer.principal),
+        },
+        timestamp="2026-08-12T15:59:00.000000Z",
+    )
+    assert recovery_attempt.candidate is None
+    assert recovery_attempt.evaluation.diagnostics[0].code == (
+        "playbill.principal.transition_unauthorized"
+    )
     instance = _settle_transition(
         instance,
         actor=recovery,
@@ -420,7 +444,7 @@ def test_recovery_label_has_no_retention_or_unconfigured_authority(tmp_path: Pat
         )
 
 
-def test_revoked_key_needs_fresh_material_and_dormant_roles_stay_immutable(
+def test_revoked_key_needs_fresh_material_and_principal_kind_stays_immutable(
     tmp_path: Path,
 ) -> None:
     managed = tmp_path / "managed-key-invariants"
@@ -482,16 +506,16 @@ def test_revoked_key_needs_fresh_material_and_dormant_roles_stay_immutable(
             timestamp="2026-08-12T18:00:00.000000Z",
         )
 
-    replacement_with_changed_roles = _replacement_key(
+    replacement_with_changed_kind = _replacement_key(
         tmp_path,
         instance,
         custody_name="third-role-change",
         principal_id="third",
-        roles=("owner",),
+        roles=("recovery",),
     )
     role_change = propose(
         "change-dormant-role",
-        replacement_with_changed_roles.principal,
+        replacement_with_changed_kind.principal,
         actor=third,
     )
     assert role_change.candidate is None

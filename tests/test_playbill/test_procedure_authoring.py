@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedures.artifacts import (
@@ -91,7 +91,7 @@ def test_accepted_claim_builder_expands_to_complete_expert_graph_golden() -> Non
 
     assert first == second
     assert first.expanded_output_digest == (
-        "sha256:0aa6b7cd26569e1b949c5f01585cb40c2cd8a2060e72fa4cd3ee7fcd8eac1e90"
+        "sha256:29cc7099436abbaf209f5c28bb28fd89b215b35b41f0fb980f78edb7d4aaf731"
     )
     assert [node.kind for node in first.definition.nodes] == ["state_tap", "guard", "project"]
     assert isinstance(first.definition.nodes[0], StateTapNodeV3)
@@ -185,7 +185,6 @@ def test_expanded_procedure_enters_only_the_ordinary_proposal_receive_path(
         identity=ArtifactIdentity(kind="Procedure", name="release-guard"),
         definition=expansion.definition,
         definition_digest=compute_procedure_definition_digest_v3(expansion.definition).tagged,
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=expansion.envelope_pins,
         activation_policy="snapshot",
     )

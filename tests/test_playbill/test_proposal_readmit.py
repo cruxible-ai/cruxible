@@ -35,7 +35,6 @@ def _shell(document_id: str, body_digest: str, *, title: str) -> DocumentShell:
         body_digest=body_digest,
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner",),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),

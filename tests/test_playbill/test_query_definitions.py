@@ -9,7 +9,6 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -76,8 +75,6 @@ STATUS_CLAIM_TYPE_PATH = "claim-types/project.work_item/status.yaml"
 REVIEWER_CLAIM_TYPE_PATH = "claim-types/project.work_item/reviewed_by.yaml"
 TIMESTAMP = "2026-08-16T14:00:00.000000Z"
 
-OWNER_AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
-
 
 def claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:
     return ClaimType(
@@ -96,7 +93,6 @@ def claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimType:
             eligible_verdicts=("supported",),
             selector="only_contender" if object_kind == "literal" else "all",
         ),
-        authority=OWNER_AUTHORITY,
     )
 
 
@@ -186,7 +182,6 @@ def active_work_query(**overrides: object) -> QueryDefinitionV1:
             max_paths=2000,
             max_paths_per_result=50,
         ),
-        "authority": OWNER_AUTHORITY,
         "pins": (
             claim_type_pin(REVIEWER_PREDICATE, object_kind="subject"),
             claim_type_pin(STATUS_PREDICATE),
@@ -226,7 +221,6 @@ def single_status_query(**overrides: object) -> QueryDefinitionV1:
         ),
         "default_budgets": QueryBudgetsV1(max_results=1, max_traversal_depth=0),
         "maximum_budgets": QueryBudgetsV1(max_results=1, max_traversal_depth=0),
-        "authority": OWNER_AUTHORITY,
         "pins": (claim_type_pin(STATUS_PREDICATE),),
     }
     fields.update(overrides)
@@ -629,7 +623,6 @@ def test_query_definition_law_accepts_a_genesis_declaration_with_resolved_pins()
     result = evaluate_query_definition_law(
         query,
         path=QUERY_PATH,
-        actor_roles=("owner",),
         predecessor=None,
         accepted_artifacts=accepted_artifacts,
     )
@@ -641,7 +634,7 @@ def test_query_definition_law_accepts_a_genesis_declaration_with_resolved_pins()
     assert result.diagnostics == ()
 
 
-def test_query_definition_law_ignores_roles_but_refuses_path_pin_and_predecessor_drift() -> None:
+def test_query_definition_law_refuses_path_pin_and_predecessor_drift() -> None:
     query = active_work_query()
     codes: list[str] = []
 
@@ -660,7 +653,6 @@ def test_query_definition_law_ignores_roles_but_refuses_path_pin_and_predecessor
         result = evaluate_query_definition_law(
             candidate,
             path=str(kwargs.get("path", QUERY_PATH)),
-            actor_roles=tuple(kwargs.get("actor_roles", ("owner",))),  # type: ignore[arg-type]
             predecessor=None,
         )
         assert result.verdict == "refused"
@@ -670,7 +662,6 @@ def test_query_definition_law_ignores_roles_but_refuses_path_pin_and_predecessor
     unresolved = evaluate_query_definition_law(
         query,
         path=QUERY_PATH,
-        actor_roles=("owner",),
         predecessor=None,
         accepted_artifacts={},
     )
@@ -701,7 +692,6 @@ def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> No
     accepted_result = evaluate_query_definition_law(
         successor,
         path=QUERY_PATH,
-        actor_roles=("owner",),
         predecessor=predecessor,
     )
     assert accepted_result.verdict == "accepted"
@@ -712,7 +702,6 @@ def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> No
             lifecycle=ArtifactLifecycle(state="live", predecessor_digest="sha256:" + "11" * 32),
         ),
         path=QUERY_PATH,
-        actor_roles=("owner",),
         predecessor=predecessor,
     )
     assert stale.diagnostics[0].code == "playbill.query_definition.stale_predecessor"
@@ -720,7 +709,6 @@ def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> No
     resubmitted = evaluate_query_definition_law(
         original,
         path=QUERY_PATH,
-        actor_roles=("owner",),
         predecessor=predecessor,
     )
     assert resubmitted.diagnostics[0].code == "playbill.query_definition.no_semantic_change"
@@ -728,7 +716,6 @@ def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> No
     other_identity = evaluate_query_definition_law(
         successor,
         path=QUERY_PATH,
-        actor_roles=("owner",),
         predecessor=accepted_query(
             active_work_query(
                 identity=ArtifactIdentity(kind="QueryDefinition", name="project.other_work")
@@ -756,21 +743,18 @@ def test_query_definition_successor_law_binds_the_exact_live_predecessor() -> No
             ),
         ),
         path=QUERY_PATH,
-        actor_roles=("owner",),
         predecessor=retired,
     )
     assert revived.diagnostics[0].code == "playbill.query_definition.lifecycle_invalid"
 
     reauthorized = evaluate_query_definition_law(
         active_work_query(
-            authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("reviewer",)),
             lifecycle=ArtifactLifecycle(
                 state="live",
                 predecessor_digest=predecessor.artifact_digest,
             ),
         ),
         path=QUERY_PATH,
-        actor_roles=("owner",),
         predecessor=predecessor,
     )
     assert reauthorized.verdict == "accepted"

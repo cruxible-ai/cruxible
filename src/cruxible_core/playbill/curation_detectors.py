@@ -1046,8 +1046,7 @@ def _active_writing_principal_count(instance: PlaybillInstance, *, git_oid: str)
 
     generation = next(item for item in instance.accepted_history() if item.oid == git_oid)
     return sum(
-        principal.status == "active"
-        and any(role in {"owner", "reviewer"} for role in principal.authority_roles)
+        principal.status == "active" and principal.kind == "ordinary"
         for principal in generation.principals.principals
     )
 

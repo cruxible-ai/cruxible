@@ -96,7 +96,6 @@ def _candidate(
         body_digest=body.digest,
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner", "reviewer"),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),
@@ -441,7 +440,6 @@ def test_qualified_git_formats_preserve_candidate_changeset_and_semantic_root(
         body_digest=body.digest,
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner", "reviewer"),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),

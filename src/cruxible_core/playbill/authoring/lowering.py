@@ -592,7 +592,6 @@ def _lower_claim(
                 (source_mapping,),
             ),
         ),
-        authority=claim_type.authority,
         pins=_merge_pins(() if predecessor is None else predecessor.pins, tuple(pins)),
         lifecycle=ArtifactLifecycle(
             predecessor_digest=(
@@ -800,7 +799,6 @@ def _lower_procedure(
             identity=identity,
             definition=definition,
             definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-            authority=payload.authority,
             pins=pins,
             owned_contracts=payload.owned_contracts,
             activation_policy=payload.activation_policy,
@@ -811,7 +809,6 @@ def _lower_procedure(
             identity=identity,
             definition=definition,
             definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-            authority=payload.authority,
             pins=pins,
             activation_policy=payload.activation_policy,
             lifecycle=lifecycle,

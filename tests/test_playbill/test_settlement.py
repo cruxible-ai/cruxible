@@ -8,10 +8,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring_profiles import (
     CLAIM_TYPE_AUTHORING_PROFILES,
-    AuthorityProfileParametersV1,
     ClaimTypeProfileInputV1,
     expand_claim_type_profile,
 )
@@ -55,10 +54,6 @@ def claim_type() -> ClaimType:
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
-        ),
-        authority=ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
         ),
     )
 
@@ -203,10 +198,6 @@ def test_profile_law_evidence_reproduces_during_settlement(tmp_path: Path) -> No
             authoring_source_digest="sha256:" + "81" * 32,
             compiler_digest=current_compiler_coordinate().rule_digest,
             structure=direct.structure,
-            authority_parameters=AuthorityProfileParametersV1(
-                propose_roles=("owner",),
-                approve_roles=("owner",),
-            ),
         )
     )
     tree = {**instance.tree_at(base.git_oid), CLAIM_TYPE_PATH: render_claim_type(direct)}

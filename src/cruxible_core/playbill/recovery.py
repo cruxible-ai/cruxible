@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,12 +62,15 @@ from cruxible_core.playbill.projection import (
     projection_piece_name,
 )
 from cruxible_core.playbill.proposals import (
+    ClaimQueryFactsProvider,
     EvaluatedTreeState,
     ExhaustPromotionVerifierProtocol,
     build_tree_state,
+    claim_admission_accounts_from_candidate,
     claim_type_expansions_from_candidate,
     evaluate_proposal_tree,
 )
+from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 from cruxible_core.playbill.serving import (
     SERVING_MANIFEST_FILE,
     bind_current_projection,
@@ -108,6 +112,34 @@ class RecoveredGeneration:
     generation_root: GenerationRoot
     principals: PrincipalRegistrySnapshot
     record: ChangeSetRecordAnyVersion | None
+
+
+@dataclass(frozen=True)
+class _ReplayQueryFactsSource:
+    """Present a replayed accepted prefix through the shared Claim-facts seam."""
+
+    ledger: GitLedger
+    history: tuple[RecoveredGeneration, ...]
+    bodies: BodyProjectionProtocol
+
+    def accepted_history(self) -> tuple[RecoveredGeneration, ...]:
+        return self.history
+
+    def tree_at(self, oid: str) -> dict[str, bytes]:
+        if oid not in {generation.oid for generation in self.history}:
+            raise SettlementIntegrityError(
+                "query facts requested a tree outside the replayed accepted prefix"
+            )
+        return self.ledger.read_tree(oid)
+
+    def body_store(self) -> BodyProjectionProtocol:
+        return self.bodies
+
+
+AcceptedQueryFactsBuilder = Callable[
+    [object, AcceptedProjectionCoordinate],
+    ClaimQueryFactsV1,
+]
 
 
 @dataclass(frozen=True)
@@ -183,7 +215,7 @@ def _refuse_removed_prerelease_content(
             ledger.read_blob(principal_entry.oid),
             path=principal_entry.path,
         )
-        if daemon.status != "active" or daemon.authority_roles != ("daemon",):
+        if daemon.status != "active" or daemon.kind != "daemon":
             raise SettlementIntegrityError("generation daemon principal is not active")
         previous_oid = oid
 
@@ -345,6 +377,7 @@ def _verify_successor(
     bodies: BodyProjectionProtocol,
     laws: AcceptanceLawRegistry,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
+    query_facts_provider: ClaimQueryFactsProvider | None,
 ) -> _GenerationWindow:
     """Verify one successor against its parent window and return the next window."""
 
@@ -409,6 +442,8 @@ def _verify_successor(
         rebased=False,
         actor_id=record.actor_binding.actor_id,
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
+        query_facts_provider=query_facts_provider,
+        replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         promotion_verifier=promotion_verifier,
         parent_state=window.state,
         wire_version=candidate.tag,
@@ -591,6 +626,7 @@ def _clean_unaccepted_generations(
     bodies: BodyProjectionProtocol,
     laws: AcceptanceLawRegistry,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
+    query_facts_builder: AcceptedQueryFactsBuilder | None,
 ) -> None:
     """Collect exact replay-valid generation commits that never settled on main."""
 
@@ -606,6 +642,11 @@ def _clean_unaccepted_generations(
             # manifest is computed cold: this window is built from an arbitrary
             # accepted parent, so no replay-carried manifest applies to it.
             parent_tree = ledger.read_tree(parent.oid)
+            query_source = _ReplayQueryFactsSource(
+                ledger=ledger,
+                history=history,
+                bodies=bodies,
+            )
             _verify_successor(
                 ledger,
                 oid,
@@ -621,6 +662,11 @@ def _clean_unaccepted_generations(
                 bodies=bodies,
                 laws=laws,
                 promotion_verifier=promotion_verifier,
+                query_facts_provider=(
+                    None
+                    if query_facts_builder is None
+                    else lambda coordinate: query_facts_builder(query_source, coordinate)
+                ),
             )
             ledger.collect_unreachable_generation(oid)
         except PlaybillError:
@@ -718,6 +764,7 @@ def recover_instance(
     witness: WitnessSink | None = None,
     laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+    query_facts_builder: AcceptedQueryFactsBuilder | None = None,
     checkpoint_directory: Path | None = None,
 ) -> RecoveredInstanceState:
     """Replay accepted history and repair only deterministic post-CAS publication.
@@ -792,6 +839,11 @@ def recover_instance(
         )
     replayed_from = len(history)
     for oid in history_oids[replayed_from:]:
+        query_source = _ReplayQueryFactsSource(
+            ledger=ledger,
+            history=tuple(history),
+            bodies=bodies,
+        )
         window = _verify_successor(
             ledger,
             oid,
@@ -803,6 +855,11 @@ def recover_instance(
             bodies=bodies,
             laws=laws,
             promotion_verifier=promotion_verifier,
+            query_facts_provider=(
+                None
+                if query_facts_builder is None
+                else lambda coordinate: query_facts_builder(query_source, coordinate)
+            ),
         )
         history.append(window.generation)
     head = history[-1]
@@ -834,6 +891,7 @@ def recover_instance(
         bodies=bodies,
         laws=laws,
         promotion_verifier=promotion_verifier,
+        query_facts_builder=query_facts_builder,
     )
     _clean_unaccepted_publications(
         ledger,

@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -140,7 +139,6 @@ def _accepted_query_procedure(query_digest: str) -> AcceptedProcedureV1:
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=tuple(
             sorted(
                 (contract_in, contract_out, query),
@@ -289,7 +287,6 @@ def test_mixed_procedure_v1_v2_ledger_replays_each_historical_wire(tmp_path: Pat
         identity=v2.identity,
         definition=v2.definition,
         definition_digest=v2.definition_digest,
-        authority=v2.authority,
         pins=v2.pins,
         activation_policy=v2.activation_policy,
     )
@@ -342,7 +339,6 @@ def test_procedure_v2_lineage_cannot_drop_its_owned_contract_closure() -> None:
         identity=v2.procedure.identity,
         definition=v2.procedure.definition,
         definition_digest=v2.procedure.definition_digest,
-        authority=v2.procedure.authority,
         pins=v2.procedure.pins,
         activation_policy=v2.procedure.activation_policy,
         lifecycle=ArtifactLifecycle(predecessor_digest=v2.artifact_digest),
@@ -351,7 +347,6 @@ def test_procedure_v2_lineage_cannot_drop_its_owned_contract_closure() -> None:
     result = evaluate_procedure_law(
         legacy_successor,
         path=v2.path,
-        actor_roles=("owner",),
         predecessor=v2,
     )
     assert result.verdict == "refused"

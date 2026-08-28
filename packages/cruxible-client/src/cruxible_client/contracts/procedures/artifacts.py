@@ -16,7 +16,6 @@ from pydantic import (
 )
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -58,7 +57,6 @@ class ProcedureArtifactV1(_StrictProcedureArtifactModel):
     identity: ArtifactIdentity
     definition: ProcedureDefinitionV3
     definition_digest: str
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
@@ -176,7 +174,6 @@ class ProcedureArtifactV2(_StrictProcedureArtifactModel):
     identity: ArtifactIdentity
     definition: ProcedureDefinitionV3
     definition_digest: str
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...]
     owned_contracts: tuple[ProcedureOwnedContractV1, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
@@ -357,10 +354,9 @@ def evaluate_procedure_law(
     procedure: ProcedureArtifactAny,
     *,
     path: str,
-    actor_roles: tuple[str, ...],
     predecessor: AcceptedProcedureV1 | None,
 ) -> ProcedureLawResultV1:
-    """Evaluate stable identity, predecessor, author authority, and exact closure."""
+    """Evaluate stable identity, predecessor, and exact closure."""
 
     if path != procedure_path(procedure.identity.name):
         return _refusal(

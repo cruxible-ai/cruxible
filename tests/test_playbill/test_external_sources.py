@@ -44,7 +44,7 @@ from tests.test_playbill._pc_c_support import (
     provider_run,
 )
 from tests.test_playbill._support import initialize_local
-from tests.test_playbill.test_claims import AUTHORITY, TIMESTAMP, _claim, _claim_type, _subject
+from tests.test_playbill.test_claims import TIMESTAMP, _claim, _claim_type, _subject
 
 
 def test_general_contract_and_exact_external_capture_do_not_copy_a_table(tmp_path: Path) -> None:
@@ -52,7 +52,6 @@ def test_general_contract_and_exact_external_capture_do_not_copy_a_table(tmp_pat
     accepted = evaluate_capture_contract_law(
         contract,
         path="capture-contracts/test.orders-v1.yaml",
-        actor_roles=("owner",),
         predecessor=None,
     )
     assert accepted.verdict == "accepted"
@@ -264,7 +263,6 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
                     ),
                 ),
             ),
-            "authority": AUTHORITY,
             "pins": tuple(
                 sorted(
                     (

@@ -53,7 +53,6 @@ class SourceCatalogEntry(_StrictCatalogModel):
     media_type: str
     compiler_profile: Literal["document-v1"] = "document-v1"
     required_tier: Literal["governed_write", "graph_write", "admin"] = "graph_write"
-    approval_roles: tuple[Literal["owner", "reviewer"], ...] = ("owner",)
     governance_scope: tuple[str, ...]
     public_uri: str | None = None
     root_alias: str | None = None
@@ -301,7 +300,6 @@ def compile_source_catalog(
             body_digest=body_digest,
             authority=DocumentAuthority(
                 required_tier=entry.required_tier,
-                approval_roles=entry.approval_roles,
             ),
             governance_scope=entry.governance_scope,
             predecessor_digest=predecessor,

@@ -642,7 +642,6 @@ def parse_projection_tree(
                             subject_identity=document.identity,
                             fact_key="metadata",
                             value={
-                                "authority": document.authority.model_dump(mode="json"),
                                 "document_kind": document.document_kind,
                                 "governance_scope": list(document.governance_scope),
                                 "lifecycle": document.lifecycle.model_dump(mode="json"),
@@ -756,7 +755,6 @@ def parse_projection_tree(
                             subject_identity=identity,
                             fact_key="accepted_shell",
                             value={
-                                "authority": subject_shell.authority.model_dump(mode="json"),
                                 "lifecycle": subject_shell.lifecycle.model_dump(mode="json"),
                             },
                         ),
@@ -867,7 +865,6 @@ def parse_projection_tree(
                             subject_identity=identity,
                             fact_key="declared",
                             value={
-                                "authority": claim_type.authority.model_dump(mode="json"),
                                 "lifecycle": claim_type.lifecycle.model_dump(mode="json"),
                                 "pins": [pin.model_dump(mode="json") for pin in claim_type.pins],
                             },
@@ -1444,7 +1441,6 @@ def parse_projection_tree(
                             subject_identity=identity,
                             fact_key="declared",
                             value={
-                                "authority": query.authority.model_dump(mode="json"),
                                 "lifecycle": query.lifecycle.model_dump(mode="json"),
                                 "pins": [pin.model_dump(mode="json") for pin in query.pins],
                             },
@@ -1738,7 +1734,6 @@ def parse_projection_tree(
                             subject_identity=identity,
                             fact_key="accepted_revision",
                             value={
-                                "authority": claim.authority.model_dump(mode="json"),
                                 "lifecycle": claim.lifecycle.model_dump(mode="json"),
                                 "pins": [pin.model_dump(mode="json") for pin in claim.pins],
                                 **(

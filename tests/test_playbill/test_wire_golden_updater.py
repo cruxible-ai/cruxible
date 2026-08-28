@@ -27,7 +27,13 @@ def test_playbill_wire_updater_executes_byte_idempotently(tmp_path: Path) -> Non
         ROOT / "scripts/update_playbill_wire_goldens.py",
         checkout / "scripts/update_playbill_wire_goldens.py",
     )
-    for name in ("claim-type-v1.json", "query-definition-v1.json", "changeset-v3.json"):
+    for name in (
+        "claim-type-v1.json",
+        "query-definition-v1.json",
+        "changeset-v3.json",
+        "subject-v1.json",
+        "semantic-genesis-v1.json",
+    ):
         shutil.copy2(
             ROOT / "tests/goldens/playbill" / name,
             checkout / "tests/goldens/playbill" / name,

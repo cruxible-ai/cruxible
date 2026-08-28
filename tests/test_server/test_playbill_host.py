@@ -98,13 +98,13 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
     owner = generate_client_principal_key(
         tmp_path / "owner-custody",
         principal_id="operator",
-        authority_roles=("owner",),
+        kind="ordinary",
         forbidden_roots=(managed_root,),
     )
     reviewer = generate_client_principal_key(
         tmp_path / "reviewer-custody",
         principal_id="reviewer",
-        authority_roles=("reviewer",),
+        kind="ordinary",
         forbidden_roots=(managed_root,),
     )
     initialized = host_client.post(
@@ -161,13 +161,13 @@ def test_authenticated_bootstrap_binds_owner_to_credential_identity(
     owner = generate_client_principal_key(
         tmp_path / "authenticated-owner-custody",
         principal_id="bootstrap-admin",
-        authority_roles=("owner",),
+        kind="ordinary",
         forbidden_roots=(managed_root,),
     )
     reviewer = generate_client_principal_key(
         tmp_path / "authenticated-reviewer-custody",
         principal_id="reviewer",
-        authority_roles=("reviewer",),
+        kind="ordinary",
         forbidden_roots=(managed_root,),
     )
     initialized = client.post(

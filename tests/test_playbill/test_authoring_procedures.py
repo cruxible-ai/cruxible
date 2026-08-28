@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV1
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
@@ -25,7 +25,6 @@ from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
-AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
 
 
 def _digest(label: str) -> str:
@@ -102,7 +101,6 @@ def _coordinator(tmp_path: Path) -> tuple[AuthoringIntentCoordinator, Authentica
 def _payload(definition: dict[str, object]) -> ProcedureAuthoringPayloadV1:
     return ProcedureAuthoringPayloadV1(
         definition=definition,
-        authority=AUTHORITY,
         activation_policy="drain",
     )
 

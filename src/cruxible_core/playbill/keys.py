@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from cruxible_client.contracts.errors import PlaybillKeyError
-from cruxible_client.contracts.types import PrincipalRecord, PrincipalRole
+from cruxible_client.contracts.types import PrincipalKind, PrincipalRecord
 
 DAEMON_PRIVATE_KEY_FILE = "daemon_ed25519"
 DAEMON_PUBLIC_KEY_FILE = "daemon_ed25519.pub"
@@ -103,7 +103,7 @@ def _generate_key_material(
     directory: Path,
     *,
     principal_id: str,
-    authority_roles: tuple[PrincipalRole, ...],
+    kind: PrincipalKind,
     private_filename: str,
     public_filename: str,
 ) -> GeneratedKeyMaterial:
@@ -126,7 +126,7 @@ def _generate_key_material(
         principal=PrincipalRecord(
             principal_id=principal_id,
             public_key=_public_key_hex(private_key),
-            authority_roles=authority_roles,
+            kind=kind,
         ),
         private_key_path=private_path,
         public_key_path=public_path,
@@ -139,7 +139,7 @@ def generate_daemon_key(credentials_directory: Path) -> GeneratedKeyMaterial:
     material = _generate_key_material(
         credentials_directory,
         principal_id="daemon",
-        authority_roles=("daemon",),
+        kind="daemon",
         private_filename=DAEMON_PRIVATE_KEY_FILE,
         public_filename=DAEMON_PUBLIC_KEY_FILE,
     )
@@ -158,24 +158,24 @@ def generate_client_principal_key(
     key_directory: Path,
     *,
     principal_id: str,
-    authority_roles: tuple[PrincipalRole, ...],
+    kind: PrincipalKind,
     forbidden_roots: Sequence[Path],
 ) -> GeneratedKeyMaterial:
     """Generate a client-held approval/recovery key outside daemon storage."""
 
-    if principal_id == "daemon" or "daemon" in authority_roles:
-        raise PlaybillKeyError("client keys cannot claim daemon identity or authority")
+    if principal_id == "daemon" or kind == "daemon":
+        raise PlaybillKeyError("client keys cannot claim daemon identity or kind")
     assert_outside_roots(key_directory, forbidden_roots)
     # Validate identifier and sorted roles before using either in a filename.
     placeholder = PrincipalRecord(
         principal_id=principal_id,
         public_key="0" * 64,
-        authority_roles=authority_roles,
+        kind=kind,
     )
     return _generate_key_material(
         key_directory,
         principal_id=placeholder.principal_id,
-        authority_roles=placeholder.authority_roles,
+        kind=placeholder.kind,
         private_filename=f"{placeholder.principal_id}.ed25519",
         public_filename=f"{placeholder.principal_id}.ed25519.pub",
     )

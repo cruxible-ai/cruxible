@@ -18,7 +18,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -124,7 +123,6 @@ class QueryDefinitionV1(_StrictQueryDefinitionModel):
     evaluation_policy: QueryEvaluationPolicyV1
     default_budgets: QueryBudgetsV1
     maximum_budgets: QueryBudgetsV1
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -437,11 +435,10 @@ def evaluate_query_definition_law(
     query: QueryDefinitionV1,
     *,
     path: str,
-    actor_roles: tuple[str, ...],
     predecessor: AcceptedQueryDefinitionV1 | None,
     accepted_artifacts: Mapping[str, tuple[ArtifactIdentity, str]] | None = None,
 ) -> QueryDefinitionLawResultV1:
-    """Evaluate exact path, digest-pinned dependencies, lifecycle, and authority."""
+    """Evaluate exact path, digest-pinned dependencies, and lifecycle."""
 
     try:
         validate_query_definition_path(query, path)

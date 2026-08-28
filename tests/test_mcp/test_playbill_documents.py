@@ -111,7 +111,6 @@ def test_playbill_handlers_decode_bytes_and_submit_only_public_attestation(monke
         "pins": [],
         "authority": {
             "required_tier": "graph_write",
-            "approval_roles": ["owner"],
         },
         "governance_scope": ["project:playbill"],
         "predecessor_digest": None,

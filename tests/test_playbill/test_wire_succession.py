@@ -97,7 +97,6 @@ def _document_tree(instance: Any) -> tuple[dict[str, bytes], dict[str, bytes]]:
         body_digest=body.digest,
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner", "reviewer"),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),

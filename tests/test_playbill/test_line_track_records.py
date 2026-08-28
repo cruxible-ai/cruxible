@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     canonical_bytes,
@@ -123,7 +123,6 @@ def _artifacts() -> tuple[AcceptedProcedureV1, AcceptedLineSpecV1]:
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=tuple(sorted((contract_in, contract_out, query), key=lambda pin: pin.role)),
         activation_policy="drain",
     )
@@ -150,7 +149,6 @@ def _artifacts() -> tuple[AcceptedProcedureV1, AcceptedLineSpecV1]:
             "max_wall_clock_microseconds": 5_000_000,
         },
         epsilon={"$decimal": "0.1"},
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=(procedure_pin,),
     )
     return accepted_procedure, AcceptedLineSpecV1(
@@ -235,7 +233,6 @@ def _accepted_promotion(output: object):
         reducer_digest=reducer.reducer_digest,
         output_digest=exhaust_promotion_output_digest(output),
         bound_generation_digests=(_digest("generation"),),
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=tuple(
             sorted(
                 (
@@ -405,7 +402,6 @@ def test_an_accepted_promotion_projects_its_line_track_record_through_the_floor(
         reducer_digest=reducer.reducer_digest,
         output_digest=output_digest,
         bound_generation_digests=(coordinate.generation_root,),
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=tuple(
             sorted(
                 (

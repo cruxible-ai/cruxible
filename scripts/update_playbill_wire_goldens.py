@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from cruxible_client.authoring.inputs import ClaimInput
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
-from cruxible_client.contracts.canonical import ChangeSetDigest, typed_digest
+from cruxible_client.authoring.inputs import ClaimInput, ProcedureInput
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.canonical import ChangeSetDigest, manifest_root, typed_digest
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
+    foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimType,
@@ -28,6 +29,9 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
     render_query_definition,
 )
+from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
+from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_core.playbill.bootstrap import bootstrap_root, genesis_semantic_root, genesis_tree
 from cruxible_core.playbill.settlement import (
     ChangeSetRecordV3,
     change_set_digest,
@@ -58,7 +62,9 @@ def _remove_retired_claim_type_fields(payload: dict[str, object]) -> dict[str, o
         raise TypeError("ClaimType fixture does not carry its policy objects")
     admission.pop("actor_requirements", None)
     admission.pop("transition_requirements", None)
+    admission["corroboration_requirements"] = admission.pop("evidence_requirements", [])
     resolution.pop("authority_rule_digest", None)
+    payload.pop("authority", None)
     return payload
 
 
@@ -90,7 +96,6 @@ def _direct_claim_type() -> ClaimType:
             eligible_verdicts=("supported",),
             selector="only_contender",
         ),
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
     )
 
 
@@ -111,7 +116,6 @@ def _query_claim_type(predicate: str, *, object_kind: str = "literal") -> ClaimT
             eligible_verdicts=("supported",),
             selector="only_contender" if object_kind == "literal" else "all",
         ),
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
     )
 
 
@@ -134,6 +138,7 @@ def _update_query_golden() -> None:
     raw = fixture.get("query_definition")
     if not isinstance(raw, dict):
         raise TypeError("QueryDefinition golden has no query_definition object")
+    raw.pop("authority", None)
     digests = {
         "project.work_item.reviewed_by": claim_type_digest(
             _query_claim_type("project.work_item.reviewed_by", object_kind="subject")
@@ -148,6 +153,50 @@ def _update_query_golden() -> None:
     fixture["query_definition"] = definition.model_dump(mode="json")
     fixture["canonical_wire"] = render_query_definition(definition).decode("utf-8")
     fixture["artifact_digest"] = query_definition_digest(definition).tagged
+    _write(path, fixture)
+
+
+def _update_subject_golden() -> None:
+    path = GOLDENS / "subject-v1.json"
+    fixture = _read(path)
+    raw = fixture.get("wire")
+    if not isinstance(raw, dict):
+        raise TypeError("Subject golden has no wire object")
+    raw.pop("authority", None)
+    subject = SubjectShell.model_validate(raw)
+    fixture["wire"] = subject.model_dump(mode="json")
+    fixture["artifact_digest"] = subject_digest(subject).tagged
+    render_subject(subject)
+    _write(path, fixture)
+
+
+def _update_semantic_genesis_golden() -> None:
+    path = GOLDENS / "semantic-genesis-v1.json"
+    fixture = _read(path)
+    input_payload = fixture.get("input")
+    if not isinstance(input_payload, dict):
+        raise TypeError("semantic genesis golden has no input object")
+    principals = (
+        PrincipalRecord(principal_id="daemon", public_key="01" * 32, kind="daemon"),
+        PrincipalRecord(principal_id="owner", public_key="02" * 32, kind="ordinary"),
+        PrincipalRecord(principal_id="reviewer", public_key="03" * 32, kind="ordinary"),
+    )
+    tree = genesis_tree(principals)
+    parent = bootstrap_root(
+        instance_id=str(input_payload["instance_id"]),
+        daemon_public_key=str(input_payload["daemon_public_key"]),
+    )
+    changeset, semantic = genesis_semantic_root(tree, parent=parent)
+    input_payload["principals"] = [item.model_dump(mode="json") for item in principals]
+    fixture["expected"] = {
+        "canonical_tree": {
+            member_path: content.decode("utf-8") for member_path, content in tree.items()
+        },
+        "bootstrap_root": parent.tagged,
+        "manifest_root": manifest_root(tree).tagged,
+        "changeset_digest": changeset.tagged,
+        "semantic_root": semantic.tagged,
+    }
     _write(path, fixture)
 
 
@@ -181,6 +230,25 @@ def _update_changeset_golden() -> None:
 def _update_seed_bundle() -> None:
     type_path = SEED / "claim-types/project.work_item.status.json"
     type_payload = _remove_retired_claim_type_fields(_read(type_path))
+    source_ids: list[str] = []
+    for name in ("wi-101-status.json", "wi-102-status.json", "wi-103-status.json"):
+        source = _read(SEED / "claims" / name).get("source")
+        if not isinstance(source, dict) or not isinstance(source.get("source_id"), str):
+            raise TypeError("seed ClaimInput has no working source_id")
+        source_ids.append(source["source_id"])
+    evidence_policy = type_payload.get("evidence_admission_policy")
+    if not isinstance(evidence_policy, dict) or not isinstance(evidence_policy.get("rules"), list):
+        raise TypeError("seed ClaimType has no evidence admission rules")
+    for rule in evidence_policy["rules"]:
+        if rule["rule_id"] == "direct-self-asserted":
+            rule["capture_contract_digests"] = [
+                capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+            ]
+        elif rule["rule_id"] == "foreign-working-sources":
+            rule["capture_contract_digests"] = sorted(
+                capture_contract_digest(foreign_source_capture_contract(source_id)).tagged
+                for source_id in source_ids
+            )
     claim_type = ClaimType.model_validate(type_payload)
     type_digest = claim_type_digest(claim_type).tagged
     _write(type_path, claim_type.model_dump(mode="json"))
@@ -195,6 +263,7 @@ def _update_seed_bundle() -> None:
 
     query_path = SEED / "query-definitions/project.work_items.json"
     query_payload = _read(query_path)
+    query_payload.pop("authority", None)
     pins = query_payload.get("pins")
     if not isinstance(pins, list):
         raise TypeError("seed QueryDefinition has no pins")
@@ -204,10 +273,25 @@ def _update_seed_bundle() -> None:
     QueryDefinitionV1.model_validate(query_payload)
     _write(query_path, query_payload)
 
+    for name in ("wi-101.json", "wi-102.json", "wi-103.json"):
+        path = SEED / "subjects" / name
+        payload = _read(path)
+        payload.pop("authority", None)
+        subject = SubjectShell.model_validate(payload)
+        _write(path, subject.model_dump(mode="json"))
+
+    procedure_path = SEED / "procedures/project.work_item.digest.json"
+    procedure_payload = _read(procedure_path)
+    procedure_payload.pop("authority", None)
+    ProcedureInput.model_validate(procedure_payload)
+    _write(procedure_path, procedure_payload)
+
 
 def main() -> None:
     _update_claim_type_golden()
     _update_query_golden()
+    _update_subject_golden()
+    _update_semantic_genesis_golden()
     _update_changeset_golden()
     _update_seed_bundle()
 

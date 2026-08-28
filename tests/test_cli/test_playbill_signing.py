@@ -36,7 +36,6 @@ def test_cli_approval_signs_exact_challenge_without_transmitting_key(
         body_digest=body.digest,
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner",),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),
@@ -143,7 +142,6 @@ def test_cli_missing_signer_never_falls_back_to_daemon(
             body_digest=body.digest,
             authority=DocumentAuthority(
                 required_tier="graph_write",
-                approval_roles=("owner",),
             ),
             governance_scope=("project:playbill",),
             lifecycle=DocumentLifecycle(revision=1),

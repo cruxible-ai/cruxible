@@ -69,7 +69,6 @@ from cruxible_client.authoring.workspace import (
     observe_playbill_next_workspace_with_coverage,
 )
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -346,7 +345,6 @@ def _claim_from_public_view(view: api.PlaybillClaimViewV2) -> ClaimArtifactAny:
                 },
                 "statement": statement,
                 "backing": backing,
-                "authority": lifecycle.get("authority"),
                 "pins": lifecycle.get("pins"),
                 "lifecycle": lifecycle.get("lifecycle"),
                 **(
@@ -1035,7 +1033,6 @@ class Playbill:
         self,
         *,
         subject: str | SubjectRef,
-        authority: ArtifactAuthority,
         pins: Sequence[ArtifactPin],
         lifecycle: ArtifactLifecycle,
     ) -> SubjectDraft:
@@ -1049,7 +1046,6 @@ class Playbill:
                 identity=ArtifactIdentity(kind="Subject", name=address),
                 subject_kind=kind,
                 subject_id=identifier,
-                authority=authority,
                 pins=tuple(pins),
                 lifecycle=lifecycle,
             ),
@@ -1069,7 +1065,6 @@ class Playbill:
         sources: Sequence[str | SourceRef],
         admission_policy: ClaimAdmissionPolicyV1,
         resolution_policy: ClaimResolutionPolicyV1,
-        authority: ArtifactAuthority,
         pins: Sequence[ArtifactPin],
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None,
@@ -1135,7 +1130,6 @@ class Playbill:
             evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(rules=rules),
             admission_policy=admission_policy,
             resolution_policy=resolution_policy,
-            authority=authority,
             pins=tuple(pins),
             lifecycle=lifecycle,
             evidence_freshness=(
@@ -1503,7 +1497,6 @@ class Playbill:
         self,
         *,
         definition: ProcedureDefinitionV3,
-        authority: ArtifactAuthority,
         activation_policy: ActivationPolicy | str,
         retire: bool,
     ) -> ProcedureDraft:
@@ -1519,7 +1512,6 @@ class Playbill:
             )
         payload = ProcedureAuthoringPayloadV2(
             definition=definition.model_dump(mode="json", by_alias=True),
-            authority=authority,
             activation_policy=policy.value,
             owned_contracts=(),
             retire=retire,
@@ -1532,7 +1524,6 @@ class Playbill:
                 "procedure",
                 {
                     "definition": definition.model_dump(mode="json", by_alias=True),
-                    "authority": authority.model_dump(mode="json"),
                     "activation_policy": policy.value,
                     "retire": retire,
                 },
@@ -1542,7 +1533,6 @@ class Playbill:
                     builder="procedure",
                     emitted={
                         "definition": ("definition",),
-                        "authority": ("authority",),
                         "activation_policy": ("activation_policy",),
                         "retire": ("retire",),
                     },

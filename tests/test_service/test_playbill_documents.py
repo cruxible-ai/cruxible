@@ -77,7 +77,6 @@ def _shell(body_digest: str) -> DocumentShell:
         body_digest=body_digest,
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner", "reviewer"),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),
@@ -324,7 +323,6 @@ def test_service_owner_rotation_and_recovery_require_lifecycle_actor_key_binding
             body_digest=body.digest,
             authority=DocumentAuthority(
                 required_tier="graph_write",
-                approval_roles=("owner",),
             ),
             governance_scope=("project:playbill",),
             lifecycle=DocumentLifecycle(revision=1),

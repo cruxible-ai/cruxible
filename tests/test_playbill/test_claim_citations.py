@@ -79,7 +79,6 @@ def _v2_claim(*, role: str = "evidence", origin: str = "independent") -> ClaimAr
             citations=(citation,),
             source_mappings=legacy.backing.source_mappings,
         ),
-        authority=legacy.authority,
         pins=legacy.pins,
     )
 
@@ -169,7 +168,6 @@ def test_v2_backing_successor_keeps_uncited_legacy_capture_implicit() -> None:
             citations=(),
             source_mappings=legacy.backing.source_mappings,
         ),
-        authority=legacy.authority,
         pins=legacy.pins,
         lifecycle=ArtifactLifecycle(predecessor_digest=claim_artifact_digest(legacy).tagged),
     )
@@ -301,7 +299,6 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
             ),
             source_mappings=legacy.backing.source_mappings,
         ),
-        authority=legacy.authority,
         pins=tuple(
             sorted(
                 (

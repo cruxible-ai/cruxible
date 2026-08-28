@@ -11,7 +11,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -25,7 +24,6 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import SubjectFormatError
 from cruxible_client.contracts.governance import PermissionTier
-from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.semantic import SemanticAddress
 
 SUBJECT_REUSE_SIGNATURE_DOMAIN = "playbill-subject-reuse-signature-v1"
@@ -51,7 +49,6 @@ class SubjectShell(_StrictSubjectModel):
     identity: ArtifactIdentity
     subject_kind: str
     subject_id: str
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -202,28 +199,13 @@ def _diagnostic(code: str, message: str, *, path: str) -> CompilerDiagnostic:
     )
 
 
-def _roles_for_actor(
-    principals: PrincipalRegistrySnapshot,
-    actor_id: str | None,
-) -> tuple[str, ...]:
-    if actor_id is None:
-        return ()
-    try:
-        principal = principals.require_active(actor_id)
-    except Exception:
-        return ()
-    return tuple(str(role) for role in principal.authority_roles if role != "daemon")
-
-
 def evaluate_subject_law(
     shell: SubjectShell,
     *,
     path: str,
-    principals: PrincipalRegistrySnapshot,
-    actor_id: str | None,
     predecessor: AcceptedSubject | None,
 ) -> SubjectLawResult:
-    """Evaluate Subject identity/lifecycle under accepted parent-root authority."""
+    """Evaluate Subject identity and lifecycle under the installed law."""
 
     try:
         validate_subject_path(shell, path)

@@ -105,7 +105,7 @@ def test_client_signer_callback_submits_only_public_attestation() -> None:
                     "signer_principal": {
                         "principal_id": "owner",
                         "public_key": "a" * 64,
-                        "authority_roles": ["owner"],
+                        "kind": "ordinary",
                         "status": "active",
                     },
                     "signer_key_history_ref": "principals/owner.yaml@"

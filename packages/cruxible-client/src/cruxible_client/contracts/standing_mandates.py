@@ -10,7 +10,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -77,7 +76,6 @@ class StandingMandate(_StrictMandateModel):
     authority_ceiling: MandateGrantV1
     valid_from: datetime
     valid_until: datetime
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -229,7 +227,6 @@ def evaluate_standing_mandate_law(
     mandate: StandingMandate,
     *,
     path: str,
-    actor_roles: tuple[str, ...],
     predecessor: AcceptedStandingMandateV1 | None,
 ) -> StandingMandateLawResultV1:
     if path != standing_mandate_path(mandate.identity.name):
