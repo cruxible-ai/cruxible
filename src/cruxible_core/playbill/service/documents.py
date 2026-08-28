@@ -344,6 +344,7 @@ def service_activate_playbill_proposal(
 ) -> PlaybillActivationReceipt:
     """Settle, prebuild, and atomically activate one admitted candidate."""
 
+    proposal_id = instance.proposal_evidence().resolve_proposal_id(proposal_id)
     try:
         ProposalDigest.from_tagged(proposal_id)
     except ValueError as exc:

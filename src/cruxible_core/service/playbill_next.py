@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+import shlex
+from collections import OrderedDict, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -67,7 +68,9 @@ from cruxible_core.playbill.coverage.contracts import (
     LogicalSourceIdentityV1,
     PlaybillCitationWindowObservationV1,
 )
-from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
+from cruxible_core.playbill.coverage.indexes import (
+    WorkingOccurrenceV1,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import claim_row_visibility
@@ -457,6 +460,11 @@ class PlaybillNextRequestV1(_StrictNextModel):
         microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS
     )
     workspace_observation: PlaybillNextWorkspaceObservationV1 | None = None
+    # The result_digest of a queue this caller has already seen. A digest this
+    # process still remembers yields only the rows that are new since it; one it
+    # does not -- a restart, an eviction, a digest from elsewhere -- yields the
+    # whole queue, which is always a correct answer to "what is outstanding".
+    since_result_digest: str | None = None
 
     @field_validator("evaluation_time")
     @classmethod
@@ -487,6 +495,12 @@ class PlaybillNextRepairV1(_StrictNextModel):
     target: str
     required_change: str
     arguments: object = Field(default_factory=dict)
+    # The operation is a dotted CLI path and the arguments are its options, so a
+    # caller could always have assembled this line -- and every caller had to.
+    # Composed from the digested fields beside it, so it is a pure function of
+    # them and stays deterministic inside the item_id and result_digest
+    # preimages it necessarily joins.
+    command: str = ""
 
     @field_validator("arguments", mode="before")
     @classmethod
@@ -537,6 +551,10 @@ class PlaybillNextResultV1(_StrictNextModel):
     unobserved_domains: tuple[NextDomain, ...]
     items: tuple[PlaybillNextItemV1, ...]
     result_digest: str
+    # Set only on a delta. `result_digest` then still names the WHOLE queue --
+    # it is the cursor the caller echoes back next time -- so it deliberately
+    # does not reproduce from the partial `items` carried here.
+    delta_since: str | None = None
 
     @field_validator("evaluation_time")
     @classmethod
@@ -557,9 +575,83 @@ class PlaybillNextResultV1(_StrictNextModel):
             raise ValueError("next result must account for every observation domain")
         if self.items != tuple(sorted(self.items, key=_item_sort_key)):
             raise ValueError("next items do not follow the deterministic order")
-        if self.result_digest != playbill_next_result_digest(self):
+        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next result digest does not reproduce")
         return self
+
+
+_REPAIR_COMMAND_PATHS: Mapping[str, str] = {
+    "playbill.authoring.create": "playbill authoring create",
+    "playbill.authoring.bind": "playbill authoring bind",
+    "playbill.claim.retire": "playbill claim retire",
+    "playbill.floor.export": "playbill floor export",
+    "playbill.block.repin": "playbill block repin",
+    "playbill.document.propose": "playbill document propose",
+}
+
+# Each of these needs a local file. The queue knows the path only if the row
+# carried it, so the placeholder is filled from the arguments when they name it
+# and dropped -- with the flag that introduces it -- when they do not. A bare
+# `REQUEST_FILE` left in the line is not a hint, it is an unrunnable command
+# presented as a runnable one, which is the one thing `command` must never be.
+_REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
+    "playbill.authoring.create": ("PAYLOAD_FILE",),
+    "playbill.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
+    "playbill.claim.retire": ("REQUEST_FILE",),
+    "playbill.document.propose": ("--envelope", "ENVELOPE_FILE"),
+}
+_REPAIR_COMMAND_PLACEHOLDERS: Mapping[str, str] = {
+    "PAYLOAD_FILE": "payload_file",
+    "REQUEST_FILE": "request_file",
+    "ENVELOPE_FILE": "envelope_file",
+}
+
+
+def _repair_operands(operation: NextRepairOperation, values: Mapping[str, object]) -> list[str]:
+    """Render one operation's file operands, filling or dropping each placeholder."""
+
+    rendered: list[str] = []
+    pending_flag: str | None = None
+    for operand in _REPAIR_COMMAND_OPERANDS[operation]:
+        key = _REPAIR_COMMAND_PLACEHOLDERS.get(operand)
+        if key is None:
+            pending_flag = operand
+            continue
+        supplied = values.get(key)
+        if not isinstance(supplied, str) or not supplied:
+            pending_flag = None
+            continue
+        if pending_flag is not None:
+            rendered.append(pending_flag)
+            pending_flag = None
+        rendered.append(shlex.quote(supplied))
+    return rendered
+
+
+def _repair_command(
+    operation: NextRepairOperation,
+    *,
+    arguments: object,
+) -> str:
+    """Compose the runnable invocation for one repair operation."""
+
+    parts = ["cruxible", _REPAIR_COMMAND_PATHS[operation]]
+    values = arguments if isinstance(arguments, Mapping) else {}
+    if operation == "playbill.block.repin":
+        source_id = values.get("source_id")
+        block_id = values.get("block_id")
+        if isinstance(source_id, str) and isinstance(block_id, str):
+            parts.extend([shlex.quote(source_id), shlex.quote(block_id)])
+    elif operation == "playbill.claim.retire":
+        claim_id = values.get("claim_id")
+        if isinstance(claim_id, str):
+            parts.append(shlex.quote(claim_id))
+        parts.extend(_repair_operands(operation, values))
+    elif operation == "playbill.floor.export":
+        parts.extend(["--output", "FLOOR_DIR"])
+    elif operation in _REPAIR_COMMAND_OPERANDS:
+        parts.extend(_repair_operands(operation, values))
+    return " ".join(parts)
 
 
 def playbill_next_item_id(item: PlaybillNextItemV1) -> str:
@@ -578,6 +670,11 @@ def _item(
     detail: object,
     repair: PlaybillNextRepairV1,
 ) -> PlaybillNextItemV1:
+    # Composed here rather than at each emitting site: a row whose command was
+    # forgotten would be indistinguishable from one that has no command.
+    repair = repair.model_copy(
+        update={"command": _repair_command(repair.operation, arguments=repair.arguments)}
+    )
     values = {
         "severity": severity,
         "reason": reason,
@@ -2099,9 +2196,40 @@ def service_playbill_next(
         unobserved_domains=unobserved,
         items=items,
     )
-    return PlaybillNextResultV1.model_validate(
-        {**values, "result_digest": playbill_next_result_digest(provisional)}
-    )
+    result_digest = playbill_next_result_digest(provisional)
+    full = PlaybillNextResultV1.model_validate({**values, "result_digest": result_digest})
+    _remember_queue(result_digest, full.items)
+    if request.since_result_digest is None:
+        return full
+    return _delta_of(full, since=request.since_result_digest)
+
+
+# Bounded, per-process memory of which rows each queue digest stood for. A miss
+# -- restart, eviction, a digest minted elsewhere -- is not an error: it yields
+# the whole queue, which answers the caller's question either way.
+_QUEUE_MEMO: OrderedDict[str, frozenset[str]] = OrderedDict()
+_QUEUE_MEMO_LIMIT = 32
+
+
+def _remember_queue(result_digest: str, items: tuple[PlaybillNextItemV1, ...]) -> None:
+    _QUEUE_MEMO.pop(result_digest, None)
+    _QUEUE_MEMO[result_digest] = frozenset(item.item_id for item in items)
+    while len(_QUEUE_MEMO) > _QUEUE_MEMO_LIMIT:
+        _QUEUE_MEMO.popitem(last=False)
+
+
+def _delta_of(full: PlaybillNextResultV1, *, since: str) -> PlaybillNextResultV1:
+    """Return only the rows new since a remembered queue, keeping the full cursor.
+
+    `result_digest` still names the whole queue: it is what the caller echoes
+    back next time, so it must not describe the subset carried here.
+    """
+
+    seen = _QUEUE_MEMO.get(since)
+    if seen is None:
+        return full
+    fresh = tuple(item for item in full.items if item.item_id not in seen)
+    return full.model_copy(update={"items": fresh, "delta_since": since})
 
 
 __all__ = [

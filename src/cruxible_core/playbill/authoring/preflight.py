@@ -237,7 +237,12 @@ def _reference_diagnostics(
                     code="playbill.authoring.reference_coordinate_unavailable",
                     stage="reference_assertion",
                     offending_element=expectation.payload_path,
-                    message="The accepted coordinate that minted this ref cannot be verified.",
+                    message=(
+                        "The accepted coordinate that minted this ref cannot be "
+                        "verified. Re-mint the reference against the current "
+                        "coordinate: run playbill authoring rebase on this intent, "
+                        "then preflight again."
+                    ),
                     owner="daemon",
                     disposition="terminal",
                     repairs=(),
@@ -251,7 +256,11 @@ def _reference_diagnostics(
                     code="playbill.authoring.reference_absent_at_minted_coordinate",
                     stage="reference_assertion",
                     offending_element=expectation.payload_path,
-                    message="The named artifact was absent where this ref claims it was minted.",
+                    message=(
+                        "The named artifact was absent where this ref claims it was "
+                        "minted. Re-resolve the target with playbill discover, then "
+                        "re-create the intent with the address it returns."
+                    ),
                     owner="daemon",
                     disposition="terminal",
                     repairs=(),
@@ -311,10 +320,18 @@ def _reference_diagnostics(
                     successors.append(candidate_path)
         if len(successors) > 1:
             code = "playbill.authoring.reference_successor_ambiguous"
-            message = "More than one accepted artifact claims to succeed this reference."
+            message = (
+                "More than one accepted artifact claims to succeed this reference. "
+                "Name the intended successor explicitly: read the candidates with "
+                "playbill list, then re-create the intent against one of them."
+            )
         else:
             code = "playbill.authoring.reference_retired"
-            message = "The typed reference has no live successor at the intent base."
+            message = (
+                "The typed reference has no live successor at the intent base. "
+                "Choose a live target with playbill discover, then re-create the "
+                "intent against it."
+            )
         diagnostics.append(
             _diagnostic(
                 code=code,
@@ -608,7 +625,11 @@ def compute_preflight(
             code="playbill.authoring.diagnostic_budget_exhausted",
             stage="frontier",
             offending_element="payload",
-            message="The bounded diagnostic frontier was exhausted.",
+            message=(
+                "The bounded diagnostic frontier was exhausted. Repair the diagnostics "
+                "already listed and preflight again; the next pass reports what this "
+                "one had no room for."
+            ),
             owner="daemon",
             disposition="terminal",
             repairs=(),

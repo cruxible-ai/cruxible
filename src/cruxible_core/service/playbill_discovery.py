@@ -20,7 +20,7 @@ from cruxible_client.contracts.discovery import (
     DiscoveryPageV1,
     DiscoveryRequestV1,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.errors import PlaybillFormatError, ProposalIntegrityError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
 from cruxible_client.contracts.providers import parse_provider, provider_digest
@@ -216,6 +216,17 @@ def service_discover_playbill_semantic(
             coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
             provider_status="installed" if interfaces else "not_installed",
             interfaces=interfaces,
+        )
+    if query is None and entrypoint is None:
+        # The discovery law refuses the empty request by design, but it did so
+        # from DiscoveryRequestV1's own validator below, which is not a CoreError
+        # and so reached the caller as an opaque 500. Only `interfaces` answers
+        # an empty request (the inventory returned above); say so, and name the
+        # verb that lists a profile without a search term.
+        raise PlaybillFormatError(
+            f"discover with profile={profile!r} needs a query or an entrypoint: "
+            "only profile='interfaces' answers an empty request. "
+            "Use `playbill list` to enumerate accepted artifacts without a search term."
         )
     vocabulary = build_accepted_discovery_vocabulary(
         instance,

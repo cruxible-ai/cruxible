@@ -114,6 +114,7 @@ from cruxible_core.playbill.authoring.preflight import ComputedPreflight, comput
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.projection_artifacts import projected_revision
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -470,6 +471,55 @@ class AuthoringIntentCoordinator:
             view = self.replace_payload(intent_id, actor=actor, payload=payload)
         return self.preflight(view.intent.intent_id, actor=actor)
 
+    def _revision_marker(
+        self,
+        computed: ComputedPreflight,
+        preflighted: AuthoringIntentV1,
+    ) -> tuple[bool, int | None]:
+        """Say whether this submit amends a Claim identity in place, and to which revision.
+
+        `revises` reuses one Claim identity rather than adding a second Claim, and
+        the submit result read exactly like an ordinary create -- the caller had to
+        re-read the artifact to discover the identity was reused. The lowering
+        already knows: a non-null predecessor_digest IS amend-in-place.
+
+        The revision number is the projection's, computed by the projection's own
+        function rather than recounted here. Counting members independently drifts
+        the moment the two disagree, and they already would: `_projected_revision`
+        returns the SAME revision when this exact artifact digest is already in the
+        path's history, so a resubmitted identical candidate keeps its number
+        instead of claiming a new one.
+        """
+
+        lowered = computed.lowered
+        if lowered is None:
+            return False, None
+        # Claims only. Procedure lowering also records a predecessor_digest, and
+        # claim_path() refuses a Procedure identity -- so without this guard every
+        # Procedure revision raised on the terminal success path, AFTER the submit
+        # and the store transition had already landed: the write happened and the
+        # call reported failure.
+        if not isinstance(preflighted.payload, ClaimAuthoringPayloadV1):
+            return False, None
+        predecessor = lowered.resolved_authoring.get("predecessor_digest")
+        if not isinstance(predecessor, str):
+            return False, None
+        artifact_digest = lowered.resolved_authoring.get("artifact_digest")
+        if not isinstance(artifact_digest, str):
+            return False, None
+        path = claim_path(preflighted.semantic_identity)
+        records = tuple(
+            (path, generation.record)
+            for generation in self.instance.accepted_history()
+            if generation.record is not None
+        )
+        return True, projected_revision(
+            records,
+            path=path,
+            input_digest=artifact_digest,
+            artifact_digest=artifact_digest,
+        )
+
     def submit(
         self,
         intent_id: str,
@@ -613,9 +663,12 @@ class AuthoringIntentCoordinator:
             operation_key=operation_key,
             transform=bind_submit,
         )
+        identity_stable, claim_revision = self._revision_marker(computed, preflighted)
         return AuthoringSubmitResultV1(
             intent=submitted,
             status=submitted.candidate_status,
+            identity_stable=identity_stable,
+            claim_revision=claim_revision,
         )
 
     def status(self, intent_id: str, *, actor: AuthenticatedActor) -> CandidateStatusV1:

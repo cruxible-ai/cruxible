@@ -1158,7 +1158,11 @@ def test_every_next_reason_has_an_effective_named_repair(
     monkeypatch: pytest.MonkeyPatch,
     key: ClosedLoopKey,
 ) -> None:
-    reasons = set(get_args(NextReason))
+    # `claim_cites_retired` is RESERVED on the wire and never emitted -- the
+    # stranded-citation row was withdrawn pending the copy-edge design. A reason
+    # nothing emits has no repair to demonstrate, so it is exempt here; the value
+    # rejoins this law when something emits it again.
+    reasons = set(get_args(NextReason)) - {"claim_cites_retired"}
     assert {reason for reason, _discriminator in CLOSED_LOOP_CASES} == reasons
     assert {
         discriminator for reason, discriminator in CLOSED_LOOP_CASES if reason == "citation_drifted"

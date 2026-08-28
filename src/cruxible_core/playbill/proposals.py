@@ -184,6 +184,7 @@ from cruxible_client.contracts.providers import (
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDefinitionFormatError,
+    QueryDefinitionV1,
     evaluate_query_definition_law,
     parse_query_definition,
     query_definition_digest,
@@ -1262,6 +1263,45 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _literal_object_traversal(
+    query: QueryDefinitionV1,
+    *,
+    claim_types: Mapping[str, AcceptedClaimType],
+) -> CompilerDiagnostic | None:
+    """Refuse a traversal whose predicate cannot carry a Subject-typed edge.
+
+    A relation traversal walks Claim objects, so only ``object_kind="subject"``
+    ClaimTypes can produce an edge. Forward traversal refused this at run time
+    once a row reached it; reverse traversal simply returned nothing, so the
+    definition looked healthy and answered every run with silence. The
+    ClaimType is only knowable here, where the pinned artifacts are resolved,
+    so this is the one place that can name it.
+    """
+    for step in query.traversal:
+        accepted = claim_types.get(f"ClaimType:{step.predicate}")
+        if accepted is None:
+            # The pin law resolves every referenced ClaimType before this runs, so
+            # an unresolved one here means the two disagree about what was pinned.
+            raise ProposalIntegrityError(
+                "QueryDefinition traversal names a ClaimType the pin closure did not "
+                f"resolve: {step.predicate}"
+            )
+        if accepted.claim_type.object_kind == "subject":
+            continue
+        return CompilerDiagnostic(
+            code="playbill.query_definition.traversal_object_not_subject",
+            severity="error",
+            message=(
+                f"Traversal step {step.binding!r} walks predicate {step.predicate!r}, "
+                f"whose ClaimType declares object_kind="
+                f"{accepted.claim_type.object_kind!r}: relation traversal requires "
+                "object_kind='subject'."
+            ),
+            subject=SemanticAddress.whole_artifact(accepted.path),
+        )
+    return None
+
+
 def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     query = parse_query_definition(context.content, path=context.path)
     predecessor: AcceptedQueryDefinitionV1 | None = None
@@ -1281,6 +1321,9 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    literal_traversal = _literal_object_traversal(query, claim_types=context.resolved.claim_types)
+    if literal_traversal is not None:
+        return _MemberVerdict(diagnostics=(literal_traversal,))
     if law.artifact_digest is None or law.required_tier is None:
         raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
     return _accepted(

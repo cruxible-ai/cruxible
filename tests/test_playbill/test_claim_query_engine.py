@@ -1135,3 +1135,108 @@ def test_a_result_can_neither_hide_a_refusal_nor_hide_a_clipping_budget() -> Non
                 },
             }
         )
+
+
+def test_a_hidden_claim_is_counted_so_absence_and_invisibility_differ() -> None:
+    """A projected field reads "absent" either way; the advisory says which it was."""
+    result = run(
+        single_status_query(),
+        facts((status_claim(1, "wi-1", "ready", supported=False),)),
+        parameters={"item_id": "wi-1"},
+    )
+
+    assert [(item.name, item.state) for item in result.rows[0].fields] == [("status", "absent")]
+    visibility = result.verdict_visibility
+    assert visibility is not None
+    assert visibility.excluded_claim_count == 1
+    assert [
+        (item.verdict, item.excluded_claim_count) for item in visibility.excluded_by_verdict
+    ] == [("uncovered", 1)]
+    assert visibility.visible_verdicts == ("supported",)
+
+
+def test_a_query_that_hides_nothing_carries_no_visibility_advisory() -> None:
+    result = run(
+        single_status_query(),
+        facts((status_claim(1, "wi-1", "ready"),)),
+        parameters={"item_id": "wi-1"},
+    )
+
+    assert result.verdict_visibility is None
+
+
+def test_the_result_preimage_carries_no_verdict_visibility_advisory() -> None:
+    """The advisory reports what was not read, so it cannot move the digest."""
+    hidden = run(
+        single_status_query(),
+        facts((status_claim(1, "wi-1", "ready", supported=False),)),
+        parameters={"item_id": "wi-1"},
+    )
+
+    assert "verdict_visibility" not in _digest_preimage(hidden)
+    assert hidden.verdict_visibility is not None
+    without = hidden.model_copy(update={"verdict_visibility": None})
+    assert claim_query_result_digest(without) == claim_query_result_digest(hidden)
+
+
+def _digest_preimage(result: ClaimQueryResultV1) -> dict[str, object]:
+    payload = result.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("verdict_visibility")
+    return payload
+
+
+def test_the_advisory_counts_only_what_this_query_declined_to_read() -> None:
+    """A hidden Claim on a Subject this query never asked about is not its exclusion."""
+    result = run(
+        single_status_query(),
+        facts(
+            (
+                status_claim(1, "wi-1", "ready", supported=False),
+                status_claim(2, "wi-2", "ready", supported=False),
+            )
+        ),
+        parameters={"item_id": "wi-1"},
+    )
+
+    visibility = result.verdict_visibility
+    assert visibility is not None
+    # wi-2 is hidden too, but this evaluation only ever read wi-1's slot.
+    assert visibility.excluded_claim_count == 1
+    assert [item.excluded_claim_count for item in visibility.excluded_by_verdict] == [1]
+
+
+def test_a_recorded_exclusion_reason_is_never_itself_visible() -> None:
+    """The comparison and the record use one verdict form, so they cannot disagree."""
+    result = run(
+        single_status_query(),
+        facts((status_claim(1, "wi-1", "ready", supported=False),)),
+        parameters={"item_id": "wi-1"},
+    )
+
+    visibility = result.verdict_visibility
+    assert visibility is not None
+    for exclusion in visibility.excluded_by_verdict:
+        assert exclusion.verdict not in visibility.visible_verdicts
+
+
+def test_the_state_tap_value_is_identical_whether_or_not_rows_were_hidden() -> None:
+    """A hidden row must not change a Procedure run's identity.
+
+    The state-tap value feeds run_value_digest, which admits and replays the
+    run. The advisory is deliberately outside the query's own result digest;
+    this keeps it outside the run's too.
+    """
+    from cruxible_core.service.playbill_procedures import state_tap_value
+
+    hidden = run(
+        single_status_query(),
+        facts((status_claim(1, "wi-1", "ready", supported=False),)),
+        parameters={"item_id": "wi-1"},
+    )
+    assert hidden.verdict_visibility is not None
+
+    without = hidden.model_copy(update={"verdict_visibility": None})
+
+    assert state_tap_value(hidden) == state_tap_value(without)
+    assert "verdict_visibility" not in state_tap_value(hidden)

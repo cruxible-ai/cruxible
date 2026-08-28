@@ -97,6 +97,12 @@ def create_app() -> FastAPI:
         )
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
 
+    # Deliberately no blanket pydantic ValidationError handler: it cannot tell a
+    # caller's malformed request from a frozen model failing deep inside a
+    # service, so it would turn internal invariant breaches into 400s and put
+    # internal model names on the wire. Request-shaped refusals are raised as
+    # typed CoreErrors where the request is understood; anything else is a real
+    # server fault and takes the generic 500 below.
     @app.exception_handler(sqlite3.IntegrityError)
     async def integrity_error_handler(
         request: Request, exc: sqlite3.IntegrityError

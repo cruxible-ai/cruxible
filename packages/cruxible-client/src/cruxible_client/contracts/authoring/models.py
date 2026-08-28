@@ -61,7 +61,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.4.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:6186cfe4c546aca1641487ca1a13dfd3f3b3e9aa97a683aabe1a746aef9975c7"
+    "sha256:2a61656538d917027d4365a083b5274e5bf900e638d5d3efd5e9d8d7a55eead6"
 )
 INSERTION_TARGET_DIGEST_DOMAIN = "playbill-insertion-target-v1"
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
@@ -2057,6 +2057,12 @@ class AuthoringSubmitResultV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     intent: AuthoringIntentV1
     status: CandidateStatusV1
+    # A `revises` submit amends one Claim identity in place rather than adding a
+    # second Claim, and nothing in the result said so: the caller saw an ordinary
+    # submit and had to re-read the artifact to learn the identity was reused.
+    # `claim_revision` is the revision this candidate becomes once accepted.
+    identity_stable: bool = False
+    claim_revision: int | None = None
 
 
 class InsertionConfirmRequestV1(_StrictAuthoringModel):

@@ -26,6 +26,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.source_catalog import SourceCompilationManifest
+from cruxible_core.playbill.id_prefixes import resolve_id_prefix
 from cruxible_core.playbill.proposals import (
     ProposalAdmissionRecord,
     ProposalEvaluationRecord,
@@ -126,9 +127,20 @@ class ProposalEvidenceStore:
             label="source compilation",
         )
 
+    def resolve_proposal_id(self, proposal_id: str) -> str:
+        """Accept a unique sha256: prefix where a full proposal id is expected."""
+
+        return resolve_id_prefix(
+            proposal_id,
+            tuple(f"sha256:{path.stem}" for path in self.proposals.glob("*.json")),
+            marker="sha256:",
+            label="proposal",
+        )
+
     def read_admission(self, proposal_id: str) -> ProposalAdmissionRecord:
         """Read one canonical immutable admission by its public proposal ID."""
 
+        proposal_id = self.resolve_proposal_id(proposal_id)
         ProposalDigest.from_tagged(proposal_id)
         path = self.proposals / f"{proposal_id.removeprefix('sha256:')}.json"
         return self._read_model(path, ProposalAdmissionRecord, label="proposal admission")

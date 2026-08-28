@@ -242,6 +242,10 @@ class SubjectProfilePredicateV1(_StrictCardModel):
     object_kind: str | None = None
     object_digest: str | None = None
     object_preview: str | None = None
+    # The preview shows what the Subject currently says; these name the Claims
+    # that say it. Without them a reader of the floor can see the value and
+    # still not know which Claim to explain, revise, or retire to change it.
+    object_claim_identities: tuple[str, ...] = ()
     verdict: str | None = None
     currency: str | None = None
 
@@ -262,6 +266,8 @@ class SubjectProfilePredicateV1(_StrictCardModel):
             raise ValueError("an unresolved predicate row cannot render one effective object")
         if self.object_preview is not None and self.object_digest is None:
             raise ValueError("an object preview requires the exact object digest beside it")
+        if self.resolution == "unresolved" and self.object_claim_identities:
+            raise ValueError("an unresolved predicate row names no effective Claim")
         return self
 
 
@@ -797,6 +803,7 @@ def _predicate_row(
         object_preview=(
             None if single is None else _object_preview(single, budget=budget, reasons=reasons)
         ),
+        object_claim_identities=(() if single is None else slot.selected_claim_identities),
         verdict=verdict,
         currency=currency,
     )

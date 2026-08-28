@@ -151,6 +151,14 @@ def _artifact_law_coordinate(
     *,
     semantic_revision: int = 2,
 ) -> AcceptanceLawCoordinate:
+    """Name one artifact law at the revision of its meaning.
+
+    The revision is part of the digest, so a law that starts refusing something
+    it used to accept must move it: accepted artifacts pin the digest their
+    acceptance was judged under, and leaving it still would let one digest stand
+    for two different laws.
+    """
+
     return AcceptanceLawCoordinate(
         identifier=identifier,
         digest=typed_digest(
@@ -200,9 +208,14 @@ PROCEDURE_LAW_V2 = _artifact_law_coordinate(
     "playbill-procedure-v2",
 )
 LINE_LAW = _artifact_law_coordinate(LINE_LAW_IDENTIFIER, "playbill-line-v1")
+# Revision 3: the law refuses a relation traversal whose predicate names a
+# ClaimType that cannot carry a Subject-typed object. Definitions that were
+# accepted under revision 2 and contain such a traversal no longer satisfy it,
+# so the meaning moved and the digest moves with it.
 QUERY_DEFINITION_LAW = _artifact_law_coordinate(
     QUERY_DEFINITION_LAW_IDENTIFIER,
     "playbill-query-definition-v1",
+    semantic_revision=3,
 )
 EXHAUST_PROMOTION_LAW = _artifact_law_coordinate(
     EXHAUST_PROMOTION_LAW_IDENTIFIER,

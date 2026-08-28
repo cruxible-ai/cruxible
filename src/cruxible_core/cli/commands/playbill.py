@@ -45,18 +45,26 @@ from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillSinceRequestInvalid
+from cruxible_client.contracts.errors import (
+    CanonicalEncodingError,
+    DocumentNotFoundError,
+    PlaybillSinceRequestInvalid,
+)
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalRecord, PrincipalRole
+from cruxible_client.errors import DataValidationError
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
     _echo_write_target,
+    _emit_brief,
     _emit_json,
     _require_instance_id,
+    and_activate_option,
+    brief_option,
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
@@ -175,6 +183,16 @@ def _server_call(
     return cast(ResultT, result)
 
 
+def _model_field_errors(exc: ValidationError) -> list[str]:
+    """Render one pydantic failure per line as ``field.path: message``."""
+    rendered: list[str] = []
+    for error in exc.errors(include_url=False):
+        location = ".".join(str(part) for part in error.get("loc", ()))
+        message = str(error.get("msg", "invalid"))
+        rendered.append(f"{location}: {message}" if location else message)
+    return rendered
+
+
 def _read_model(path: str, model: type[ResultT]) -> ResultT:
     source = Path(path).expanduser()
     try:
@@ -184,7 +202,20 @@ def _read_model(path: str, model: type[ResultT]) -> ResultT:
     if not isinstance(payload, dict):
         raise click.ClickException(f"{source} must contain one mapping")
     validator = getattr(model, "model_validate")
-    return cast(ResultT, validator(payload))
+    try:
+        return cast(ResultT, validator(payload))
+    except ValidationError as exc:
+        # A malformed request file is the caller's mistake, not a crash: without
+        # this the raw pydantic ValidationError escapes `handle_errors` (which
+        # catches only the client CoreError family) and prints a Python
+        # traceback, unlike every other refusal on this CLI. Carry the field
+        # paths so the caller can repair the file from the message alone.
+        # DataValidationError renders `summary: <errors>` itself, so the summary
+        # must not repeat the field list.
+        raise DataValidationError(
+            f"{source} is not a valid {model.__name__}",
+            errors=_model_field_errors(exc),
+        ) from exc
 
 
 def _read_since_access_profile(path: str) -> dict[str, Any]:
@@ -708,9 +739,12 @@ def approve_proposal(
     type=click.Path(file_okay=False),
     help="Workspace holding .playbill/coverage.json and its optional floor output.",
 )
+@brief_option
 @json_option
 @handle_errors
-def activate_proposal(proposal_id: str, workspace_root: str, output_json: bool) -> None:
+def activate_proposal(
+    proposal_id: str, workspace_root: str, output_brief: bool, output_json: bool
+) -> None:
     result = _server_call(
         lambda client, instance_id: activate_with_workspace_refresh(
             client,
@@ -727,6 +761,20 @@ def activate_proposal(proposal_id: str, workspace_root: str, output_json: bool) 
         raise click.ClickException(
             f"proposal activation status={result.status}; floor refresh failed: {message}"
         )
+    if output_brief:
+        _emit_brief(
+            outcome=result.status,
+            ids={
+                "proposal": result.proposal_id,
+                "coordinate": (
+                    None
+                    if result.accepted_coordinate is None
+                    else result.accepted_coordinate.git_oid
+                ),
+            },
+            next_command="cruxible playbill next --brief",
+        )
+        return
     _emit_json(payload)
 
 
@@ -754,6 +802,38 @@ def whoami(output_json: bool) -> None:
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
+# `playbill explain` resolves a Document identity and explains the Subject that
+# Document is. An identity of another kind used to reach the daemon and come back
+# as a bare `CoreError: <what you typed>`, naming neither the accepted shape nor
+# the command that does answer for that kind. Each entry routes one recognizable
+# identity shape to the verb that actually explains it.
+_EXPLAIN_ROUTES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (re.compile(r"^(?:Claim:)?(?P<rest>CLM-[0-9a-f]+)$"), "Claim", "claim explain {rest}"),
+    (re.compile(r"^ClaimType:(?P<rest>.+)$"), "ClaimType", "claim-type get {rest}"),
+    (
+        re.compile(r"^Subject:(?P<kind>[^/]+)/(?P<id>.+)$"),
+        "Subject",
+        "subject get {kind} {id}",
+    ),
+    (re.compile(r"^Procedure:(?P<rest>.+)$"), "Procedure", "procedure readiness {rest}"),
+    (re.compile(r"^QueryDefinition:(?P<rest>.+)$"), "QueryDefinition", "query get {rest}"),
+)
+
+_EXPLAIN_ACCEPTS = (
+    "playbill explain accepts one accepted Document identity "
+    "(for example document:fleet.policy-note)"
+)
+
+
+def _explain_route(identity: str) -> tuple[str, str] | None:
+    """Name the kind and the exact command that explains it, when the shape says so."""
+    for pattern, kind, template in _EXPLAIN_ROUTES:
+        match = pattern.match(identity)
+        if match is not None:
+            return kind, "cruxible playbill " + template.format(**match.groupdict())
+    return None
+
+
 @playbill_group.command("explain")
 @click.argument("identity")
 @click.option("--detail", type=click.Choice(["summary", "evidence", "proof"]), default="summary")
@@ -761,10 +841,28 @@ def whoami(output_json: bool) -> None:
 @json_option
 @handle_errors
 def explain(identity: str, detail: str, include_body: bool, output_json: bool) -> None:
+    """Explain one accepted Document by identity."""
+
+    route = _explain_route(identity)
+    if route is not None:
+        kind, command = route
+        raise DataValidationError(
+            f"{identity} is a {kind} identity, not a Document identity: "
+            f"{_EXPLAIN_ACCEPTS}. Use `{command}` to explain this {kind}."
+        )
+
     def call(
         client: CruxibleClient, instance_id: str
     ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
-        document = client.get_playbill_document(instance_id, identity)
+        try:
+            document = client.get_playbill_document(instance_id, identity)
+        except DocumentNotFoundError as exc:
+            raise DocumentNotFoundError(
+                f"no accepted Document has identity {identity}: {_EXPLAIN_ACCEPTS}. "
+                "Other kinds have their own explainers: `cruxible playbill claim explain` "
+                "for a Claim, `cruxible playbill subject get` for a Subject, "
+                "`cruxible playbill expand` for any accepted artifact path."
+            ) from exc
         path = str(document.envelope["path"])
         return client.explain_playbill_subject(
             instance_id,
@@ -1285,12 +1383,24 @@ def propose_claims(authorings: tuple[str, ...], proposal_name: str, output_json:
 @click.argument("claim_id", required=False)
 @click.argument("request_file", required=False, type=click.Path(exists=True, dir_okay=False))
 @click.option("--example", is_flag=True, help="Print a valid retirement request file.")
+@and_activate_option
+@click.option(
+    "--workspace-root",
+    type=click.Path(exists=True, file_okay=False),
+    default=".",
+    show_default=True,
+    help="Workspace whose floor is refreshed when --and-activate activates.",
+)
+@brief_option
 @json_option
 @handle_errors
 def retire_claim(
     claim_id: str | None,
     request_file: str | None,
     example: bool,
+    and_activate: bool,
+    workspace_root: str,
+    output_brief: bool,
     output_json: bool,
 ) -> None:
     """Preflight or submit one attributed Claim retirement closure."""
@@ -1313,15 +1423,62 @@ def retire_claim(
         request = _CLAIM_RETIRE_ADAPTER.validate_python(_read_mapping(request_file))
     except ValidationError as exc:
         raise click.ClickException(f"Invalid Claim retirement: {exc}") from exc
-    result = _server_call(
-        lambda client, instance_id: client.retire_playbill_claim(
+
+    def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
+        retired = client.retire_playbill_claim(
             instance_id,
             claim_id,
             request=request.model_dump(mode="json"),
-        ),
-        command_name="playbill claim retire",
-    )
-    _emit_json(result.model_dump(mode="json"))
+        )
+        proposal_id = _retire_proposal_id(retired)
+        if not and_activate or proposal_id is None:
+            return retired, None
+        return retired, activate_with_workspace_refresh(
+            client, instance_id, proposal_id, workspace=workspace_root
+        )
+
+    result, activation = _server_call(call, command_name="playbill claim retire")
+    payload: dict[str, Any] = {"retire": result.model_dump(mode="json")}
+    if activation is not None:
+        payload["activation"] = activation.model_dump(mode="json")
+    elif and_activate:
+        payload["activation_note"] = (
+            "not activated: this retirement produced no activatable proposal "
+            f"(outcome {getattr(result, 'outcome', 'preflight')})"
+        )
+    if output_brief:
+        proposal_id = _retire_proposal_id(result)
+        _emit_brief(
+            outcome=(
+                "accepted"
+                if activation is not None
+                else str(getattr(result, "outcome", "preflight"))
+            ),
+            ids={"claim": claim_id, "proposal": proposal_id},
+            next_command=(
+                None
+                if activation is not None or proposal_id is None
+                else f"cruxible playbill proposal activate {proposal_id}"
+            ),
+        )
+        return
+    _emit_json(payload if (and_activate or activation is not None) else payload["retire"])
+
+
+def _retire_proposal_id(result: Any) -> str | None:
+    """Return the activatable proposal a submitted retirement produced, if any.
+
+    A preflight produces none, and neither does an `already_retired` replay.
+    """
+
+    proposal = getattr(result, "proposal", None)
+    if proposal is None:
+        return None
+    admission = proposal.proposal.get("admission") if isinstance(proposal.proposal, dict) else None
+    if not isinstance(admission, dict):
+        return None
+    proposal_id = admission.get("proposal_id")
+    return proposal_id if isinstance(proposal_id, str) else None
 
 
 @playbill_group.group("authoring")
@@ -1484,15 +1641,32 @@ def bind_authoring_selection(
 
 @authoring_group.command("preflight")
 @click.argument("intent_id")
+@brief_option
 @json_option
 @handle_errors
-def preflight_authoring_intent(intent_id: str, output_json: bool) -> None:
+def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.preflight_playbill_authoring_intent(
             instance_id, intent_id
         ),
         command_name="playbill authoring preflight",
     )
+    if output_brief:
+        codes = [
+            str(item.get("code"))
+            for item in (result.frontier.get("diagnostics") or [])
+            if isinstance(item, dict)
+        ]
+        _emit_brief(
+            outcome=result.verdict + (f" ({', '.join(codes)})" if codes else ""),
+            ids={"intent": intent_id},
+            next_command=(
+                f"cruxible playbill authoring submit {intent_id}"
+                if result.verdict == "passed"
+                else f"cruxible playbill authoring create  # repair, then preflight {intent_id}"
+            ),
+        )
+        return
     _emit_json(result.model_dump(mode="json"))
     if result.verdict == "refused":
         intent = _server_call(
@@ -1525,14 +1699,84 @@ def rebase_authoring_intent(intent_id: str, output_json: bool) -> None:
 
 @authoring_group.command("submit")
 @click.argument("intent_id")
+@and_activate_option
+@click.option(
+    "--workspace-root",
+    type=click.Path(exists=True, file_okay=False),
+    default=".",
+    show_default=True,
+    help="Workspace whose floor is refreshed when --and-activate activates.",
+)
+@brief_option
 @json_option
 @handle_errors
-def submit_authoring_intent(intent_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.submit_playbill_authoring_intent(instance_id, intent_id),
-        command_name="playbill authoring submit",
-    )
-    _emit_json(result.model_dump(mode="json"))
+def submit_authoring_intent(
+    intent_id: str,
+    and_activate: bool,
+    workspace_root: str,
+    output_brief: bool,
+    output_json: bool,
+) -> None:
+    def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
+        submitted = client.submit_playbill_authoring_intent(instance_id, intent_id)
+        if not and_activate or submitted.status.state != "ready_to_activate":
+            return submitted, None
+        # Only a candidate that needs nothing further is activated here. Anything
+        # else returns the submit result untouched: a partly-activated candidate
+        # would be a worse answer than an unactivated one.
+        proposal_id = submitted.status.proposal_id
+        if proposal_id is None:  # pragma: no cover - ready_to_activate carries one
+            return submitted, None
+        return submitted, activate_with_workspace_refresh(
+            client, instance_id, proposal_id, workspace=workspace_root
+        )
+
+    submitted, activation = _server_call(call, command_name="playbill authoring submit")
+    payload: dict[str, Any] = {"submit": submitted.model_dump(mode="json")}
+    if activation is not None:
+        payload["activation"] = activation.model_dump(mode="json")
+    elif and_activate:
+        payload["activation_note"] = _not_activated_note(submitted.status.state)
+    if output_brief:
+        _emit_brief(
+            outcome=(
+                "accepted" if activation is not None else f"submitted ({submitted.status.state})"
+            ),
+            ids={
+                "intent": intent_id,
+                "proposal": submitted.status.proposal_id,
+                "coordinate": (
+                    activation.accepted_coordinate.git_oid if activation is not None else None
+                ),
+            },
+            next_command=_submit_next_command(submitted, activated=activation is not None),
+        )
+        return
+    _emit_json(payload if (and_activate or activation is not None) else payload["submit"])
+
+
+def _not_activated_note(state: str) -> str:
+    """Say why --and-activate stopped, in the caller's terms."""
+
+    if state == "awaiting_external_approval":
+        return (
+            "not activated: the candidate needs an external approval. "
+            "Collect it with `cruxible playbill proposal approve`, then activate."
+        )
+    return f"not activated: the candidate is {state}, not ready_to_activate"
+
+
+def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
+    if activated:
+        return None
+    proposal_id = submitted.status.proposal_id
+    if submitted.status.state == "ready_to_activate" and proposal_id:
+        return f"cruxible playbill proposal activate {proposal_id}"
+    if submitted.status.state == "awaiting_external_approval" and proposal_id:
+        return f"cruxible playbill proposal approve {proposal_id}"
+    if submitted.status.state == "preflight_refused":
+        return f"cruxible playbill authoring preflight {submitted.intent['intent_id']}"
+    return None
 
 
 @authoring_group.command("status")
@@ -2004,6 +2248,13 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
     type=click.Path(file_okay=False),
     help="Workspace whose configured floor is observed locally.",
 )
+@click.option(
+    "--delta",
+    "since_result_digest",
+    default=None,
+    help="A prior result_digest; return only the rows new since that queue.",
+)
+@brief_option
 @json_option
 @handle_errors
 def next_work(
@@ -2011,6 +2262,8 @@ def next_work(
     access_profile_path: str | None,
     expiring_within: int,
     workspace_root: str,
+    since_result_digest: str | None,
+    output_brief: bool,
     output_json: bool,
 ) -> None:
     stamped_evaluation_time = (
@@ -2045,6 +2298,7 @@ def next_work(
             at=coordinate,
             expiring_within={"microseconds": expiring_within},
             workspace_observation=observed,
+            since_result_digest=since_result_digest,
         )
 
     result = _server_call(
@@ -3664,6 +3918,7 @@ def _resolved_coverage(
     help="A `grep -n` result batch to resolve as one operation.",
 )
 @click.option("--all", "whole_working_set", is_flag=True, help="Resolve the whole declared scope.")
+@brief_option
 @json_option
 @handle_errors
 def resolve_coverage(
@@ -3674,6 +3929,7 @@ def resolve_coverage(
     ranges: tuple[str, ...],
     grep_path: str | None,
     whole_working_set: bool,
+    output_brief: bool,
     output_json: bool,
 ) -> None:
     """Resolve what the working files you just read or changed are governed by.
@@ -3694,6 +3950,16 @@ def resolve_coverage(
     result = _resolved_coverage(observations, command_name="playbill coverage resolve")
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if output_brief:
+        drifted = [span for span in result.spans if span.match_state == "drifted"]
+        _emit_brief(
+            outcome=f"{result.health} ({result.summary.exact} exact, {len(drifted)} drifted)",
+            ids={"coordinate": result.at.git_oid, "epoch": str(result.epoch)},
+            next_command=(
+                "cruxible playbill next --brief" if drifted or result.health != "complete" else None
+            ),
+        )
         return
     for line in render_coverage_result(result):
         click.echo(line)

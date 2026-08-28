@@ -171,6 +171,70 @@ class VisibleClaimRow:
         return self.row.object_subject_path
 
 
+@dataclass(frozen=True)
+class ClaimRowOutcomeV1:
+    """What one Claim row resolved to, and -- when hidden -- by which verdict.
+
+    `visible is None` alone cannot say why a row vanished, so a Claim the policy
+    hid is indistinguishable from a Claim that does not exist. `hidden_verdict`
+    names the verdict that hid it, and is set only for that reason: an absent
+    Subject or an out-of-policy currency leaves it None.
+    """
+
+    visible: VisibleClaimRow | None
+    hidden_verdict: str | None = None
+
+
+def claim_row_outcome(
+    row: ClaimFactRowV1,
+    *,
+    subject: AcceptedSubject | None,
+    providers: Mapping[str, ProviderV1],
+    policy: QueryEvaluationPolicyV1,
+    evaluation_time: datetime,
+) -> ClaimRowOutcomeV1:
+    """Resolve one Claim row's visibility, keeping the reason it was hidden."""
+
+    if subject is None:
+        return ClaimRowOutcomeV1(visible=None)
+    statement = row.accepted.claim.statement
+    verdict = evaluate_claim_verdict(
+        claim_statement_digest=row.accepted.statement_digest,
+        rule=row.rule,
+        evaluation_time=evaluation_time,
+        captures=row.captures,
+        attestations=row.attestations,
+        providers=providers,
+        claim_effective_from=statement.effective_from,
+        claim_effective_until=statement.effective_until,
+        referent_current=row.referent_current,
+        resolved_authority_basis=row.resolved_authority_basis,
+    )
+    # Compare and record the same form. The policy is written in the compat
+    # vocabulary and the visible row already reports that form, so testing the
+    # raw verdict while recording the mapped one could name an exclusion reason
+    # that is itself listed in visible_verdicts.
+    reported = claim_verdict_v1_compat(verdict).verdict
+    if reported not in policy.visible_verdicts:
+        return ClaimRowOutcomeV1(visible=None, hidden_verdict=reported)
+    if verdict.currency not in policy.visible_currency:
+        return ClaimRowOutcomeV1(visible=None)
+    return ClaimRowOutcomeV1(
+        visible=VisibleClaimRow(
+            row=row,
+            visibility=QueryClaimVisibilityV1(
+                claim_path=row.accepted.path,
+                statement_digest=row.accepted.statement_digest,
+                artifact_digest=row.accepted.artifact_digest,
+                predicate=statement.predicate,
+                subject_identity=subject.shell.identity.qualified,
+                verdict=reported,
+                currency=verdict.currency,
+            ),
+        )
+    )
+
+
 def claim_row_visibility(
     row: ClaimFactRowV1,
     *,
@@ -186,37 +250,13 @@ def claim_row_visibility(
     any policy, so it is never visible and never materialized.
     """
 
-    if subject is None:
-        return None
-    statement = row.accepted.claim.statement
-    verdict = evaluate_claim_verdict(
-        claim_statement_digest=row.accepted.statement_digest,
-        rule=row.rule,
-        evaluation_time=evaluation_time,
-        captures=row.captures,
-        attestations=row.attestations,
+    return claim_row_outcome(
+        row,
+        subject=subject,
         providers=providers,
-        claim_effective_from=statement.effective_from,
-        claim_effective_until=statement.effective_until,
-        referent_current=row.referent_current,
-        resolved_authority_basis=row.resolved_authority_basis,
-    )
-    if verdict.verdict not in policy.visible_verdicts:
-        return None
-    if verdict.currency not in policy.visible_currency:
-        return None
-    return VisibleClaimRow(
-        row=row,
-        visibility=QueryClaimVisibilityV1(
-            claim_path=row.accepted.path,
-            statement_digest=row.accepted.statement_digest,
-            artifact_digest=row.accepted.artifact_digest,
-            predicate=statement.predicate,
-            subject_identity=subject.shell.identity.qualified,
-            verdict=claim_verdict_v1_compat(verdict).verdict,
-            currency=verdict.currency,
-        ),
-    )
+        policy=policy,
+        evaluation_time=evaluation_time,
+    ).visible
 
 
 # -- the materialized Subject view ---------------------------------------
@@ -430,6 +470,14 @@ class ClaimQueryBackendV1(Protocol):
     def visibility(self, row: ClaimFactRowV1) -> VisibleClaimRow | None:
         """Return the Claim row's visibility, or None when the policy hides it."""
 
+    @property
+    def excluded_by_verdict(self) -> tuple[tuple[str, int], ...]:
+        """Return how many Claims each out-of-policy verdict hid, verdict-sorted.
+
+        A backend that hides a Claim owes the caller that count: without it a
+        hidden Claim and an absent Claim are the same silence.
+        """
+
 
 class ClaimQueryBackendFactoryV1(Protocol):
     """Materialize one backend from accepted facts, a definition, and a read time."""
@@ -469,9 +517,19 @@ class DirectClaimFactIndex:
         }
         self._by_subject: dict[tuple[str, str], list[VisibleClaimRow]] = {}
         self._by_object: dict[tuple[str, str], list[VisibleClaimRow]] = {}
+        # Hidden rows are bucketed by the same keys the read primitives use, so
+        # the accounting can report what THIS evaluation declined rather than
+        # everything the instance happens to hold. A row nothing asked for is
+        # not something this query hid.
+        self._hidden_by_subject: dict[tuple[str, str], list[str]] = {}
+        self._hidden_by_object: dict[tuple[str, str], list[str]] = {}
+        self._touched: set[tuple[str, tuple[str, str]]] = set()
         for row in facts.claims:
-            visible = self.visibility(row)
+            outcome = self._outcome(row)
+            visible = outcome.visible
             if visible is None:
+                if outcome.hidden_verdict is not None:
+                    self._record_hidden(row, verdict=outcome.hidden_verdict)
                 continue
             predicate = row.accepted.claim.statement.predicate
             self._by_subject.setdefault((row.subject_path, predicate), []).append(visible)
@@ -485,16 +543,42 @@ class DirectClaimFactIndex:
 
         return self._facts.coordinate
 
-    def visibility(self, row: ClaimFactRowV1) -> VisibleClaimRow | None:
-        """Return the Claim row's visibility, or None when the policy hides it."""
+    def _record_hidden(self, row: ClaimFactRowV1, *, verdict: str) -> None:
+        predicate = row.accepted.claim.statement.predicate
+        self._hidden_by_subject.setdefault((row.subject_path, predicate), []).append(verdict)
+        item = row.accepted.claim.statement.object
+        if isinstance(item, SubjectClaimObject):
+            key = (item.address.artifact_path, predicate)
+            self._hidden_by_object.setdefault(key, []).append(verdict)
 
-        return claim_row_visibility(
+    @property
+    def excluded_by_verdict(self) -> tuple[tuple[str, int], ...]:
+        """Return how many Claims each out-of-policy verdict hid, verdict-sorted.
+
+        Only the buckets this evaluation actually read from count: a Claim on a
+        Subject or predicate the query never asked about was not hidden from it.
+        """
+
+        counts: dict[str, int] = {}
+        for direction, key in self._touched:
+            source = self._hidden_by_subject if direction == "on" else self._hidden_by_object
+            for verdict in source.get(key, ()):
+                counts[verdict] = counts.get(verdict, 0) + 1
+        return tuple(sorted(counts.items(), key=lambda item: item[0].encode("utf-8")))
+
+    def _outcome(self, row: ClaimFactRowV1) -> ClaimRowOutcomeV1:
+        return claim_row_outcome(
             row,
             subject=self._subjects.get(row.subject_path),
             providers=self._providers,
             policy=self._definition.evaluation_policy,
             evaluation_time=self._evaluation_time,
         )
+
+    def visibility(self, row: ClaimFactRowV1) -> VisibleClaimRow | None:
+        """Return the Claim row's visibility, or None when the policy hides it."""
+
+        return self._outcome(row).visible
 
     def subjects(self, kinds: tuple[str, ...], *, subject_id: str | None = None) -> tuple[str, ...]:
         """Return the canonically ordered Subject paths of the declared kinds."""
@@ -515,11 +599,13 @@ class DirectClaimFactIndex:
     def claims_on(self, artifact_path: str, predicate: str) -> tuple[VisibleClaimRow, ...]:
         """Return the visible Claims whose statement subject is that Subject."""
 
+        self._touched.add(("on", (artifact_path, predicate)))
         return tuple(self._by_subject.get((artifact_path, predicate), ()))
 
     def claims_to(self, artifact_path: str, predicate: str) -> tuple[VisibleClaimRow, ...]:
         """Return the visible Claims whose Subject-typed object is that Subject."""
 
+        self._touched.add(("to", (artifact_path, predicate)))
         return tuple(self._by_object.get((artifact_path, predicate), ()))
 
 

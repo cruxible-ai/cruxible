@@ -21,6 +21,7 @@ from cruxible_client.contracts.authoring.models import (
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.errors import PlaybillError
+from cruxible_core.playbill.id_prefixes import resolve_id_prefix
 
 AUTHORING_INTENT_EVENT_DIGEST_DOMAIN = "playbill-authoring-intent-event-v1"
 AUTHORING_INTENT_EVENT_V2_DIGEST_DOMAIN = "playbill-authoring-intent-event-v2"
@@ -337,7 +338,18 @@ class AuthoringIntentStore:
             os.replace(temporary, final)
             _fsync_directory(self.root)
 
+    def resolve_intent_id(self, intent_id: str) -> str:
+        """Accept a unique AIT- prefix where a full intent id is expected."""
+
+        return resolve_id_prefix(
+            intent_id,
+            tuple(path.name for path in self._intent_directories()),
+            marker="AIT-",
+            label="AuthoringIntent",
+        )
+
     def get(self, intent_id: str, *, actor_id: str) -> AuthoringIntentV1:
+        intent_id = self.resolve_intent_id(intent_id)
         with self._locked():
             events = self._load_events(self.root / intent_id)
             intent = events[-1].intent

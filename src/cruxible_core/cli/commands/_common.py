@@ -36,6 +36,41 @@ json_option = click.option(
 )
 
 
+brief_option = click.option(
+    "--brief",
+    "output_brief",
+    is_flag=True,
+    default=False,
+    help="Render only the outcome, the ids, and the command to run next.",
+)
+
+and_activate_option = click.option(
+    "--and-activate",
+    "and_activate",
+    is_flag=True,
+    default=False,
+    help="Activate immediately when the candidate needs no approval; never half-activate.",
+)
+
+
+def _emit_brief(
+    *,
+    outcome: str,
+    ids: Mapping[str, str | None],
+    next_command: str | None,
+) -> None:
+    """Render the three things a caller acts on: what happened, what to name, what to run.
+
+    Full JSON stays the default because it is the record; this is the read.
+    """
+
+    click.echo(f"outcome: {outcome}")
+    for label, value in ids.items():
+        if value:
+            click.echo(f"{label}: {value}")
+    click.echo(f"next: {next_command}" if next_command else "next: nothing to run")
+
+
 def _root_ctx_obj() -> dict[str, Any]:
     ctx = click.get_current_context(silent=True)
     if ctx is None:

@@ -376,8 +376,17 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
         claim_type_definition=None,
     )
     assert unrefreshed.reference_expectations == ()
-    assert not unrefreshed.prepare().refused
+    prepared_revision = unrefreshed.prepare()
+    assert not prepared_revision.refused
     assert pb.coordinate == original_coordinate
+
+    # A `revises` submit amends one Claim identity in place; the result says so
+    # rather than reading like an ordinary create.
+    revision_submit = transport.submit_playbill_authoring_intent(
+        instance_id, prepared_revision.intent_id
+    )
+    assert revision_submit.identity_stable is True
+    assert revision_submit.claim_revision == 2
 
     missing_revision_id = "CLM-" + "f" * 32
     missing_revision = pb.claim(

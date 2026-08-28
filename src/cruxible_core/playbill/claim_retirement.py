@@ -61,6 +61,25 @@ class ClaimRetirementResultItemV1(_StrictRetirementModel):
     successor_digest: str
 
 
+class ClaimRetireCitingClaimV1(_StrictRetirementModel):
+    """RESERVED. The advisory that produced these rows is withdrawn.
+
+    Retiring a Claim withdraws an assertion, not the evidence under it, so the
+    Claims that read the same bytes are not stranded by it. The only key that
+    could have named a real relation -- byte equality of the committed content --
+    joins unrelated Claims that happen to read identical spans of different
+    sources. The sound key is an explicit copy edge on the citation itself, which
+    is the maintainer's shared-Capture/copy-edge design decision to make.
+
+    The model and its field stay on the wire, always empty, so that decision does
+    not have to move the catalogued surface a second time.
+    """
+
+    artifact_identity: ArtifactIdentity
+    claim_path: str
+    capture_digests: tuple[str, ...]
+
+
 class ClaimRetirePreflightV1(_StrictRetirementModel):
     tag: Literal["playbill-claim-retire-preflight-v1"] = "playbill-claim-retire-preflight-v1"
     operation_digest: str
@@ -70,6 +89,9 @@ class ClaimRetirePreflightV1(_StrictRetirementModel):
     reason: ClaimRetirementReason
     effective_until: datetime | None
     required_dependents: tuple[ClaimRetireInventoryItemV1, ...]
+    # RESERVED, always empty -- see ClaimRetireCitingClaimV1. Retirement makes no
+    # claim about who else read the same bytes.
+    citing_claims: tuple[ClaimRetireCitingClaimV1, ...] = ()
     diagnostics: tuple[CompilerDiagnostic, ...]
     submit_ready: bool
 

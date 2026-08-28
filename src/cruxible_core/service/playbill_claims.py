@@ -99,6 +99,7 @@ from cruxible_core.playbill.dereference import (
     ExternalSelectionReaderProtocol,
     dereference_source_handle,
 )
+from cruxible_core.playbill.id_prefixes import resolve_id_prefix
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_claims import ClaimProjectionView
@@ -533,6 +534,10 @@ def _claim_from_view(view: PlaybillClaimView | PlaybillClaimViewV2) -> ClaimArti
     )
 
 
+# Deliberate divergence: this direct-propose path keeps the older
+# subject+predicate disposition scope while the authoring coordinator narrowed
+# to the (subject, predicate, qualifier) slot. B3 deletes this path entirely, so
+# it is left at the wider scope rather than migrated twice.
 def _existing_statements(
     tree: dict[str, bytes], statement: ClaimStatement
 ) -> tuple[ExistingClaimStatementHandleV1, ...]:
@@ -1073,6 +1078,36 @@ def service_propose_playbill_claim(
     )
 
 
+def _resolved_claim_id(
+    instance: PlaybillInstance,
+    identity: str,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> str:
+    """Accept a unique CLM- prefix where a full Claim id is expected."""
+
+    bare = identity.removeprefix("Claim:")
+    return resolve_id_prefix(
+        bare,
+        _accepted_claim_ids(instance, coordinate=coordinate),
+        marker="CLM-",
+        label="Claim",
+    )
+
+
+def _accepted_claim_ids(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+) -> tuple[str, ...]:
+    tree = instance.tree_at(coordinate.git_oid)
+    return tuple(
+        path.rsplit("/", 1)[-1].removesuffix(".yaml")
+        for path in tree
+        if path.startswith("claims/") and path.endswith(".yaml")
+    )
+
+
 def service_get_playbill_claim(
     instance: PlaybillInstance,
     *,
@@ -1081,7 +1116,8 @@ def service_get_playbill_claim(
     evaluation_time: datetime | None = None,
 ) -> PlaybillClaimViewV2:
     expected = "Claim:CLM-<32 lowercase hex> or CLM-<32 lowercase hex>"
-    bare = identity.removeprefix("Claim:")
+    coordinate = _resolve_coordinate(instance, at)
+    bare = _resolved_claim_id(instance, identity, coordinate=coordinate)
     try:
         path = claim_path(bare)
     except ValueError as exc:
@@ -1089,7 +1125,6 @@ def service_get_playbill_claim(
             f"Claim not found; expected {expected}; received {identity!r}"
         ) from exc
     qualified = f"Claim:{bare}"
-    coordinate = _resolve_coordinate(instance, at)
     generation = next(
         item for item in instance.accepted_history() if item.oid == coordinate.git_oid
     )
@@ -1372,7 +1407,7 @@ def service_playbill_claim_history(
 ) -> PlaybillClaimHistory:
     parsed_identity = ArtifactIdentity(
         kind="Claim",
-        name=identity.removeprefix("Claim:"),
+        name=_resolved_claim_id(instance, identity, coordinate=_resolve_coordinate(instance, None)),
     )
     path = claim_path(parsed_identity.name)
     entries: list[PlaybillClaimHistoryEntry] = []

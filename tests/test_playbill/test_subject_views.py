@@ -576,7 +576,7 @@ class PrimitiveOnlyBackend:
     """A backend exposing exactly the frozen surface and nothing else.
 
     An evaluation that succeeds through this object cannot have read accepted
-    state by any route other than the five primitives and the bound coordinate.
+    state by any route other than the frozen primitives and the bound coordinate.
     """
 
     def __init__(self, inner: DirectClaimFactIndex) -> None:
@@ -609,6 +609,14 @@ class PrimitiveOnlyBackend:
     def visibility(self, row: ClaimFactRowV1) -> VisibleClaimRow | None:
         self.calls.add("visibility")
         return self._inner.visibility(row)
+
+    @property
+    def excluded_by_verdict(self) -> tuple[tuple[str, int], ...]:
+        # A backend that hides a Claim owes the caller that count, so this is
+        # part of the frozen surface rather than something the evaluator may
+        # reach around the backend to compute for itself.
+        self.calls.add("excluded_by_verdict")
+        return self._inner.excluded_by_verdict
 
 
 @dataclass
@@ -728,7 +736,14 @@ def test_the_evaluator_reads_state_only_through_the_frozen_backend_surface() -> 
     )
 
     assert claim_query_result_digest(restricted) == claim_query_result_digest(reference)
-    assert factory.backends[0].calls == {"subjects", "subject", "claims_on"}
+    # `excluded_by_verdict` is read once per evaluation to account for the Claims
+    # the policy hid; it contributes to no digest (see claim_query_result_digest).
+    assert factory.backends[0].calls == {
+        "subjects",
+        "subject",
+        "claims_on",
+        "excluded_by_verdict",
+    }
 
 
 # -- the parity matrix ----------------------------------------------------

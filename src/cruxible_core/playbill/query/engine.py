@@ -28,9 +28,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import cmp_to_key
-from typing import Any, Literal, NamedTuple
+from typing import Any, Literal, NamedTuple, cast
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import (
     Sha256Value,
@@ -38,12 +38,14 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.claim_verdicts import EvidenceRelativeClaimVerdict
 from cruxible_client.contracts.claims import SubjectClaimObject
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillError
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     QueryDedupeV1,
     QueryDefinitionV1,
+    QueryEvaluationPolicyV1,
     QueryResultCardinalityV1,
     QueryResultShapeV1,
 )
@@ -284,6 +286,45 @@ class QueryTruncationV1(_StrictQueryEngineModel):
         return bool(self.clipped_budgets)
 
 
+class QueryVerdictExclusionV1(_StrictQueryEngineModel):
+    """How many Claims one excluded verdict hid from this evaluation."""
+
+    tag: Literal["playbill-query-verdict-exclusion-v1"] = "playbill-query-verdict-exclusion-v1"
+    verdict: EvidenceRelativeClaimVerdict
+    excluded_claim_count: int = Field(ge=1)
+
+
+class QueryVerdictVisibilityV1(_StrictQueryEngineModel):
+    """Advisory accounting of the Claims the evaluation policy did not show.
+
+    Not part of the digest preimage: this reports what the read declined to look
+    at, never what it read, so two evaluations that commit to the same rows stay
+    byte-identical whether or not either hid anything.
+    """
+
+    tag: Literal["playbill-query-verdict-visibility-v1"] = "playbill-query-verdict-visibility-v1"
+    excluded_claim_count: int = Field(ge=1)
+    excluded_by_verdict: tuple[QueryVerdictExclusionV1, ...] = ()
+    visible_verdicts: tuple[EvidenceRelativeClaimVerdict, ...] = ()
+
+    @field_validator("excluded_by_verdict")
+    @classmethod
+    def _exclusions(
+        cls, value: tuple[QueryVerdictExclusionV1, ...]
+    ) -> tuple[QueryVerdictExclusionV1, ...]:
+        verdicts = tuple(item.verdict for item in value)
+        if verdicts != byte_sorted(verdicts):
+            raise ValueError("excluded query verdicts must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "QueryVerdictVisibilityV1":
+        counted = sum(item.excluded_claim_count for item in self.excluded_by_verdict)
+        if counted != self.excluded_claim_count:
+            raise ValueError("excluded claim count must equal its per-verdict accounting")
+        return self
+
+
 class QueryParameterBindingV1(_StrictQueryEngineModel):
     """One resolved caller parameter exactly as the evaluation bound it."""
 
@@ -319,6 +360,16 @@ class ClaimQueryResultV1(_StrictQueryEngineModel):
     conflicts: tuple[QueryConflictV1, ...] = ()
     truncation: QueryTruncationV1
     refusal: QueryRefusalV1 | None = None
+    # Advisory sidecar, deliberately OUTSIDE the digest preimage (see
+    # `claim_query_result_digest`). A Claim the evaluation policy hides is
+    # indistinguishable from a Claim that does not exist -- a projected field
+    # comes back "absent" either way -- so a definition whose visible_verdicts
+    # omit the verdicts its Claims actually carry answers every run with silence
+    # and looks healthy doing it. This says how many rows that silence covers.
+    # It reports what was NOT read, so it cannot change what the read committed
+    # to: keeping it out of the preimage means no result digest and no receipt
+    # re-pins, and a caller who ignores it still replays byte-identically.
+    verdict_visibility: QueryVerdictVisibilityV1 | None = None
 
     @field_validator("evaluated_at", "expires_at")
     @classmethod
@@ -407,10 +458,18 @@ def query_attempted_parameter_digest(parameters: Mapping[str, object] | None) ->
 
 
 def claim_query_result_digest(result: ClaimQueryResultV1) -> str:
-    """Digest one complete result, ordering and truncation accounting included."""
+    """Digest one complete result, ordering and truncation accounting included.
+
+    `verdict_visibility` sits outside the preimage. It is advisory accounting of
+    the Claims the evaluation policy declined to show, so it describes what was
+    not read rather than what the result commits to; keeping it out means adding
+    it re-pins no existing digest and no receipt, and a result replays
+    byte-identically whether or not the advisory is present.
+    """
 
     payload = result.model_dump(mode="json")
     payload.pop("tag")
+    payload.pop("verdict_visibility")
     return typed_digest(Sha256Value, RESULT_DIGEST_DOMAIN, payload).tagged
 
 
@@ -1267,6 +1326,34 @@ def _evaluate(
             evaluated_path_count=evaluated_path_count,
             retained_path_count=retained_path_count,
         ),
+        verdict_visibility=_verdict_visibility(backend, policy=query.evaluation_policy),
+    )
+
+
+def _verdict_visibility(
+    backend: ClaimQueryBackendV1,
+    *,
+    policy: QueryEvaluationPolicyV1,
+) -> QueryVerdictVisibilityV1 | None:
+    """Account for the Claims this evaluation's policy declined to show.
+
+    None when the policy hid nothing, so a definition that shows everything it
+    reads carries no advisory at all.
+    """
+
+    excluded = tuple(backend.excluded_by_verdict)
+    if not excluded:
+        return None
+    return QueryVerdictVisibilityV1(
+        excluded_claim_count=sum(count for _verdict, count in excluded),
+        excluded_by_verdict=tuple(
+            QueryVerdictExclusionV1(
+                verdict=cast(EvidenceRelativeClaimVerdict, verdict),
+                excluded_claim_count=count,
+            )
+            for verdict, count in excluded
+        ),
+        visible_verdicts=policy.visible_verdicts,
     )
 
 
@@ -1312,6 +1399,7 @@ __all__ = [
     "QueryRowBindingV1",
     "QueryTruncationV1",
     "QueryValueStateV1",
+    "QueryVerdictExclusionV1",
     "VisibleClaimRow",
     "claim_query_result_digest",
     "evaluate_claim_query",
