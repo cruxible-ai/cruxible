@@ -109,9 +109,7 @@ def test_corroboration_insufficient_commits_the_observed_result() -> None:
 
     assert results[0].observed_count == 1
     assert results[0].satisfied is False
-    assert [code for code, _message in issues] == [
-        "playbill.claim.corroboration_insufficient"
-    ]
+    assert [code for code, _message in issues] == ["playbill.claim.corroboration_insufficient"]
 
 
 def test_corroboration_unresolved_digest_is_a_typed_issue() -> None:
@@ -127,9 +125,7 @@ def test_corroboration_unresolved_digest_is_a_typed_issue() -> None:
     )
 
     assert results == ()
-    assert [code for code, _message in issues] == [
-        "playbill.claim.corroboration_query_unresolved"
-    ]
+    assert [code for code, _message in issues] == ["playbill.claim.corroboration_query_unresolved"]
 
 
 def test_reserved_parameter_type_mismatch_is_detected_before_query_execution() -> None:
@@ -159,6 +155,4 @@ def test_nonreserved_required_parameter_uses_the_query_refusal() -> None:
 
     assert results[0].query_verdict == "refused"
     assert results[0].query_refusal_code == "playbill.query.parameter_missing"
-    assert [code for code, _message in issues] == [
-        "playbill.claim.corroboration_query_refused"
-    ]
+    assert [code for code, _message in issues] == ["playbill.claim.corroboration_query_refused"]
