@@ -83,6 +83,7 @@ from cruxible_core.playbill.witness import WitnessSink
 from cruxible_core.storage.playbill_projection import ProjectionHandle, bind_projection
 
 if TYPE_CHECKING:
+    from cruxible_core.playbill.claim_attestation_store import ClaimAttestationEvidenceStore
     from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 
 DESCRIPTOR_FILE = "instance.json"
@@ -541,6 +542,19 @@ class PlaybillInstance:
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
         return ReviewOperationalStore(
+            paths["exhaust"],
+            instance_id=self.descriptor.instance_id,
+        )
+
+    def claim_attestation_evidence_store(self) -> ClaimAttestationEvidenceStore:
+        """Return the principal-authored evidence ledger without initializing it."""
+
+        from cruxible_core.playbill.claim_attestation_store import (
+            ClaimAttestationEvidenceStore,
+        )
+
+        paths = self._validated_paths(self.root, self.descriptor.storage)
+        return ClaimAttestationEvidenceStore(
             paths["exhaust"],
             instance_id=self.descriptor.instance_id,
         )
