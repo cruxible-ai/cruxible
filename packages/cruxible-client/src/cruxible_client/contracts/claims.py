@@ -1143,7 +1143,8 @@ def _citation_origin_refusal(
         contract=contract,
         store=store,
         claim_id=claim.identity.name,
-    ) or capture_is_direct_selection_bound(
+    )
+    direct_selection_bound = capture_is_direct_selection_bound(
         envelope,
         contract=contract,
         claim_id=claim.identity.name,
@@ -1160,6 +1161,7 @@ def _citation_origin_refusal(
             "The coordinator self-source Capture is not bound to this Claim.",
         )
     verified_self_source = direct_self_source or coordinator_self_source
+    self_source_origin_permitted = verified_self_source or direct_selection_bound
     for association in associations:
         if association.origin == "self_published" and association.role != "copy":
             return (
@@ -1171,7 +1173,7 @@ def _citation_origin_refusal(
                 "playbill.claim.self_source_origin_mismatch",
                 "A direct self-source tied to this Claim must declare self_source origin.",
             )
-        if not verified_self_source and association.origin == "self_source":
+        if not self_source_origin_permitted and association.origin == "self_source":
             return (
                 "playbill.claim.self_source_origin_mismatch",
                 "self_source origin requires a verified self-source Capture tied to this Claim.",
