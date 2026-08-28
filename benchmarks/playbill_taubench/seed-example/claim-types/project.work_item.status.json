@@ -17,7 +17,7 @@
         "allowed_reducer_digests": [],
         "attestation_requirement": "none",
         "capture_contract_digests": [
-          "sha256:84b7e6eca1a9c18084e4805df07c07eeb8f6465b6234d8205c382102fce1165e"
+          "sha256:a69e7edb9d8f4fe5e732119bab48722bfee865bd6d0cdc438021015d1af1e00f"
         ],
         "claim_roles": [
           "normative",
@@ -35,9 +35,9 @@
         "allowed_reducer_digests": [],
         "attestation_requirement": "none",
         "capture_contract_digests": [
-          "sha256:7492f007725d36d8a83d60ed998ed263c50144e2a31f672b3cbba4ca8654bc76",
-          "sha256:c75b0b8c058604aa03689e142b2c14f2d100a73a18f18b67432fa68ade9a9e53",
-          "sha256:e4bdfee47f0127746ae024d897b7dcbb0f9bd5b291edb3b4ea44f2f4423dffff"
+          "sha256:2851cbd4b21e669b717fbb09fcd62a896a5e3b1dd45afd54246d764db8c399be",
+          "sha256:4ab8147456dccf58a93d3b175c4ade699c80571ee9ff2ede1fb74905e0e3738a",
+          "sha256:977ef8ecd813d979b35fe8007d7c08aaa27c72884de705e57d887f71bf007443"
         ],
         "claim_roles": [
           "observation"

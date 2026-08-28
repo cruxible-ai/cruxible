@@ -11,6 +11,7 @@ from cruxible_client.contracts.canonical import ChangeSetDigest, manifest_root, 
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
+    foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimType,
@@ -229,6 +230,25 @@ def _update_changeset_golden() -> None:
 def _update_seed_bundle() -> None:
     type_path = SEED / "claim-types/project.work_item.status.json"
     type_payload = _remove_retired_claim_type_fields(_read(type_path))
+    source_ids: list[str] = []
+    for name in ("wi-101-status.json", "wi-102-status.json", "wi-103-status.json"):
+        source = _read(SEED / "claims" / name).get("source")
+        if not isinstance(source, dict) or not isinstance(source.get("source_id"), str):
+            raise TypeError("seed ClaimInput has no working source_id")
+        source_ids.append(source["source_id"])
+    evidence_policy = type_payload.get("evidence_admission_policy")
+    if not isinstance(evidence_policy, dict) or not isinstance(evidence_policy.get("rules"), list):
+        raise TypeError("seed ClaimType has no evidence admission rules")
+    for rule in evidence_policy["rules"]:
+        if rule["rule_id"] == "direct-self-asserted":
+            rule["capture_contract_digests"] = [
+                capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+            ]
+        elif rule["rule_id"] == "foreign-working-sources":
+            rule["capture_contract_digests"] = sorted(
+                capture_contract_digest(foreign_source_capture_contract(source_id)).tagged
+                for source_id in source_ids
+            )
     claim_type = ClaimType.model_validate(type_payload)
     type_digest = claim_type_digest(claim_type).tagged
     _write(type_path, claim_type.model_dump(mode="json"))
