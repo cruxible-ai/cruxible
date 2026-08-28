@@ -147,7 +147,7 @@ def threshold_world(
         proposal_name="attestation-consequence-claim",
         timestamp="2026-08-24T17:00:02.000000Z",
     )
-    activate(instance, owner, proposed, sequence=2)
+    activate(instance, owner, proposed)
     claim = _claim_from_view(service_list_playbill_claims(instance).claims[0])
     law = _claim_law_evidence(
         instance,

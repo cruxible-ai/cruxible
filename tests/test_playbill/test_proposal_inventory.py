@@ -46,7 +46,7 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
         proposal_name="advance-head",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, accepted, sequence=3)
+    activate(instance, owner, accepted)
     refused = service_propose_playbill_document(
         instance,
         shell=DocumentShell(

@@ -99,7 +99,7 @@ def _fresh_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         proposal_name="freshness-initial",
         timestamp=TIMESTAMP,
     )
-    _activate_direct_claim(instance, owner, proposed, sequence=len(instance.accepted_history()))
+    _activate_direct_claim(instance, owner, proposed)
 
     path = claim_type_path(_claim_type().predicate)
     predecessor = parse_claim_type(

@@ -92,12 +92,9 @@ def activate(
     instance: PlaybillInstance,
     owner: GeneratedKeyMaterial,
     proposed: Any,
-    *,
-    sequence: int,
 ) -> None:
     """Approve and activate one direct-Claim proposal at the accepted head."""
 
-    del sequence
     base = instance.accepted_coordinate()
     candidate = proposed.proposal.proposal.candidate
     assert candidate is not None
@@ -153,7 +150,7 @@ def seed_claims(tmp_path: Path) -> tuple[PlaybillInstance, GeneratedKeyMaterial]
         proposal_name="seed-first",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, first, sequence=len(instance.accepted_history()))
+    activate(instance, owner, first)
     second_body = instance.body_store().store(b"status: blocked")
     second = service_propose_playbill_claim(
         instance,
@@ -173,7 +170,7 @@ def seed_claims(tmp_path: Path) -> tuple[PlaybillInstance, GeneratedKeyMaterial]
         proposal_name="seed-second",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, second, sequence=len(instance.accepted_history()))
+    activate(instance, owner, second)
     return instance, owner
 
 
@@ -243,12 +240,9 @@ def accept_proposal(
     instance: PlaybillInstance,
     owner: GeneratedKeyMaterial,
     inspection: Any,
-    *,
-    sequence: int,
 ) -> None:
     """Approve and activate one generic (non-Claim) proposal inspection."""
 
-    del sequence
     base = instance.accepted_coordinate()
     candidate = inspection.proposal.candidate
     assert candidate is not None, inspection.proposal.evaluation.diagnostics

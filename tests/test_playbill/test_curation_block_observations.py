@@ -83,7 +83,7 @@ def _instance_with_document(tmp_path: Path):  # type: ignore[no-untyped-def]
         proposal_name="runbook",
         timestamp="2026-08-26T15:00:00.000000Z",
     )
-    accept_proposal(instance, owner, proposed, sequence=1)
+    accept_proposal(instance, owner, proposed)
     return instance
 
 

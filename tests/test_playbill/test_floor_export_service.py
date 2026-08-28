@@ -58,7 +58,7 @@ def _instance_with_query(tmp_path: Path):
         proposal_name="work-item-query",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, inspection, sequence=3)
+    accept_proposal(instance, owner, inspection)
     return instance, owner
 
 
@@ -243,7 +243,7 @@ def test_floor_grows_with_accepted_state_rather_than_being_frozen(tmp_path: Path
         proposal_name="work-item-query",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, inspection, sequence=3)
+    accept_proposal(instance, owner, inspection)
 
     after = service_export_playbill_floor(instance)
 

@@ -100,7 +100,7 @@ def _foreign_world(root: Path, *, whole_source: bool = False):  # type: ignore[n
         proposal_name="scanner-cited-runbook",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, proposal, sequence=1)
+    activate(instance, owner, proposal)
     return instance, source, workspace
 
 
@@ -242,7 +242,7 @@ def _multi_source_world(
         proposal_name="scanner-scale-citation",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, proposal, sequence=1)
+    activate(instance, owner, proposal)
     return instance, workspace
 
 

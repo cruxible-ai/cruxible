@@ -173,7 +173,6 @@ def _accepted_dependency_world(tmp_path: Path):  # type: ignore[no-untyped-def]
             instance,
             owner,
             seeded,
-            sequence=len(instance.accepted_history()),
         )
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -266,7 +265,6 @@ def _accepted_dependency_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         instance,
         owner,
         root_revision,
-        sequence=len(instance.accepted_history()),
     )
     return instance, owner, STATUS_CLAIM_ID, SUMMARY_CLAIM_ID, leaf_id
 
@@ -400,7 +398,6 @@ def test_invalid_effective_interval_is_typed_for_retirement_and_migration(
         instance,
         owner,
         seeded,
-        sequence=len(instance.accepted_history()),
     )
     claim_id = STATUS_CLAIM_ID
     actor = AuthenticatedActor(actor_id="owner")

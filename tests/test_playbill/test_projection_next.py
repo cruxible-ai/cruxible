@@ -193,7 +193,7 @@ def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone
         proposal_name="unrelated-projection-generation",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, unrelated, sequence=4)
+    accept_proposal(instance, owner, unrelated)
     advanced_coordinate = instance.accepted_coordinate()
     assert advanced_coordinate.git_oid != original_coordinate.git_oid
     assert advanced_coordinate.generation_root != original_coordinate.generation_root
@@ -375,7 +375,7 @@ def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None
         proposal_name="projection-overturned-claim",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, proposed, sequence=1)
+    activate(instance, owner, proposed)
     overturned = _claim_from_view(service_list_playbill_claims(instance).claims[0])
     backing = ProjectionClaimBackingV1(
         identity=overturned.identity,
@@ -420,7 +420,7 @@ def test_query_backing_replays_actual_resolved_parameter_values(tmp_path: Path) 
         proposal_name="parameterized-projection-query",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, proposal, sequence=3)
+    accept_proposal(instance, owner, proposal)
     parameters = (
         ProjectionResolvedParameterBindingV1(name="subject", value_type="string", value="wi-42"),
     )
@@ -458,7 +458,7 @@ def test_query_backing_reacts_to_real_time_dependent_visibility(tmp_path: Path) 
         proposal_name="future-projection-claim",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, proposal, sequence=4)
+    activate(instance, owner, proposal)
     backing = _query_backing(instance, at=NOW)
 
     assert _projection_rows(instance, _request(instance, backing=(backing,))) == ()
@@ -500,7 +500,7 @@ def test_claim_backing_statement_digest_ignores_artifact_only_revision(
     )
     assert successor.statement_digest == backing.statement_digest
     assert successor.artifact_digest != original_artifact_digest
-    activate(instance, owner, successor, sequence=4)
+    activate(instance, owner, successor)
 
     accepted_successor = next(
         item

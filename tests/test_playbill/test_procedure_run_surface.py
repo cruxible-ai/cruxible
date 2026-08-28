@@ -62,7 +62,7 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
         proposal_name="served-procedure-query",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, inspection, sequence=3)
+    accept_proposal(instance, owner, inspection)
     procedure = _accepted_query_procedure(query_definition_digest(query).tagged).procedure
     _activate_procedure(
         instance,
@@ -139,7 +139,7 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
         proposal_name="served-procedure-query",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, inspection, sequence=3)
+    accept_proposal(instance, owner, inspection)
     exact = _accepted_query_procedure(query_digest).procedure
     assert isinstance(exact, ProcedureArtifactV2)
     query_pin = next(pin for pin in exact.pins if pin.target.kind == "QueryDefinition")

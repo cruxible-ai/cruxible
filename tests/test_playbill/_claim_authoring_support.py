@@ -388,10 +388,7 @@ def _activate_direct_claim(
     instance: PlaybillInstance,
     _owner: object,
     proposed: object,
-    *,
-    sequence: int = 1,
 ) -> None:
-    del sequence
     inspection = proposed.proposal
     candidate = inspection.proposal.candidate
     evaluated_oid = inspection.proposal.evaluation.evaluated_tree_oid

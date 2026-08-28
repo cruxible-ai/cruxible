@@ -68,7 +68,7 @@ def test_exact_statement_attestations_compound_across_backing_successors(
         proposal_name="evidence-initial",
         timestamp=TIMESTAMP,
     )
-    _activate_direct_claim(instance, owner, initial, sequence=len(instance.accepted_history()))
+    _activate_direct_claim(instance, owner, initial)
     initial_coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     before = service_evaluate_playbill_claim_verdict(
         instance,
@@ -96,7 +96,7 @@ def test_exact_statement_attestations_compound_across_backing_successors(
         timestamp="2026-08-16T20:01:00.000000Z",
     )
     assert contradicted.proposal.proposal.candidate is not None
-    _activate_direct_claim(instance, owner, contradicted, sequence=len(instance.accepted_history()))
+    _activate_direct_claim(instance, owner, contradicted)
 
     current = service_evaluate_playbill_claim_verdict(
         instance,
@@ -133,7 +133,7 @@ def test_exact_statement_attestations_compound_across_backing_successors(
         timestamp="2026-08-16T20:02:00.000000Z",
     )
     assert unsure.proposal.proposal.candidate is not None
-    _activate_direct_claim(instance, owner, unsure, sequence=len(instance.accepted_history()))
+    _activate_direct_claim(instance, owner, unsure)
     compounded = service_evaluate_playbill_claim_verdict(
         instance,
         claim_identity=initial.claim_identity,

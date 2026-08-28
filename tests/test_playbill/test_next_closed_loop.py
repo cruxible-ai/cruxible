@@ -264,7 +264,7 @@ def _claim_conflicted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         proposal_name="closed-loop-conflict",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate(instance, owner, conflicting, sequence=3)
+    activate(instance, owner, conflicting)
     before = _request(instance)
     row = _row(instance, "claim_conflicted", before)
     assert row.repair.operation == EXPECTED_OPERATIONS["claim_conflicted"]
@@ -298,7 +298,7 @@ def _claim_conflicted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         proposal_name="closed-loop-qualify-conflict",
         timestamp="2026-08-24T17:00:04.000000Z",
     )
-    activate(instance, owner, repair, sequence=4)
+    activate(instance, owner, repair)
     _assert_gone(instance, "claim_conflicted", _request(instance))
 
 
@@ -363,7 +363,7 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
         proposal_name="closed-loop-origin-only",
         timestamp="2026-08-24T17:00:02.000000Z",
     )
-    activate(instance, owner, proposed, sequence=2)
+    activate(instance, owner, proposed)
     source = b"status: ready\n"
     source_body = instance.body_store().store(source)
     if not bind:
@@ -391,7 +391,7 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
         proposal_name="closed-loop-bind-evidence",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate(instance, owner, successor, sequence=3)
+    activate(instance, owner, successor)
     return instance, owner, successor, source_id, source_body.digest
 
 
@@ -424,7 +424,7 @@ def _claim_uncovered(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         proposal_name="closed-loop-cover-claim",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate(instance, owner, successor, sequence=3)
+    activate(instance, owner, successor)
     _assert_gone(instance, "claim_uncovered", _request(instance))
 
 
@@ -455,7 +455,7 @@ def _freshness_world(root: Path):  # type: ignore[no-untyped-def]
         proposal_name="closed-loop-freshness-initial",
         timestamp="2026-08-16T20:00:00.000000Z",
     )
-    _activate_direct_claim(instance, owner, proposed, sequence=1)
+    _activate_direct_claim(instance, owner, proposed)
     path = claim_type_path(_claim_type().predicate)
     predecessor = parse_claim_type(
         instance.tree_at(instance.accepted_coordinate().git_oid)[path],
@@ -520,7 +520,7 @@ def _refresh_claim(instance, owner, *, timestamp: str) -> None:  # type: ignore[
         proposal_name="closed-loop-refresh-evidence",
         timestamp=timestamp,
     )
-    _activate_direct_claim(instance, owner, proposed, sequence=3)
+    _activate_direct_claim(instance, owner, proposed)
 
 
 def _claim_stale_evidence(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -624,7 +624,7 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     assert row.repair.operation == _expected_operation(key)
     assert row.repair.required_change == "adjudicate_citation_drift"
 
-    activate(instance, owner, successor, sequence=3)
+    activate(instance, owner, successor)
     _assert_key_gone(
         instance,
         key,
@@ -839,7 +839,7 @@ def _citation_drifted_v4(
         proposal_name=f"closed-loop-adjudicate-{drift_state}-citation",
         timestamp="2026-08-24T17:00:04.000000Z",
     )
-    activate(instance, owner, successor, sequence=4)
+    activate(instance, owner, successor)
     _new_current, new_citation, new_envelope = _foreign_citation(instance)
     current_observation = _v4_citation_observation(
         instance=instance,
@@ -1116,7 +1116,7 @@ def _claim_attestation_threshold(
         proposal_name="closed-loop-attestation-threshold",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate(instance, owner, repair, sequence=3)
+    activate(instance, owner, repair)
     _assert_gone(instance, "claim_attestation_threshold_met", _request(instance))
 
 

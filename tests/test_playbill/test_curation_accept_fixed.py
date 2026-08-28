@@ -126,7 +126,7 @@ def test_accept_fixed_verifies_proposal_changeset_generation_and_member_intersec
         proposal_name="runbook-initial",
         timestamp="2026-08-26T18:00:00.000000Z",
     )
-    accept_proposal(instance, owner, first, sequence=1)
+    accept_proposal(instance, owner, first)
     observation, event = _append_document_item(instance)
 
     second_body = instance.store_document_body(b"status: reviewed\n")
@@ -144,7 +144,7 @@ def test_accept_fixed_verifies_proposal_changeset_generation_and_member_intersec
         proposal_name="runbook-successor",
         timestamp="2026-08-26T18:01:00.000000Z",
     )
-    accept_proposal(instance, owner, second, sequence=2)
+    accept_proposal(instance, owner, second)
     record = instance.accepted_history()[-1].record
     assert record is not None
     accepted_before_action = instance.accepted_coordinate()
@@ -177,7 +177,7 @@ def test_accept_fixed_refuses_an_unrelated_accepted_changeset(tmp_path: Path) ->
         proposal_name="runbook-initial",
         timestamp="2026-08-26T18:00:00.000000Z",
     )
-    accept_proposal(instance, owner, first, sequence=1)
+    accept_proposal(instance, owner, first)
     observation, event = _append_document_item(instance)
 
     other_body = instance.store_document_body(b"other\n")
@@ -191,7 +191,7 @@ def test_accept_fixed_refuses_an_unrelated_accepted_changeset(tmp_path: Path) ->
         proposal_name="other",
         timestamp="2026-08-26T18:01:00.000000Z",
     )
-    accept_proposal(instance, owner, proposal, sequence=2)
+    accept_proposal(instance, owner, proposal)
     record = instance.accepted_history()[-1].record
     assert record is not None
 
@@ -221,7 +221,7 @@ def test_dead_vocabulary_auto_resolves_to_the_accepted_retirement_changeset(
         proposal_name="dead-subject-initial",
         timestamp="2026-08-26T18:00:00.000000Z",
     )
-    accept_proposal(instance, owner, first, sequence=1)
+    accept_proposal(instance, owner, first)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     path = subject_path(initial.subject_kind, initial.subject_id)
     detection = build_curation_detection(
@@ -274,7 +274,7 @@ def test_dead_vocabulary_auto_resolves_to_the_accepted_retirement_changeset(
         proposal_name="dead-subject-retirement",
         timestamp="2026-08-26T18:01:00.000000Z",
     )
-    accept_proposal(instance, owner, retirement, sequence=2)
+    accept_proposal(instance, owner, retirement)
     record = instance.accepted_history()[-1].record
     assert record is not None
 
@@ -322,7 +322,7 @@ def test_dead_vocabulary_retirement_scan_loads_each_generation_once(
         proposal_name="dead-subject-initial",
         timestamp="2026-08-26T18:00:00.000000Z",
     )
-    accept_proposal(instance, owner, first, sequence=1)
+    accept_proposal(instance, owner, first)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     path = subject_path(initial.subject_kind, initial.subject_id)
     detection = build_curation_detection(
@@ -377,7 +377,7 @@ def test_dead_vocabulary_retirement_scan_loads_each_generation_once(
         proposal_name="dead-subject-retirement",
         timestamp="2026-08-26T18:01:00.000000Z",
     )
-    accept_proposal(instance, owner, retirement, sequence=2)
+    accept_proposal(instance, owner, retirement)
     original_tree_at = instance.tree_at
     loaded_oids: list[str] = []
 
