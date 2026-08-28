@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Claim corroboration and role-free artifact governance (PC-C1).** Claim
+  admission can now require daemon-bound, accepted-state QueryDefinitions and
+  persists deterministic evaluation accounts for proposal and replay checks.
+  Per-artifact authority-role wire is removed; principals instead declare the
+  closed `ordinary`, `recovery`, or instance-owned `daemon` kind. New instances
+  require two independently held ordinary principals, so `playbill init` now
+  requires `--reviewer-key-dir`; `principal add` uses `--kind` rather than
+  `--role`. This is a pre-release clean cut and existing prerelease worlds must
+  be rebuilt.
+
 - **Activation attribution + lifecycle key-possession (PC-G12q fix round).**
   Activation mutation receipts now carry a required `activated_by` naming the
   governed actor (public client contract re-pinned); the HTTP request log
@@ -16,8 +26,9 @@
   The in-daemon approval quorum is withdrawn: candidates require no approval by
   default, creator-suffices activation remains a separate attributed act, and
   non-creators may still record verified voluntary approvals. Creator
-  self-approval remains refused for record honesty. Single-key `playbill init`
-  is restored and `--reviewer-key-dir` is optional.
+  self-approval remains refused for record honesty. PC-C1 supersedes the
+  short-lived single-key initialization surface: two ordinary client principals
+  and `--reviewer-key-dir` are required at genesis.
 
 - **Playbill publication prepare retries now distinguish live persistence from
   terminal replay (pre-release compatibility note).** The exported
