@@ -19,6 +19,7 @@ from cruxible_client.contracts.laws import (
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
     LINE_ACCEPTANCE_LAW,
+    PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_ACCEPTANCE_LAW,
     PROCEDURE_V2_ACCEPTANCE_LAW,
@@ -179,6 +180,8 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
     assert len(seen_coordinates) == len(LAW_COORDINATES)
     assert len(seen_tags) == len(LAW_COORDINATES)
+    assert set(PLAYBILL_ACCEPTANCE_LAWS._by_coordinate) == seen_coordinates
+    assert set(PLAYBILL_ACCEPTANCE_LAWS._current_by_tag) == seen_tags
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
