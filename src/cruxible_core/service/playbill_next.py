@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, TypeAlias
@@ -33,6 +33,7 @@ from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResultV2,
 )
 from cruxible_client.contracts.claims import (
+    AcceptedClaim,
     ClaimArtifactAny,
     ClaimCitationV1,
     LiteralClaimObject,
@@ -67,7 +68,10 @@ from cruxible_core.playbill.coverage.contracts import (
     LogicalSourceIdentityV1,
     PlaybillCitationWindowObservationV1,
 )
-from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
+from cruxible_core.playbill.coverage.indexes import (
+    WorkingOccurrenceV1,
+    live_claim_paths_by_capture,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import claim_row_visibility
@@ -1340,6 +1344,91 @@ def _bounded_claim_lineages(
     )
 
 
+def _claim_cites_retired_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    evaluation_time: datetime,
+    access_profile: CoverageAccessProfileV1,
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Surface each live Claim left citing a retired Claim's Capture.
+
+    Retirement cannot demand these as dependents -- a shared Capture citation is
+    not a dependency edge its closure walks -- so the stranding is invisible at
+    retirement time and stays invisible afterwards. The queue is where it
+    becomes actionable: the citing Claim still asserts something whose only
+    other asserter has been withdrawn.
+    """
+
+    if not access_profile.permits("instance"):
+        return ()
+    facts = build_accepted_query_facts(
+        instance,
+        coordinate=coordinate,
+        include_retired=True,
+    )
+    retired_captures: dict[str, set[str]] = {}
+    live: list[AcceptedClaim] = []
+    for row in facts.claims:
+        accepted = row.accepted
+        if accepted.claim.lifecycle.state == "live":
+            live.append(accepted)
+            continue
+        if accepted.claim.lifecycle.state != "retired":
+            continue
+        for reference in claim_citation_references(accepted.claim):
+            retired_captures.setdefault(reference.capture_digest, set()).add(
+                accepted.claim.identity.qualified
+            )
+    if not retired_captures:
+        return ()
+    return _stranded_citation_items(retired_captures, live=live)
+
+
+def _stranded_citation_items(
+    retired_captures: Mapping[str, set[str]],
+    *,
+    live: Sequence[AcceptedClaim],
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Turn "which Captures did retired Claims cite" into one row per stranded citer."""
+
+    by_capture = live_claim_paths_by_capture(live)
+    identities = {item.path: item.claim.identity.qualified for item in live}
+    stranded: dict[str, dict[str, set[str]]] = {}
+    for capture in sorted(retired_captures, key=lambda item: item.encode("utf-8")):
+        for path in by_capture.get(capture, ()):
+            entry = stranded.setdefault(identities[path], {})
+            entry.setdefault(capture, set()).update(retired_captures[capture])
+
+    items: list[PlaybillNextItemV1] = []
+    for citing in sorted(stranded, key=lambda item: item.encode("utf-8")):
+        captures = stranded[citing]
+        retired = sorted(
+            {identity for owners in captures.values() for identity in owners},
+            key=lambda item: item.encode("utf-8"),
+        )
+        items.append(
+            _item(
+                severity="warning",
+                reason="claim_cites_retired",
+                subject_identity=citing,
+                related_identities=tuple(retired),
+                detail={
+                    "citing_claim": citing,
+                    "retired_claims": retired,
+                    "capture_digests": sorted(captures, key=lambda item: item.encode("utf-8")),
+                },
+                repair=PlaybillNextRepairV1(
+                    operation="playbill.authoring.create",
+                    target=citing,
+                    required_change="adjudicate_or_rebind_citation",
+                    arguments={"claim_id": citing.removeprefix("Claim:")},
+                ),
+            )
+        )
+    return tuple(items)
+
+
 def _claim_dependency_items(
     instance: PlaybillInstance,
     *,
@@ -2068,6 +2157,12 @@ def service_playbill_next(
                     observation=request.workspace_observation,
                 ),
                 *_claim_dependency_items(
+                    instance,
+                    coordinate=coordinate,
+                    evaluation_time=request.evaluation_time,
+                    access_profile=request.access_profile,
+                ),
+                *_claim_cites_retired_items(
                     instance,
                     coordinate=coordinate,
                     evaluation_time=request.evaluation_time,

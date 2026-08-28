@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.claims import (
+    AcceptedClaim,
     ClaimArtifactAny,
     ClaimArtifactV3,
     ClaimRetireDependentV1,
@@ -19,7 +20,9 @@ from cruxible_client.contracts.claims import (
     ClaimRetireRequestV1,
     ClaimStatement,
     claim_artifact_digest,
+    claim_citation_references,
     claim_path,
+    claim_statement_digest,
     parse_claim,
     render_claim,
 )
@@ -27,6 +30,7 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.closure import ReversePinClosureItem, reverse_pin_closure
+from cruxible_core.playbill.coverage.indexes import live_claim_paths_by_capture
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -61,6 +65,14 @@ class ClaimRetirementResultItemV1(_StrictRetirementModel):
     successor_digest: str
 
 
+class ClaimRetireCitingClaimV1(_StrictRetirementModel):
+    """One live Claim that cites a Capture the retiring Claim also cites."""
+
+    artifact_identity: ArtifactIdentity
+    claim_path: str
+    capture_digests: tuple[str, ...]
+
+
 class ClaimRetirePreflightV1(_StrictRetirementModel):
     tag: Literal["playbill-claim-retire-preflight-v1"] = "playbill-claim-retire-preflight-v1"
     operation_digest: str
@@ -70,6 +82,11 @@ class ClaimRetirePreflightV1(_StrictRetirementModel):
     reason: ClaimRetirementReason
     effective_until: datetime | None
     required_dependents: tuple[ClaimRetireInventoryItemV1, ...]
+    # Advisory, never required. A citation is not a dependency edge the closure
+    # can retire, so these Claims are not dispositionable as dependents; they are
+    # named because retiring this Claim leaves each of them citing a Capture
+    # whose Claim is gone, which the retirement used to do silently.
+    citing_claims: tuple[ClaimRetireCitingClaimV1, ...] = ()
     diagnostics: tuple[CompilerDiagnostic, ...]
     submit_ready: bool
 
@@ -107,6 +124,54 @@ def _generation_timestamp(instance: PlaybillInstance) -> str:
     if record is None:
         raise ClaimRetireError("an accepted Claim cannot exist at genesis")
     return record.candidate.timestamp
+
+
+def _citing_claims(
+    tree: Mapping[str, bytes],
+    *,
+    root_path: str,
+    root: ClaimArtifactAny,
+) -> tuple[ClaimRetireCitingClaimV1, ...]:
+    """Name the live Claims left citing this Claim's Captures once it retires.
+
+    Advisory only. `reverse_pin_closure` walks pins and derivation inputs, so a
+    Claim that merely cites the same Capture is invisible to it and cannot be
+    dispositioned as a dependent -- but it is exactly what goes stale, silently,
+    when the cited Claim goes away.
+    """
+
+    cited = {reference.capture_digest for reference in claim_citation_references(root)}
+    if not cited:
+        return ()
+    accepted = tuple(
+        AcceptedClaim(
+            path=path,
+            claim=parsed,
+            statement_digest=claim_statement_digest(parsed.statement).tagged,
+            artifact_digest=claim_artifact_digest(parsed).tagged,
+        )
+        for path, parsed in (
+            (path, parse_claim(tree[path], path=path))
+            for path in sorted(tree, key=lambda item: item.encode("utf-8"))
+            if path.startswith("claims/") and path != root_path
+        )
+    )
+    by_capture = live_claim_paths_by_capture(accepted)
+    identities = {item.path: item.claim.identity for item in accepted}
+    captures_by_path: dict[str, set[str]] = {}
+    for capture in sorted(cited, key=lambda item: item.encode("utf-8")):
+        for path in by_capture.get(capture, ()):
+            captures_by_path.setdefault(path, set()).add(capture)
+    return tuple(
+        ClaimRetireCitingClaimV1(
+            artifact_identity=identities[path],
+            claim_path=path,
+            capture_digests=tuple(sorted(captures, key=lambda item: item.encode("utf-8"))),
+        )
+        for path, captures in sorted(
+            captures_by_path.items(), key=lambda item: item[0].encode("utf-8")
+        )
+    )
 
 
 def _claim_identity_by_digest(
@@ -448,6 +513,7 @@ def service_retire_claim(
     )
     unsupported = tuple(item for item in closure if item.state.artifact_kind != "claim")
     inventory = _inventory(closure)
+    citing = _citing_claims(tree, root_path=path, root=claim)
     root_request = ClaimRetireDependentV1(
         artifact_identity=claim.identity,
         predecessor_digest=claim_artifact_digest(claim).tagged,
@@ -480,6 +546,7 @@ def service_retire_claim(
             reason=request.reason,
             effective_until=request.effective_until,
             required_dependents=inventory,
+            citing_claims=citing,
             diagnostics=(),
             submit_ready=not inventory,
         )
@@ -519,6 +586,7 @@ def service_retire_claim(
             reason=request.reason,
             effective_until=request.effective_until,
             required_dependents=inventory,
+            citing_claims=citing,
             diagnostics=evaluation.diagnostics,
             submit_ready=evaluation.candidate is not None,
         )

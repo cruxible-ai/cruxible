@@ -282,6 +282,30 @@ class _CitationRow:
     dereference_handle_digest: str | None = None
 
 
+def live_claim_paths_by_capture(
+    claims: Iterable[AcceptedClaim],
+) -> dict[str, tuple[str, ...]]:
+    """Map each Capture digest to the live Claim paths that cite it.
+
+    The reverse of ``ClaimBacking.capture_digests``. Both citation indexes below
+    build this same relation inline and then discard it; retirement needs it on
+    its own, to say which live Claims would be left citing the Captures of a
+    Claim that is going away. Paths are byte-sorted so callers report a stable
+    order.
+    """
+
+    citing: dict[str, set[str]] = {}
+    for accepted in claims:
+        if accepted.claim.lifecycle.state != "live":
+            continue
+        for reference in claim_citation_references(accepted.claim):
+            citing.setdefault(reference.capture_digest, set()).add(accepted.path)
+    return {
+        capture: tuple(sorted(paths, key=lambda item: item.encode("utf-8")))
+        for capture, paths in citing.items()
+    }
+
+
 def build_evidence_citation_index(
     *,
     at: AcceptedCoordinate,
