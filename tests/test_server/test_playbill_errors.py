@@ -244,11 +244,17 @@ def test_http_activate_refuses_a_missing_proposal_id_typed(
     assert response.json()["error_code"] == "playbill.proposal.activation_request_invalid"
 
 
-def test_server_side_model_validation_refuses_as_a_typed_request_error(
+def test_a_frozen_model_failing_inside_a_service_stays_a_generic_server_error(
     playbill_http: tuple[TestClient, str, Path],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Any frozen model a route builds server-side refuses 400, never 500."""
+    """An internal invariant breach is a server fault, not the caller's mistake.
+
+    A blanket ValidationError handler cannot tell the two apart, so it would
+    report a broken internal model as a 400 and put that model's name on the
+    wire. Request-shaped refusals are raised as typed CoreErrors instead, where
+    the request is actually understood.
+    """
     client, instance_id, _private_key = playbill_http
 
     def exploding_search(selected: str, **values: object) -> object:
@@ -256,12 +262,37 @@ def test_server_side_model_validation_refuses_as_a_typed_request_error(
         raise AssertionError("unreachable")
 
     monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_search", exploding_search)
-    response = client.post(
+    # The default TestClient re-raises server exceptions; this asserts on the
+    # body the client would actually receive.
+    quiet = TestClient(client.app, raise_server_exceptions=False)
+    response = quiet.post(
         f"/api/v1/{instance_id}/playbill/search",
         json={"mode": "list"},
     )
 
-    assert response.status_code == 400, response.text
+    assert response.status_code == 500, response.text
     body = response.json()
-    assert body["error_type"] == "DataValidationError"
-    assert any("max_rows" in item for item in body["errors"])
+    assert body["error_type"] == "InternalServerError"
+    assert body["message"] == "internal server error"
+    # The internal model name never reaches the client.
+    assert "PlaybillSearchBudgetsV1" not in response.text
+
+
+def test_the_caller_shaped_refusals_stay_typed_400s(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """The two surfaces X4 fixed refuse at the boundary, not through a blanket rule."""
+    client, instance_id, _private_key = playbill_http
+
+    empty_kinds = client.post(
+        f"/api/v1/{instance_id}/playbill/search",
+        json={"mode": "list", "kinds": []},
+    )
+    assert empty_kinds.status_code == 200, empty_kinds.text
+
+    empty_discover = client.post(
+        f"/api/v1/{instance_id}/playbill/discover",
+        json={"profile": "subjects"},
+    )
+    assert empty_discover.status_code == 400, empty_discover.text
+    assert empty_discover.json()["error_type"] == "PlaybillFormatError"
