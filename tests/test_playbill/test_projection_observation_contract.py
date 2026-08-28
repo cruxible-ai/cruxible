@@ -110,6 +110,9 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "claim_dependency_stale",
         "claim_attestation_threshold_met",
         "document_modified",
+        # Reserved, never emitted: withdrawn pending the copy-edge design
+        # (see the PlaybillNextReason reservation comment).
+        "claim_cites_retired",
     }
     assert set(get_args(NextRepairOperation)) == {
         "playbill.authoring.create",
