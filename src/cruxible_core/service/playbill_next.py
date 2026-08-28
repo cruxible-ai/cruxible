@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import shlex
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -21,6 +21,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import (
     FOREIGN_SOURCE_COORDINATE_TYPE,
+    FOREIGN_SOURCE_SELECTOR_TYPE,
     CanonicalDurationV1,
     parse_capture_envelope,
 )
@@ -61,6 +62,13 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.citation_relations import (
+    RELATION_RETIRED_CONFLICT_SCHEMA,
+    RELATION_SOURCE_USE_SCHEMA,
+    external_source_relation_subject,
+    logical_source_relation_subject,
+    retired_activation_live_candidates,
+)
 from cruxible_core.playbill.claim_slots import classify_claim_slot
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
@@ -976,6 +984,99 @@ class _SourceAssociation:
     stale_publication: bool
 
 
+@dataclass(frozen=True)
+class _CitationRelationUse:
+    capture_digest: str
+    citation_id: str
+    claim_artifact_digest: str
+    claim_identity: str
+    lifecycle: Literal["live", "retired"]
+    commitment_digest: str
+    byte_length: int
+    source: ExternalSourceReferenceV1
+    original_start: int | None
+    original_end: int | None
+
+    @property
+    def external_key(self) -> str:
+        return external_source_relation_subject(self.source)
+
+
+def _digest_value(value: object) -> str | None:
+    if isinstance(value, str):
+        try:
+            Sha256Value.from_tagged(value)
+        except ValueError:
+            return None
+        return value
+    if isinstance(value, Mapping) and isinstance(value.get("$digest"), str):
+        raw = cast(str, value["$digest"])
+        try:
+            Sha256Value.from_tagged(raw)
+        except ValueError:
+            return None
+        return raw
+    return None
+
+
+def _relation_use(value: Mapping[str, object]) -> _CitationRelationUse:
+    source = ExternalSourceReferenceV1.model_validate(value.get("source"))
+    commitment = value.get("commitment")
+    lifecycle = value.get("claim_lifecycle")
+    if not isinstance(commitment, Mapping) or lifecycle not in {"live", "retired"}:
+        raise ValueError("citation relation use has an invalid lifecycle or commitment")
+    capture_digest = _digest_value(value.get("capture_digest"))
+    claim_artifact_digest = _digest_value(value.get("claim_artifact_digest"))
+    commitment_digest = _digest_value(commitment.get("digest"))
+    byte_length = commitment.get("byte_length")
+    citation_id = value.get("citation_id")
+    claim_identity = value.get("claim_identity")
+    if (
+        capture_digest is None
+        or claim_artifact_digest is None
+        or commitment_digest is None
+        or not isinstance(byte_length, int)
+        or isinstance(byte_length, bool)
+        or not isinstance(citation_id, str)
+        or not isinstance(claim_identity, str)
+    ):
+        raise ValueError("citation relation use is incomplete")
+    selector = source.selector
+    raw_window = (
+        selector.get("working_selection", selector) if isinstance(selector, Mapping) else None
+    )
+    start = raw_window.get("start_byte") if isinstance(raw_window, Mapping) else None
+    end = raw_window.get("end_byte") if isinstance(raw_window, Mapping) else None
+    if (
+        not isinstance(start, int)
+        or isinstance(start, bool)
+        or not isinstance(end, int)
+        or isinstance(end, bool)
+        or not 0 <= start <= end
+    ):
+        start = end = None
+    return _CitationRelationUse(
+        capture_digest=capture_digest,
+        citation_id=citation_id,
+        claim_artifact_digest=claim_artifact_digest,
+        claim_identity=claim_identity,
+        lifecycle=cast(Literal["live", "retired"], lifecycle),
+        commitment_digest=commitment_digest,
+        byte_length=byte_length,
+        source=source,
+        original_start=start,
+        original_end=end,
+    )
+
+
+def post_retirement_examined_support_suppresses_claim_cites_retired(
+    _claim_artifact_digest: str,
+) -> bool:
+    """Future attestation-door seam; no accepted attestation can suppress today."""
+
+    return False
+
+
 def _whole_source_selection(envelope: object) -> bool:
     source = getattr(envelope, "source", None)
     if not isinstance(source, ExternalSourceReferenceV1):
@@ -1206,6 +1307,346 @@ def _source_associations(
     )
 
 
+def _claim_cites_retired_item(
+    *,
+    coordinate: PlaybillAcceptedCoordinate,
+    live_claim_identity: str,
+    live_claim_artifact_digest: str,
+    relation_kind: str,
+    live_citation_id: str,
+    retired_claim_count: int,
+    retired_citation_count: int,
+    retired_claim_witnesses: tuple[str, ...],
+) -> PlaybillNextItemV1 | None:
+    if post_retirement_examined_support_suppresses_claim_cites_retired(live_claim_artifact_digest):
+        return None
+    return _item(
+        severity="warning",
+        reason="claim_cites_retired",
+        subject_identity=live_claim_identity,
+        related_identities=retired_claim_witnesses,
+        detail={
+            "accepted_coordinate": coordinate.model_dump(mode="json"),
+            "live_citation_id": live_citation_id,
+            "relation_kind": relation_kind,
+            "retired_citation_count": retired_citation_count,
+            "retired_claim_count": retired_claim_count,
+            "retired_claim_witnesses": list(retired_claim_witnesses),
+        },
+        repair=PlaybillNextRepairV1(
+            operation="playbill.claim.retire",
+            target=live_claim_identity,
+            required_change="retire_or_replace_claim_citing_retired_evidence",
+            arguments={
+                "claim_id": live_claim_identity.removeprefix("Claim:"),
+                "expected_coordinate": coordinate.model_dump(mode="json"),
+            },
+        ),
+    )
+
+
+def _unique_relation_occurrence(
+    use: _CitationRelationUse,
+    observed: PlaybillNextSourceObservationV4,
+) -> WorkingOccurrenceV1 | None:
+    expected_source = LogicalSourceIdentityV1(plane="external", identity=use.source.source_identity)
+    if observed.scan_notes or observed.marker_notes:
+        return None
+    if not any(
+        proof.source == expected_source
+        and proof.commitment_digest == use.commitment_digest
+        and proof.byte_length == use.byte_length
+        for proof in observed.commitment_scan_proofs
+    ):
+        return None
+    occurrences = tuple(
+        occurrence
+        for occurrence in observed.occurrences
+        if occurrence.source == expected_source
+        and occurrence.observed_commitment_digest == use.commitment_digest
+        and occurrence.byte_length == use.byte_length
+    )
+    return occurrences[0] if len(occurrences) == 1 else None
+
+
+def _citation_relation_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    access_profile: CoverageAccessProfileV1,
+    observation: PlaybillNextWorkspaceObservationV1 | None,
+) -> tuple[tuple[PlaybillNextItemV1, ...], frozenset[tuple[str, str]]]:
+    """Serve retirement relations from the immutable accepted-coordinate slice."""
+
+    if not access_profile.permits("instance"):
+        return (), frozenset()
+    if not any(path.startswith("claims/") for path in instance.tree_at(coordinate.git_oid)):
+        return (), frozenset()
+    public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    exact_by_claim: dict[str, list[Mapping[str, object]]] = defaultdict(list)
+    uses_by_source: dict[str, list[_CitationRelationUse]] = defaultdict(list)
+    observed_sources = {
+        item.source_id: item
+        for item in (() if observation is None else observation.source_observations or ())
+        if isinstance(item, PlaybillNextSourceObservationV4)
+    }
+    try:
+        with instance.bind_accepted_projection(coordinate) as projection:
+            for fact in projection.semantic_facts(
+                RELATION_RETIRED_CONFLICT_SCHEMA,
+                subject_identity="claim-cites-retired",
+            ):
+                if not isinstance(fact.value, Mapping):
+                    raise ValueError("retired conflict has an invalid value")
+                identity = fact.value.get("live_claim_identity")
+                if not isinstance(identity, str):
+                    raise ValueError("retired conflict has no live Claim")
+                exact_by_claim[identity].append(fact.value)
+            for source_id in sorted(observed_sources, key=lambda item: item.encode("utf-8")):
+                for fact in projection.semantic_facts(
+                    RELATION_SOURCE_USE_SCHEMA,
+                    subject_identity=logical_source_relation_subject(source_id),
+                ):
+                    if not isinstance(fact.value, Mapping):
+                        raise ValueError("citation relation use has an invalid value")
+                    uses_by_source[source_id].append(_relation_use(fact.value))
+    except (PlaybillError, ValueError, ValidationError) as exc:
+        raise PlaybillNextAcceptedStateInvalid(
+            f"{PlaybillNextAcceptedStateInvalid.code}: citation relation projection is invalid"
+        ) from exc
+
+    items: list[PlaybillNextItemV1] = []
+    exact_subjects: set[str] = set()
+    for live_identity in sorted(exact_by_claim, key=lambda item: item.encode("utf-8")):
+        facts = exact_by_claim[live_identity]
+        preferred = next(
+            (
+                matching
+                for relation_kind in ("capture", "exact_external", "same_version_span")
+                if (
+                    matching := [
+                        item for item in facts if item.get("relation_kind") == relation_kind
+                    ]
+                )
+            ),
+            facts,
+        )
+        raw_witnesses = tuple(
+            witness
+            for item in preferred
+            for raw in (item.get("retired_claim_witnesses"),)
+            if isinstance(raw, (list, tuple))
+            for witness in raw
+            if isinstance(witness, str)
+        )
+        witnesses = tuple(
+            sorted(
+                set(raw_witnesses),
+                key=lambda item: item.encode("utf-8"),
+            )[:8]
+        )
+        live_digest = _digest_value(preferred[0].get("live_claim_artifact_digest"))
+        live_citation = preferred[0].get("live_citation_id")
+        if live_digest is None or not isinstance(live_citation, str):
+            raise PlaybillNextAcceptedStateInvalid(
+                f"{PlaybillNextAcceptedStateInvalid.code}: retired conflict is incomplete"
+            )
+        item = _claim_cites_retired_item(
+            coordinate=public_coordinate,
+            live_claim_identity=live_identity,
+            live_claim_artifact_digest=live_digest,
+            relation_kind=str(preferred[0].get("relation_kind")),
+            live_citation_id=live_citation,
+            retired_claim_count=sum(
+                value
+                for fact in preferred
+                for value in (fact.get("retired_claim_count"),)
+                if isinstance(value, int) and not isinstance(value, bool)
+            ),
+            retired_citation_count=sum(
+                value
+                for fact in preferred
+                for value in (fact.get("retired_citation_count"),)
+                if isinstance(value, int) and not isinstance(value, bool)
+            ),
+            retired_claim_witnesses=witnesses,
+        )
+        if item is not None:
+            items.append(item)
+        exact_subjects.add(live_identity)
+
+    suppressed_publications: set[tuple[str, str]] = set()
+    for source_id in sorted(uses_by_source, key=lambda item: item.encode("utf-8")):
+        observed = observed_sources[source_id]
+        current: list[tuple[int, int, str, _CitationRelationUse, WorkingOccurrenceV1]] = []
+        for use in uses_by_source[source_id]:
+            if (
+                use.source.coordinate_type != FOREIGN_SOURCE_COORDINATE_TYPE
+                or use.source.selector_type != FOREIGN_SOURCE_SELECTOR_TYPE
+            ):
+                continue
+            occurrence = _unique_relation_occurrence(use, observed)
+            if (
+                occurrence is None
+                or occurrence.line_overlay.start_byte >= occurrence.line_overlay.end_byte
+            ):
+                continue
+            current.append(
+                (
+                    occurrence.line_overlay.start_byte,
+                    occurrence.line_overlay.end_byte,
+                    use.lifecycle,
+                    use,
+                    occurrence,
+                )
+            )
+
+        # An event sweep marks each live Claim at most once. Work is O(m_s log m_s + w_s),
+        # never the live-by-retired Cartesian product.
+        events: list[tuple[int, int, str, int, _CitationRelationUse]] = []
+        for start, end, lifecycle, use, _occurrence in current:
+            events.append((start, 1, lifecycle, end, use))
+            events.append((end, 0, lifecycle, end, use))
+        active_retired: dict[str, _CitationRelationUse] = {}
+        active_live: Counter[str] = Counter()
+        emitted_span: set[str] = set()
+
+        def emit_span(live_use: _CitationRelationUse) -> None:
+            if live_use.claim_identity in exact_subjects or live_use.claim_identity in emitted_span:
+                return
+            retired = tuple(active_retired.values())
+            if not retired:
+                return
+            witnesses = tuple(
+                sorted(
+                    {entry.claim_identity for entry in retired},
+                    key=lambda item: item.encode("utf-8"),
+                )[:8]
+            )
+            row = _claim_cites_retired_item(
+                coordinate=public_coordinate,
+                live_claim_identity=live_use.claim_identity,
+                live_claim_artifact_digest=live_use.claim_artifact_digest,
+                relation_kind="current_span_overlap",
+                live_citation_id=live_use.citation_id,
+                retired_claim_count=len({entry.claim_identity for entry in retired}),
+                retired_citation_count=len(retired),
+                retired_claim_witnesses=witnesses,
+            )
+            if row is not None:
+                items.append(row)
+            emitted_span.add(live_use.claim_identity)
+
+        live_use_by_claim: dict[str, _CitationRelationUse] = {}
+        for _position, order, lifecycle, _end, use in sorted(
+            events,
+            key=lambda event: (
+                event[0],
+                event[1],
+                event[2].encode("ascii"),
+                event[4].citation_id.encode("ascii"),
+            ),
+        ):
+            if order == 0:
+                if lifecycle == "retired":
+                    active_retired.pop(use.citation_id, None)
+                else:
+                    active_live[use.claim_identity] -= 1
+                    if active_live[use.claim_identity] <= 0:
+                        active_live.pop(use.claim_identity, None)
+                        live_use_by_claim.pop(use.claim_identity, None)
+                continue
+            if lifecycle == "retired":
+                live_candidates = retired_activation_live_candidates(
+                    active_retired,
+                    live_use_by_claim,
+                )
+                active_retired[use.citation_id] = use
+                for live_use in live_candidates:
+                    emit_span(live_use)
+            else:
+                active_live[use.claim_identity] += 1
+                live_use_by_claim[use.claim_identity] = use
+                emit_span(use)
+
+        document_id = observed.document_id
+        if (
+            document_id is None
+            or instance.tree_at(coordinate.git_oid).get(document_path(document_id)) is None
+        ):
+            continue
+        live_intervals = sorted(
+            (start, end)
+            for start, end, lifecycle, _use, _occurrence in current
+            if lifecycle == "live"
+        )
+        live_union: list[tuple[int, int]] = []
+        for start, end in live_intervals:
+            if live_union and start <= live_union[-1][1]:
+                live_union[-1] = (live_union[-1][0], max(live_union[-1][1], end))
+            else:
+                live_union.append((start, end))
+        uncovered = [
+            entry
+            for entry in current
+            if entry[2] == "retired"
+            and not any(
+                entry[0] < live_end and entry[1] > live_start for live_start, live_end in live_union
+            )
+        ]
+        components: list[list[tuple[int, int, str, _CitationRelationUse, WorkingOccurrenceV1]]] = []
+        for entry in sorted(
+            uncovered,
+            key=lambda item: (item[0], item[1], item[3].citation_id.encode("ascii")),
+        ):
+            if components and entry[0] <= max(item[1] for item in components[-1]):
+                components[-1].append(entry)
+            else:
+                components.append([entry])
+        for component in components:
+            start = min(entry[0] for entry in component)
+            end = max(entry[1] for entry in component)
+            claims = {entry[3].claim_identity for entry in component}
+            citations = {entry[3].citation_id for entry in component}
+            occurrence_ids = {entry[4].identity_digest for entry in component}
+            witnesses = tuple(sorted(claims, key=lambda item: item.encode("utf-8"))[:8])
+            items.append(
+                _item(
+                    severity="warning",
+                    reason="retired_claim_source_stale",
+                    subject_identity=f"document:{document_id}",
+                    related_identities=witnesses,
+                    detail={
+                        "document_id": document_id,
+                        "end_byte": end,
+                        "occurrence_identity_witnesses": sorted(
+                            occurrence_ids, key=lambda item: item.encode("ascii")
+                        )[:8],
+                        "retired_citation_count": len(citations),
+                        "retired_claim_count": len(claims),
+                        "retired_claim_witnesses": list(witnesses),
+                        "source_id": source_id,
+                        "start_byte": start,
+                    },
+                    repair=PlaybillNextRepairV1(
+                        operation="playbill.document.propose",
+                        target=f"document:{document_id}",
+                        required_change="revise_retired_claim_source_span",
+                        arguments={
+                            "document_id": document_id,
+                            "end_byte": end,
+                            "source_id": source_id,
+                            "start_byte": start,
+                        },
+                    ),
+                )
+            )
+            suppressed_publications.update(
+                (source_id, entry[3].commitment_digest) for entry in component
+            )
+    return tuple(items), frozenset(suppressed_publications)
+
+
 def _self_published_source_items(
     instance: PlaybillInstance,
     *,
@@ -1213,6 +1654,7 @@ def _self_published_source_items(
     evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
+    suppressed_relations: frozenset[tuple[str, str]] = frozenset(),
 ) -> tuple[PlaybillNextItemV1, ...]:
     if (
         observation is None
@@ -1255,6 +1697,8 @@ def _self_published_source_items(
     for (source_id, commitment_digest), group in sorted(
         grouped.items(), key=lambda item: (item[0][0].encode("utf-8"), item[0][1].encode("ascii"))
     ):
+        if (source_id, commitment_digest) in suppressed_relations:
+            continue
         source = observed.get(source_id)
         if source is None or source_id in archival:
             continue
@@ -2057,6 +2501,12 @@ def service_playbill_next(
         if domain == "accepted_state" or domain in workspace_domains
     )
     unobserved = tuple(domain for domain in _ALL_DOMAINS if domain not in observed)
+    relation_items, suppressed_publications = _citation_relation_items(
+        instance,
+        coordinate=coordinate,
+        access_profile=request.access_profile,
+        observation=request.workspace_observation,
+    )
     items = tuple(
         sorted(
             (
@@ -2074,12 +2524,14 @@ def service_playbill_next(
                     access_profile=request.access_profile,
                     observation=request.workspace_observation,
                 ),
+                *relation_items,
                 *_self_published_source_items(
                     instance,
                     coordinate=public_coordinate,
                     evaluation_time=request.evaluation_time,
                     access_profile=request.access_profile,
                     observation=request.workspace_observation,
+                    suppressed_relations=suppressed_publications,
                 ),
                 *_claim_dependency_items(
                     instance,

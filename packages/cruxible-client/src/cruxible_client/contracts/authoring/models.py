@@ -61,7 +61,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.4.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:d359caaf64d44771915442de947881fa33afd4e5cd3e1afd65ca46d27de75ba8"
+    "sha256:f008e9dfde54a8b7ad801b0c19cb419614512a02166784414dc58345c0abd0f2"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -639,8 +639,27 @@ class SelfSourceBodyV1(_StrictAuthoringModel):
         return _canonical_base64(self.content_base64, label="self-source body")
 
 
+class ExistingCaptureCitationSourceV1(_StrictAuthoringModel):
+    """Reference one already-materialized Capture without re-authoring its bytes."""
+
+    tag: Literal["playbill-existing-capture-citation-source-v1"] = (
+        "playbill-existing-capture-citation-source-v1"
+    )
+    capture_digest: str
+
+    @field_validator("capture_digest")
+    @classmethod
+    def _capture_digest(cls, value: str) -> str:
+        return _sha256(value, label="existing Capture digest")
+
+
 ClaimAuthoringSourceV1 = Annotated[
     WorkingSelectionObservationV1 | SelfSourceBodyV1,
+    Field(discriminator="tag"),
+]
+
+ClaimAuthoringSourceV3 = Annotated[
+    WorkingSelectionObservationV1 | SelfSourceBodyV1 | ExistingCaptureCitationSourceV1,
     Field(discriminator="tag"),
 ]
 
@@ -682,9 +701,12 @@ class ClaimAuthoringPayloadV1(_StrictAuthoringModel):
 
     @model_validator(mode="after")
     def _source_role(self) -> "ClaimAuthoringPayloadV1":
-        if isinstance(self.source, WorkingSelectionObservationV1):
+        if isinstance(
+            self.source,
+            WorkingSelectionObservationV1 | ExistingCaptureCitationSourceV1,
+        ):
             if self.citation_role is None:
-                raise ValueError("Flow A requires an explicit citation_role")
+                raise ValueError("Flow A and existing Captures require an explicit citation_role")
         elif self.citation_role is not None:
             raise ValueError("Flow B self-source fixes its citation role server-side")
         return self
@@ -698,6 +720,12 @@ class ClaimDependencyDraftsV1(_StrictAuthoringModel):
 
 class ClaimAuthoringPayloadV2(ClaimAuthoringPayloadV1):
     tag: Literal["playbill-claim-authoring-payload-v2"] = "playbill-claim-authoring-payload-v2"  # type: ignore[assignment]
+    dependency_drafts: ClaimDependencyDraftsV1
+
+
+class ClaimAuthoringPayloadV3(ClaimAuthoringPayloadV1):
+    tag: Literal["playbill-claim-authoring-payload-v3"] = "playbill-claim-authoring-payload-v3"  # type: ignore[assignment]
+    source: ClaimAuthoringSourceV3  # type: ignore[assignment]
     dependency_drafts: ClaimDependencyDraftsV1
 
 
@@ -759,6 +787,7 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
 AuthoringPayloadV1 = Annotated[
     ClaimAuthoringPayloadV1
     | ClaimAuthoringPayloadV2
+    | ClaimAuthoringPayloadV3
     | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayloadV2,
     Field(discriminator="tag"),
@@ -1790,6 +1819,8 @@ __all__ = [
     "CandidateStatusV1",
     "ClaimAuthoringPayloadV1",
     "ClaimAuthoringPayloadV2",
+    "ClaimAuthoringPayloadV3",
+    "ClaimAuthoringSourceV3",
     "ClaimDependencyDraftsV1",
     "DiagnosticFrontierLimitsV1",
     "DiagnosticFrontierV1",
@@ -1814,6 +1845,7 @@ __all__ = [
     "ProcedureAuthoringPayloadV1",
     "ProcedureAuthoringPayloadV2",
     "RepairAlternativeV1",
+    "ExistingCaptureCitationSourceV1",
     "SelfSourceBodyV1",
     "WorkingAnchorWindowV1",
     "WorkingDigestCoordinateV1",

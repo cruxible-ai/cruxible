@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import ClassVar, Literal, Protocol, runtime_checkable
 
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -78,6 +78,16 @@ class SourceRef:
     address: str
     coordinate: AcceptedCoordinate
     kind: ClassVar[RefKind] = RefKind.SOURCE
+
+
+@dataclass(frozen=True)
+class CaptureRef:
+    """Opaque accepted Capture plus its contract and citation-role provenance."""
+
+    capture_digest: str
+    contract_address: str
+    coordinate: AcceptedCoordinate
+    citation_role: Literal["evidence", "copy", "legacy"]
 
 
 @dataclass(frozen=True)
@@ -306,6 +316,7 @@ __all__ = [
     "ProcedureRef",
     "QueryRef",
     "RefKind",
+    "CaptureRef",
     "ReferenceKindError",
     "ReferentSensitivity",
     "SlotRef",

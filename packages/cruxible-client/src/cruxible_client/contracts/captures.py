@@ -1089,6 +1089,105 @@ def capture_is_coordinator_self_source(
     )
 
 
+def capture_is_direct_selection_bound(
+    envelope: CaptureEnvelopeV1,
+    *,
+    contract: CaptureContractV1,
+    claim_id: str,
+) -> bool:
+    """Recognize the direct-selection builder's Claim binding.
+
+    A direct-selection Capture points at the selected bytes rather than a
+    serialized DirectClaimSourceV1, so its binding lives in the frozen run
+    coordinate (and, for unmaterialized external selections, the selector).
+    """
+
+    if (
+        contract != DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+        or envelope.run_coordinate.run_kind != "provider"
+        or envelope.run_coordinate.run_id != f"direct-selection:{claim_id.casefold()}"
+        or envelope.run_coordinate.executable_identity != contract.identity
+        or envelope.run_coordinate.executable_digest != capture_contract_digest(contract).tagged
+    ):
+        return False
+    if isinstance(envelope.source, ExternalSourceReferenceV1):
+        selector = envelope.source.selector
+        return isinstance(selector, dict) and selector.get("claim_id") == claim_id
+    return isinstance(envelope.source, CasSourceReferenceV1)
+
+
+CaptureReuseClassification = Literal[
+    "claim_bound",
+    "claim_bound_mismatch",
+    "shareable",
+    "not_shareable",
+]
+
+
+def classify_capture_reuse(
+    envelope: CaptureEnvelopeV1,
+    *,
+    contract: CaptureContractV1,
+    store: CaptureObjectStoreProtocol,
+    claim_id: str,
+) -> CaptureReuseClassification:
+    """Classify reuse with the same fail-closed Claim-family law at every boundary.
+
+    Contract identity and source-subject mapping are independent scope signals.
+    Either Claim-self signal makes the Capture Claim-bound; conflicting or forged
+    family combinations therefore fail closed instead of falling through to the
+    otherwise-observed shareable class.
+    """
+
+    identity_family = (
+        "direct"
+        if contract.identity.name == DIRECT_SELF_ASSERTED_CONTRACT_ID
+        else (
+            "coordinator" if contract.identity.name == COORDINATOR_SELF_SOURCE_CONTRACT_ID else None
+        )
+    )
+    mapping_family = (
+        "direct"
+        if contract.source_subject_mapping_digest
+        == DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.source_subject_mapping_digest
+        else (
+            "coordinator"
+            if contract.source_subject_mapping_digest
+            == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.source_subject_mapping_digest
+            else None
+        )
+    )
+    family = identity_family or mapping_family
+    if family is not None:
+        if identity_family != family or mapping_family != family:
+            return "claim_bound_mismatch"
+        matches = (
+            family == "direct"
+            and (
+                capture_is_direct_self_source(
+                    envelope,
+                    contract=contract,
+                    store=store,
+                    claim_id=claim_id,
+                )
+                or capture_is_direct_selection_bound(
+                    envelope,
+                    contract=contract,
+                    claim_id=claim_id,
+                )
+            )
+        ) or (
+            family == "coordinator"
+            and capture_is_coordinator_self_source(
+                envelope,
+                contract=contract,
+                claim_id=claim_id,
+            )
+        )
+        return "claim_bound" if matches else "claim_bound_mismatch"
+    return "shareable" if contract.epistemic_grade == "observed" else "not_shareable"
+
+
 class CaptureBuildResult(_StrictCaptureModel):
     contract_digest: str
     envelope: CaptureEnvelopeV1
@@ -1924,7 +2023,9 @@ __all__ = [
     "capture_contract_digest",
     "capture_contract_is_self_asserted",
     "capture_is_coordinator_self_source",
+    "capture_is_direct_selection_bound",
     "capture_is_direct_self_source",
+    "classify_capture_reuse",
     "capture_contract_path",
     "capture_component_pin",
     "capture_digest",

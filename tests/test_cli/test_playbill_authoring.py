@@ -533,7 +533,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     assert help_result.exit_code == 0
     assert "Input kind family: claim | procedure" in help_result.output
 
-    for name in ("claim-flow-a", "claim-self-source", "procedure"):
+    for name in ("claim-existing-capture", "claim-flow-a", "claim-self-source", "procedure"):
         result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)

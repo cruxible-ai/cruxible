@@ -3,6 +3,7 @@
     "PlaybillAuthoringExampleName": {
       "values": [
         "claim-type",
+        "claim-existing-capture",
         "claim-flow-a",
         "claim-self-source",
         "procedure"
@@ -31,7 +32,8 @@
         "claim_dependency_stale",
         "claim_attestation_threshold_met",
         "document_modified",
-        "claim_cites_retired"
+        "claim_cites_retired",
+        "retired_claim_source_stale"
       ]
     },
     "RuntimeCredentialPermissionMode": {
@@ -2595,6 +2597,7 @@
           "schema": {
             "enum": [
               "claim-type",
+              "claim-existing-capture",
               "claim-flow-a",
               "claim-self-source",
               "procedure"
@@ -2636,6 +2639,7 @@
           "name": {
             "enum": [
               "claim-type",
+              "claim-existing-capture",
               "claim-flow-a",
               "claim-self-source",
               "procedure"

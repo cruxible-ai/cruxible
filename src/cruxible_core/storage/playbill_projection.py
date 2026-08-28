@@ -525,6 +525,41 @@ class ProjectionHandle:
             raise ProjectionIntegrityError("PB-B can query exactly one physical piece")
         return self.piece_paths[0]
 
+    def semantic_facts(
+        self,
+        schema_id: str,
+        *,
+        subject_identity: str | None = None,
+    ) -> tuple[ProjectionFact, ...]:
+        """Read one compiler-declared semantic relation slice in key order."""
+
+        if self._closed:
+            raise ProjectionIntegrityError("projection handle is closed")
+        if subject_identity is None:
+            rows = self._connection.execute(
+                "SELECT schema_id,schema_version,subject_identity,fact_key,value_json "
+                "FROM semantic_facts WHERE schema_id = ? "
+                "ORDER BY schema_version,subject_identity,fact_key",
+                (schema_id,),
+            ).fetchall()
+        else:
+            rows = self._connection.execute(
+                "SELECT schema_id,schema_version,subject_identity,fact_key,value_json "
+                "FROM semantic_facts WHERE schema_id = ? AND subject_identity = ? "
+                "ORDER BY schema_version,fact_key",
+                (schema_id, subject_identity),
+            ).fetchall()
+        return tuple(
+            ProjectionFact(
+                schema_id=row["schema_id"],
+                schema_version=row["schema_version"],
+                subject_identity=row["subject_identity"],
+                fact_key=row["fact_key"],
+                value=json.loads(row["value_json"]),
+            )
+            for row in rows
+        )
+
     def fixture(self, identity: str) -> dict[str, object] | None:
         if self._closed:
             raise ProjectionIntegrityError("projection handle is closed")

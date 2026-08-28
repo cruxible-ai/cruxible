@@ -18,6 +18,9 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDispositionV1,
     AuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
+    ClaimAuthoringPayloadV3,
+    ClaimDependencyDraftsV1,
+    ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
     SelfSourceBodyV1,
@@ -75,8 +78,13 @@ class WorkingSelectionInput(_StrictInputModel):
     source_id: str
 
 
+class ExistingCaptureInput(_StrictInputModel):
+    kind: Literal["existing_capture"]
+    capture_digest: str
+
+
 AuthoringSourceInput: TypeAlias = Annotated[
-    SelfSourceInput | WorkingSelectionInput,
+    SelfSourceInput | WorkingSelectionInput | ExistingCaptureInput,
     Field(discriminator="kind"),
 ]
 
@@ -206,6 +214,33 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
             "input.source",
             "create and compile cannot observe local working-source bytes.",
             "Run playbill authoring bind with this input and the selected local file.",
+        )
+    if isinstance(value.source, ExistingCaptureInput):
+        if value.citation_role is None:
+            raise AuthoringInputError(
+                "playbill.authoring.existing_capture_not_admitted",
+                "input.citation_role",
+                "An existing Capture requires evidence or copy intent.",
+                "Set citation_role to evidence or copy.",
+            )
+        return ClaimAuthoringPayloadV3(
+            statement=AuthoringClaimStatementV1(
+                subject=_subject_address(value.subject, field_path="input.subject"),
+                predicate=value.predicate,
+                qualifier=value.qualifier,
+                object=_claim_object(value.object),
+                role=value.role,
+                effective_from=value.effective_from,
+                effective_until=value.effective_until,
+            ),
+            rationale=value.rationale,
+            source=ExistingCaptureCitationSourceV1(
+                capture_digest=value.source.capture_digest,
+            ),
+            citation_role=value.citation_role,
+            claim_ref=value.claim_id,
+            existing_claim_dispositions=_dispositions(value.dispositions),
+            dependency_drafts=ClaimDependencyDraftsV1(),
         )
     if value.citation_role is not None:
         raise AuthoringInputError(
@@ -413,6 +448,7 @@ __all__ = [
     "CarriedContractReferenceInput",
     "ClaimDispositionInput",
     "ClaimInput",
+    "ExistingCaptureInput",
     "ExactContentObjectInput",
     "LiteralObjectInput",
     "ProcedureInput",

@@ -12,10 +12,12 @@ from cruxible_client.authoring.inputs import (
     AuthoringInputError,
     CarriedContractInput,
     ClaimInput,
+    ExistingCaptureInput,
     LiteralObjectInput,
     ProcedureInput,
     SelfSourceInput,
     WorkingSelectionInput,
+    lower_authoring_input,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
@@ -92,6 +94,42 @@ def test_input_create_binds_friendly_subject_to_the_stored_intent_base(
     )
     assert view.intent.payload.tag == "playbill-claim-authoring-payload-v1"
     assert "digest" not in _claim_input().model_dump_json()
+
+
+def test_existing_capture_input_lowers_to_the_v3_payload_without_digest_relay() -> None:
+    capture_digest = "sha256:" + "7" * 64
+    input_value = _claim_input().model_copy(
+        update={
+            "source": ExistingCaptureInput(
+                kind="existing_capture",
+                capture_digest=capture_digest,
+            ),
+            "citation_role": "evidence",
+        }
+    )
+
+    payload = lower_authoring_input(input_value, tree={})
+
+    assert payload.tag == "playbill-claim-authoring-payload-v3"
+    assert payload.source.capture_digest == capture_digest  # type: ignore[union-attr]
+
+
+def test_existing_capture_input_requires_an_explicit_admitted_citation_role() -> None:
+    input_value = _claim_input().model_copy(
+        update={
+            "source": ExistingCaptureInput(
+                kind="existing_capture",
+                capture_digest="sha256:" + "7" * 64,
+            ),
+            "citation_role": None,
+        }
+    )
+
+    with pytest.raises(AuthoringInputError) as raised:
+        lower_authoring_input(input_value, tree={})
+
+    assert raised.value.code == "playbill.authoring.existing_capture_not_admitted"
+    assert raised.value.field_path == "input.citation_role"
 
 
 def test_input_compile_typed_refuses_a_terminal_v3_claim_with_v2_backing(

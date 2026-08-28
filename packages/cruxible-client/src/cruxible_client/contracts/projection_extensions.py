@@ -555,6 +555,11 @@ def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
             constraints=("unique(subject_identity,fact_key)",),
         )
         for schema_id in (
+            "playbill.citation_relation.capture_contract",
+            "playbill.citation_relation.external_use",
+            "playbill.citation_relation.retired_conflict",
+            "playbill.citation_relation.source_use",
+            "playbill.citation_relation.use",
             "playbill.exhaust_promotion.basis",
             "playbill.line.track_record",
             "playbill.procedure.resolution_activation",

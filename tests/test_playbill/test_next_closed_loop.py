@@ -89,6 +89,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
+from tests.test_playbill import test_citation_retirement_relations as citation_retirement
 from tests.test_playbill._adoption_fixture import _Builder
 from tests.test_playbill._claim_authoring_support import (
     DirectClaimAuthoringV1,
@@ -156,6 +157,8 @@ EXPECTED_OPERATIONS = {
     "claim_dependency_stale": "playbill.authoring.create",
     "claim_attestation_threshold_met": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
+    "claim_cites_retired": "playbill.claim.retire",
+    "retired_claim_source_stale": "playbill.document.propose",
 }
 
 
@@ -1120,6 +1123,18 @@ def _claim_attestation_threshold(
     _assert_gone(instance, "claim_attestation_threshold_met", _request(instance))
 
 
+def _claim_cites_retired(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    citation_retirement.test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_it(
+        root
+    )
+
+
+def _retired_claim_source_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    citation_retirement.test_retired_source_window_is_served_without_retired_claim_cards_and_repair_clears(
+        root
+    )
+
+
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_conflicted", None): _claim_conflicted,
     ("claim_uncovered", None): _claim_uncovered,
@@ -1138,6 +1153,8 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_dependency_stale", None): _claim_dependency_stale,
     ("claim_attestation_threshold_met", None): _claim_attestation_threshold,
     ("document_modified", None): _document_modified,
+    ("claim_cites_retired", None): _claim_cites_retired,
+    ("retired_claim_source_stale", None): _retired_claim_source_stale,
 }
 
 
@@ -1147,11 +1164,7 @@ def test_every_next_reason_has_an_effective_named_repair(
     monkeypatch: pytest.MonkeyPatch,
     key: ClosedLoopKey,
 ) -> None:
-    # `claim_cites_retired` is RESERVED on the wire and never emitted -- the
-    # stranded-citation row was withdrawn pending the copy-edge design. A reason
-    # nothing emits has no repair to demonstrate, so it is exempt here; the value
-    # rejoins this law when something emits it again.
-    reasons = set(get_args(NextReason)) - {"claim_cites_retired"}
+    reasons = set(get_args(NextReason))
     assert {reason for reason, _discriminator in CLOSED_LOOP_CASES} == reasons
     assert {
         discriminator for reason, discriminator in CLOSED_LOOP_CASES if reason == "citation_drifted"

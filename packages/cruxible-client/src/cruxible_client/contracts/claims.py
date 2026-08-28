@@ -35,7 +35,9 @@ from cruxible_client.contracts.captures import (
     LedgerMaterialResolverProtocol,
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
+    capture_is_direct_selection_bound,
     capture_is_direct_self_source,
+    classify_capture_reuse,
     verify_capture,
 )
 from cruxible_client.contracts.claim_attestations import (
@@ -1120,10 +1122,31 @@ def _citation_origin_refusal(
     )
     if not associations:
         return None
+    reuse_class = classify_capture_reuse(
+        envelope,
+        contract=contract,
+        store=store,
+        claim_id=claim.identity.name,
+    )
+    if reuse_class == "claim_bound_mismatch":
+        return (
+            "playbill.claim.self_source_capture_unbound",
+            "The Claim-bound Capture belongs to another Claim or has mismatched family signals.",
+        )
+    if reuse_class == "not_shareable":
+        return (
+            "playbill.authoring.capture_not_shareable",
+            "Only a verified observed Capture may be shared across Claims.",
+        )
     direct_self_source = capture_is_direct_self_source(
         envelope,
         contract=contract,
         store=store,
+        claim_id=claim.identity.name,
+    )
+    direct_selection_bound = capture_is_direct_selection_bound(
+        envelope,
+        contract=contract,
         claim_id=claim.identity.name,
     )
     coordinator_contract = contract == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
@@ -1138,6 +1161,7 @@ def _citation_origin_refusal(
             "The coordinator self-source Capture is not bound to this Claim.",
         )
     verified_self_source = direct_self_source or coordinator_self_source
+    self_source_origin_permitted = verified_self_source or direct_selection_bound
     for association in associations:
         if association.origin == "self_published" and association.role != "copy":
             return (
@@ -1149,7 +1173,7 @@ def _citation_origin_refusal(
                 "playbill.claim.self_source_origin_mismatch",
                 "A direct self-source tied to this Claim must declare self_source origin.",
             )
-        if not verified_self_source and association.origin == "self_source":
+        if not self_source_origin_permitted and association.origin == "self_source":
             return (
                 "playbill.claim.self_source_origin_mismatch",
                 "self_source origin requires a verified self-source Capture tied to this Claim.",

@@ -244,8 +244,13 @@ def main(argv: list[str] | None = None) -> int:
             artifact_id = build_artifact_id(prefix, rel_str, content, taken)
         except ValueError as exc:
             entries.append(
-                {"path": rel_str, "artifact_id": None, "bytes": len(content),
-                 "status": "failed", "error": str(exc)}
+                {
+                    "path": rel_str,
+                    "artifact_id": None,
+                    "bytes": len(content),
+                    "status": "failed",
+                    "error": str(exc),
+                }
             )
             counts["failed"] += 1
             print(f"failed      -            {rel_str}: {exc}", file=sys.stderr)

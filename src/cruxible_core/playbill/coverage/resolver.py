@@ -160,6 +160,7 @@ def _resolve_span_v3(
     manifest_reasons: tuple[str, ...],
     manifest: CoverageManifestBodyV2 | None,
     window_observations: tuple[PlaybillCitationWindowObservationV1, ...],
+    additional_window_citation_ids: frozenset[str],
 ) -> CoverageSpanResultV3:
     """Resolve one source from its own proof boundary, never a global scan bit."""
 
@@ -310,7 +311,7 @@ def _resolve_span_v3(
         association.reference.citation_id
         for citation in visible_local
         for association in citation.citation_associations
-    }
+    } | additional_window_citation_ids
     overlay_occurrences: dict[tuple[str, int], set[str]] = {}
     for occurrence in occurrences:
         overlay_occurrences.setdefault(
@@ -454,6 +455,7 @@ def resolve_coverage_v3(
     access: CoverageAccessProfileV1,
     manifest: CoverageManifestBodyV2 | None = None,
     window_observations: tuple[PlaybillCitationWindowObservationV1, ...] = (),
+    additional_window_citation_ids: frozenset[str] = frozenset(),
 ) -> CoverageResultV3:
     """Resolve association-native coverage with source-local proof health."""
 
@@ -475,6 +477,7 @@ def resolve_coverage_v3(
             manifest_reasons=manifest_reasons,
             manifest=manifest,
             window_observations=window_observations,
+            additional_window_citation_ids=additional_window_citation_ids,
         )
         for span in request.spans
     )
