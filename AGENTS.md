@@ -72,120 +72,72 @@ forever, including by the frozen verifiers of retired formats.
 
 **Release process:**
 1. Bump version in both files
-2. Rebuild kit bundles + manifest: `uv run python scripts/build_kit_bundles.py` (if a kit's config/providers changed, first `uv run cruxible lock --kit-dir kits/<kit>`); verify with `uv run python scripts/check_kit_lockfiles.py` and commit the regenerated manifest/locks
+2. Run `uv lock --check` and `uv run python scripts/check_version_lockstep.py`
 3. Commit: `Bump to vX.Y.Z`
 4. Tag: `git tag vX.Y.Z`
-5. Push: `git push && git push --tags`; the tag workflow publishes both PyPI packages, rebuilds bundles from the tagged source, verifies their digests against the committed manifest, and creates or updates the GitHub release assets
-6. Confirm CI's `scripts/check_kit_release_assets.py` gate is green; before the tag exists it reports a notice and skips, while an existing tag requires every manifest asset URL to return HTTP 200
+5. Push: `git push && git push --tags`; the tag workflow publishes both PyPI packages and creates or updates the GitHub release
 
 ## Architecture
 
-### Three Surface Layers, One Service Core
+### Four Surfaces, One Playbill Core
 
-All interfaces delegate to the **service layer** (`service/`). Never duplicate orchestration logic in handlers.
-
-```
-MCP (mcp/)  ──┐
-CLI (cli/)  ──┼──▶  Service Layer (service/)  ──▶  Core Modules
-HTTP (server/) ┘
-```
-
-- **MCP** (`mcp/`) — Primary interface for AI agents via FastMCP. Handlers in `handlers.py` support dual-mode: library-mode (direct calls) or server-mode (delegates to `CruxibleClient`).
-- **CLI** (`cli/`) — Click CLI. Commands in `commands.py` delegate to service functions.
-- **HTTP** (`server/`) — FastAPI REST server with bearer-token auth. Routes in `server/routes/`. Supports HTTP and Unix Domain Socket transports.
-- **Client** (`client/`) — `CruxibleClient` SDK for talking to HTTP servers. Mirrors all service operations.
-
-### Service Layer (`service/`)
-
-The source of truth for all business logic. Organized by concern:
-
-- `queries.py` — Read operations (query, schema, inspect, list, stats, sample)
-- `mutations.py` — Graph mutations (add_entities, add_relationships, ingest)
-- `feedback.py` — Feedback collection and outcome recording
-- `execution.py` — Workflow execution (plan, run, test, apply, propose, lock)
-- `groups.py` — Candidate group proposal management with resolution/trust
-- `analysis.py` — Constraint evaluation and candidate finding
-- `snapshots.py` — State snapshots for branching/recovery
-- `types.py` — All input/output types (typed dataclasses)
-
-Service functions have consistent signatures: accept `instance: InstanceProtocol`, return typed result dataclasses.
-
-### Instance Protocol (`instance_protocol.py`)
-
-Structural protocols defining abstract instance/store interfaces:
-- `InstanceProtocol` — Graph/config loading, snapshot creation, store access
-- `ReceiptStoreProtocol`, `FeedbackStoreProtocol`, `GroupStoreProtocol`, `EntityProposalStoreProtocol`
-
-This abstraction enables future non-SQLite backends (e.g., cloud storage) without coupling.
-
-The concrete implementation is `CruxibleInstance` in `cli/instance.py`, which manages the `.cruxible/` directory:
+All interfaces delegate to the Playbill service layer. Never duplicate orchestration logic in handlers or transports.
 
 ```
-.cruxible/
-  instance.json     # Bootstrap metadata (config path, version, compatibility mirror)
-  state.db          # SQLite live graph, audit/governance stores, snapshots, artifacts, head/origin
-  snapshots/
-    <snapshot_id>/
-      graph.json    # Portable export/cache materialized from DB snapshot artifacts
-      config.yaml
-      snapshot.json
+SDK (cruxible_client.authoring) ─┐
+MCP (mcp/)                       ├──▶ service/playbill_*.py ──▶ playbill/
+CLI (cli/)                       │
+HTTP (server/)                  ─┘
 ```
 
-Snapshot metadata, snapshot artifacts, and authoritative head/origin state live
-in `state.db`. `.cruxible/snapshots/` is a portable export/cache, and
-`.cruxible/graph.json` is not live authority.
+- **SDK** (`packages/cruxible-client/`) — typed contracts, HTTP transport, and agent-oriented authoring/reading adapters.
+- **MCP** (`mcp/`) — FastMCP tools delegating through the same runtime/client surfaces.
+- **CLI** (`cli/`) — Click commands; Playbill commands live in `cli/commands/playbill.py`.
+- **HTTP** (`server/`) — FastAPI routes with bearer-token authentication.
 
-### Workflow System (`workflow/`)
+### Playbill service layer (`service/playbill_*.py`)
 
-Deterministic workflow engine with lock-file reproducibility:
+The source of truth for served orchestration. It is organized by concern:
 
-- `compiler.py` — Compiles workflows to `CompiledPlan`, generates SHA256 locks (`cruxible.lock.yaml`), resolves providers and artifacts
-- `executor.py` / `step_handlers.py` — Runtime execution dispatching 19 step kinds (the `StepKind` literal in `config/schema.py`; `DEFAULT_STEP_HANDLER_REGISTRY` asserts coverage of all of them): query, provider, assert, assert_not_truncated, assert_count, assert_exists, shape_items, join_items, filter_items, aggregate_items, dedupe_items, make_candidates, map_signals, propose_relationship_group, make_entities, make_relationships, apply_entities, apply_relationships, apply_all
-- `contracts.py` — Payload validation against declared contracts
-- `refs.py` — Step reference resolution (`$input`, `$steps.*`, `$item`)
+- claims/evidence/proposals and proposal review;
+- coverage, discovery, search, since, and the deterministic floor;
+- procedure authoring/execution and `next` repair rows;
+- operational curation and audit worklists.
 
-Three execution modes: `run` (non-canonical), `preview` (canonical dry-run), `apply` (canonical with mutations). Canonical workflows create `StateSnapshot` objects with lineage tracking.
+Service functions accept a `PlaybillInstance` and return typed Pydantic results.
 
-### Provider System (`provider/`)
+### Playbill instance and accepted state
 
-External provider execution with tracing. Providers are callables resolved by the registry (`provider/registry.py`). Each execution produces an `ExecutionTrace` (input/output, duration, status, artifact hash) persisted to `state.db`.
+`PlaybillInstance` in `playbill/instance.py` manages the daemon-owned repository and stores:
 
-### Groups and Entity Proposals
+```
+.cruxible-playbill/
+  instance.json       # instance descriptor
+  repository.git/     # accepted and proposal trees
+  bodies/             # content-addressed bodies
+  journal/            # signed generation/procedure journals
+  projections/        # rebuildable served indexes
+  operational/        # non-governed curation/audit/authoring state
+```
 
-Two parallel governed-mutation systems:
+The signed generation ledger and accepted Git tree are authority. Projections,
+file floors, and operational stores are derived or explicitly non-governed.
 
-- **Groups** (`group/`) — Relationship proposals using tri-state signals (support/contradict/unsure) from integrations. `CandidateGroup` tracks status: pending_review → auto_resolved/applying → resolved.
+### Procedure system (`playbill/procedures/`)
 
-Both are persisted in the unified `state.db` via their respective stores.
+Procedures compile to the frozen graph-v3 representation and execute
+deterministically. Admission binds inputs and coordinates before execution;
+the exhaust journal records node outcomes, dependency manifests, effects, and
+typed terminal egress receipts. Line specs add recurring triggers and retained
+line-grained track records through accepted exhaust promotions.
 
 ### Key Design Decisions
 
 - **Zero LLM dependencies.** Purely deterministic runtime. Codex provides all intelligence via MCP tools.
-- **Pydantic for all models.** Config schema, runtime types, receipts — all validated.
-- **Polars for data operations.** Ingestion and candidate detection use Polars DataFrames.
-- **NetworkX for graph.** EntityGraph wraps networkx DiGraph for entity/relationship storage.
-- **SQLite for persistence.** Receipts, feedback, outcomes, groups, proposals stored in SQLite.
-- **YAML for config.** Defines entity types, relationships, named queries, constraints, ingestion mappings, workflows, quality checks, integrations, and provider artifacts.
-
-### Config Schema (`config/schema.py`)
-
-Configs define a decision domain. Beyond the basics (entity_types, relationships, named_queries, constraints, ingestion), the schema includes:
-
-- `workflows` — Declarative step-based execution plans
-- `quality_checks` — 5 types: property, json_content, uniqueness, bounds, cardinality
-- `integrations` — External integration specs with contracts and guardrails
-- `matching` — Per-relationship proposal rules (auto-resolve conditions, trust requirements)
-- `artifacts` — External resources (models, data) referenced by workflows
-
-### Evaluation (`evaluate.py`)
-
-Deterministic graph quality assessment with 6 checks:
-1. Orphan entities (no edges)
-2. Coverage gaps (declared types missing from graph)
-3. Constraint violations (rule-based)
-4. Candidate opportunities (shared neighbors, missing edges)
-5. Low-confidence edges
-6. Unreviewed co-members
+- **Pydantic for contracts and receipts.** Canonical values reject ambiguous encodings.
+- **Git plus signed ledgers for governed authority.** SQLite indexes and operational stores do not replace the accepted tree.
+- **Content-addressed bodies and deterministic projection.** Served reads reproduce from accepted coordinates.
+- **Pointer-model knowledge.** Claims bind ordinary source substrates; the ledger remains the singular truth plane.
 
 ### Permission Modes
 
@@ -195,24 +147,23 @@ MCP tools are gated by `CRUXIBLE_MODE` env var. Four cumulative tiers
 
 | Mode | Env value | Tools |
 |------|-----------|-------|
-| `READ_ONLY` | `read_only` | `init` (reload only), `validate`, `schema`, `query`, `receipt`, `list`, `sample`, `evaluate`, `find_candidates`, `get_entity`, `get_relationship`, inspect/lint/trace reads |
-| `GOVERNED_WRITE` | `governed_write` | READ_ONLY + governed operator actions: `feedback`, `outcome`, proposal/group workflows, decision records, snapshot creation, source artifact registration, and subscribed state pulls |
-| `GRAPH_WRITE` | `graph_write` | GOVERNED_WRITE + direct graph writes (`add_entity`, `add_relationship`), canonical workflow apply, and group resolution / trust updates |
-| `ADMIN` | `admin` (default) | All tools: instance lifecycle, active config replacement, locks, clones, overlays, `ingest`, `add_constraint`, and published-state trust boundaries |
+| `READ_ONLY` | `read_only` | Playbill reads, receipted query runs, coverage, curation/audit reads |
+| `GOVERNED_WRITE` | `governed_write` | READ_ONLY + authoring/proposal and attributed operational actions |
+| `GRAPH_WRITE` | `graph_write` | Retained tier boundary; no legacy graph-write product surface |
+| `ADMIN` | `admin` (default) | Instance/principal lifecycle and published-state trust boundaries |
 
 - `CRUXIBLE_ALLOWED_ROOTS` env var (comma-separated absolute paths) restricts which directories `cruxible_init` can access.
 - Audit logging uses structlog to stderr.
 
 ### Error Handling
 
-All errors inherit from `CoreError` in `errors.py`. Key types: `ConfigError`, `DataValidationError`, `EntityNotFoundError`, `RelationshipNotFoundError`, `QueryNotFoundError`, `PermissionDeniedError`.
+All errors inherit from `CoreError` in `errors.py`. Playbill wire and execution
+refusals are typed in `cruxible_client.contracts.errors`.
 
 ### Test Organization
 
-Tests mirror the src layout under `tests/`:
-- `test_service/` — Service layer tests (primary coverage target)
-- `test_mcp/` — MCP handler tests
-- `test_cli/` — CLI command tests (includes server-mode testing)
-- `test_config/`, `test_graph/`, `test_query/`, `test_receipt/`, `test_feedback/`, `test_workflow/` — Module-level tests
-- `conftest.py` — Shared fixtures including workflow config templates and `canonical_workflow_instance`
-- `support/` — Test helpers (e.g., `workflow_test_providers.py`)
+Tests mirror the live surfaces under `tests/test_playbill`, `test_client`,
+`test_server`, `test_cli`, and `test_mcp`. `tests/test_architecture` and
+`tests/test_guardrails` pin DP-0 boundaries, public snapshots, and contract
+catalogs. Golden journal-corpus tests are intentionally expensive and should
+only run when their dispatch explicitly permits them.

@@ -62,6 +62,7 @@ FORBIDDEN_MODULE_PREFIXES = (
     "cruxible_core.graph",
     "cruxible_core.procedure",
     "cruxible_core.query",
+    "cruxible_core.predicate",
     "cruxible_core.receipt_tree",
     "cruxible_core.workflow",
     "cruxible_core.provider",

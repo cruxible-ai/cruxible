@@ -1072,19 +1072,14 @@ SQLite schema script for `storage/sqlite.py` and was orphaned by that deletion.
 pointed at a deleted module, and the `workflow`, `provider`, and `query`
 package initializers lost re-export catalogs that named deleted modules.
 
-`cruxible_core.kit_defaults` was already unimported before this batch and is
-left in place: it is pre-existing dead code, not PC-F residue, and removing it
-remains separately scoped.
-
 ### PC-DEL1 completion of the donor cut
 
 PC-DEL1 removed the deferred `config`, `graph`, old `procedure`, old
 `query`, `receipt_tree`, `workflow`, provider/reader, in-core client, and
 legacy governance families together with their isolated tests and corpora. It
 also retired the Playbill donor manifest because no adapter or served path
-still consumes those packages. The standalone `cruxible_core.predicate`
-module was not part of PC-DEL1's approved family set and remains separately
-scoped.
+still consumes those packages. The final fix round removed the standalone
+`cruxible_core.predicate` module after its last consumers disappeared.
 
 The active Procedure and query contracts live in `cruxible_client.contracts`;
 the active execution and read paths live below `cruxible_core.playbill`.
@@ -1345,10 +1340,10 @@ itself, which a recorded byte string could only weaken.
 oracle at `986307d56649eb51747ca227228fbe19f73e3895`.
 
 The semantic parity recording at
-`tests/data/playbill_parity/modeling-parity-oracle-v1.json` remains as history
-of the legacy answers. Its original donor configurations and Procedure digest
-corpus are recoverable from repository history, not duplicated in the live
-verification tree.
+`tests/data/playbill_parity/modeling-parity-oracle-v1.json` is historical
+comparison data only, not a live verification oracle. Its original donor
+configurations and Procedure digest corpus are recoverable from repository
+history, not duplicated in the live verification tree.
 
 ## Intentionally retained package dependencies
 
@@ -1360,15 +1355,11 @@ The remaining dependency inventory is:
 | `cruxible-client` | Reduced Playbill HTTP client shipped with the core |
 | `pydantic` | Active Playbill/client contracts and donor validation models |
 | `packaging` | Requirement parsing in the architecture dependency audit |
-| `polars` | Retained pending a later dependency-only cleanup; the retired tabular donor no longer owns a runtime edge |
 | `pyyaml` | Active source-catalog CLI and packaged client source-catalog paths |
 | `structlog` | Active daemon audit/request logging and permission checks |
 | `click` | Active four-group CLI |
 | `cryptography` | Ed25519 principal keys, signatures, and Git verification |
-| `rich` | Retained pending a later dependency-only cleanup |
 | `httpx` | Active reduced client/CLI HTTP transport |
-| `pypdf` | Retained pending a later dependency-only cleanup; the retired PDF donor no longer owns a runtime edge |
-| `markdown-it-py` | Retained pending a later dependency-only cleanup |
 | `fastapi` | Active HTTP daemon |
 | `python-multipart` | Retained daemon multipart-form dependency |
 | `uvicorn` | Active daemon launcher |
