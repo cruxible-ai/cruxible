@@ -40,6 +40,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "claim_dependency_stale",
     "claim_attestation_threshold_met",
     "document_modified",
+    "claim_cites_retired",
 ]
 
 
@@ -605,6 +606,8 @@ class PlaybillClaimRetirePreflight(BaseModel):
     reason: Literal["was-rescinded", "was-wrong"]
     effective_until: str | None
     required_dependents: list[dict[str, Any]]
+    # Advisory, never required: live Claims left citing this Claim's Captures.
+    citing_claims: list[dict[str, Any]] = []
     diagnostics: list[dict[str, Any]]
     submit_ready: bool
 
@@ -741,6 +744,9 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     intent: dict[str, Any]
     status: PlaybillCandidateStatus
+    # True when this submit amends an existing Claim identity in place.
+    identity_stable: bool = False
+    claim_revision: int | None = None
 
 
 class PlaybillInsertionConfirmResult(BaseModel):

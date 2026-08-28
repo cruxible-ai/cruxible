@@ -30,7 +30,8 @@
         "self_published_source_stale",
         "claim_dependency_stale",
         "claim_attestation_threshold_met",
-        "document_modified"
+        "document_modified",
+        "claim_cites_retired"
       ]
     },
     "RuntimeCredentialPermissionMode": {
@@ -3153,6 +3154,39 @@
     },
     "PlaybillAuthoringSubmitResult": {
       "fields": {
+        "claim_revision": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "claim_revision",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Revision"
+          }
+        },
+        "identity_stable": {
+          "default": false,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "identity_stable",
+          "required": false,
+          "schema": {
+            "default": false,
+            "title": "Identity Stable",
+            "type": "boolean"
+          }
+        },
         "intent": {
           "has_default": false,
           "has_default_factory": false,
@@ -3311,6 +3345,23 @@
         },
         "additionalProperties": false,
         "properties": {
+          "claim_revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Claim Revision"
+          },
+          "identity_stable": {
+            "default": false,
+            "title": "Identity Stable",
+            "type": "boolean"
+          },
           "intent": {
             "additionalProperties": true,
             "title": "Intent",
@@ -6402,6 +6453,23 @@
     },
     "PlaybillClaimRetirePreflight": {
       "fields": {
+        "citing_claims": {
+          "default": [],
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "citing_claims",
+          "required": false,
+          "schema": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Citing Claims",
+            "type": "array"
+          }
+        },
         "coordinate": {
           "has_default": false,
           "has_default_factory": false,
@@ -6570,6 +6638,15 @@
         },
         "additionalProperties": false,
         "properties": {
+          "citing_claims": {
+            "default": [],
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Citing Claims",
+            "type": "array"
+          },
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
