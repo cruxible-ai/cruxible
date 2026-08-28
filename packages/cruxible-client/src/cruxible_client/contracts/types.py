@@ -59,8 +59,6 @@ class PrincipalRecord(StrictModel):
             raise ValueError("authority_roles must be sorted and unique")
         if "daemon" in value and value != ("daemon",):
             raise ValueError("daemon authority cannot be combined with client roles")
-        if "recovery" in value and value != ("recovery",):
-            raise ValueError("recovery authority is key-management-only")
         return value
 
     @property
@@ -271,13 +269,6 @@ class PlaybillDescriptor(StrictModel):
         if not _LOWER_HEX_32_RE.fullmatch(value):
             raise ValueError("daemon_public_key must contain 32 bytes of lowercase hex")
         return value
-
-    @model_validator(mode="after")
-    def _profile_recovery(self) -> "PlaybillDescriptor":
-        if self.operating_profile == "cloud" and self.recovery_posture != "recovery-configured":
-            raise ValueError("cloud profile requires configured recovery")
-        return self
-
 
 class PrincipalInspection(StrictModel):
     principal_id: str

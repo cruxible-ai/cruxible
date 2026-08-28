@@ -137,7 +137,7 @@ def test_attestation_preimage_and_complete_envelope_digest_match_golden() -> Non
     assert approval_digest(attestation).tagged == fixture["attestation_digest"]
 
 
-def test_tampered_stale_foreign_revoked_and_recovery_approvals_refuse() -> None:
+def test_tampered_stale_foreign_and_revoked_approvals_refuse() -> None:
     private, owner = _key("owner", ("owner",))
     candidate = _candidate()
     valid = _submission(private, candidate, signer_id="owner")
@@ -163,12 +163,14 @@ def test_tampered_stale_foreign_revoked_and_recovery_approvals_refuse() -> None:
 
     recovery_private, recovery = _key("recovery", ("recovery",))
     recovery_submission = _submission(recovery_private, candidate, signer_id="recovery")
-    with pytest.raises(ApprovalIntegrityError, match="cannot approve"):
+    assert (
         verify_approval(
             recovery_submission,
             candidate=candidate.candidate,
             principals=_registry(recovery),
-        )
+        ).signer_id
+        == "recovery"
+    )
 
 
 def test_noncreator_voluntary_approval_verifies_without_default_requirement() -> None:
@@ -252,8 +254,8 @@ def test_nondefault_committed_requirement_refuses_at_the_wire_boundary() -> None
         _candidate(approval_requirements=(ApprovalRequirement(role="reviewer"),))
 
 
-def test_principal_role_model_prevents_recovery_or_daemon_authority_expansion() -> None:
-    with pytest.raises(ValueError, match="recovery authority"):
-        _key("recovery", ("owner", "recovery"))
+def test_principal_role_model_keeps_only_daemon_role_isolation() -> None:
+    _private, combined = _key("recovery", ("owner", "recovery"))
+    assert combined.authority_roles == ("owner", "recovery")
     with pytest.raises(ValueError, match="daemon authority"):
         _key("daemon", ("daemon", "owner"))

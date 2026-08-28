@@ -244,20 +244,20 @@ def test_owner_rotation_and_recovery_replacement_replay_exact_key_roots(
     )
 
     base, tree, document_candidate = _candidate(instance)
-    with pytest.raises(ApprovalIntegrityError, match="recovery principals cannot approve"):
-        prepare_generation(
-            instance._ledger,
-            base=base,
-            candidate_tree=tree,
-            candidate=document_candidate,
-            approval_submissions=(
-                _sign(recovery, document_candidate.candidate_digest, base.semantic_root),
-            ),
-            bodies=instance.body_store(),
-            actor_binding=ChangeActorBinding(actor_id="recovery"),
-            proposal_actor_id="recovery",
-            sequence=3,
-        )
+    bundle = prepare_generation(
+        instance._ledger,
+        base=base,
+        candidate_tree=tree,
+        candidate=document_candidate,
+        approval_submissions=(
+            _sign(recovery, document_candidate.candidate_digest, base.semantic_root),
+        ),
+        bodies=instance.body_store(),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+        sequence=3,
+    )
+    assert tuple(item.signer_id for item in bundle.approvals) == ("recovery",)
 
 
 def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
@@ -310,7 +310,7 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
         )
 
 
-def test_last_recovery_and_unconfigured_recovery_authority_refuse(tmp_path: Path) -> None:
+def test_recovery_label_has_no_retention_or_unconfigured_authority(tmp_path: Path) -> None:
     instance, owner, recovery = _cloud_instance(tmp_path)
     base = instance.accepted_coordinate()
     revoked = recovery.principal.model_copy(update={"status": "revoked"})
@@ -327,8 +327,7 @@ def test_last_recovery_and_unconfigured_recovery_authority_refuse(tmp_path: Path
         candidate_tree=tree,
         timestamp="2026-08-12T17:00:00.000000Z",
     )
-    assert result.candidate is None
-    assert result.evaluation.diagnostics[0].code == "playbill.principal.last_recovery"
+    assert result.candidate is not None
 
     local_root = tmp_path / "managed-local"
     local_owner = generate_client(

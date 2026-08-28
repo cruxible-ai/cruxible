@@ -10,9 +10,8 @@ from cruxible_client.contracts.errors import PrincipalIntegrityError
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
-    principal_registry_from_tree,
 )
-from cruxible_client.contracts.types import PrincipalRecord, PrincipalRole
+from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 
 PrincipalLifecycleAction = Literal["register", "rotate", "revoke", "recover"]
@@ -30,7 +29,6 @@ class PrincipalLifecycleEvaluation:
     """
 
     action: PrincipalLifecycleAction | None
-    approval_role: PrincipalRole | None = None
     error_code: str | None = None
     error_message: str | None = None
 
@@ -123,24 +121,6 @@ def evaluate_principal_lifecycle(
             "playbill.principal.transition_unauthorized",
             "Principal transition is outside registration, self-rotation, "
             "revocation, or recovery policy.",
-        )
-    try:
-        proposed_registry = principal_registry_from_tree(
-            candidate_tree,
-            semantic_root=current.semantic_root,
-        )
-    except PrincipalIntegrityError as exc:
-        return _refused("playbill.principal.registry_invalid", str(exc))
-    recovery_was_configured = any(
-        "recovery" in principal.authority_roles for principal in principals.principals
-    )
-    if recovery_was_configured and not any(
-        principal.status == "active" and "recovery" in principal.authority_roles
-        for principal in proposed_registry.principals
-    ):
-        return _refused(
-            "playbill.principal.last_recovery",
-            "A recovery-configured instance must retain an active recovery principal.",
         )
     return PrincipalLifecycleEvaluation(action=action)
 

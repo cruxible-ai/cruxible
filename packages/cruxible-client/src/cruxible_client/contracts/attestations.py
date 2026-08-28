@@ -164,8 +164,6 @@ def verify_approval(
         raise ApprovalIntegrityError(str(exc)) from exc
     if principal.authority_roles == ("daemon",):
         raise ApprovalIntegrityError("the daemon principal cannot provide client approval")
-    if purpose == "ordinary-artifact" and principal.authority_roles == ("recovery",):
-        raise ApprovalIntegrityError("recovery principals cannot approve ordinary artifacts")
     try:
         public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(principal.public_key))
         public_key.verify(
@@ -191,7 +189,7 @@ def verify_candidate_approvals(
     creator_principal_id: str,
     purpose: ApprovalPurpose = "ordinary-artifact",
 ) -> tuple[VerifiedApproval, ...]:
-    """Verify voluntary approvals and any committed nondefault requirements."""
+    """Verify voluntary approvals against active, non-daemon principal keys."""
 
     try:
         principals.require_active(creator_principal_id)
