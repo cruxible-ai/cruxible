@@ -6,8 +6,6 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.policies import (
-    ActorRequirementV1,
-    AdmissionActorV1,
     ClaimAdmissionCandidateContextV1,
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
@@ -18,10 +16,7 @@ from cruxible_client.contracts.policies import (
     FreezeRequirementV1,
     QueryEvidenceResultV1,
     ResolutionContenderV1,
-    TransitionRequirementV1,
-    VerifiedPolicySignerV1,
     evaluate_claim_admission_candidate,
-    evaluate_claim_admission_settlement,
     evaluate_claim_evidence_admission,
     evaluate_claim_evidence_admission_trace,
     resolve_claim_contenders,
@@ -33,22 +28,6 @@ DIGEST_B = "sha256:" + "22" * 32
 
 def _review_policy() -> ClaimAdmissionPolicyV1:
     return ClaimAdmissionPolicyV1(
-        transition_requirements=(
-            TransitionRequirementV1(
-                requirement_id="approve-transition",
-                when_predicate="review.status",
-                from_values=("changes_requested", "open"),
-                to_value="approved",
-                require=("one-valid-approval", "reviewer-role"),
-            ),
-        ),
-        actor_requirements=(
-            ActorRequirementV1(
-                requirement_id="reviewer-role",
-                signer_roles=("reviewer",),
-                signer_distinct_from_lineage_creation_actor=True,
-            ),
-        ),
         evidence_requirements=(
             EvidenceRequirementV1(
                 requirement_id="one-valid-approval",
@@ -86,8 +65,6 @@ def _context(
             "review.status": (candidate_status,),
             "review.summary": ("summary",),
         },
-        admission_actor=AdmissionActorV1(actor_id="owner", roles=("owner",)),
-        lineage_creation_actor_id="owner",
         query_results=(
             QueryEvidenceResultV1(
                 requirement_id="one-valid-approval",
@@ -100,81 +77,38 @@ def _context(
     )
 
 
-def test_review_request_policy_keeps_query_law_but_demotes_actor_requirement() -> None:
+def test_review_request_policy_enforces_evidence_without_actor_or_transition_facades() -> None:
     candidate = evaluate_claim_admission_candidate(_review_policy(), _context())
 
     assert candidate.verdict == "eligible"
-    assert candidate.triggered_transitions == ("approve-transition",)
-    assert candidate.required_signers == ()
-    assert candidate.lineage_creation_actor_id is None
-
-    accepted = evaluate_claim_admission_settlement(
-        candidate,
-        (
-            VerifiedPolicySignerV1(
-                signer_id="reviewer",
-                roles=("reviewer",),
-            ),
-        ),
-        lineage_creation_actor_id="owner",
-    )
-    assert accepted.verdict == "satisfied"
-
-    creator_signing = evaluate_claim_admission_settlement(
-        candidate,
-        (VerifiedPolicySignerV1(signer_id="owner", roles=("reviewer",)),),
-        lineage_creation_actor_id="owner",
-    )
-    assert creator_signing.verdict == "satisfied"
-
-    substituted_lineage = evaluate_claim_admission_settlement(
-        candidate,
-        (VerifiedPolicySignerV1(signer_id="owner", roles=("reviewer",)),),
-        lineage_creation_actor_id="someone-else",
-    )
-    assert substituted_lineage.verdict == "satisfied"
+    assert candidate.evidence_results[0].requirement_id == "one-valid-approval"
+    assert set(candidate.model_fields_set) == {"verdict", "evidence_results", "refusal_codes"}
 
 
 @pytest.mark.parametrize(
-    "requirement",
+    ("field", "value"),
     (
-        ActorRequirementV1(requirement_id="reviewer-role", admission_actor_roles=("impossible",)),
-        ActorRequirementV1(
-            requirement_id="reviewer-role", admission_actor_subjects=("other-subject",)
-        ),
-        ActorRequirementV1(requirement_id="reviewer-role", signer_roles=("impossible",)),
-        ActorRequirementV1(requirement_id="reviewer-role", signer_subjects=("other-subject",)),
-        ActorRequirementV1(
-            requirement_id="reviewer-role", signer_control_domains=("other-domain",)
-        ),
-        ActorRequirementV1(
-            requirement_id="reviewer-role",
-            signer_roles=("impossible",),
-            minimum_distinct_signers=7,
-        ),
-        ActorRequirementV1(
-            requirement_id="reviewer-role",
-            signer_roles=("impossible",),
-            signer_distinct_from_lineage_creation_actor=True,
-        ),
+        ("transition_requirements", []),
+        ("actor_requirements", []),
     ),
 )
-def test_every_actor_requirement_field_is_dormant(
-    requirement: ActorRequirementV1,
-) -> None:
-    policy = _review_policy().model_copy(update={"actor_requirements": (requirement,)})
+def test_deleted_admission_policy_fields_refuse(field: str, value: object) -> None:
+    payload = _review_policy().model_dump(mode="json")
+    payload[field] = value
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ClaimAdmissionPolicyV1.model_validate(payload)
 
-    candidate = evaluate_claim_admission_candidate(policy, _context())
-    settlement = evaluate_claim_admission_settlement(
-        candidate,
-        (),
-        lineage_creation_actor_id="substituted",
-    )
 
-    assert candidate.verdict == "eligible"
-    assert candidate.required_signers == ()
-    assert candidate.lineage_creation_actor_id is None
-    assert settlement.verdict == "satisfied"
+@pytest.mark.parametrize("field", ("parameters", "max_rows", "max_traversal_depth"))
+def test_deleted_evidence_requirement_fields_refuse(field: str) -> None:
+    payload = EvidenceRequirementV1(
+        requirement_id="one-valid-approval",
+        query_definition_digest=DIGEST_A,
+        min_count=1,
+    ).model_dump(mode="json")
+    payload[field] = {} if field == "parameters" else 1
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        EvidenceRequirementV1.model_validate(payload)
 
 
 def test_admission_refuses_truncated_query_freeze_bypass_and_unknown_predicate() -> None:
@@ -302,7 +236,7 @@ def test_evidence_policy_refuses_duplicate_rules_and_illegal_reducer_shapes() ->
         )
 
 
-def test_resolution_preserves_conflict_and_requires_exact_authority_proof() -> None:
+def test_resolution_preserves_conflict_and_rejects_deleted_authority_selector() -> None:
     policy = ClaimResolutionPolicyV1(
         cardinality="one",
         eligible_verdicts=("supported",),
@@ -325,11 +259,19 @@ def test_resolution_preserves_conflict_and_requires_exact_authority_proof() -> N
         "CLM-" + "0a" * 16,
         "CLM-" + "0b" * 16,
     }
+    with pytest.raises(ValidationError):
+        ClaimResolutionPolicyV1.model_validate(
+            {
+                **policy.model_dump(mode="json"),
+                "selector": "authority_rule",
+                "authority_rule_digest": DIGEST_A,
+            }
+        )
 
 
-def test_unknown_policy_requirement_tag_refuses_fail_closed() -> None:
+def test_unknown_policy_requirement_field_refuses_fail_closed() -> None:
     payload = _review_policy().model_dump(mode="json")
-    payload["actor_requirements"][0]["tag"] = "playbill-actor-requirement-v2"
+    payload["transition_requirements"] = [{"tag": "playbill-transition-requirement-v2"}]
     with pytest.raises(ValidationError):
         ClaimAdmissionPolicyV1.model_validate(payload)
 
@@ -337,17 +279,19 @@ def test_unknown_policy_requirement_tag_refuses_fail_closed() -> None:
 def test_requirement_ids_cannot_alias_across_policy_kinds() -> None:
     with pytest.raises(ValidationError, match="unique across"):
         ClaimAdmissionPolicyV1(
-            actor_requirements=(
-                ActorRequirementV1(
-                    requirement_id="same-id",
-                    signer_roles=("reviewer",),
-                ),
-            ),
             evidence_requirements=(
                 EvidenceRequirementV1(
                     requirement_id="same-id",
                     query_definition_digest=DIGEST_A,
                     min_count=1,
+                ),
+            ),
+            freeze_requirements=(
+                FreezeRequirementV1(
+                    requirement_id="same-id",
+                    while_predicate="review.status",
+                    while_values=("approved",),
+                    frozen_predicates=("review.summary",),
                 ),
             ),
         )

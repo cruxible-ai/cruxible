@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -142,7 +141,6 @@ from cruxible_client.contracts.merkle import (
     update_merkle_manifest,
 )
 from cruxible_client.contracts.policies import (
-    AdmissionActorV1,
     ClaimAdmissionCandidateContextV1,
     ClaimAdmissionPolicyV1,
     evaluate_claim_admission_candidate,
@@ -766,45 +764,7 @@ def _effective_claim_values(
 
 
 def _policy_has_requirements(policy: ClaimAdmissionPolicyV1) -> bool:
-    return any(
-        (
-            policy.transition_requirements,
-            policy.actor_requirements,
-            policy.evidence_requirements,
-            policy.freeze_requirements,
-        )
-    )
-
-
-def _lineage_creation_actor(
-    current_tree: Mapping[str, bytes],
-    *,
-    subject_path: str,
-    claim_paths: tuple[str, ...],
-    candidate_creates_lineage: bool,
-    actor_id: str,
-) -> str | None:
-    """Recover immutable creation attribution from accepted change-set history."""
-
-    targets = {subject_path, *claim_paths}
-    for path in sorted(current_tree, key=lambda item: item.encode("utf-8")):
-        if not re.fullmatch(r"changesets/cs-[0-9]{20}\.json", path):
-            continue
-        try:
-            payload = json.loads(current_tree[path])
-            members = payload["members"]
-            recorded_actor = payload["actor_binding"]["actor_id"]
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise ProposalIntegrityError(
-                f"accepted change-set creation attribution is invalid: {path}"
-            ) from exc
-        if not isinstance(members, list) or not isinstance(recorded_actor, str):
-            raise ProposalIntegrityError(
-                f"accepted change-set creation attribution is invalid: {path}"
-            )
-        if any(isinstance(member, dict) and member.get("path") in targets for member in members):
-            return recorded_actor
-    return actor_id if candidate_creates_lineage else None
+    return bool(policy.evidence_requirements or policy.freeze_requirements)
 
 
 def _claim_admission_evaluations(
@@ -813,8 +773,6 @@ def _claim_admission_evaluations(
     candidate_tree: Mapping[str, bytes],
     scope: tuple[str, ...],
     timestamp: str,
-    actor_id: str,
-    actor_roles: tuple[str, ...],
     subjects: Mapping[str, AcceptedSubject],
     claim_types: Mapping[str, AcceptedClaimType],
 ) -> tuple[
@@ -835,13 +793,6 @@ def _claim_admission_evaluations(
 
     parent_values = _effective_claim_values(current_tree, evaluation_time=timestamp)
     candidate_values = _effective_claim_values(candidate_tree, evaluation_time=timestamp)
-    accepted_claim_paths: dict[str, list[str]] = {}
-    for path in sorted(current_tree, key=lambda item: item.encode("utf-8")):
-        if not _CLAIM_PATH_RE.fullmatch(path):
-            continue
-        claim = parse_claim(current_tree[path], path=path)
-        accepted_claim_paths.setdefault(claim.statement.subject.artifact_path, []).append(path)
-
     entries_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     digests_by_path: dict[str, tuple[str, ...]] = {}
     diagnostics: list[CompilerDiagnostic] = []
@@ -875,28 +826,13 @@ def _claim_admission_evaluations(
                 key=lambda item: item.encode("utf-8"),
             )
         )
-        lineage_actor = _lineage_creation_actor(
-            current_tree,
-            subject_path=subject_path,
-            claim_paths=tuple(accepted_claim_paths.get(subject_path, ())),
-            candidate_creates_lineage=(
-                subject_path not in current_tree and subject_path in candidate_tree
-            )
-            or not accepted_claim_paths.get(subject_path),
-            actor_id=actor_id,
-        )
         context = ClaimAdmissionCandidateContextV1(
             evaluation_time=timestamp,
             declared_predicates=declared_predicates,
             parent_values=parent_values.get(subject_path, {}),
             candidate_values=candidate_values.get(subject_path, {}),
-            admission_actor=AdmissionActorV1(
-                actor_id=actor_id,
-                roles=actor_roles,
-            ),
-            lineage_creation_actor_id=lineage_actor,
             # QueryDefinition execution is introduced in PC-F. Until then an
-            # evidence-gated transition refuses as missing rather than trusting
+            # evidence requirement refuses as missing rather than trusting
             # caller-authored query output.
             query_results=(),
         )
@@ -2195,22 +2131,19 @@ def _evaluate_scoped_members(
                         path,
                     )
                 )
-    if actor_id is not None:
-        (
-            claim_admission_by_path,
-            claim_admission_digests_by_path,
-            claim_admission_diagnostics,
-        ) = _claim_admission_evaluations(
-            current_tree=current_tree,
-            candidate_tree=candidate_tree,
-            scope=scope,
-            timestamp=timestamp,
-            actor_id=actor_id,
-            actor_roles=actor_roles,
-            subjects=resolved.subjects,
-            claim_types=resolved.claim_types,
-        )
-        diagnostics.extend(claim_admission_diagnostics)
+    (
+        claim_admission_by_path,
+        claim_admission_digests_by_path,
+        claim_admission_diagnostics,
+    ) = _claim_admission_evaluations(
+        current_tree=current_tree,
+        candidate_tree=candidate_tree,
+        scope=scope,
+        timestamp=timestamp,
+        subjects=resolved.subjects,
+        claim_types=resolved.claim_types,
+    )
+    diagnostics.extend(claim_admission_diagnostics)
 
     used_expansions: set[str] = set()
     accepted: list[_AcceptedMember] = []

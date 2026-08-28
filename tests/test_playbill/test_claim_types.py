@@ -478,7 +478,6 @@ def test_profile_evidence_refuses_forged_expansion_or_override_digest() -> None:
 def test_profile_seed_list_is_exact_and_digest_pinned() -> None:
     assert tuple(item.profile_id for item in CLAIM_TYPE_AUTHORING_PROFILES) == (
         "append-only-source-observation-v1",
-        "governed-single-valued-status-transition-v1",
         "ordinary-project-fact-v1",
         "policy-owner-normative-claim-v1",
         "replay-verifiable-derivation-v1",
