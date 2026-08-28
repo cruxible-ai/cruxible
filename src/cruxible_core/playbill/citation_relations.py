@@ -312,14 +312,6 @@ def build_citation_relation_facts(
             external_groups[external_source_relation_subject(parsed)].append(use)
 
     emitted: set[tuple[str, str]] = set()
-    exact_capture_subjects: set[str] = {
-        str(fact.value["live_claim_identity"])
-        for fact in facts
-        if fact.schema_id == RELATION_RETIRED_CONFLICT_SCHEMA
-        and isinstance(fact.value, dict)
-        and fact.value.get("relation_kind") == "capture"
-        and isinstance(fact.value.get("live_claim_identity"), str)
-    }
     for relation_kind, groups in (
         ("capture", capture_groups),
         ("exact_external", external_groups),
@@ -338,29 +330,11 @@ def build_citation_relation_facts(
             retired_claims = {str(item["claim_identity"]) for item in retired}
             retired_citations = {str(item["citation_id"]) for item in retired}
             for item in live:
-                effective_retired = retired
-                if relation_kind == "exact_external":
-                    live_capture = item["capture_digest"]
-                    effective_retired = [
-                        candidate
-                        for candidate in retired
-                        if candidate["capture_digest"] != live_capture
-                    ]
-                    if not effective_retired:
-                        continue
-                    retired_claims = {
-                        str(candidate["claim_identity"]) for candidate in effective_retired
-                    }
-                    retired_citations = {
-                        str(candidate["citation_id"]) for candidate in effective_retired
-                    }
                 live_identity = str(item["claim_identity"])
                 dedup = (live_identity, relation_key)
                 if dedup in emitted:
                     continue
                 emitted.add(dedup)
-                if relation_kind == "capture":
-                    exact_capture_subjects.add(live_identity)
                 facts.append(
                     ProjectionFact(
                         schema_id=RELATION_RETIRED_CONFLICT_SCHEMA,
@@ -402,7 +376,7 @@ def build_citation_relation_facts(
 
         def emit(live: dict[str, object]) -> None:
             live_identity = str(live["claim_identity"])
-            if live_identity in exact_capture_subjects or live_identity in emitted_live:
+            if live_identity in emitted_live:
                 return
             if not active_retired:
                 return

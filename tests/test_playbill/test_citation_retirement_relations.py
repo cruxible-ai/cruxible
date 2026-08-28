@@ -13,6 +13,7 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
     document_digest,
 )
+from cruxible_client.contracts.projection_extensions import ProjectionFact
 from cruxible_core.playbill.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
     RELATION_USE_SCHEMA,
@@ -200,6 +201,55 @@ def test_relation_delta_reopens_only_the_changed_claim_captures(
 
     assert sorted(incremental, key=key) == sorted(full, key=key)
     assert parse_calls == 1
+
+
+def test_incremental_capture_precedence_drops_carried_weaker_conflict(
+    tmp_path: Path,
+) -> None:
+    instance, owner, _actor, first, second, *_rest = shared_capture_world(tmp_path)
+    before = instance.accepted_coordinate()
+    with instance.bind_accepted_projection(before) as projection:
+        previous_uses = projection.semantic_facts(RELATION_USE_SCHEMA)
+        previous_conflicts = projection.semantic_facts(RELATION_RETIRED_CONFLICT_SCHEMA)
+
+    live_use = next(
+        fact.value
+        for fact in previous_uses
+        if fact.value["claim_identity"] == f"Claim:{second}"  # type: ignore[index]
+    )
+    carried_span_conflict = ProjectionFact(
+        schema_id=RELATION_RETIRED_CONFLICT_SCHEMA,
+        schema_version=1,
+        subject_identity="claim-cites-retired",
+        fact_key="carried-span-conflict",
+        value={
+            "live_capture_digest": live_use["capture_digest"],  # type: ignore[index]
+            "live_citation_id": live_use["citation_id"],  # type: ignore[index]
+            "live_claim_artifact_digest": live_use["claim_artifact_digest"],  # type: ignore[index]
+            "live_claim_identity": f"Claim:{second}",
+            "relation_key": "same_version_span:untouched-second-source",
+            "relation_kind": "same_version_span",
+            "retired_citation_count": 1,
+            "retired_citation_witnesses": ["citation-from-second-source"],
+            "retired_claim_count": 1,
+            "retired_claim_witnesses": ["Claim:CLM-" + "f" * 32],
+        },
+    )
+
+    _retire_claim(instance, owner, first)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    incremental = build_citation_relation_facts(
+        tree,
+        bodies=instance.body_store(),
+        previous_use_facts=previous_uses,
+        previous_conflict_facts=(*previous_conflicts, carried_span_conflict),
+        changed_claim_paths=frozenset((claim_path(first),)),
+    )
+    conflicts = [fact for fact in incremental if fact.schema_id == RELATION_RETIRED_CONFLICT_SCHEMA]
+
+    assert len(conflicts) == 1
+    assert conflicts[0].value["live_claim_identity"] == f"Claim:{second}"  # type: ignore[index]
+    assert conflicts[0].value["relation_kind"] == "capture"  # type: ignore[index]
 
 
 def test_span_sweep_scans_active_live_set_once_per_retired_activation_epoch() -> None:
