@@ -50,12 +50,12 @@ from cruxible_client.contracts.errors import (
     DocumentNotFoundError,
     PlaybillSinceRequestInvalid,
 )
-from cruxible_client.errors import DataValidationError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_catalog import SourceCatalog, SourceCompilationBundle
 from cruxible_client.contracts.types import PrincipalRecord, PrincipalRole
+from cruxible_client.errors import DataValidationError
 from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,

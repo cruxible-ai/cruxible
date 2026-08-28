@@ -18,8 +18,8 @@ from cruxible_core.errors import (
     RuntimeCredentialNotFoundError,
 )
 from cruxible_core.playbill.authoring.insertions import PublicationClaimNotAccepted
-from cruxible_core.playbill.search import PlaybillSearchBudgetsV1
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationIncomplete
+from cruxible_core.playbill.search import PlaybillSearchBudgetsV1
 from cruxible_core.server.errors import error_to_response
 from cruxible_core.server.errors import response_to_error as compat_response_to_error
 
@@ -246,8 +246,8 @@ def test_http_activate_refuses_a_missing_proposal_id_typed(
 
 def test_server_side_model_validation_refuses_as_a_typed_request_error(
     playbill_http: tuple[TestClient, str, Path],
-    monkeypatch,
-) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Any frozen model a route builds server-side refuses 400, never 500."""
     client, instance_id, _private_key = playbill_http
 

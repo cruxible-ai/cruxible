@@ -44,4 +44,5 @@ def test_a_traversal_over_a_literal_predicate_is_refused_naming_the_claim_type()
     assert diagnostic.code == "playbill.query_definition.traversal_object_not_subject"
     assert "object_kind='subject'" in diagnostic.message
     assert claim_type.predicate in diagnostic.message
+    assert diagnostic.subject is not None
     assert diagnostic.subject.artifact_path == accepted.path
