@@ -76,18 +76,21 @@
   `expert`/`full` retaining the complete surface, and render one deduplicated
   orientation header on human `playbill search`, `list`, and `orient` output.
 
+- **PC-DEL3 removes the unreleased legacy Playbill wire and zero-use surfaces.**
+  The unused native projection family is gone. Coverage results and source
+  observations now expose only their live v3/v4 variants; publication
+  authoring exposes only v2. The Claim-v1 direct write path and parser are
+  retired in favor of ClaimInput through the AuthoringIntent coordinator, and
+  seed apply is retired while the pure seed planner remains. The parked
+  coverage hook remains non-executable. Claim-v1 compatibility had previously
+  been announced through 0.5.0; this unreleased lineage removes it early, so
+  pre-release fixtures and ledgers carrying `playbill-claim-v1` must be rebuilt
+  or migrated before upgrading.
+
 Every user-visible fix or feature adds its entry here in the same change
 that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
 the project's own state instance.
-
-- **Playbill writer ergonomics now route agents through the coordinator.** Direct
-  `playbill claim propose` remains available for compatibility but emits the
-  structured `playbill.claim.propose.legacy_wire_deprecated` warning because it
-  mints Claims outside the citation-aware authoring path. Authoring now provides
-  model-generated examples and client-side Flow-A binding from an exact local
-  source anchor, while Claim reads accept both bare and qualified identities and
-  refusal/review text names the actor, repair authority, and true action tiers.
 
 - **The 0.4.0 deprecation removals landed (BREAKING).** Every surface the
   registry stamped `removal_version: 0.4.0` and that a caller could stop sending

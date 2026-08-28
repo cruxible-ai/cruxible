@@ -117,7 +117,6 @@ SEED_GROUP_OPERATIONS: Final[Mapping[SeedEntryKind, str]] = {
     "claim_type": "playbill_propose_claim_type",
     "subject": "playbill_propose_subject",
     "document": "playbill_propose_document",
-    "claim": "playbill_propose_claims",
     "query_definition": "playbill_propose_query_definition",
     "procedure": "playbill_authoring_submit",
 }
