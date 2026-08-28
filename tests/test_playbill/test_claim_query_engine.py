@@ -1135,3 +1135,52 @@ def test_a_result_can_neither_hide_a_refusal_nor_hide_a_clipping_budget() -> Non
                 },
             }
         )
+
+
+def test_a_hidden_claim_is_counted_so_absence_and_invisibility_differ() -> None:
+    """A projected field reads "absent" either way; the advisory says which it was."""
+    result = run(
+        single_status_query(),
+        facts((status_claim(1, "wi-1", "ready", supported=False),)),
+        parameters={"item_id": "wi-1"},
+    )
+
+    assert [(item.name, item.state) for item in result.rows[0].fields] == [("status", "absent")]
+    visibility = result.verdict_visibility
+    assert visibility is not None
+    assert visibility.excluded_claim_count == 1
+    assert [
+        (item.verdict, item.excluded_claim_count) for item in visibility.excluded_by_verdict
+    ] == [("uncovered", 1)]
+    assert visibility.visible_verdicts == ("supported",)
+
+
+def test_a_query_that_hides_nothing_carries_no_visibility_advisory() -> None:
+    result = run(
+        single_status_query(),
+        facts((status_claim(1, "wi-1", "ready"),)),
+        parameters={"item_id": "wi-1"},
+    )
+
+    assert result.verdict_visibility is None
+
+
+def test_the_result_preimage_carries_no_verdict_visibility_advisory() -> None:
+    """The advisory reports what was not read, so it cannot move the digest."""
+    hidden = run(
+        single_status_query(),
+        facts((status_claim(1, "wi-1", "ready", supported=False),)),
+        parameters={"item_id": "wi-1"},
+    )
+
+    assert "verdict_visibility" not in _digest_preimage(hidden)
+    assert hidden.verdict_visibility is not None
+    without = hidden.model_copy(update={"verdict_visibility": None})
+    assert claim_query_result_digest(without) == claim_query_result_digest(hidden)
+
+
+def _digest_preimage(result: ClaimQueryResultV1) -> dict[str, object]:
+    payload = result.model_dump(mode="json")
+    payload.pop("tag")
+    payload.pop("verdict_visibility")
+    return payload
