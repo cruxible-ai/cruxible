@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import (
@@ -15,6 +14,7 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1
+from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.query.semantic_discovery import DiscoveryError
@@ -145,9 +145,14 @@ def test_empty_interfaces_request_returns_an_honest_not_installed_inventory(
 
 
 def test_other_empty_discovery_profiles_remain_refused(tmp_path: Path) -> None:
+    """Still refused, now as a typed refusal rather than a raw model error.
+
+    The refusal used to escape from DiscoveryRequestV1's own validator, which
+    is not a CoreError, so over HTTP it reached the caller as an opaque 500.
+    """
     instance, _owner = _instance_with_query(tmp_path)
 
-    with pytest.raises(ValidationError, match="exactly one query or entrypoint"):
+    with pytest.raises(PlaybillFormatError, match="needs a query or an entrypoint"):
         service_discover_playbill_semantic(
             instance,
             evaluation_time=EVALUATION_TIME,
