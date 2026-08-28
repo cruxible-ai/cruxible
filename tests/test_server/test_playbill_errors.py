@@ -18,6 +18,7 @@ from cruxible_core.errors import (
     RuntimeCredentialNotFoundError,
 )
 from cruxible_core.playbill.authoring.insertions import PublicationClaimNotAccepted
+from cruxible_core.playbill.search import PlaybillSearchBudgetsV1
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationIncomplete
 from cruxible_core.server.errors import error_to_response
 from cruxible_core.server.errors import response_to_error as compat_response_to_error
@@ -191,3 +192,76 @@ def test_http_next_maps_raw_source_observation_to_typed_refusal(
 
     assert response.status_code == 400, response.text
     assert response.json()["error_code"] == "playbill.next.workspace_observation_invalid"
+
+
+def test_http_discover_refuses_an_empty_request_typed_not_as_a_server_error(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """Only profile=interfaces answers an empty request; the rest refuse typed.
+
+    The discovery law always refused this, but it refused from a pydantic
+    validator the route builds server-side, so the refusal reached the caller
+    as an opaque 500.
+    """
+    client, instance_id, _private_key = playbill_http
+
+    for profile in ("subjects", "all"):
+        response = client.post(
+            f"/api/v1/{instance_id}/playbill/discover",
+            json={"profile": profile},
+        )
+
+        assert response.status_code == 400, response.text
+        body = response.json()
+        assert body["error_type"] == "PlaybillFormatError"
+        assert "needs a query or an entrypoint" in body["message"]
+        assert profile in body["message"]
+
+
+def test_http_discover_still_answers_an_empty_interfaces_request(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/discover",
+        json={"profile": "interfaces"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["tag"] == "playbill-interface-inventory-v1"
+
+
+def test_http_activate_refuses_a_missing_proposal_id_typed(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """A None proposal_id stringifies into the path; it must not reach the catch-all."""
+    client, instance_id, _private_key = playbill_http
+
+    response = client.post(f"/api/v1/{instance_id}/playbill/proposals/None/activate")
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error_code"] == "playbill.proposal.activation_request_invalid"
+
+
+def test_server_side_model_validation_refuses_as_a_typed_request_error(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch,
+) -> None:  # type: ignore[no-untyped-def]
+    """Any frozen model a route builds server-side refuses 400, never 500."""
+    client, instance_id, _private_key = playbill_http
+
+    def exploding_search(selected: str, **values: object) -> object:
+        PlaybillSearchBudgetsV1(max_rows=0)  # below the model's own floor
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_search", exploding_search)
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/search",
+        json={"mode": "list"},
+    )
+
+    assert response.status_code == 400, response.text
+    body = response.json()
+    assert body["error_type"] == "DataValidationError"
+    assert any("max_rows" in item for item in body["errors"])

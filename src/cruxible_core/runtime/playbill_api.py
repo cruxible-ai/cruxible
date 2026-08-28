@@ -1537,7 +1537,12 @@ def playbill_search(
             accepted_coordinate=_accepted_coordinate(instance_id, at),
             evaluation_time=_evaluation_time(evaluation_time),
             access_profile=coverage_access_profile(),
-            kinds=kinds,
+            # An empty kind filter reads as "no kind restriction", exactly as the
+            # empty `statuses` filter beside it already does. The frozen request
+            # model keeps its nonempty invariant, so the selection-basis digest
+            # still commits to the concrete kinds searched; only the caller's
+            # shorthand is expanded here.
+            kinds=kinds or SEARCH_KINDS,
             query=query,
             subject=subject,
             statuses=statuses,

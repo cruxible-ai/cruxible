@@ -84,3 +84,42 @@ def test_http_search_openapi_and_runtime_reject_removed_brief_kind(
         json={"mode": "list", "kinds": ["brief"]},
     )
     assert response.status_code == 422
+
+
+def test_http_search_reads_an_empty_kind_filter_as_every_kind(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    """`kinds: []` means "no kind restriction", as `statuses: []` already does."""
+    client, instance_id, _private_key = playbill_http
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/search",
+        json={"mode": "list", "kinds": [], "statuses": []},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["mode"] == "list"
+
+
+def test_http_search_empty_kind_filter_matches_the_explicit_full_kind_list(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+
+    implicit = client.post(
+        f"/api/v1/{instance_id}/playbill/search",
+        json={"mode": "list", "kinds": [], "evaluation_time": "2026-08-21T14:00:00Z"},
+    )
+    explicit = client.post(
+        f"/api/v1/{instance_id}/playbill/search",
+        json={
+            "mode": "list",
+            "kinds": ["claim", "demand", "procedure"],
+            "evaluation_time": "2026-08-21T14:00:00Z",
+        },
+    )
+
+    assert implicit.status_code == 200, implicit.text
+    assert explicit.status_code == 200, explicit.text
+    assert implicit.json()["result_digest"] == explicit.json()["result_digest"]

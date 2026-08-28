@@ -13,6 +13,7 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
 from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
@@ -96,6 +97,33 @@ def create_app() -> FastAPI:
             errors=errors,
         )
         return JSONResponse(status_code=422, content=body.model_dump(mode="json"))
+
+    @app.exception_handler(ValidationError)
+    async def model_validation_error_handler(
+        request: Request, exc: ValidationError
+    ) -> JSONResponse:
+        # RequestValidationError above covers the request BODY. This covers the
+        # other pydantic boundary: a frozen model the route builds server-side
+        # from an already-parsed request. Those validators state a real caller
+        # mistake ("search kinds must be nonempty"), but without this handler the
+        # ValidationError is not a CoreError and falls through to the catch-all
+        # below, so a 400-shaped refusal reached the caller as an opaque 500
+        # (V8 hit this on two unrelated read surfaces). Render the field paths
+        # the same way the body handler does.
+        request.state.error_type = exc.__class__.__name__
+        errors = [_format_request_validation_error(err) for err in exc.errors(include_url=False)]
+        _log.warning(
+            "model_validation_error",
+            route=request.url.path,
+            method=request.method,
+            detail=str(exc),
+        )
+        body = ErrorResponse(
+            error_type="DataValidationError",
+            message=f"{exc.title} is not satisfied by this request",
+            errors=errors,
+        )
+        return JSONResponse(status_code=400, content=body.model_dump(mode="json"))
 
     @app.exception_handler(sqlite3.IntegrityError)
     async def integrity_error_handler(
