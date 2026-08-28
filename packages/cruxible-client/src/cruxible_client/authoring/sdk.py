@@ -1108,12 +1108,12 @@ class Playbill:
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None,
     ) -> ClaimTypeDraft:
-        object_kind = _enum(object_kind, ClaimObjectKind, label="claim-type object kind")
-        cardinality = _enum(cardinality, Cardinality, label="claim-type cardinality")
-        referent_sensitivity = _enum(
+        kind = _enum(object_kind, ClaimObjectKind, label="claim-type object kind")
+        arity = _enum(cardinality, Cardinality, label="claim-type cardinality")
+        sensitivity = _enum(
             referent_sensitivity, ReferentSensitivity, label="claim-type referent sensitivity"
         )
-        permitted_roles = tuple(
+        roles = tuple(
             _enum(item, ClaimRole, label="claim-type permitted role") for item in permitted_roles
         )
         name = _address(predicate, RefKind.CLAIM_TYPE)
@@ -1126,7 +1126,7 @@ class Playbill:
         rules = tuple(
             ClaimEvidenceAdmissionRuleV1(
                 rule_id=f"source-{source_id}",
-                claim_roles=tuple(sorted({role.value for role in permitted_roles})),
+                claim_roles=tuple(sorted({role.value for role in roles})),
                 capture_contract_digests=(
                     capture_contract_digest(foreign_source_capture_contract(source_id)).tagged,
                 ),
@@ -1160,12 +1160,12 @@ class Playbill:
             identity=ArtifactIdentity(kind="ClaimType", name=name),
             predicate=name,
             allowed_subject_kinds=tuple(subject_kinds),
-            object_kind=object_kind.value,
+            object_kind=kind.value,
             literal_schema=value_schema,
             allowed_object_subject_kinds=tuple(object_subject_kinds),
-            cardinality=cardinality.value,
-            permitted_roles=tuple(role.value for role in permitted_roles),
-            referent_sensitivity=referent_sensitivity.value,
+            cardinality=arity.value,
+            permitted_roles=tuple(role.value for role in roles),
+            referent_sensitivity=sensitivity.value,
             evidence_admission_policy=ClaimEvidenceAdmissionPolicyV1(rules=rules),
             admission_policy=admission_policy,
             resolution_policy=resolution_policy,
@@ -1203,8 +1203,8 @@ class Playbill:
         claim_type_definition: ClaimTypeDraft | None,
     ) -> ClaimDraft:
         sites = capture_keyword_sites("claim", stacklevel=1)
-        role = _enum(role, ClaimRole, label="claim role")
-        dispositions = {
+        claim_role = _enum(role, ClaimRole, label="claim role")
+        resolved_dispositions = {
             key: _enum(value, Disposition, label="claim disposition")
             for key, value in dispositions.items()
         }
@@ -1238,7 +1238,10 @@ class Playbill:
             citation_role = None
         sorted_dispositions = tuple(
             sorted(
-                ((_address(key, RefKind.CLAIM), value) for key, value in dispositions.items()),
+                (
+                    (_address(key, RefKind.CLAIM), value)
+                    for key, value in resolved_dispositions.items()
+                ),
                 key=lambda item: item[0].encode("ascii"),
             )
         )
@@ -1248,7 +1251,7 @@ class Playbill:
                 predicate=predicate_name,
                 qualifier=qualifier,
                 object=LiteralClaimObject(value=normalize_canonical(value)),
-                role=role.value,
+                role=claim_role.value,
                 effective_from=(None if effective_period is None else effective_period.starts_at),
                 effective_until=(None if effective_period is None else effective_period.ends_at),
             ),
@@ -1320,7 +1323,7 @@ class Playbill:
             "subject": subject_name,
             "predicate": predicate_name,
             "value": normalize_canonical(value),
-            "role": role.value,
+            "role": claim_role.value,
             "rationale": rationale,
             "source_branch": (
                 "supported_by"
@@ -1539,6 +1542,7 @@ class Playbill:
         retire: bool,
     ) -> ProcedureDraft:
         sites = capture_keyword_sites("procedure", stacklevel=1)
+        policy = _enum(activation_policy, ActivationPolicy, label="procedure activation policy")
         allowed = {"state_tap", "transform", "project"}
         unsupported = tuple(node.node_id for node in definition.nodes if node.kind not in allowed)
         if unsupported:
@@ -1550,7 +1554,7 @@ class Playbill:
         payload = ProcedureAuthoringPayloadV2(
             definition=definition.model_dump(mode="json", by_alias=True),
             authority=authority,
-            activation_policy=activation_policy.value,
+            activation_policy=policy.value,
             owned_contracts=(),
             retire=retire,
         )
@@ -1563,7 +1567,7 @@ class Playbill:
                 {
                     "definition": definition.model_dump(mode="json", by_alias=True),
                     "authority": authority.model_dump(mode="json"),
-                    "activation_policy": activation_policy.value,
+                    "activation_policy": policy.value,
                     "retire": retire,
                 },
             ),
