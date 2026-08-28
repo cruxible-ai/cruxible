@@ -534,6 +534,10 @@ def _claim_from_view(view: PlaybillClaimView | PlaybillClaimViewV2) -> ClaimArti
     )
 
 
+# Deliberate divergence: this direct-propose path keeps the older
+# subject+predicate disposition scope while the authoring coordinator narrowed
+# to the (subject, predicate, qualifier) slot. B3 deletes this path entirely, so
+# it is left at the wider scope rather than migrated twice.
 def _existing_statements(
     tree: dict[str, bytes], statement: ClaimStatement
 ) -> tuple[ExistingClaimStatementHandleV1, ...]:

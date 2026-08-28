@@ -96,3 +96,37 @@ def test_a_retired_claim_in_the_slot_is_neither_demanded_nor_offerable() -> None
     assert [claim.identity.name for claim in _same_predicate_claims(tree, live.statement)] == [
         live.identity.name
     ]
+
+
+def _dispositionable(tree: dict[str, bytes], statement: ClaimStatement) -> set[str]:
+    return {claim.identity.name for claim in _same_predicate_claims(tree, statement)}
+
+
+def test_the_same_slot_still_refuses_without_its_dispositions() -> None:
+    """Narrowing removed demands that never contended; it kept the ones that do."""
+    first = _claim_in_slot(claim_id="CLM-" + "1" * 32, qualifier="primary")
+    second = _claim_in_slot(claim_id="CLM-" + "2" * 32, qualifier="primary")
+    tree = _tree(first, second)
+
+    demanded = {claim.identity.name for claim in _same_slot_claims(tree, second.statement)}
+
+    # Authoring into this slot must disposition both live occupants; supplying
+    # none leaves a nonempty required set, which is what the law refuses on.
+    assert demanded == {first.identity.name, second.identity.name}
+    assert demanded - set() == demanded
+
+
+def test_a_cross_slot_disposition_is_accepted_and_recorded() -> None:
+    """A voluntary position on another qualifier's slot is kept, not rejected."""
+    primary = _claim_in_slot(claim_id="CLM-" + "1" * 32, qualifier="primary")
+    secondary = _claim_in_slot(claim_id="CLM-" + "2" * 32, qualifier="secondary")
+    tree = _tree(primary, secondary)
+
+    demanded = {claim.identity.name for claim in _same_slot_claims(tree, secondary.statement)}
+    offerable = _dispositionable(tree, secondary.statement)
+
+    # The other qualifier is not demanded ...
+    assert primary.identity.name not in demanded
+    # ... but naming it is legal, so it is never an unexpected_claim_id, and the
+    # statement_digest lookup that records it still resolves.
+    assert primary.identity.name in offerable
