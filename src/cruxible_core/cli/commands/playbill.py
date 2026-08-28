@@ -60,8 +60,11 @@ from cruxible_core.cli.commands._common import (
     _activate_server_instance,
     _dispatch_cli,
     _echo_write_target,
+    _emit_brief,
     _emit_json,
     _require_instance_id,
+    and_activate_option,
+    brief_option,
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
@@ -736,9 +739,12 @@ def approve_proposal(
     type=click.Path(file_okay=False),
     help="Workspace holding .playbill/coverage.json and its optional floor output.",
 )
+@brief_option
 @json_option
 @handle_errors
-def activate_proposal(proposal_id: str, workspace_root: str, output_json: bool) -> None:
+def activate_proposal(
+    proposal_id: str, workspace_root: str, output_brief: bool, output_json: bool
+) -> None:
     result = _server_call(
         lambda client, instance_id: activate_with_workspace_refresh(
             client,
@@ -755,6 +761,16 @@ def activate_proposal(proposal_id: str, workspace_root: str, output_json: bool) 
         raise click.ClickException(
             f"proposal activation status={result.status}; floor refresh failed: {message}"
         )
+    if output_brief:
+        _emit_brief(
+            outcome=result.status,
+            ids={
+                "proposal": result.proposal_id,
+                "coordinate": result.accepted_coordinate.git_oid,
+            },
+            next_command="cruxible playbill next --brief",
+        )
+        return
     _emit_json(payload)
 
 
@@ -1363,12 +1379,24 @@ def propose_claims(authorings: tuple[str, ...], proposal_name: str, output_json:
 @click.argument("claim_id", required=False)
 @click.argument("request_file", required=False, type=click.Path(exists=True, dir_okay=False))
 @click.option("--example", is_flag=True, help="Print a valid retirement request file.")
+@and_activate_option
+@click.option(
+    "--workspace-root",
+    type=click.Path(exists=True, file_okay=False),
+    default=".",
+    show_default=True,
+    help="Workspace whose floor is refreshed when --and-activate activates.",
+)
+@brief_option
 @json_option
 @handle_errors
 def retire_claim(
     claim_id: str | None,
     request_file: str | None,
     example: bool,
+    and_activate: bool,
+    workspace_root: str,
+    output_brief: bool,
     output_json: bool,
 ) -> None:
     """Preflight or submit one attributed Claim retirement closure."""
@@ -1391,15 +1419,62 @@ def retire_claim(
         request = _CLAIM_RETIRE_ADAPTER.validate_python(_read_mapping(request_file))
     except ValidationError as exc:
         raise click.ClickException(f"Invalid Claim retirement: {exc}") from exc
-    result = _server_call(
-        lambda client, instance_id: client.retire_playbill_claim(
+
+    def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
+        retired = client.retire_playbill_claim(
             instance_id,
             claim_id,
             request=request.model_dump(mode="json"),
-        ),
-        command_name="playbill claim retire",
-    )
-    _emit_json(result.model_dump(mode="json"))
+        )
+        proposal_id = _retire_proposal_id(retired)
+        if not and_activate or proposal_id is None:
+            return retired, None
+        return retired, activate_with_workspace_refresh(
+            client, instance_id, proposal_id, workspace=workspace_root
+        )
+
+    result, activation = _server_call(call, command_name="playbill claim retire")
+    payload: dict[str, Any] = {"retire": result.model_dump(mode="json")}
+    if activation is not None:
+        payload["activation"] = activation.model_dump(mode="json")
+    elif and_activate:
+        payload["activation_note"] = (
+            "not activated: this retirement produced no activatable proposal "
+            f"(outcome {getattr(result, 'outcome', 'preflight')})"
+        )
+    if output_brief:
+        proposal_id = _retire_proposal_id(result)
+        _emit_brief(
+            outcome=(
+                "accepted"
+                if activation is not None
+                else str(getattr(result, "outcome", "preflight"))
+            ),
+            ids={"claim": claim_id, "proposal": proposal_id},
+            next_command=(
+                None
+                if activation is not None or proposal_id is None
+                else f"cruxible playbill proposal activate {proposal_id}"
+            ),
+        )
+        return
+    _emit_json(payload if (and_activate or activation is not None) else payload["retire"])
+
+
+def _retire_proposal_id(result: Any) -> str | None:
+    """Return the activatable proposal a submitted retirement produced, if any.
+
+    A preflight produces none, and neither does an `already_retired` replay.
+    """
+
+    proposal = getattr(result, "proposal", None)
+    if proposal is None:
+        return None
+    admission = proposal.proposal.get("admission") if isinstance(proposal.proposal, dict) else None
+    if not isinstance(admission, dict):
+        return None
+    proposal_id = admission.get("proposal_id")
+    return proposal_id if isinstance(proposal_id, str) else None
 
 
 @playbill_group.group("authoring")
@@ -1562,15 +1637,32 @@ def bind_authoring_selection(
 
 @authoring_group.command("preflight")
 @click.argument("intent_id")
+@brief_option
 @json_option
 @handle_errors
-def preflight_authoring_intent(intent_id: str, output_json: bool) -> None:
+def preflight_authoring_intent(intent_id: str, output_brief: bool, output_json: bool) -> None:
     result = _server_call(
         lambda client, instance_id: client.preflight_playbill_authoring_intent(
             instance_id, intent_id
         ),
         command_name="playbill authoring preflight",
     )
+    if output_brief:
+        codes = [
+            str(item.get("code"))
+            for item in (result.frontier.get("diagnostics") or [])
+            if isinstance(item, dict)
+        ]
+        _emit_brief(
+            outcome=result.verdict + (f" ({', '.join(codes)})" if codes else ""),
+            ids={"intent": intent_id},
+            next_command=(
+                f"cruxible playbill authoring submit {intent_id}"
+                if result.verdict == "passed"
+                else f"cruxible playbill authoring create  # repair, then preflight {intent_id}"
+            ),
+        )
+        return
     _emit_json(result.model_dump(mode="json"))
     if result.verdict == "refused":
         intent = _server_call(
@@ -1603,14 +1695,84 @@ def rebase_authoring_intent(intent_id: str, output_json: bool) -> None:
 
 @authoring_group.command("submit")
 @click.argument("intent_id")
+@and_activate_option
+@click.option(
+    "--workspace-root",
+    type=click.Path(exists=True, file_okay=False),
+    default=".",
+    show_default=True,
+    help="Workspace whose floor is refreshed when --and-activate activates.",
+)
+@brief_option
 @json_option
 @handle_errors
-def submit_authoring_intent(intent_id: str, output_json: bool) -> None:
-    result = _server_call(
-        lambda client, instance_id: client.submit_playbill_authoring_intent(instance_id, intent_id),
-        command_name="playbill authoring submit",
-    )
-    _emit_json(result.model_dump(mode="json"))
+def submit_authoring_intent(
+    intent_id: str,
+    and_activate: bool,
+    workspace_root: str,
+    output_brief: bool,
+    output_json: bool,
+) -> None:
+    def call(client: CruxibleClient, instance_id: str) -> tuple[Any, Any]:
+        submitted = client.submit_playbill_authoring_intent(instance_id, intent_id)
+        if not and_activate or submitted.status.state != "ready_to_activate":
+            return submitted, None
+        # Only a candidate that needs nothing further is activated here. Anything
+        # else returns the submit result untouched: a partly-activated candidate
+        # would be a worse answer than an unactivated one.
+        proposal_id = submitted.status.proposal_id
+        if proposal_id is None:  # pragma: no cover - ready_to_activate carries one
+            return submitted, None
+        return submitted, activate_with_workspace_refresh(
+            client, instance_id, proposal_id, workspace=workspace_root
+        )
+
+    submitted, activation = _server_call(call, command_name="playbill authoring submit")
+    payload: dict[str, Any] = {"submit": submitted.model_dump(mode="json")}
+    if activation is not None:
+        payload["activation"] = activation.model_dump(mode="json")
+    elif and_activate:
+        payload["activation_note"] = _not_activated_note(submitted.status.state)
+    if output_brief:
+        _emit_brief(
+            outcome=(
+                "accepted" if activation is not None else f"submitted ({submitted.status.state})"
+            ),
+            ids={
+                "intent": intent_id,
+                "proposal": submitted.status.proposal_id,
+                "coordinate": (
+                    activation.accepted_coordinate.git_oid if activation is not None else None
+                ),
+            },
+            next_command=_submit_next_command(submitted, activated=activation is not None),
+        )
+        return
+    _emit_json(payload if (and_activate or activation is not None) else payload["submit"])
+
+
+def _not_activated_note(state: str) -> str:
+    """Say why --and-activate stopped, in the caller's terms."""
+
+    if state == "awaiting_external_approval":
+        return (
+            "not activated: the candidate needs an external approval. "
+            "Collect it with `cruxible playbill proposal approve`, then activate."
+        )
+    return f"not activated: the candidate is {state}, not ready_to_activate"
+
+
+def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
+    if activated:
+        return None
+    proposal_id = submitted.status.proposal_id
+    if submitted.status.state == "ready_to_activate" and proposal_id:
+        return f"cruxible playbill proposal activate {proposal_id}"
+    if submitted.status.state == "awaiting_external_approval" and proposal_id:
+        return f"cruxible playbill proposal approve {proposal_id}"
+    if submitted.status.state == "preflight_refused":
+        return f"cruxible playbill authoring preflight {submitted.intent['intent_id']}"
+    return None
 
 
 @authoring_group.command("status")
@@ -2082,6 +2244,7 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
     type=click.Path(file_okay=False),
     help="Workspace whose configured floor is observed locally.",
 )
+@brief_option
 @json_option
 @handle_errors
 def next_work(
@@ -2089,6 +2252,7 @@ def next_work(
     access_profile_path: str | None,
     expiring_within: int,
     workspace_root: str,
+    output_brief: bool,
     output_json: bool,
 ) -> None:
     stamped_evaluation_time = (
@@ -3742,6 +3906,7 @@ def _resolved_coverage(
     help="A `grep -n` result batch to resolve as one operation.",
 )
 @click.option("--all", "whole_working_set", is_flag=True, help="Resolve the whole declared scope.")
+@brief_option
 @json_option
 @handle_errors
 def resolve_coverage(
@@ -3752,6 +3917,7 @@ def resolve_coverage(
     ranges: tuple[str, ...],
     grep_path: str | None,
     whole_working_set: bool,
+    output_brief: bool,
     output_json: bool,
 ) -> None:
     """Resolve what the working files you just read or changed are governed by.
@@ -3772,6 +3938,16 @@ def resolve_coverage(
     result = _resolved_coverage(observations, command_name="playbill coverage resolve")
     if output_json:
         _emit_json(result.model_dump(mode="json"))
+        return
+    if output_brief:
+        drifted = [span for span in result.spans if span.match_state == "drifted"]
+        _emit_brief(
+            outcome=f"{result.health} ({result.summary.exact} exact, {len(drifted)} drifted)",
+            ids={"coordinate": result.at.git_oid, "epoch": str(result.epoch)},
+            next_command=(
+                "cruxible playbill next --brief" if drifted or result.health != "complete" else None
+            ),
+        )
         return
     for line in render_coverage_result(result):
         click.echo(line)

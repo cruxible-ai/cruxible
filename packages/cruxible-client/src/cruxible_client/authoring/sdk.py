@@ -12,9 +12,10 @@ from collections import OrderedDict
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import Enum
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeVar, cast
 
 from pydantic import SecretStr, TypeAdapter
 
@@ -65,6 +66,7 @@ from cruxible_client.authoring.source_map import (
     entries_for_keywords,
 )
 from cruxible_client.authoring.workspace import (
+    activate_with_workspace_refresh,
     observe_playbill_next_workspace,
     observe_playbill_next_workspace_with_coverage,
 )
@@ -179,6 +181,61 @@ def _address(value: str | TypedRef, expected: RefKind) -> str:
             f"expected {expected.value} reference, received {value.kind.value}"
         )
     return value.address
+
+
+@dataclass(frozen=True)
+class ClaimView:
+    """The few Claim fields a caller reads, lifted out of the fact array."""
+
+    claim_id: str
+    revision: int
+    subject: str
+    predicate: str
+    qualifier: str | None
+    role: str
+    object_kind: str
+    value: object
+    lifecycle_state: str
+    verdict: str
+
+
+def _address_path(value: object) -> str:
+    if isinstance(value, Mapping):
+        return str(value.get("artifact_path", ""))
+    return ""
+
+
+def _resolved_workspace(explicit: Path | None, from_env: str | None) -> Path:
+    """Explicit workspace, else the environment's, else the working directory."""
+
+    if explicit is not None:
+        return explicit
+    if from_env:
+        return Path(from_env).expanduser()
+    return Path.cwd()
+
+
+_EnumT = TypeVar("_EnumT", bound=Enum)
+
+
+def _enum(value: _EnumT | str, kind: type[_EnumT], *, label: str) -> _EnumT:
+    """Accept the enum or its exact string value.
+
+    Every vocabulary here is a `str, Enum`, so a plain string reads as correct
+    and only fails deep in the call as an AttributeError on `.value` -- at
+    runtime, not at typecheck. Coerce at the boundary instead, and name the
+    admissible values when the string is not one of them.
+    """
+
+    if isinstance(value, kind):
+        return value
+    if isinstance(value, str):
+        try:
+            return kind(value)
+        except ValueError:
+            admissible = ", ".join(sorted(item.value for item in kind))
+            raise ValueError(f"{label} must be one of: {admissible}") from None
+    raise TypeError(f"{label} must be a {kind.__name__} or one of its string values")
 
 
 _REFERENCE_KINDS: Mapping[RefKind, str] = {
@@ -823,6 +880,14 @@ class Playbill:
             if not isinstance(loaded, dict):
                 raise ValueError("Playbill context must contain a JSON object")
             remembered = loaded
+        # Precedence is explicit > environment > remembered context, matching the
+        # token, which already read its environment fallback. Without these an
+        # ad-hoc daemon had to be named argument-by-argument on every connect
+        # even when the environment already described it.
+        env_target = os.environ.get("CRUXIBLE_SERVER_URL")
+        env_instance = os.environ.get("CRUXIBLE_INSTANCE_ID")
+        env_workspace = os.environ.get("CRUXIBLE_PLAYBILL_WORKSPACE")
+        target = target if target is not None else env_target
         resolved_target = target or cast(str | None, remembered.get("server_url"))
         socket = cast(str | None, remembered.get("server_socket"))
         if target is not None:
@@ -833,7 +898,9 @@ class Playbill:
                 socket = None
         if resolved_target is None and socket is None:
             raise ValueError("Playbill connection requires a server target")
-        resolved_instance = instance or cast(str | None, remembered.get("instance_id"))
+        resolved_instance = (
+            instance or env_instance or cast(str | None, remembered.get("instance_id"))
+        )
         if not resolved_instance:
             raise ValueError("Playbill connection requires an instance")
         raw_token = (
@@ -855,7 +922,7 @@ class Playbill:
             result = cls(
                 client=client,
                 instance_id=resolved_instance,
-                workspace=workspace or Path.cwd(),
+                workspace=_resolved_workspace(workspace, env_workspace),
                 access_profile=access_profile
                 or AccessProfile(
                     profile_id="sdk-default",
@@ -916,6 +983,74 @@ class Playbill:
 
         return ProjectionBlocks(self)
 
+    def claim_view(self, claim: str | ClaimRef) -> ClaimView:
+        """Read one accepted Claim as the few fields callers actually ask for.
+
+        The wire read returns a fact array keyed by schema id, so answering
+        "what does this Claim say, and is it believed" means walking that array
+        by hand every time. This is that walk, once.
+        """
+
+        identity = _address(claim, RefKind.CLAIM) if isinstance(claim, ClaimRef) else claim
+        view = self._client.get_playbill_claim(self._instance_id, identity)
+        facts = {
+            str(fact.get("schema_id")): fact.get("value")
+            for fact in view.facts
+            if isinstance(fact, Mapping)
+        }
+        statement = facts.get("playbill.claim.statement")
+        lifecycle = facts.get("playbill.claim.lifecycle")
+        verdict = facts.get("playbill.claim.current_verdict")
+        if not isinstance(statement, Mapping):
+            raise ValueError(f"accepted Claim {identity} carries no statement fact")
+        item = statement.get("object")
+        object_value: object = None
+        object_kind = ""
+        if isinstance(item, Mapping):
+            object_kind = str(item.get("kind", ""))
+            if object_kind == "literal":
+                object_value = item.get("value")
+            elif object_kind == "subject":
+                address = item.get("address")
+                object_value = (
+                    address.get("artifact_path") if isinstance(address, Mapping) else None
+                )
+            else:
+                object_value = item.get("content_digest")
+        state = ""
+        if isinstance(lifecycle, Mapping):
+            inner = lifecycle.get("lifecycle")
+            if isinstance(inner, Mapping):
+                state = str(inner.get("state", ""))
+        return ClaimView(
+            claim_id=str(view.envelope.get("identity", identity)),
+            revision=int(view.envelope.get("revision", 0)),
+            subject=_address_path(statement.get("subject")),
+            predicate=str(statement.get("predicate", "")),
+            qualifier=cast(str | None, statement.get("qualifier")),
+            role=str(statement.get("role", "")),
+            object_kind=object_kind,
+            value=object_value,
+            lifecycle_state=state,
+            verdict=(str(verdict.get("verdict", "")) if isinstance(verdict, Mapping) else ""),
+        )
+
+    def activate(self, proposal_id: str) -> api.PlaybillWorkspaceActivationResult:
+        """Activate one proposal and refresh this workspace's configured floor.
+
+        Activation was the one step of the authoring loop `Playbill` did not
+        carry: callers had to build a second `CruxibleClient` and reach for
+        `activate_with_workspace_refresh` themselves, passing the workspace path
+        they had already given `connect`.
+        """
+
+        return activate_with_workspace_refresh(
+            self._client,
+            self._instance_id,
+            proposal_id,
+            workspace=self._workspace,
+        )
+
     def refresh(self) -> SearchPage:
         page = self._search(
             mode="orient",
@@ -959,12 +1094,12 @@ class Playbill:
         *,
         predicate: str | ClaimTypeRef,
         subject_kinds: Sequence[str],
-        object_kind: ClaimObjectKind,
+        object_kind: ClaimObjectKind | str,
         value_schema: dict[str, object] | None,
         object_subject_kinds: Sequence[str],
-        cardinality: Cardinality,
-        permitted_roles: Sequence[ClaimRole],
-        referent_sensitivity: ReferentSensitivity,
+        cardinality: Cardinality | str,
+        permitted_roles: Sequence[ClaimRole | str],
+        referent_sensitivity: ReferentSensitivity | str,
         sources: Sequence[str | SourceRef],
         admission_policy: ClaimAdmissionPolicyV1,
         resolution_policy: ClaimResolutionPolicyV1,
@@ -973,6 +1108,14 @@ class Playbill:
         evidence_freshness: Duration | None,
         attestation_consequence_policy: ClaimAttestationConsequencePolicyV1 | None = None,
     ) -> ClaimTypeDraft:
+        object_kind = _enum(object_kind, ClaimObjectKind, label="claim-type object kind")
+        cardinality = _enum(cardinality, Cardinality, label="claim-type cardinality")
+        referent_sensitivity = _enum(
+            referent_sensitivity, ReferentSensitivity, label="claim-type referent sensitivity"
+        )
+        permitted_roles = tuple(
+            _enum(item, ClaimRole, label="claim-type permitted role") for item in permitted_roles
+        )
         name = _address(predicate, RefKind.CLAIM_TYPE)
         if isinstance(predicate, ClaimTypeRef):
             self._assert_coordinate(predicate.coordinate)
@@ -1046,7 +1189,7 @@ class Playbill:
         subject: str | SubjectRef,
         predicate: str | ClaimTypeRef,
         value: CanonicalValue,
-        role: ClaimRole,
+        role: ClaimRole | str,
         rationale: str,
         supported_by: EvidenceSelection | None,
         copied_from: EvidenceSelection | None,
@@ -1054,12 +1197,17 @@ class Playbill:
         qualifier: str | None,
         effective_period: EffectivePeriod | None,
         revises: str | ClaimRef | None,
-        dispositions: Mapping[str | ClaimRef, Disposition],
+        dispositions: Mapping[str | ClaimRef, Disposition | str],
         publish_to: InsertionSelection | None,
         subject_definition: SubjectDraft | None,
         claim_type_definition: ClaimTypeDraft | None,
     ) -> ClaimDraft:
         sites = capture_keyword_sites("claim", stacklevel=1)
+        role = _enum(role, ClaimRole, label="claim role")
+        dispositions = {
+            key: _enum(value, Disposition, label="claim disposition")
+            for key, value in dispositions.items()
+        }
         branches = tuple(item is not None for item in (supported_by, copied_from, self_source))
         if sum(branches) != 1:
             raise ValueError("exactly one of supported_by, copied_from, or self_source is required")
@@ -1387,7 +1535,7 @@ class Playbill:
         *,
         definition: ProcedureDefinitionV3,
         authority: ArtifactAuthority,
-        activation_policy: ActivationPolicy,
+        activation_policy: ActivationPolicy | str,
         retire: bool,
     ) -> ProcedureDraft:
         sites = capture_keyword_sites("procedure", stacklevel=1)

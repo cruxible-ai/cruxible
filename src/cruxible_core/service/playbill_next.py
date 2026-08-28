@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -491,6 +492,12 @@ class PlaybillNextRepairV1(_StrictNextModel):
     target: str
     required_change: str
     arguments: object = Field(default_factory=dict)
+    # The operation is a dotted CLI path and the arguments are its options, so a
+    # caller could always have assembled this line -- and every caller had to.
+    # Composed from the digested fields beside it, so it is a pure function of
+    # them and stays deterministic inside the item_id and result_digest
+    # preimages it necessarily joins.
+    command: str = ""
 
     @field_validator("arguments", mode="before")
     @classmethod
@@ -566,6 +573,51 @@ class PlaybillNextResultV1(_StrictNextModel):
         return self
 
 
+_REPAIR_COMMAND_PATHS: Mapping[str, str] = {
+    "playbill.authoring.create": "playbill authoring create",
+    "playbill.authoring.bind": "playbill authoring bind",
+    "playbill.claim.retire": "playbill claim retire",
+    "playbill.floor.export": "playbill floor export",
+    "playbill.block.repin": "playbill block repin",
+    "playbill.document.propose": "playbill document propose",
+}
+
+# Each of these needs a local file the queue cannot know the path of, so the
+# composed line names the placeholder rather than pretending to be complete.
+_REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
+    "playbill.authoring.create": ("PAYLOAD_FILE",),
+    "playbill.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
+    "playbill.claim.retire": ("REQUEST_FILE",),
+    "playbill.document.propose": ("--envelope", "ENVELOPE_FILE"),
+}
+
+
+def _repair_command(
+    operation: NextRepairOperation,
+    *,
+    arguments: object,
+) -> str:
+    """Compose the runnable invocation for one repair operation."""
+
+    parts = ["cruxible", _REPAIR_COMMAND_PATHS[operation]]
+    values = arguments if isinstance(arguments, Mapping) else {}
+    if operation == "playbill.block.repin":
+        source_id = values.get("source_id")
+        block_id = values.get("block_id")
+        if isinstance(source_id, str) and isinstance(block_id, str):
+            parts.extend([shlex.quote(source_id), shlex.quote(block_id)])
+    elif operation == "playbill.claim.retire":
+        claim_id = values.get("claim_id")
+        if isinstance(claim_id, str):
+            parts.append(shlex.quote(claim_id))
+        parts.extend(_REPAIR_COMMAND_OPERANDS[operation])
+    elif operation == "playbill.floor.export":
+        parts.extend(["--output", "FLOOR_DIR"])
+    else:
+        parts.extend(_REPAIR_COMMAND_OPERANDS[operation])
+    return " ".join(parts)
+
+
 def playbill_next_item_id(item: PlaybillNextItemV1) -> str:
     payload = item.model_dump(mode="json")
     payload.pop("tag")
@@ -582,6 +634,11 @@ def _item(
     detail: object,
     repair: PlaybillNextRepairV1,
 ) -> PlaybillNextItemV1:
+    # Composed here rather than at each emitting site: a row whose command was
+    # forgotten would be indistinguishable from one that has no command.
+    repair = repair.model_copy(
+        update={"command": _repair_command(repair.operation, arguments=repair.arguments)}
+    )
     values = {
         "severity": severity,
         "reason": reason,
