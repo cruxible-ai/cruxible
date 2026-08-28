@@ -69,13 +69,6 @@ playbill hook post-tool-use
 playbill host create
 playbill init
 playbill list
-playbill native compile
-playbill native render
-playbill native review-current
-playbill native stash list
-playbill native stash restore
-playbill native stash show
-playbill native status
 playbill next
 playbill curation list
 playbill curation overrule
@@ -561,7 +554,7 @@ golden moves; the only added surface is the `playbill hook post-tool-use` CLI
 command, and the coverage package's no-authority import allowlist still holds
 over both new modules.
 
-## PC-G-H3: the seed bundle, the arm recipe, and one ordering defect
+## PC-G-H3: the seed bundle and arm recipe
 
 The last slice of the TauBench critical path. It adds one CLI group, one flag on
 an existing command, a pure planning module, and a committed benchmark
@@ -569,47 +562,6 @@ directory. **Zero served operations, zero routes, zero MCP tools, zero client
 methods, and zero golden diffs**; every propose call the seed command makes
 existed before this slice, and `playbill/seed.py` writes the table of them out
 by name so that is readable rather than asserted.
-
-### The stash ordering defect, and the class it belongs to
-
-`test_a_stash_captures_exactly_the_dirty_regions_bytes` failed roughly half the
-time. The symptom was `body.region_ids != parsed.dirty_region_ids` carrying the
-same two digests in swapped order; the cause was two different canonical
-orderings for one list.
-
-`NativeStashBodyV1` orders its regions by **region identity**, and its validator
-enforces that — correct, because identity is path-free by §11.9.3 and a
-digest-committed record must not order its fields by where a lens happened to
-place a Claim. `NativeTreeParseV1.dirty_region_ids` returned the same identities
-in **presentation** order: byte-sorted path, then position inside the file. Those
-two orderings coincide only when the digests happen to sort the way the paths
-do, and a region identity is a digest over the Claim's semantic address, so
-which way that falls is decided afresh by every instance's own artifact
-identifiers. Roughly a coin flip per run, which is exactly how it presented.
-
-The fix is at the source and it is one line per accessor: `dirty_region_ids`,
-`tampered_region_ids`, and `moved_region_ids` — on both the file parse and the
-tree parse — return `byte_sorted`. `regions` still walks in presentation order,
-because presentation order is what a person reading a file expects and what a
-diagnostic should name; it is *identity lists* that may not carry presentation
-coordinates. `native/sync.py` had already been wrapping `byte_sorted(dirty)`
-around every commit point, which is the same defect being worked around one
-caller at a time; those wrappers are now gone, so a regression in the accessor
-surfaces instead of being papered over.
-
-Two regression tests, and the split between them is deliberate. The constructed
-one builds a tree parse whose first file deliberately holds the last-sorting
-identity, so it fails before the fix on **every** run rather than half of them —
-a coin-flip regression test is not a regression test. The rendered one asserts
-the ordering as a law across all three routes to the list: the stash body's
-committed order, the parse's identity list, and the render plan's
-`stashed_region_ids`.
-
-The class matters more than the instance. A digest-committed local format whose
-field ordering depends on presentation is nondeterministic, and the local-format
-family — checkpoint, coverage manifest, stash — exists to be reproducible. Any
-future accessor returning region identities inherits the same rule, which is
-written into `native/parse.py`'s module docstring rather than left to memory.
 
 ### The seed bundle is CLI orchestration, and could not have been one proposal
 
@@ -653,29 +605,6 @@ planner accordingly validates only the models it reads fields out of, and every
 one of them lives inside the `playbill` package: `seed.py` imports no service
 module and there is no import cycle to break.
 
-### The floor and the native renders compose in the CLI, not the service
-
-`playbill floor export --with-native` is the §11.8 native-surface amendment —
-"the file floor in arms 3 and 4 includes the committed native knowledge renders
-of §11.9". It is a **CLI** composition, deliberately: the floor service keeps
-returning bytes and touching no filesystem, and the render lens keeps being a
-pure function of accepted state, because the daemon having any path by which it
-could write into a repository is exactly what §11.9.5's explicit-sync law
-forbids.
-
-**No manifest format moved.** The two exports share one directory without
-knowing about each other, because they cannot collide: every floor artifact is
-`.json` under its own prefix and every rendered page is `.md`, and the manifests
-keep their own names — `manifest.json`, `render-manifest.json`, and
-`coverage-manifest.json` naming the §11.6.3 boundary. The floor manifest
-enumerates no `.md` path and does not mention the render manifest; a test
-asserts both.
-
-The native write is the *same* function `playbill native render` uses, factored
-out rather than reimplemented, so the floor export inherits the §11.9.5
-dirty-region refusal by construction. A second write path that skipped that
-check would be a second way to lose an author's edits.
-
 ### The arm recipe is executable and committed
 
 `benchmarks/playbill_taubench/` holds `recipe.py`, `seed-example/`, and a README.
@@ -707,8 +636,7 @@ proposal, or acceptance in it.
 **The run manifest pins what §11.8 requires pinned.** Index, overlay, manifest
 digests and epoch off a coverage result the hooked arm received; generation,
 semantic, compiler, and floor digests off the floor manifest's own coordinate;
-render digest and lens version off the render manifest; the rule set and its
-digest; and the seed plan digest, which excludes the invocation's proposal name
+the rule set and its digest; and the seed plan digest, which excludes the invocation's proposal name
 so it answers "is this the same world?" rather than "was this the same command?".
 `hook_adapter.envelope_version` is `null` and recorded rather than omitted,
 because the owned-harness middleware has no vendor hook envelope and "not
@@ -724,11 +652,6 @@ deliberately *not* in it and are recorded here rather than left implied:
 | Procedure expand | `playbill expand` returns a context capsule for Subjects, Claims, and interfaces; Procedures are not a facet | a Procedure facet on the capsule, once dogfood shows which fields a reader actually wants |
 | Journal ownership | `run["journal_record_digest"] is None`: the daemon opens no query-receipt journal, and the knowledge-loop smoke pins that | a daemon-owned journal and the decision about who owns retention — the same open seam PC-F2-S2 recorded |
 | Lineage read | an earlier proposal can be *named* and the naming is checked against the shared target ref; no read enumerates a lineage | one served read operation over admissions, which is a contract change and was out of scope for both PC-F3 and this batch |
-| Native TauBench task corpora | the recipe seeds a foreign-source world and runs one scripted turn; §11.8's native-knowledge tasks want tasks *about* rendered governed spans | a task corpus authored against OKF-rendered spans, per the §11.8 note that native-knowledge tasks are meaningful only with the §11.9 surface present |
-
-The four PC-F3 seams recorded above (draft scope, foreign renders, lineage read,
-capture path for rendered occurrences) are unchanged by this slice.
-
 ## PC-F3-S1b: the multi-Claim proposal operation
 
 A change set already settles as one indivisible generation, and the evaluator,
@@ -798,150 +721,6 @@ operation:
 
 Each was produced through its own regeneration path, and every other golden in
 this repository is byte-identical across the slice.
-
-## PC-F3-S3: the native surface closed, and what PC-G inherits
-
-PC-F3 is review-complete at this slice. The batch shipped the render lens and
-region grammar (S1), the compile contract and the CLI loop (S2), and here the
-frozen laws, the stash, and review currency at its dogfood minimum. **No served
-operation was added by any part of PC-F3.** The render is computed in the CLI
-from reads that already existed, which is also what makes §11.9.5's
-explicit-sync law structural: the daemon never produced the bytes, so there is
-no path by which it could commit them into a repository.
-
-### The five laws have one home
-
-`tests/test_playbill/test_native_round_trip_laws.py` is the canonical home of
-the §11.9.6 block. It quotes the spec paragraph it freezes and holds seven
-tests: the five laws, each named after its law, plus the two preconditions the
-paragraph states. Copies that previously lived beside the surfaces they
-constrained were removed from `test_native_render_lens.py` and
-`test_native_compile.py`, so weakening a law now means deleting a test that says
-which law was deleted.
-
-| Law | How it is proven |
-|---|---|
-| `compile(render(x, ctx))` is a no-op | a real seeded instance, rendered and compiled: zero members, drafts, refusals, and three-way rows |
-| `render(parse(render(x, ctx)), ctx) == render(x, ctx)` | `native_render_from_tree` rebuilds the whole render -- manifest included -- from the rendered bytes alone, and the result is byte-equal |
-| edit → compile → accept → render preserves the payload | the loop through the governed path: edit, compile, `service_propose_playbill_claims`, activate, re-render; the accepted Claim carries the new value and the fresh checkout compiles to nothing |
-| edit derived field → typed refusal | one derived region edited *through the typed region structure* rather than by matching prose; tampered at parse with a regeneration instruction, refused at compile with the same instruction as its required action |
-| dirty re-render refuses without stash/discard | the refusal names every dirty field and all three ways forward, and refuses both dispositions at once |
-| precondition: no wall clock | observable half here (two contexts, two renders); structural half is the AST guardrail in `test_playbill_dp0_boundaries.py`, which this test names and asserts still exists |
-| precondition: freshness never alters snapshot bytes | resolve coverage over a rendered tree and byte-compare the tree |
-
-Law 2 is the one that needed new code. Parsing previously produced typed regions
-and diagnostics, which is what compile needs and not enough to re-render from.
-`native/inverse.py` adds the total decomposition: every byte of a rendered file
-is a marker line, a region body line, or prose, and re-emitting rebuilds the
-markers **from their parsed models** rather than copying them, so the
-canonical-JSON payload has to round-trip. Every per-file baseline in the
-reconstructed manifest -- content digest, byte length, disposition, region
-identity, kind, address, artifact digest, body digest -- is recomputed from the
-files rather than read out of the committed manifest. No accepted state is in
-scope for the reconstruction.
-
-What law 2 deliberately does **not** do is re-derive Claims from prose. Prose is
-carried through verbatim, because inverting the semantic rendering would be a
-second lens coupled to spellings §11.9 keeps class-3 through the dogfood. The
-semantic direction is covered by laws 1 and 3 instead. Totality is claimed for
-clean trees; a tree with broken region structure raises rather than guessing,
-which is the compiler's business and not this law's.
-
-**No spelling moved in this slice.** `NATIVE_LENS_VERSION` stays at 2 and
-`native_renderer_digest()` is unchanged. Its history: v1 was the S1 grammar; v2
-added the draft marker in S2. The version exists so a render can say which
-grammar produced it, not so old spellings are preserved.
-
-### The stash
-
-`playbill native render --stash` captures the dirty regions' exact bytes before
-a byte of the re-render lands, then proceeds. `--discard` is unchanged, the bare
-dirty re-render still refuses, and the refusal now names all three answers --
-compile, stash, discard -- because "stash or discard" hides the one an author
-usually wants. Passing both dispositions is a contradiction and refuses.
-
-`playbill native stash list | show | restore` read and re-apply those entries
-with no daemon involved. A restore lands **by region identity**, which carries
-no path, so a stashed edit lands correctly after its field moved to another
-file; a stashed field the current render no longer has, or one that no longer
-binds unambiguously, is reported and left in the stash rather than placed
-somewhere it might not belong.
-
-The format itself is pure: `native/stash.py` produces and consumes bytes and the
-CLI writes them, exactly as the lens produces a tree and the CLI writes that.
-The native package still imports no `os`, no `shutil`, and no `subprocess`, and
-the architecture guardrail still asserts it.
-
-### Review currency, and the read that is missing
-
-`review-current` keeps `--bound DIGEST` as the explicit form and adds
-`--superseded-proposal PROPOSAL_ID`, which reads the earlier proposal's
-candidate digest *and* its signers through the ordinary review operation and
-fills `superseded_signer_ids`, so the report can say whose approval no longer
-verifies rather than only that some approval must be collected. It refuses a
-proposal admitted against a different proposal ref, checked through the ordinary
-proposal inspection: proposals sharing a target ref are successive attempts at
-one change, and a proposal from another lineage is not evidence about this one.
-
-Neither form can *discover* the earlier proposal. Admissions in one lineage
-share a `target_ref`, and every served read resolves a proposal by identity
-rather than enumerating them, so "which proposals preceded this one" is a
-question the current surface cannot ask. Closing that gap wants one read
-operation over admissions; adding a served operation was out of scope for this
-batch, and the gap is recorded here and in the command's own docstring rather
-than worked around.
-
-### Recorded seams PC-G inherits
-
-Four limits are deliberate, each shipped with the behavior that makes it safe:
-
-| Seam | What holds today | What PC-G would add |
-|---|---|---|
-| Draft scope | one unlocated draft per file, and drafts bind Subjects only; a second draft marker in one file refuses | multi-draft files and non-Subject draft targets, once dogfood shows which is actually written |
-| Foreign renders | every rendered file is `native_editable` or `orientation`; the `foreign_observed` disposition exists in the manifest, grammar, and compile guard, and nothing renders one | a lens that renders foreign-source material as observed-only pages |
-| Lineage read | an earlier proposal is *named*, and naming it is checked against the shared target ref | a read operation over admissions, so a lineage can be enumerated |
-| Capture path for rendered occurrences | drift cards over a rendered tree cite the region's own locator handle, computed from a disposable index built from the render baseline; no Capture is invented and nothing accepted references render output | if a rendered occurrence should become accepted evidence, an explicit Capture through the ordinary evidence path |
-
-Also unchanged and intentional: subscription slicing is deferred (single-repo
-whole scope, stated explicitly in `RenderContextV1` rather than left implicit),
-there is no forge or LSP implementation, and there is no multi-lens rendering.
-
-### The PC-G handoff inventory, in one list
-
-1. **No served operation exists for the native surface, and none should be added
-   casually.** The render, the parse, the compile, the stash, and review
-   currency are all CLI-side over reads that already exist. A new operation here
-   is a contract change, not a convenience.
-2. **The lens is class-3.** Spellings may move; `NATIVE_LENS_VERSION` and
-   `native_renderer_digest()` must move with them. The five laws and the typed
-   editable/derived split are the contract, and the law block is where a change
-   to them has to be argued.
-3. **The law block is `tests/test_playbill/test_native_round_trip_laws.py`.** Do
-   not add a sixth law elsewhere and do not re-prove one of the five beside a
-   surface; that is what this slice consolidated.
-4. **Every law test asserts a law, never a spelling.** The one test that must
-   reach inside a derived region does so through the typed region structure. New
-   tests in that file follow the same rule.
-5. **The stash is local and disposable.** Deleting `.playbill-stash/` under a
-   render root loses only stashed local edits. No test and no operator procedure
-   may treat its presence as required.
-6. **The native package may not touch a filesystem or a clock**, and may not
-   import the service layer, the ledger, or the server. The guardrail is
-   `test_pc_f3_native_render_adds_no_authority_and_reads_no_clock`, and it
-   enumerates the package's modules, so adding one there is a deliberate act.
-7. **Region identity is path-free.** Moves and renames preserve it, coverage
-   reports it, and the stash restores by it. Anything that starts matching on a
-   path is a regression against §11.9.3.
-8. **Deletion is never inferred** -- of text, a locator, a file, or the whole
-   rendered directory. No compile path produces a retirement, and
-   `NativeCompileResultV1.retirements` is asserted empty.
-9. **The four seams above are the known gaps.** Each has a test pinning today's
-   behavior, so closing one means changing a test that says what changed.
-10. **Verification scope for anything touching this surface:**
-    `tests/test_playbill/test_native_*`, `tests/test_cli/test_playbill_native_*`,
-    `tests/test_guardrails`, and `tests/test_architecture`. Adding a CLI command
-    also touches `docs/cli-reference.md`, the command inventory in this guide,
-    and `CLI_COMMANDS` in `cli/main.py` -- all three are guardrail-enforced.
 
 ## Deleted directory and service inventory
 
@@ -1100,7 +879,6 @@ as a wire change.
 | `playbill-projection-manifest-v1` and its piece builds | `<managed root>/projections/` | Disposable materialized read state, rebuilt from the accepted tree. |
 | `playbill-serving-manifest-v1` | `<managed root>/projections/serving.json` | The local admission pointer at one exact accepted coordinate. |
 | `playbill-coverage-manifest-v1`, inside `playbill-coverage-manifest-file-v1` | `<managed root>/coverage/coverage-manifest-v1.json` | The published freshness proof for coverage delivery: which working sources were observed, at which accepted coordinate, over which index, under which access profile, at which epoch. |
-| `playbill-native-stash-v1`, inside `playbill-native-stash-file-v1` | `<render root>/.playbill-stash/stash-<digest>.json` | Local edits a re-render would otherwise have overwritten: the exact bytes of each dirty region, with the region identity, address, and baseline digest needed to put them back. |
 
 The checkpoint format is the one PC-F added. Four properties make it reviewable
 as local state rather than as a new surface:
@@ -1146,24 +924,6 @@ in `coverage/manifest.py` rather than in `canonical.py`. Its epoch is a
 monotonic counter and never a time, and its publication time sits outside the
 digest preimage, so rebuilding it over the same coordinate and snapshot
 reproduces the same digest exactly.
-
-The native stash is the one PC-F3 added, and it is local state by the same four
-properties with one difference in *where*. It sits under the **render root**
-rather than the instance's managed root, because the material it holds is the
-repository's: a render may be produced against a daemon whose filesystem the CLI
-cannot write to at all, and edits to a checkout belong beside the checkout. The
-dot-prefixed directory keeps it out of the rendered tree the render manifest
-describes, so no stash entry is ever read as rendered material. It never enters
-the ledger, the CAS, a journal, or an export; every entry re-verifies its own
-digest on load and an entry that does not reproduce is deleted rather than
-restored; and deleting the directory costs exactly the local edits somebody
-chose to stash, which is the same loss §11.9 already makes the whole risk
-surface of a rendered tree. Its `written_at` sits outside the digest preimage,
-so stashing the same edits twice produces one identity rather than two entries
-that differ only in when somebody typed the command. Its self-digest kind,
-`NativeStashDigest`, is declared in `native/stash.py`. The module itself touches
-no filesystem -- it renders and parses bytes, and the CLI writes them
-atomically -- because the native package structurally may not import `os`.
 
 No golden pins the *contents* of these files, and none should: a golden is how
 this repository freezes a contract other parties depend on, and these are
