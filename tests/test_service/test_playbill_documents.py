@@ -21,7 +21,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.service.playbill_documents import (
+from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     service_activate_playbill_proposal,
     service_dereference_playbill_document,
@@ -36,7 +36,7 @@ from cruxible_core.service.playbill_documents import (
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.playbill_review import service_prepare_playbill_approval
+from cruxible_core.playbill.service.review import service_prepare_playbill_approval
 from tests.test_playbill._support import FIXED_TIMESTAMP, generate_client
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_principal_history import _cloud_instance, _replacement_key

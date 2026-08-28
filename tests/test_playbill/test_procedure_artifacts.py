@@ -39,7 +39,6 @@ from cruxible_client.contracts.procedures.models import (
     ProposeChangeSetNodeV3,
     StateTapNodeV3,
 )
-from cruxible_core.procedure.digest import DIGEST_FUNCTIONS
 
 
 def _digest(label: str) -> str:
@@ -344,9 +343,3 @@ def test_proposal_terminal_has_no_activation_or_direct_write_capability() -> Non
     payload["nodes"][1] = {"kind": "apply_entities", "node_id": "write"}
     with pytest.raises(ValidationError, match="union_tag_invalid"):
         ProcedureDefinitionV3.model_validate(payload)
-
-
-def test_historical_reader_dispatch_remains_separate() -> None:
-    """A v3 import does not patch or reinterpret the frozen v1/v2 dispatcher."""
-
-    assert tuple(DIGEST_FUNCTIONS) == (1, 2)

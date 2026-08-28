@@ -27,16 +27,11 @@ dependencies = [
     "cruxible-client==0.4.0",
     "pydantic>=2.12",
     "packaging>=23.0",
-    "networkx>=3.0",
-    "polars>=1.0",
     "pyyaml>=6.0",
     "structlog>=24.0",
     "click>=8.0",
     "cryptography>=46.0",
-    "rich>=13.0",
     "httpx>=0.24",
-    "pypdf>=5.0",
-    "markdown-it-py>=4.0",
     "fastapi>=0.100",
     "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.20",
@@ -50,15 +45,11 @@ mcp = ["mcp>=1.0,<2"]
 # dependencies, so the daemon ships in the default install. Whether that stack
 # should move back out of base deps is a 0.4 packaging question, not something
 # an empty extra can express.
-# Layout-aware PDF parsing (the pdf_to_markdown docling backend) pulls the
-# docling ML stack (~1GB incl. torch); opt in when you need it.
-pdf = ["docling>=2.0"]
 dev = [
     "pytest>=8.0",
     "pytest-cov",
     "ruff==0.15.0",
     "mypy>=1.10",
-    "docling>=2.0",
 ]
 
 [project.scripts]
@@ -105,6 +96,5 @@ packages = ["cruxible_core", "cruxible_client"]
 
 [dependency-groups]
 dev = [
-    "types-networkx>=3.6.1.20260303",
     "types-pyyaml>=6.0.12.20250915",
 ]

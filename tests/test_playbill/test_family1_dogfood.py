@@ -17,7 +17,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.service.playbill_documents import (
+from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_dereference_playbill_document,
     service_playbill_document_history,
@@ -25,7 +25,7 @@ from cruxible_core.service.playbill_documents import (
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.playbill_review import service_review_playbill_proposal
+from cruxible_core.playbill.service.review import service_review_playbill_proposal
 from tests.test_playbill.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
 

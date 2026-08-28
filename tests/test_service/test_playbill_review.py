@@ -10,19 +10,17 @@ import pytest
 from cruxible_client.contracts.errors import PlaybillKeyError
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.service.documents import (
-    service_propose_playbill_principal_change,
-)
-from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
-from cruxible_core.service.playbill_documents import (
     service_propose_playbill_document,
+    service_propose_playbill_principal_change,
     service_store_playbill_body,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.playbill_review import (
+from cruxible_core.playbill.service.review import (
     render_playbill_proposal_review,
     service_prepare_playbill_approval,
     service_review_playbill_proposal,
 )
+from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from tests.test_playbill._support import generate_client
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _shell
 

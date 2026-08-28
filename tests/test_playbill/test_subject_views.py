@@ -1,10 +1,4 @@
-"""PC-F materialized Subject views and local NetworkX backend parity.
-
-The direct index is the reference implementation of the backend contract: any
-divergence in the NetworkX backend is a defect in the NetworkX backend. Parity
-is measured with :func:`claim_query_result_digest` over a matrix that exercises
-every declared query shape, budget, conflict, and visibility window.
-"""
+"""Materialized Subject views and deterministic direct-index query behavior."""
 
 from __future__ import annotations
 
@@ -44,7 +38,6 @@ from cruxible_client.contracts.subjects import AcceptedSubject, subject_path
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import (
     ClaimFactRowV1,
-    ClaimQueryBackendError,
     ClaimQueryBackendFactoryV1,
     ClaimQueryFactsV1,
     DirectClaimFactIndex,
@@ -56,7 +49,6 @@ from cruxible_core.playbill.query.backends import (
 )
 from cruxible_core.playbill.query.engine import (
     CLAIM_CONFLICT,
-    COORDINATE_MISMATCH,
     RESULT_CONFLICT,
     SUBJECT_UNRESOLVED,
     TRAVERSAL_OBJECT_NOT_SUBJECT,
@@ -64,7 +56,6 @@ from cruxible_core.playbill.query.engine import (
     claim_query_result_digest,
     evaluate_claim_query,
 )
-from cruxible_core.playbill.query.networkx_backend import NetworkXClaimQueryBackend
 from tests.test_playbill.test_claim_query_engine import (
     AMOUNT_PREDICATE,
     DUE_PREDICATE,
@@ -716,150 +707,7 @@ def test_the_view_carries_no_evaluation_time_verdict_or_conflict() -> None:
     assert not {"verdict", "currency", "evaluated_at", "conflicts"} & fields
 
 
-# -- the NetworkX materialization -----------------------------------------
-
-
-def test_the_graph_export_reproduces_the_logical_export_of_the_accepted_facts() -> None:
-    fact_rows = all_reviewers_facts()
-    backend = NetworkXClaimQueryBackend(
-        fact_rows, definition=active_work_query(), evaluation_time=NOW
-    )
-
-    exported = backend.export()
-
-    assert exported == subject_query_view(fact_rows)
-    assert render_subject_query_view(exported) == render_subject_query_view(
-        subject_query_view(fact_rows)
-    )
-    assert backend.coordinate == fact_rows.coordinate
-
-
-def test_a_deleted_backend_answers_nothing_and_rebuilds_byte_identically() -> None:
-    fact_rows = all_reviewers_facts()
-    query = active_work_query()
-    backend = NetworkXClaimQueryBackend(fact_rows, definition=query, evaluation_time=NOW)
-    before = render_subject_query_view(backend.export())
-
-    backend.discard()
-
-    assert backend.materialized is False
-    for read in (
-        lambda: backend.export(),
-        lambda: backend.subjects(SUBJECT_KINDS),
-        lambda: backend.subject(subject_path("project.person", "ada")),
-        lambda: backend.claims_on(subject_path("project.work_item", "wi-1"), STATUS_PREDICATE),
-        lambda: backend.claims_to(subject_path("project.person", "ada"), REVIEWER_PREDICATE),
-        lambda: backend.visibility(fact_rows.claims[0]),
-    ):
-        with pytest.raises(ClaimQueryBackendError):
-            read()
-
-    backend.rebuild(fact_rows)
-
-    assert backend.materialized is True
-    assert render_subject_query_view(backend.export()) == before
-    assert subject_query_view_digest(backend.export()) == subject_query_view_digest(
-        subject_query_view(fact_rows)
-    )
-
-
-def test_deleting_and_rebuilding_the_backend_changes_no_query_answer() -> None:
-    fact_rows = all_reviewers_facts()
-    query = active_work_query()
-    rebuilt: list[NetworkXClaimQueryBackend] = []
-
-    def rebuilding_factory(
-        rows: ClaimQueryFactsV1,
-        *,
-        definition: QueryDefinitionV1,
-        evaluation_time: datetime,
-    ) -> NetworkXClaimQueryBackend:
-        backend = NetworkXClaimQueryBackend(
-            rows, definition=definition, evaluation_time=evaluation_time
-        )
-        backend.discard()
-        backend.rebuild(rows)
-        rebuilt.append(backend)
-        return backend
-
-    fresh = evaluate(
-        query,
-        fact_rows,
-        backend_factory=NetworkXClaimQueryBackend,
-        parameters={"status": "ready"},
-    )
-    recycled = evaluate(
-        query,
-        fact_rows,
-        backend_factory=rebuilding_factory,
-        parameters={"status": "ready"},
-    )
-
-    assert rebuilt and rebuilt[0].materialized
-    assert claim_query_result_digest(fresh) == claim_query_result_digest(recycled)
-
-
-def test_a_backend_materialized_at_another_coordinate_refuses() -> None:
-    fact_rows = all_reviewers_facts()
-    stale = ClaimQueryFactsV1(
-        coordinate=coordinate(generation="33"),
-        subjects=fact_rows.subjects,
-        claims=fact_rows.claims,
-    )
-
-    def stale_factory(
-        rows: ClaimQueryFactsV1,
-        *,
-        definition: QueryDefinitionV1,
-        evaluation_time: datetime,
-    ) -> NetworkXClaimQueryBackend:
-        return NetworkXClaimQueryBackend(
-            stale, definition=definition, evaluation_time=evaluation_time
-        )
-
-    result = evaluate(
-        all_items_query(),
-        fact_rows,
-        backend_factory=stale_factory,
-    )
-
-    assert result.verdict == "refused"
-    assert result.refusal is not None
-    assert result.refusal.code == COORDINATE_MISMATCH
-    assert result.rows == ()
-
-
 # -- backend contract conformance -----------------------------------------
-
-
-@pytest.mark.parametrize("cell", PARITY_CELLS, ids=lambda item: item.name)
-def test_the_five_primitives_agree_row_for_row_and_order_for_order(cell: ParityCell) -> None:
-    direct = DirectClaimFactIndex(
-        cell.facts, definition=cell.query, evaluation_time=cell.evaluation_time
-    )
-    graph = NetworkXClaimQueryBackend(
-        cell.facts, definition=cell.query, evaluation_time=cell.evaluation_time
-    )
-    paths = tuple(row.path for row in cell.facts.subjects) + (
-        ABSENT_PATH,
-        subject_path("project.person", "ada"),
-    )
-
-    assert graph.coordinate == direct.coordinate
-    assert graph.subjects(SUBJECT_KINDS) == direct.subjects(SUBJECT_KINDS)
-    for kind in SUBJECT_KINDS:
-        assert graph.subjects((kind,)) == direct.subjects((kind,))
-    for identifier in ("wi-1", "ada", "absent"):
-        assert graph.subjects(SUBJECT_KINDS, subject_id=identifier) == direct.subjects(
-            SUBJECT_KINDS, subject_id=identifier
-        )
-    for path in paths:
-        assert graph.subject(path) == direct.subject(path)
-        for predicate in PREDICATES:
-            assert graph.claims_on(path, predicate) == direct.claims_on(path, predicate)
-            assert graph.claims_to(path, predicate) == direct.claims_to(path, predicate)
-    for row in cell.facts.claims:
-        assert graph.visibility(row) == direct.visibility(row)
 
 
 def test_the_evaluator_reads_state_only_through_the_frozen_backend_surface() -> None:
@@ -886,38 +734,6 @@ def test_the_evaluator_reads_state_only_through_the_frozen_backend_surface() -> 
 # -- the parity matrix ----------------------------------------------------
 
 
-@pytest.mark.parametrize("cell", PARITY_CELLS, ids=lambda item: item.name)
-def test_the_networkx_backend_matches_the_reference_evaluation(cell: ParityCell) -> None:
-    reference = evaluate(
-        cell.query,
-        cell.facts,
-        backend_factory=DirectClaimFactIndex,
-        evaluation_time=cell.evaluation_time,
-        parameters=cell.parameters,
-        budgets=cell.budgets,
-    )
-    materialized = evaluate(
-        cell.query,
-        cell.facts,
-        backend_factory=NetworkXClaimQueryBackend,
-        evaluation_time=cell.evaluation_time,
-        parameters=cell.parameters,
-        budgets=cell.budgets,
-    )
-
-    assert claim_query_result_digest(materialized) == claim_query_result_digest(reference)
-    assert canonical_bytes(materialized.model_dump(mode="json")) == canonical_bytes(
-        reference.model_dump(mode="json")
-    )
-    if cell.expect_refusal is not None:
-        assert reference.refusal is not None
-        assert reference.refusal.code == cell.expect_refusal
-    else:
-        assert reference.verdict == "completed"
-    assert reference.truncation.clipped_budgets == cell.expect_clipped
-    assert bool(reference.conflicts) == cell.expect_conflicts
-
-
 def test_the_parity_matrix_covers_every_budget_refusal_and_result_shape() -> None:
     clipped = {budget for cell in PARITY_CELLS for budget in cell.expect_clipped}
     refusals = {cell.expect_refusal for cell in PARITY_CELLS if cell.expect_refusal is not None}
@@ -939,3 +755,23 @@ def test_the_parity_matrix_covers_every_budget_refusal_and_result_shape() -> Non
     assert shapes == {"path", "relation_claim", "subject"}
     assert len(times) >= 3
     assert any(cell.expect_conflicts for cell in PARITY_CELLS)
+
+
+@pytest.mark.parametrize("cell", PARITY_CELLS, ids=lambda cell: cell.name)
+def test_the_reference_evaluator_satisfies_each_parity_cell(cell: ParityCell) -> None:
+    result = evaluate(
+        cell.query,
+        cell.facts,
+        backend_factory=DirectClaimFactIndex,
+        evaluation_time=cell.evaluation_time,
+        parameters=cell.parameters,
+        budgets=cell.budgets,
+    )
+
+    if cell.expect_refusal is not None:
+        assert result.refusal is not None
+        assert result.refusal.code == cell.expect_refusal
+    else:
+        assert result.verdict == "completed"
+    assert result.truncation.clipped_budgets == cell.expect_clipped
+    assert bool(result.conflicts) is cell.expect_conflicts

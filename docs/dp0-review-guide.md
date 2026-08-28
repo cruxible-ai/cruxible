@@ -996,9 +996,8 @@ was removed or rewritten around the surviving Playbill surface.
 
 PC-D subsequently deleted the `cruxible_core.group` and `cruxible_core.kits`
 packages, workflow proposal/apply modules, and the old Procedure persistence
-lifecycle. The frozen Procedure graph-format-v1/v2 readers remain as a PC-H
-corpus verifier — PC-H settles whether they become a permanent non-donor
-verifier package. Importing any retired module no longer initializes a retired
+lifecycle. PC-DEL1 later removed the remaining old graph-format readers and
+their corpus. Importing any retired module no longer initializes a retired
 governance or storage path.
 
 PC-E1 deleted the ReceiptStore and ResolutionContractStore packages, protocols,
@@ -1073,135 +1072,19 @@ SQLite schema script for `storage/sqlite.py` and was orphaned by that deletion.
 pointed at a deleted module, and the `workflow`, `provider`, and `query`
 package initializers lost re-export catalogs that named deleted modules.
 
-`cruxible_core.kit_defaults` was already unimported before this batch and is
-left in place: it is pre-existing dead code, not PC-F residue, and removing it
-belongs to the PC-H import audit.
+### PC-DEL1 completion of the donor cut
 
-### Deferred residue, and why each module is still here
+PC-DEL1 removed the deferred `config`, `graph`, old `procedure`, old
+`query`, `receipt_tree`, `workflow`, provider/reader, in-core client, and
+legacy governance families together with their isolated tests and corpora. It
+also retired the Playbill donor manifest because no adapter or served path
+still consumes those packages. The final fix round removed the standalone
+`cruxible_core.predicate` module after its last consumers disappeared.
 
-The purge was re-batched after a classification pass proved the original PC-F
-labels were dependency-wrong: `config.schema` is validated by a chain that
-reaches into `query` and `graph`, and `procedure/` — a PC-H donor — is pinned
-to all of it. Deleting on the original labels would have taken the Procedure
-corpus verifier with it. So the following stay alive with their removal batch
-moved, and the batch that owns them owns their deletion:
-
-| Residue | New batch | Why it could not leave in PC-F |
-|---|---:|---|
-| `cruxible_core.config` (whole package) | PC-H | The Procedure definition digest is computed over these schemas. The package is labelled whole rather than carving `schema.py` out of it, because carving risks moving that frozen digest. |
-| `cruxible_core.predicate` | PC-H | Every remaining consumer is itself PC-H residue: `procedure/guards.py`, `procedure/analysis.py`, `config/{schema, validator, constraint_rules}.py`, and `query/predicates.py`. |
-| `cruxible_core.query.{enums, predicates, types, profiles, relationship_state}` | PC-H | The verified deferred-validator chain: `config/schema.py` imports `query.enums` eagerly and `query.predicates` inside `_validate_top_level_query_predicate_scopes`; `predicates` pulls `types` and `relationship_state`, and `types` pulls `profiles`. |
-| `cruxible_core.graph.{types, entity_graph, assertion_state, provenance}` | PC-H | The same chain: `query.predicates` imports `graph.entity_graph`, and `query.types` imports `graph.types`, which imports `assertion_state` and `provenance`. |
-| `cruxible_core.graph.evidence` | PC-H | `EvidenceRef` is a field type on `procedure/types.py`, `procedure/resolution_oracle.py`, and `graph/types.py`. |
-| `cruxible_core.workflow.types` | PC-H | `procedure/pins.py` describes what a pin records in terms of `WorkflowLock`, `LockedProvider`, and `LockedArtifact`. It stayed in `workflow/` rather than being relocated: a move would be an honest-rename, which is PC-H's, and would touch a module the frozen Procedure digest corpus reads. |
-| `cruxible_core.provider.{types, trace_payloads}` | PC-G | The manifest's previous rationale — "last consumers are workflow and service types" — was factually incomplete. Every reader in `providers/common/*` is written against `ProviderContext`, so the contract types leave with the readers in PC-G, not with the registry and payload donors that left here. |
-
-The architecture suite derives this residue rather than merely listing it: the
-surviving `query` and `graph` modules are asserted to be a subset of the
-`config.schema` import closure, so a later batch cannot widen the residue
-without the guard noticing.
-
-### Tests removed, converted, and kept
-
-Whole suites whose only subject was deleted code left with it:
-`tests/test_workflow/`, `tests/test_storage/`, `tests/test_support/`, the eight
-donor suites under `tests/test_service/` and their `conftest.py`,
-`tests/test_graph/{test_edge_identity, test_entity_identity, test_graph_diff,
-test_operations}.py`, `tests/test_query/{test_engine, test_graph_layout,
-test_neighborhood}.py`, `tests/test_config/test_composition_ownership.py`,
-`tests/test_providers/test_payloads.py`, and — per the F7 seam —
-`tests/test_playbill/test_modeling_parity_donors.py` in full. The shared
-donor helpers `tests/support/{state_cross_section, terminal_lifecycle,
-workflow_helpers}.py` went with them.
-
-One guardrail was deleted, and it is the only one:
-
-```text
-tests/test_guardrails/test_write_policy_asymmetry.py
-```
-
-It drove the `graph/operations.py` chokepoint and the deleted
-`service/direct_write_policy.py`, so the asymmetry it policed no longer exists.
-The other five legacy guardrails named in the pre-re-batch classification —
-`test_mutation_guard_reference`, `test_v2_registry_is_total`,
-`test_pin_payload_is_total`, `test_procedure_step_union_is_unambiguous`, and
-`test_branch_predicate_grammar_is_closed` — were classified as dying with the
-purge only because the original labels deleted `config.schema`, `predicate`,
-and `workflow.types`. Under the re-batch every subject they police is live
-residue, so all five are retained and pass unchanged.
-
-`tests/test_receipt_tree/test_receipt_tree.py` was converted rather than
-deleted. It used `query.engine.execute_query` as a scenario oracle, which made
-a deleted donor an input to a package that outlives it. The query-shaped
-receipt DAG is now composed directly through the public `ReceiptBuilder` API,
-node for node and edge for edge, and every assertion the engine used to satisfy
-is asserted against it unchanged. `receipt_tree/` has no donor dependency left.
-
-Four suites kept their subject and lost only the donor-driven case inside them:
-`tests/test_config/test_compact.py` (the write-enforcement half of the identity
-case), `tests/test_query/test_profiles.py` (the SQLite round-trip, restated as
-the property-order invariant it was actually testing),
-`tests/test_procedures/test_graph_analysis.py` (the compiler alias-walk oracle,
-restated as the literal walk), and `tests/test_playbill/test_bootstrap.py` (the
-legacy `CruxibleInstance` layout case). `tests/test_cli/test_startup_imports.py`
-now asserts the surviving PC-H residue stays unloaded on CLI import, since the
-module it used to name no longer exists.
-
-### Known prose residue, deliberately left to PC-H
-
-PC-F fixed the two references that were broken rather than merely historical:
-the `:mod:` cross-reference in `query/relationship_state.py` to the deleted
-`query.entity_state`, and the runtime `ValueError` in `graph/entity_graph.py`
-that told callers to mint claim ids through the deleted
-`graph.operations.apply_relationship`. What remains is narrative — docstrings
-inside retained donors that describe where a rule *used* to be enforced:
-
-```text
-config/schema.py     -> service/direct_write_policy.py, graph/operations.py
-errors.py            -> graph/operations.py
-graph/types.py       -> graph.operations.apply_relationship
-query/profiles.py    -> storage/sqlite.py
-workflow/types.py    -> provider.registry.resolve_command_provider_target
-```
-
-These are left as-is on purpose: rewriting them is the honest-rename sweep PC-H
-owns, and every file listed except `errors.py` is itself donor residue that
-leaves in PC-G/PC-H. `errors.py` additionally still defines
-`DirectWriteRefusedError` and `TerminalLifecycleWriteRefusedError`, which
-nothing raises any more but which `server/errors.py` still maps to HTTP status
-codes under the frozen contract; retiring them is a contract change, not a
-purge, and belongs to the PC-H audit.
-
-## Donor allowlist and removal batches
-
-This table is the complete import-level donor manifest. Served Playbill code
-may not import these modules; any Playbill transplant must go through the named
-adapter. Every row has an owning removal batch.
-
-| Donor module prefix | Removal batch | Why retained | Adapter |
-|---|---:|---|---|
-| `cruxible_core.procedure` | PC-H | Frozen graph-format v1/v2 corpus verifier; PC-H settles whether it becomes a permanent non-donor verifier package | — |
-| `cruxible_core.config` | PC-H | Step, query, provider, and contract schema donor pinned by the Procedure definition digest; the whole package is labelled rather than `schema.py` alone because carving a module out of it risks moving that frozen digest | — |
-| `cruxible_core.predicate` | PC-H | Typed comparison and coercion donor; every remaining consumer is itself PC-H residue — the Procedure guard grammar, the config schema/validator/constraint rules it validates, and the residual `query.predicates` vocabulary | — |
-| `cruxible_core.query` | PC-H | Residual query vocabulary the config schema reaches when validating a named query — `enums`, `predicates`, `types`, `profiles`, `relationship_state`; the engine, evaluation, filter, projection, continuation, layout, and read-surface donors left in PC-F | — |
-| `cruxible_core.graph` | PC-H | Residual graph vocabulary reached through the same validator chain — `types`, `entity_graph`, `assertion_state`, `provenance` — plus the `EvidenceRef` behavior the Procedure and workflow lock types depend on; the mutable graph operations, diff, and identity donors left in PC-F | — |
-| `cruxible_core.workflow` | PC-H | Residual lock/plan types only: `procedure/pins.py` describes what a pin records in terms of `WorkflowLock`, `LockedProvider`, and `LockedArtifact`, so the module leaves with the Procedure donor; the compiler and the rest of the query-oracle spine left in PC-F and the `Receipt` tree was already rehomed to `cruxible_core.receipt_tree` | — |
-| `cruxible_core.provider` | PC-G | Residual provider contract/trace types only; the last consumers are the un-transplanted readers in `cruxible_core.providers` (`providers/common/*` is written against `ProviderContext`), so it leaves with them rather than with the registry and payload donors that left in PC-F | — |
-| `cruxible_core.providers` | PC-G | Un-transplanted tabular/document/identity readers; native source connectors land with the vertical slice | — |
-
-The unserved mutation and query service layer that this table used to cover is
-gone: PC-D took the group and Procedure/workflow governance services, PC-E1 the
-receipt/resolution/gate/lifecycle services, and PC-F the remaining mutation,
-query, evidence, write-policy, and server service modules together with the
-legacy instance and SQLite backend they ran against. No donor write path
-survives.
-
-`DONOR_OPERATION_PERMISSIONS` outlives the operations it names. It is now a
-frozen record of the pre-Playbill authority tiers rather than a live seam: the
-architecture suite asserts it stays disjoint from both the public MCP tools and
-the active HTTP/CLI runtime operations, so nothing it lists can be reachable.
-PC-H settles whether the catalog is kept as history or deleted with the rest of
-the donor vocabulary.
+The active Procedure and query contracts live in `cruxible_client.contracts`;
+the active execution and read paths live below `cruxible_core.playbill`.
+Architecture tests now assert the deleted family directories contain no source
+files and that served dependency closure cannot reintroduce them.
 
 ## Local operational formats, which are not wire formats
 
@@ -1317,7 +1200,6 @@ tests/goldens/playbill/changeset-v3.json
 tests/goldens/playbill/claim-type-v1.json
 tests/goldens/playbill/coverage-grammar-v1.json
 tests/goldens/playbill/depgraph-v3.json
-tests/goldens/playbill/discovery-index-v1.json
 tests/goldens/playbill/journal_corpus/index.json
 tests/goldens/playbill/journal_corpus/negative/export-duplicated-record.json
 tests/goldens/playbill/journal_corpus/negative/export-false-oversized-claim.json
@@ -1388,11 +1270,6 @@ source identity and remote-state refusal behavior.
 Claim-native QueryDefinition v1 wire, its verdict/conflict policy and budget
 declarations, and its envelope digest.
 
-`tests/goldens/playbill/discovery-index-v1.json` preserves the disposable
-grep-friendly discovery index rendered from the materialized Subject view: its
-`INDEX.md` and `discovery.jsonl` bytes plus the rebuild manifest a deletion and
-rebuild must reproduce.
-
 `tests/goldens/playbill/merkle-manifest-v1.json` pins the merkle manifest
 primitive: the defined empty root, the leaf/interior/root preimages, every trie
 node digest, and the incremental change set that must reproduce the same root as
@@ -1462,47 +1339,31 @@ itself, which a recorded byte string could only weaken.
 `e3fe35b360d098f14a5d59bf770ffee401224f0c` and the Procedure graph-program
 oracle at `986307d56649eb51747ca227228fbe19f73e3895`.
 
-Other deliberately frozen donor inputs are the 48-file
-`tests/data/procedure_digest_corpus/` (whose exact membership is asserted by
-`test_definition_digest_corpus.py`) and the byte-preserved
-`tests/data/config_donors/agent-operation/config.yaml` plus
-`cruxible-kit.yaml`. They remain verification fixtures, not distributed kits.
-
-PC-F added two more, under the same DP-0C allowance to copy "only semantic
-parity fixtures needed by PC-F/PC-G into test data":
-`tests/data/config_donors/project-domain/` and
-`tests/data/config_donors/supply-chain-blast-radius/` are trimmed parity slices
-of the kit configs deleted in `b36b2a1b`, carrying only the vocabulary and the
-verbatim named queries the modeling-parity cases read. They and
-`tests/data/playbill_parity/modeling-parity-oracle-v1.json` — the pinned record
-of what each surface answers — outlive the donor purge and are asserted present
-by the DP-0 boundary test.
+The semantic parity recording at
+`tests/data/playbill_parity/modeling-parity-oracle-v1.json` is historical
+comparison data only, not a live verification oracle. Its original donor
+configurations and Procedure digest corpus are recoverable from repository
+history, not duplicated in the live verification tree.
 
 ## Intentionally retained package dependencies
 
-Dependency pruning is PC-H work and follows actual imports after the final
-transplant. DP-0 intentionally retains:
+PC-DEL1 pruned only dependencies made unreachable by its approved families.
+The remaining dependency inventory is:
 
 | Dependency | Why retained after DP-0 |
 |---|---|
 | `cruxible-client` | Reduced Playbill HTTP client shipped with the core |
 | `pydantic` | Active Playbill/client contracts and donor validation models |
 | `packaging` | Requirement parsing in the architecture dependency audit |
-| `networkx` | Active local Claim-query backend (`playbill/query/networkx_backend.py`) plus the residual `graph.entity_graph` the config-schema validator chain reaches, through PC-H |
-| `polars` | Tabular reader `providers/common/tabular.py`, through PC-G |
-| `pyyaml` | Active source-catalog CLI plus the config donor loader/expander, through PC-H |
+| `pyyaml` | Active source-catalog CLI and packaged client source-catalog paths |
 | `structlog` | Active daemon audit/request logging and permission checks |
 | `click` | Active four-group CLI |
 | `cryptography` | Ed25519 principal keys, signatures, and Git verification |
-| `rich` | Packaging cleanup deferred to the import-based PC-H prune; no new Playbill contract depends on it, and after PC-F nothing imports it at all |
-| `httpx` | Reduced client/CLI transport plus the document reader `providers/common/documents.py`, through PC-G |
-| `pypdf` | PDF reader backend in `providers/common/documents.py`, through PC-G |
-| `markdown-it-py` | Deterministic Markdown source-span donor through PC-C |
+| `httpx` | Active reduced client/CLI HTTP transport |
 | `fastapi` | Active HTTP daemon |
-| `python-multipart` | Daemon dependency retained until the PC-H import audit |
+| `python-multipart` | Retained daemon multipart-form dependency |
 | `uvicorn` | Active daemon launcher |
 | `mcp` (optional extra) | Active Playbill MCP server |
-| `docling` (optional `pdf` extra) | Layout-aware PDF reader backend in `providers/common/documents.py`, through PC-G |
 
 No dependency in this table is evidence that its legacy product is still
 public. The served dependency-closure guard separately proves that Playbill
@@ -1523,11 +1384,10 @@ PC-F additionally requires the surviving guardrail and target-visibility
 surfaces, which the purge touched:
 
 ```bash
-uv run pytest -q tests/test_guardrails tests/test_cli/test_playbill_target_visibility.py
-uv run pytest -q tests/test_procedures tests/test_providers
+uv run pytest -q tests/test_guardrails tests/test_architecture \
+  tests/test_cli/test_playbill_target_visibility.py
 ```
 
-The architecture suite pins the public registration catalogs, the donor
-manifest, the private donor permission seam, the immutable oracle commits, and
-this guide's inventories. The RR `change_head` must name the exact commit that
-passed those checks.
+The architecture suite pins the public registration catalogs, immutable oracle
+commits, deleted-family absence laws, and this guide's inventories. The RR
+`change_head` must name the exact commit that passed those checks.

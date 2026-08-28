@@ -1,9 +1,8 @@
 """Frozen graph-format-v3 Procedure grammar.
 
-The historical graph-format-v1/v2 readers live in ``cruxible_core.procedure``
-and are deliberately not imported here.  V3 is a new, explicitly tagged wire
-format whose dependencies are exact Playbill pins or interface-typed LineSpec
-slots.  Nothing in this module performs a mutable config or registry lookup.
+This packaged contract module owns the live Playbill Procedure graph profile.
+Its dependencies are exact Playbill pins or interface-typed LineSpec slots;
+nothing here performs a mutable config or registry lookup.
 """
 
 from __future__ import annotations

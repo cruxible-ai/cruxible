@@ -1007,7 +1007,6 @@ def test_query_definition_grammar_never_imports_donor_query_symbols() -> None:
         assert "cruxible_core.query" not in source
         assert "cruxible_core.config" not in source
         assert "cruxible_core.graph" not in source
-        assert "cruxible_core.predicate" not in source
         assert "cruxible_core.runtime.instance" not in source
 
 

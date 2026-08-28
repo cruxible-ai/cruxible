@@ -83,34 +83,6 @@ def _contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedCon
     )
 
 
-def test_playbill_owned_contract_schema_preserves_the_deferred_wire_profile() -> None:
-    """The transplant removes a dependency edge, not a byte or validation change."""
-
-    from cruxible_core.config.schema import ContractSchema as DeferredContractSchema
-    from cruxible_core.config.schema import PropertySchema as DeferredPropertySchema
-
-    count = {"type": "int", "optional": True, "default": 2}
-    payload = {"type": "json", "allow": "ignored"}
-    # The unknown `allow` key is ignored by both profiles, preserving the
-    # deferred model's permissive input behavior as well as its accepted bytes.
-    local = ContractSchema(
-        description="owner carried",
-        fields={
-            "count": PropertySchema(**count),  # type: ignore[arg-type]
-            "payload": PropertySchema(**payload),  # type: ignore[arg-type]
-        },
-    )
-    deferred = DeferredContractSchema(
-        description="owner carried",
-        fields={
-            "count": DeferredPropertySchema(**count),  # type: ignore[arg-type]
-            "payload": DeferredPropertySchema(**payload),  # type: ignore[arg-type]
-        },
-    )
-
-    assert local.model_dump(mode="json") == deferred.model_dump(mode="json")
-
-
 def _accepted_query_procedure(query_digest: str) -> AcceptedProcedureV1:
     input_contract = _contract("empty-input", {})
     output_contract = _contract("query-rows", {"rows": PropertySchema(type="json")})
