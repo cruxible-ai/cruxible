@@ -477,8 +477,7 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
             )
             continue
         if entry.kind == "claim":
-            if entry.payload.get("kind") == "claim":
-                input_claims.append(entry)
+            input_claims.append(entry)
             continue
         grouped[entry.kind].append(
             SeedProposalGroupV1(
@@ -501,32 +500,16 @@ def plan_seed_bundle(files: Mapping[str, bytes], *, proposal_name: str) -> SeedP
             )
         )
 
-    claim_paths = byte_sorted(tuple(item.path for item in entries if item.kind == "claim"))
-    if claim_paths:
-        direct_claim_paths = byte_sorted(
-            tuple(
-                item.path
-                for item in entries
-                if item.kind == "claim" and item.payload.get("kind") != "claim"
-            )
+    legacy_claims = tuple(
+        entry.path for entry in input_claims if entry.payload.get("kind") != "claim"
+    )
+    if legacy_claims:
+        rendered = ", ".join(legacy_claims)
+        raise SeedBundleError(
+            "legacy Claim authoring is retired; convert these entries to kind='claim' "
+            f"ClaimInput payloads before planning: {rendered}"
         )
-    else:
-        direct_claim_paths = ()
-    if direct_claim_paths:
-        grouped["claim"].append(
-            SeedProposalGroupV1(
-                group_id="claims",
-                proposal_slug="claims",
-                kind="claim",
-                operation=SEED_GROUP_OPERATIONS["claim"],
-                entry_paths=direct_claim_paths,
-                rationale=(
-                    f"{len(direct_claim_paths)} Claim(s) and every dependency they carry "
-                    "settle as one "
-                    "generation through the batch operation"
-                ),
-            )
-        )
+
     grouped["claim"].extend(
         SeedProposalGroupV1(
             group_id=f"claim_input:{entry.identity}",

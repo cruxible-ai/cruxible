@@ -1,10 +1,11 @@
-"""Rebuild the eight surviving Playbill fixtures authorized by the PC-DEL2 wire cut."""
+"""Rebuild the surviving Playbill fixtures and the TauBench seed example."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
 from cruxible_client.contracts.canonical import ChangeSetDigest, typed_digest
 from cruxible_client.contracts.captures import (
@@ -187,17 +188,10 @@ def _update_seed_bundle() -> None:
     for name in ("wi-101-status.json", "wi-102-status.json", "wi-103-status.json"):
         path = SEED / "claims" / name
         payload = _read(path)
-        statement = payload.get("statement")
-        if not isinstance(statement, dict):
-            raise TypeError("seed Claim has no statement")
-        statement["claim_type_digest"] = type_digest
-        nested = payload.get("claim_type_artifact")
-        if isinstance(nested, dict):
-            nested_type = ClaimType.model_validate(_remove_retired_claim_type_fields(nested))
-            if nested_type != claim_type:
-                raise AssertionError("seed Claim carries a different ClaimType")
-            payload["claim_type_artifact"] = nested_type.model_dump(mode="json")
-        _write(path, payload)
+        claim_input = ClaimInput.model_validate(payload)
+        if claim_input.predicate != claim_type.predicate:
+            raise AssertionError("seed ClaimInput names a different ClaimType predicate")
+        _write(path, claim_input.model_dump(mode="json", exclude_defaults=True))
 
     query_path = SEED / "query-definitions/project.work_items.json"
     query_payload = _read(query_path)

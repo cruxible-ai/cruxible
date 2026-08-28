@@ -12,7 +12,9 @@ to one AuthoringIntent; the plan remains a deterministic, offline description.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -27,6 +29,7 @@ from cruxible_client.authoring.seed import (
     seed_plan_digest,
 )
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from tests.test_playbill._claim_authoring_support import _status_authoring
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "benchmarks/playbill_taubench/seed-example"
 
@@ -39,6 +42,14 @@ def example_bundle() -> dict[str, bytes]:
         for path in sorted(EXAMPLE.rglob("*"))
         if path.is_file()
     }
+
+
+def _write(files: dict[str, bytes], path: str, payload: Any) -> None:
+    files[path] = (json.dumps(payload, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _legacy_claim_payload() -> dict[str, Any]:
+    return _status_authoring().model_dump(mode="json")
 
 
 def test_the_example_bundle_plans_each_surviving_writer_in_dependency_order() -> None:
@@ -150,3 +161,61 @@ def test_a_malformed_authoring_names_its_own_file() -> None:
         plan_seed_bundle(files, proposal_name="taubench-example")
 
     assert "subjects/wi-101.json is not a well-formed subject authoring" in str(refusal.value)
+
+
+def test_legacy_claim_authoring_refuses_before_a_retired_operation_can_be_planned() -> None:
+    files = example_bundle()
+    for path in tuple(files):
+        if path.startswith("claims/"):
+            del files[path]
+    legacy = _legacy_claim_payload()
+    legacy["claim_type_artifact"] = None
+    legacy["subject_shell"] = None
+    _write(files, "claims/legacy-status.json", legacy)
+
+    with pytest.raises(SeedBundleError) as refusal:
+        plan_seed_bundle(files, proposal_name="legacy")
+
+    assert "legacy Claim authoring is retired" in str(refusal.value)
+    assert "playbill_propose_claims" not in str(refusal.value)
+
+
+def test_top_level_and_carried_claim_type_conflict_still_refuses() -> None:
+    files = example_bundle()
+    for path in tuple(files):
+        if path.startswith("claims/"):
+            del files[path]
+    legacy = _legacy_claim_payload()
+    top_level = json.loads(files["claim-types/project.work_item.status.json"])
+    top_level["literal_schema"] = {"enum": ["done", "ready"], "type": "string"}
+    _write(files, "claim-types/project.work_item.status.json", top_level)
+    _write(files, "claims/legacy-status.json", legacy)
+
+    with pytest.raises(SeedBundleError) as refusal:
+        plan_seed_bundle(files, proposal_name="legacy")
+
+    assert "one canonical path in one change set" in str(refusal.value)
+    assert "project.work_item.status" in str(refusal.value)
+
+
+def test_two_legacy_claims_carrying_different_claim_types_still_refuse() -> None:
+    files = example_bundle()
+    for path in tuple(files):
+        if path.startswith("claims/"):
+            del files[path]
+    first = _legacy_claim_payload()
+    second = _legacy_claim_payload()
+    second["statement"]["subject"]["artifact_path"] = "subjects/project.work_item/wi-43.yaml"
+    second["subject_shell"]["subject_id"] = "wi-43"
+    assert isinstance(second["claim_type_artifact"], dict)
+    second["claim_type_artifact"]["literal_schema"] = {
+        "enum": ["blocked"],
+        "type": "string",
+    }
+    _write(files, "claims/legacy-a.json", first)
+    _write(files, "claims/legacy-b.json", second)
+
+    with pytest.raises(SeedBundleError) as refusal:
+        plan_seed_bundle(files, proposal_name="legacy")
+
+    assert "carry different ClaimType artifacts" in str(refusal.value)
