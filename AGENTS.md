@@ -56,7 +56,7 @@ Version lives in two places — keep them in sync:
 - `pyproject.toml` (`version = "X.Y.Z"`)
 - `src/cruxible_core/__init__.py` (`__version__ = "X.Y.Z"`)
 
-The MCP server name includes the version (`cruxible-core v0.4.0`) so agents and users can confirm which build is running.
+The MCP server name includes the version (`cruxible v0.4.0`) so agents and users can confirm which build is running.
 
 **When to bump:**
 - **Patch (0.2.x):** Bug fixes, doc/prompt wording changes, test additions
@@ -85,7 +85,7 @@ All interfaces delegate to the Playbill service layer. Never duplicate orchestra
 
 ```
 SDK (cruxible_client.authoring) ─┐
-MCP (mcp/)                       ├──▶ service/playbill_*.py ──▶ playbill/
+MCP (mcp/)                       ├──▶ playbill/service/ (documents, explain, review, source_catalog orchestration) and service/playbill_*.py ──▶ playbill/
 CLI (cli/)                       │
 HTTP (server/)                  ─┘
 ```
