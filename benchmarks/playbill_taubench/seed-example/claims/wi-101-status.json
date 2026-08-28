@@ -2,11 +2,9 @@
   "claim_id": null,
   "claim_type_artifact": {
     "admission_policy": {
-      "actor_requirements": [],
       "evidence_requirements": [],
       "freeze_requirements": [],
-      "tag": "playbill-claim-admission-policy-v1",
-      "transition_requirements": []
+      "tag": "playbill-claim-admission-policy-v1"
     },
     "allowed_object_subject_kinds": [],
     "allowed_subject_kinds": [
@@ -70,7 +68,6 @@
     "predicate": "project.work_item.status",
     "referent_sensitivity": "identity",
     "resolution_policy": {
-      "authority_rule_digest": null,
       "cardinality": "one",
       "conflict_result": "unresolved",
       "eligible_verdicts": [
@@ -105,7 +102,7 @@
       "kind": "ClaimType",
       "name": "project.work_item.status"
     },
-    "claim_type_digest": "sha256:84e26af5cd292edb33d7d3d246cc400b11d2c0a598f55d628c023be547da0906",
+    "claim_type_digest": "sha256:f63af79570a050b3def5e5e7464aa408c40d496f9a625e41b52e1227f968478e",
     "effective_from": null,
     "effective_until": null,
     "object": {

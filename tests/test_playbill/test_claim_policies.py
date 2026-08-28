@@ -135,6 +135,29 @@ def test_admission_refuses_truncated_query_freeze_bypass_and_unknown_predicate()
     assert "playbill.claim_policy.unknown_predicate" in refused.refusal_codes
 
 
+def test_retained_freeze_exception_bytes_cannot_bypass_without_transitions() -> None:
+    policy = _review_policy()
+    freeze = policy.freeze_requirements[0].model_copy(
+        update={"except_transition_requirements": ("retired-transition",)}
+    )
+    frozen_context = _context(parent_status="approved", candidate_status="approved")
+    frozen_context = frozen_context.model_copy(
+        update={
+            "candidate_values": {
+                **frozen_context.candidate_values,
+                "review.summary": ("changed",),
+            }
+        }
+    )
+
+    result = evaluate_claim_admission_candidate(
+        policy.model_copy(update={"freeze_requirements": (freeze,)}),
+        frozen_context,
+    )
+
+    assert "playbill.claim_policy.freeze_active" in result.refusal_codes
+
+
 def _evidence_policy() -> ClaimEvidenceAdmissionPolicyV1:
     return ClaimEvidenceAdmissionPolicyV1(
         rules=(

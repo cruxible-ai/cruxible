@@ -270,6 +270,7 @@ class PlaybillDescriptor(StrictModel):
             raise ValueError("daemon_public_key must contain 32 bytes of lowercase hex")
         return value
 
+
 class PrincipalInspection(StrictModel):
     principal_id: str
     algorithm: str

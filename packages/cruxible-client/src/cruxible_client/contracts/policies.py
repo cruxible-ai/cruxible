@@ -89,6 +89,7 @@ class EvidenceRequirementV1(_StrictPolicyModel):
         ArtifactDigest.from_tagged(value)
         return value
 
+
 class FreezeRequirementV1(_StrictPolicyModel):
     tag: Literal["playbill-freeze-requirement-v1"] = "playbill-freeze-requirement-v1"
     requirement_id: str

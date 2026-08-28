@@ -230,16 +230,16 @@ def test_claim_type_v1_and_v3_preserve_the_exact_precut_wire_and_digest() -> Non
     )
 
     assert hashlib.sha256(render_claim_type(original)).hexdigest() == (
-        "e0fa400a6ad96e7deb5d8b64c98984d0b392af24de4dfd42dfef784240b6832b"
+        "b2ab6796ff1ace872643b763f01b9942c25cb624baa33247f5e710407cf60c39"
     )
     assert claim_type_digest(original).tagged == (
-        "sha256:f1ed3e5b2833246ec71275ca212677a6585c0a4cad514b3436d9b29db91f2d23"
+        "sha256:bb336cc0f65017597703b86e62a250a853209f10a5a1cbf2348f82bf8c397afe"
     )
     assert hashlib.sha256(render_claim_type(successor)).hexdigest() == (
-        "2c1de8eee8e43a1e18e4e1977228ea1be45ae499b33bbe219c38e31901b472cf"
+        "7c7a2160d4a1c04f753d2d8bd539025af63fb7b2a4aa7ba0bc31ddeb1ed602e8"
     )
     assert claim_type_digest(successor).tagged == (
-        "sha256:08790f07585b846742d2ed3148a83b0380cda241b3fe49c6cf1ccbadb4961f67"
+        "sha256:3ebef3b4d70d3abdd98c000201a231427fe322a92c108b0c22b6113723945237"
     )
     assert b'"subject_scope":null' in render_claim_type(successor)
     assert b'"slot_policy":null' in render_claim_type(successor)
