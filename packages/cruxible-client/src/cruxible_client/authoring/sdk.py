@@ -32,6 +32,7 @@ from cruxible_client.authoring.sdk_types import (
     AccessProfile,
     ActivationPolicy,
     CapabilityNotServed,
+    CaptureRef,
     Cardinality,
     ClaimObjectKind,
     ClaimRef,
@@ -83,7 +84,9 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringReferenceExpectationV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayloadV3,
     ClaimDependencyDraftsV1,
+    ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV2,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
@@ -97,6 +100,7 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
+    capture_contract_path,
     foreign_source_capture_contract,
 )
 from cruxible_client.contracts.claim_types import (
@@ -193,6 +197,7 @@ class ClaimView:
     value: object
     lifecycle_state: str
     verdict: str
+    captures: tuple[CaptureRef, ...]
 
 
 def _address_path(value: object) -> str:
@@ -445,7 +450,12 @@ class ClaimTypeDraft:
 @dataclass(frozen=True)
 class _IntentDraft:
     _playbill: Playbill = field(repr=False, compare=False)
-    payload: ClaimAuthoringPayloadV1 | ClaimAuthoringPayloadV2 | ProcedureAuthoringPayloadV2
+    payload: (
+        ClaimAuthoringPayloadV1
+        | ClaimAuthoringPayloadV2
+        | ClaimAuthoringPayloadV3
+        | ProcedureAuthoringPayloadV2
+    )
     reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
     program_stamp: AuthoringProgramStampV1
     source_map: DiagnosticSourceMap
@@ -739,9 +749,9 @@ class Publication:
             raise ValueError(f"publication cannot apply from state {self.state!r}")
         path = self._path()
         payload = self._intent._draft.payload
-        if not isinstance(payload, ClaimAuthoringPayloadV2) or not isinstance(
-            payload.source, SelfSourceBodyV1
-        ):
+        if not isinstance(
+            payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayloadV3
+        ) or not isinstance(payload.source, SelfSourceBodyV1):
             raise ValueError("publication requires a retained self-source body")
         expected = path.read_bytes()
         application = apply_playbill_publication(
@@ -997,6 +1007,16 @@ class Playbill:
             value=object_value,
             lifecycle_state=state,
             verdict=(str(verdict.get("verdict", "")) if isinstance(verdict, Mapping) else ""),
+            captures=tuple(
+                CaptureRef(
+                    capture_digest=account.capture_digest,
+                    contract_address=capture_contract_path(
+                        account.capture_contract_identity.removeprefix("CaptureContract:")
+                    ),
+                    coordinate=_coordinate(view.coordinate),
+                )
+                for account in view.admission_accounts
+            ),
         )
 
     def activate(self, proposal_id: str) -> api.PlaybillWorkspaceActivationResult:
@@ -1151,8 +1171,8 @@ class Playbill:
         value: CanonicalValue,
         role: ClaimRole | str,
         rationale: str,
-        supported_by: EvidenceSelection | None,
-        copied_from: EvidenceSelection | None,
+        supported_by: EvidenceSelection | CaptureRef | None,
+        copied_from: EvidenceSelection | CaptureRef | None,
         self_source: str | None,
         qualifier: str | None,
         effective_period: EffectivePeriod | None,
@@ -1179,16 +1199,24 @@ class Playbill:
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
         source: Any
         if supported_by is not None:
-            assert_independent_projection_evidence(
-                source_id=supported_by.source_id,
-                content=supported_by.content,
-                start_byte=supported_by.start_byte,
-                end_byte=supported_by.end_byte,
-            )
-            source = supported_by.observation()
+            if isinstance(supported_by, CaptureRef):
+                self._assert_coordinate(supported_by.coordinate)
+                source = ExistingCaptureCitationSourceV1(capture_digest=supported_by.capture_digest)
+            else:
+                assert_independent_projection_evidence(
+                    source_id=supported_by.source_id,
+                    content=supported_by.content,
+                    start_byte=supported_by.start_byte,
+                    end_byte=supported_by.end_byte,
+                )
+                source = supported_by.observation()
             citation_role: Literal["evidence", "copy"] | None = "evidence"
         elif copied_from is not None:
-            source = copied_from.observation()
+            if isinstance(copied_from, CaptureRef):
+                self._assert_coordinate(copied_from.coordinate)
+                source = ExistingCaptureCitationSourceV1(capture_digest=copied_from.capture_digest)
+            else:
+                source = copied_from.observation()
             citation_role = "copy"
         else:
             assert self_source is not None
@@ -1205,7 +1233,7 @@ class Playbill:
                 key=lambda item: item[0].encode("ascii"),
             )
         )
-        payload = ClaimAuthoringPayloadV2(
+        payload_values = dict(
             statement=AuthoringClaimStatementV1(
                 subject=_subject_address(subject_name),
                 predicate=predicate_name,
@@ -1237,6 +1265,11 @@ class Playbill:
                 ),
             ),
         )
+        payload = (
+            ClaimAuthoringPayloadV3(**payload_values)
+            if isinstance(source, ExistingCaptureCitationSourceV1)
+            else ClaimAuthoringPayloadV2(**payload_values)
+        )
         expectations: list[AuthoringReferenceExpectationV1 | None] = [
             _expectation(
                 subject,
@@ -1252,6 +1285,22 @@ class Playbill:
         if revises is not None:
             expectations.append(
                 _expectation(revises, expected=RefKind.CLAIM, payload_path="claim_ref")
+            )
+        capture_ref = (
+            supported_by
+            if isinstance(supported_by, CaptureRef)
+            else copied_from
+            if isinstance(copied_from, CaptureRef)
+            else None
+        )
+        if capture_ref is not None:
+            expectations.append(
+                AuthoringReferenceExpectationV1(
+                    payload_path="source",
+                    artifact_kind="Source",
+                    address=capture_ref.contract_address,
+                    minted_coordinate=capture_ref.coordinate,
+                )
             )
         for index, (raw_key, _value) in enumerate(sorted_dispositions):
             original = next(key for key in dispositions if _address(key, RefKind.CLAIM) == raw_key)
@@ -1294,11 +1343,12 @@ class Playbill:
             ),
             "source_id": (
                 supported_by.source_id
-                if supported_by is not None
+                if isinstance(supported_by, EvidenceSelection)
                 else copied_from.source_id
-                if copied_from is not None
+                if isinstance(copied_from, EvidenceSelection)
                 else None
             ),
+            "capture_digest": None if capture_ref is None else capture_ref.capture_digest,
             "self_source": self_source,
             "qualifier": qualifier,
             "effective_period": (

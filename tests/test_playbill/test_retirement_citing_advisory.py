@@ -1,17 +1,16 @@
-"""What survives the withdrawal of the stranded-citation laws.
+"""Historical preflight silence and accepted citation-relation consequences.
 
-The `claim_cites_retired` queue row and the retirement `citing_claims` advisory
-are WITHDRAWN. Retiring a Claim withdraws an assertion, not the evidence under
-it, so the Claims that read the same bytes are not stranded by the retirement.
-The only key those laws could be built on -- byte equality of the committed
-content -- joins unrelated Claims that happen to read identical spans of
-different sources. The sound key is an explicit copy edge recorded on the
-citation, which is a wire movement belonging to the shared-Capture/copy-edge
-design decision.
+The retirement preflight advisory stays withdrawn: retiring a Claim never
+enumerates downstream consequences in the governed operation. The stateless
+queue instead uses explicit shared-Capture and same-source-version selector
+relations. It remains silent when all it knows is equal bytes from unrelated
+sources; it does not need a workspace observation for accepted same-version
+selector overlap.
 
 What is kept here is the evidence for that ruling, not the withdrawn machinery:
-the acceptance law that makes a shared Capture impossible, the reachable
-copied_from world, and the pins that both surfaces now stay silent.
+the historical self-source refusal, the reachable copied-from world, and the
+pins that keep the governed operation silent while the queue reports the
+accepted relation.
 """
 
 from __future__ import annotations
@@ -32,23 +31,7 @@ from cruxible_client.contracts.claims import (
 def test_citing_another_claims_coordinator_capture_is_refused_at_evaluation(
     tmp_path: Path,
 ) -> None:
-    """Why the stranding law has no end-to-end path today, pinned as a law.
-
-    The detector above is correct and the retirement advisory is correct, but
-    the state they act on -- two Claims citing one Capture -- is not reachable
-    through the surfaces. Two separate rules produce that:
-
-    * every builder in `contracts.captures` binds `claim_id` into the envelope
-      it mints, so no authoring call can hand the same Capture to two Claims;
-    * for the coordinator self-source contract, proposal evaluation refuses a
-      Claim citing a Capture bound to a different Claim outright.
-
-    The second is the harder one and it is what this test pins. The refusal is
-    scoped to that one contract (`_citation_origin_refusal`), so a Capture under
-    another contract -- a foreign source, a provider run -- could legitimately
-    be shared if a builder ever minted one without the claim_id binding. Until
-    one does, `claim_cites_retired` is a law with no reachable subject.
-    """
+    """The proposal law preserves Claim binding while observed Captures are shareable."""
     from cruxible_core.playbill.proposals import (
         AuthenticatedActor,
         ProposalAdmissionRequest,
@@ -155,7 +138,8 @@ def copied_from_world(root: Path, *, retire: bool = True):  # type: ignore[no-un
     commit to the same selected bytes. The observing Claim is then retired.
 
     This world is kept because it is the one that made the ruling decidable: it
-    is genuinely reachable, and the surfaces are now pinned silent on it.
+    is genuinely reachable, and the queue can prove its same-version selector
+    relation without joining bytes by value.
     Returns the instance, its owner, and the coordinator and actor that built it.
     """
     from cruxible_client.contracts.authoring.models import (
@@ -265,10 +249,10 @@ def test_retiring_a_claim_says_nothing_about_who_else_read_the_same_bytes(
     assert preflight.citing_claims == ()
 
 
-def test_the_queue_stays_silent_about_the_claim_that_copied_a_retired_one(
+def test_same_version_selector_relation_reports_the_claim_that_copied_a_retired_one(
     tmp_path: Path,
 ) -> None:
-    """The reachable stranding world produces no row. That is the ruling."""
+    """Accepted same-version spans are sufficient without a workspace observation."""
     from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
     from cruxible_core.service.playbill_next import (
         PlaybillNextRequestV1,
@@ -288,11 +272,13 @@ def test_the_queue_stays_silent_about_the_claim_that_copied_a_retired_one(
         ),
     )
 
-    assert all(item.reason != "claim_cites_retired" for item in result.items)
+    rows = tuple(item for item in result.items if item.reason == "claim_cites_retired")
+    assert len(rows) == 1
+    assert rows[0].subject_identity == f"Claim:{COPY_CLAIM_ID}"
+    assert rows[0].detail["relation_kind"] == "same_version_span"
 
 
-def test_the_withdrawn_reason_stays_reserved_on_the_wire() -> None:
-    """Reserved, not removed: the copy-edge design must not move this twice."""
+def test_the_relation_reason_remains_in_the_closed_wire_vocabulary() -> None:
     from typing import get_args
 
     from cruxible_core.service.playbill_next import NextReason

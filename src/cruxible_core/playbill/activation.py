@@ -102,6 +102,15 @@ class ActivationPublisher:
     ) -> AssemblerResult:
         coordinate = bundle.projection_coordinate(base=base)
         accepted_coordinates = dict(self.accepted_coordinates_by_sequence)
+        accepted_coordinates.setdefault(
+            bundle.record.sequence - 1,
+            AcceptedCoordinate(
+                git_oid=base.git_oid,
+                semantic_root=base.semantic_root,
+                generation_root=base.generation_root,
+                compiler_digest=base.compiler.rule_digest,
+            ),
+        )
         accepted_coordinates[bundle.record.sequence] = AcceptedCoordinate(
             git_oid=coordinate.git_oid,
             semantic_root=coordinate.semantic_root,

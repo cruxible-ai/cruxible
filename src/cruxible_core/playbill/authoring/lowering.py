@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import NoReturn
@@ -15,6 +16,8 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayloadV3,
+    ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
     RepairAlternativeV1,
@@ -24,14 +27,20 @@ from cruxible_client.contracts.authoring.models import (
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    AcceptedCaptureContract,
     CaptureBuildResult,
     DirectCaptureBuildResult,
     build_coordinator_self_source_capture,
     build_working_selection_capture,
     capture_contract_digest,
     capture_contract_path,
+    classify_capture_reuse,
+    parse_capture_contract,
+    parse_capture_envelope,
     render_capture_contract,
+    verify_capture,
 )
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -56,10 +65,12 @@ from cruxible_client.contracts.claims import (
     claim_referent_context_digest,
     claim_statement_address,
     claim_statement_digest,
+    evaluate_capture_evidence_admissions,
     merge_claim_citations,
     parse_claim,
     render_claim,
 )
+from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny,
     ProcedureArtifactV1,
@@ -73,12 +84,18 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, iter_pin_bindings
+from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.source_references import LedgerSourceReferenceV1
 from cruxible_client.contracts.subjects import (
     parse_subject,
     render_subject,
     subject_digest,
     subject_path,
+)
+from cruxible_core.playbill.citation_relations import (
+    RELATION_CONTRACT_SCHEMA,
+    capture_contract_relation_subject,
 )
 from cruxible_core.playbill.compiler import projection_registry_for_compiler
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -102,6 +119,94 @@ class LoweredAuthoring:
     proposed_tree: dict[str, bytes]
     resolved_authoring: dict[str, object]
     changed_members: tuple[tuple[str, bytes], ...]
+    idempotent: bool = False
+
+
+@dataclass(frozen=True)
+class _TreeLedgerResolver:
+    tree: Mapping[str, bytes]
+    coordinate: AcceptedCoordinate
+
+    def read_ledger_source(self, source: LedgerSourceReferenceV1) -> bytes:
+        if source.coordinate != self.coordinate:
+            raise ValueError("ledger Capture source names another accepted coordinate")
+        content = self.tree.get(source.address.artifact_path)
+        if content is None:
+            raise ValueError("ledger Capture source is absent at its accepted coordinate")
+        return content
+
+
+def _capture_contract_at_base(
+    instance: PlaybillInstance,
+    *,
+    base: AcceptedProjectionCoordinate,
+    base_tree: Mapping[str, bytes],
+    contract_digest: str,
+) -> AcceptedCaptureContract:
+    with instance.bind_accepted_projection(base) as projection:
+        facts = projection.semantic_facts(
+            RELATION_CONTRACT_SCHEMA,
+            subject_identity=capture_contract_relation_subject(contract_digest),
+        )
+    if len(facts) != 1 or not isinstance(facts[0].value, dict):
+        _refuse(
+            "playbill.authoring.capture_contract_unresolved",
+            "source.capture_digest",
+            "The existing Capture's exact CaptureContract is not accepted at this base.",
+            repair_kind="replace_capture",
+            repair_description=(
+                "Choose a Capture whose exact contract is accepted at the intent base."
+            ),
+        )
+    value = facts[0].value
+    path_value = value.get("path")
+    path = path_value.get("$path") if isinstance(path_value, dict) else None
+    if not isinstance(path, str) or not isinstance(base_tree.get(path), bytes):
+        _refuse(
+            "playbill.authoring.capture_contract_unresolved",
+            "source.capture_digest",
+            "The CaptureContract relation does not resolve an accepted artifact.",
+            repair_kind="replace_capture",
+            repair_description=(
+                "Choose a Capture whose exact contract is accepted at the intent base."
+            ),
+        )
+    contract = parse_capture_contract(base_tree[path], path=path)
+    accepted = AcceptedCaptureContract(
+        path=path,
+        contract=contract,
+        artifact_digest=capture_contract_digest(contract).tagged,
+    )
+    if accepted.artifact_digest != contract_digest:
+        _refuse(
+            "playbill.authoring.capture_contract_unresolved",
+            "source.capture_digest",
+            "The indexed CaptureContract differs from the Capture's exact contract digest.",
+            repair_kind="replace_capture",
+            repair_description=(
+                "Choose a Capture whose exact contract is accepted at the intent base."
+            ),
+        )
+    return accepted
+
+
+def _provider_digests_for_capture(
+    tree: Mapping[str, bytes],
+    *,
+    producer: ArtifactIdentity,
+    executable: ArtifactIdentity,
+) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for identity in {producer, executable}:
+        if identity.kind != "Provider":
+            continue
+        path = provider_path(identity.name)
+        content = tree.get(path)
+        if content is None:
+            continue
+        provider = parse_provider(content, path=path)
+        result[identity.qualified] = provider_digest(provider).tagged
+    return result
 
 
 def _refuse(
@@ -259,7 +364,7 @@ def _install_claim_dependencies(
 ) -> tuple[dict[str, bytes], set[str]]:
     candidate_tree = dict(base_tree)
     changed_paths: set[str] = set()
-    if not isinstance(payload, ClaimAuthoringPayloadV2):
+    if not isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayloadV3):
         return candidate_tree, changed_paths
 
     drafts = payload.dependency_drafts
@@ -483,7 +588,9 @@ def _lower_claim(
         )
 
     public_base = AcceptedCoordinate.from_internal(base)
-    built_capture: CaptureBuildResult | DirectCaptureBuildResult
+    built_capture: CaptureBuildResult | DirectCaptureBuildResult | None = None
+    accepted_contract: AcceptedCaptureContract | None = None
+    install_contract = True
     if isinstance(payload.source, SelfSourceBodyV1):
         built_capture = build_coordinator_self_source_capture(
             store=instance.body_store(),
@@ -496,6 +603,100 @@ def _lower_claim(
         contract = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT
         citation_role: CitationRole = "copy"
         citation_origin: CitationOrigin = "self_source"
+    elif isinstance(payload.source, ExistingCaptureCitationSourceV1):
+        install_contract = False
+        store = instance.body_store()
+        try:
+            raw_envelope = store.read(
+                payload.source.capture_digest,
+                access=BodyAccessContext(
+                    principal_id="playbill-authoring",
+                    can_read_body=True,
+                ),
+            )
+        except PlaybillError:
+            _refuse(
+                "playbill.authoring.existing_capture_not_found",
+                "source.capture_digest",
+                "The existing Capture digest is not present in the daemon CAS.",
+                repair_kind="replace_capture",
+                repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
+            )
+        try:
+            envelope = parse_capture_envelope(raw_envelope)
+        except (PlaybillError, ValueError):
+            _refuse(
+                "playbill.authoring.existing_capture_invalid",
+                "source.capture_digest",
+                "The referenced bytes are not a canonical Capture envelope.",
+                repair_kind="replace_capture",
+                repair_description="Use a Capture digest returned by a typed Claim/evidence read.",
+            )
+        accepted_contract = _capture_contract_at_base(
+            instance,
+            base=base,
+            base_tree=candidate_base_tree,
+            contract_digest=envelope.capture_contract_digest,
+        )
+        try:
+            envelope = verify_capture(
+                payload.source.capture_digest,
+                store=store,
+                contract=accepted_contract.contract,
+                ledger_resolver=_TreeLedgerResolver(
+                    candidate_base_tree,
+                    AcceptedCoordinate.from_internal(base),
+                ),
+                producer_artifact_digests=_provider_digests_for_capture(
+                    candidate_base_tree,
+                    producer=envelope.producer,
+                    executable=envelope.run_coordinate.executable_identity,
+                ),
+            )
+        except (PlaybillError, ValueError):
+            _refuse(
+                "playbill.authoring.existing_capture_invalid",
+                "source.capture_digest",
+                "The existing Capture does not verify against its exact accepted contract.",
+                repair_kind="replace_capture",
+                repair_description="Use a verified Capture returned at this accepted coordinate.",
+            )
+        classification = classify_capture_reuse(
+            envelope,
+            contract=accepted_contract.contract,
+            store=store,
+            claim_id=claim_id,
+        )
+        if classification == "claim_bound_mismatch":
+            _refuse(
+                "playbill.claim.self_source_capture_unbound",
+                "source.capture_digest",
+                "The Claim-bound Capture belongs to another Claim or has mismatched "
+                "family signals.",
+                repair_kind="replace_capture",
+                repair_description="Use a shareable observed Capture or one bound to this Claim.",
+            )
+        if classification == "not_shareable":
+            _refuse(
+                "playbill.authoring.capture_not_shareable",
+                "source.capture_digest",
+                "Only verified observed Captures are shareable across Claims.",
+                repair_kind="replace_capture",
+                repair_description="Use an observed Capture or author new source evidence.",
+            )
+        assert payload.citation_role is not None
+        if classification == "claim_bound" and payload.citation_role != "copy":
+            _refuse(
+                "playbill.authoring.existing_capture_not_admitted",
+                "citation_role",
+                "Claim-bound self-source Captures remain non-evidentiary copies.",
+                repair_kind="replace_citation_role",
+                repair_description="Use citation_role=copy for this Claim-bound Capture.",
+                replacement="copy",
+            )
+        contract = accepted_contract.contract
+        citation_role = payload.citation_role
+        citation_origin = "self_source" if classification == "claim_bound" else "independent"
     else:
         source = payload.source
         assert isinstance(source, WorkingSelectionObservationV1)
@@ -517,10 +718,21 @@ def _lower_claim(
         citation_role = payload.citation_role
         citation_origin = "independent"
 
+    capture_digest_value = (
+        payload.source.capture_digest
+        if isinstance(payload.source, ExistingCaptureCitationSourceV1)
+        else built_capture.capture_digest
+    )
+    capture_envelope = (
+        envelope
+        if isinstance(payload.source, ExistingCaptureCitationSourceV1)
+        else built_capture.envelope
+    )
+
     identity = ArtifactIdentity(kind="Claim", name=claim_id)
     citation = build_claim_citation(
         identity,
-        capture_digest=built_capture.capture_digest,
+        capture_digest=capture_digest_value,
         role=citation_role,
         origin=citation_origin,
     )
@@ -533,7 +745,7 @@ def _lower_claim(
         sorted(
             {
                 *(() if predecessor is None else predecessor.backing.capture_digests),
-                built_capture.capture_digest,
+                capture_digest_value,
             },
             key=lambda item: item.encode("ascii"),
         )
@@ -542,9 +754,9 @@ def _lower_claim(
         subject=claim_statement_address(path),
         spans=(
             ContentSpan(
-                content_digest=built_capture.envelope.commitment.digest,
+                content_digest=capture_envelope.commitment.digest,
                 start_byte=0,
-                end_byte=built_capture.envelope.commitment.byte_length or 0,
+                end_byte=capture_envelope.commitment.byte_length or 0,
             ),
         ),
     )
@@ -599,13 +811,54 @@ def _lower_claim(
             )
         ),
     )
+    if isinstance(payload.source, ExistingCaptureCitationSourceV1) and citation_role == "evidence":
+        assert accepted_contract is not None
+        admissions = evaluate_capture_evidence_admissions(
+            claim,
+            claim_type=claim_type,
+            capture_digest=capture_digest_value,
+            capture_contract=accepted_contract,
+            envelope=capture_envelope,
+            verified_attestations=(),
+        )
+        if not any(decision.trace.result.verdict == "eligible" for decision in admissions):
+            _refuse(
+                "playbill.authoring.existing_capture_not_admitted",
+                "source.capture_digest",
+                "The existing Capture satisfies no evidence admission rule for this Claim.",
+                repair_kind="replace_capture_or_role",
+                repair_description=(
+                    "Use a Capture admitted by the ClaimType or cite it as a non-evidentiary copy."
+                ),
+                replacement={
+                    "closest_rule_ids": sorted(
+                        {
+                            decision.trace.closest_rule_id
+                            for decision in admissions
+                            if decision.trace.closest_rule_id is not None
+                        },
+                        key=lambda item: item.encode("utf-8"),
+                    ),
+                    "underlying_refusal_codes": sorted(
+                        {
+                            decision.trace.result.refusal_code
+                            for decision in admissions
+                            if decision.trace.result.refusal_code is not None
+                        },
+                        key=lambda item: item.encode("utf-8"),
+                    ),
+                },
+            )
     candidate_tree = dict(candidate_base_tree)
     contract_member_path = capture_contract_path(contract.identity.name)
     contract_bytes = render_capture_contract(contract)
     claim_bytes = render_claim(claim)
-    candidate_tree[contract_member_path] = contract_bytes
+    if install_contract:
+        candidate_tree[contract_member_path] = contract_bytes
     candidate_tree[path] = claim_bytes
-    member_paths = {contract_member_path, path}
+    member_paths = {path}
+    if install_contract:
+        member_paths.add(contract_member_path)
     member_paths.update(dependency_paths)
     changed = tuple(
         (member_path, candidate_tree[member_path])
@@ -615,11 +868,35 @@ def _lower_claim(
         )
         if base_tree.get(member_path) != candidate_tree[member_path]
     )
+    idempotent = (
+        isinstance(payload.source, ExistingCaptureCitationSourceV1)
+        and predecessor is not None
+        and claim.statement == predecessor.statement
+        and citation in predecessor_citations
+        and not payload.existing_claim_dispositions
+        and not dependency_paths
+    )
+    if idempotent:
+        candidate_tree = dict(candidate_base_tree)
+        changed = ()
+    resolved_artifact_digest = (
+        claim_artifact_digest(predecessor).tagged
+        if idempotent and predecessor is not None
+        else claim_artifact_digest(claim).tagged
+    )
     return LoweredAuthoring(
         proposed_tree=candidate_tree,
         resolved_authoring={
-            "artifact_digest": claim_artifact_digest(claim).tagged,
-            "capture_digest": built_capture.capture_digest,
+            "artifact_digest": resolved_artifact_digest,
+            "capture_digest": capture_digest_value,
+            "citation_id": citation.citation_id,
+            **(
+                {
+                    "outcome": "playbill.authoring.existing_capture_already_associated",
+                }
+                if idempotent
+                else {}
+            ),
             "changed_members": _encoded_members(changed),
             "existing_claim_dispositions": [
                 {
@@ -639,6 +916,7 @@ def _lower_claim(
             "statement": statement.model_dump(mode="json"),
         },
         changed_members=changed,
+        idempotent=idempotent,
     )
 
 

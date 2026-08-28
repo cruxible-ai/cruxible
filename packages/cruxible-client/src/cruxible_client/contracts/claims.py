@@ -36,6 +36,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
     capture_is_direct_self_source,
+    classify_capture_reuse,
     verify_capture,
 )
 from cruxible_client.contracts.claim_attestations import (
@@ -1120,6 +1121,22 @@ def _citation_origin_refusal(
     )
     if not associations:
         return None
+    reuse_class = classify_capture_reuse(
+        envelope,
+        contract=contract,
+        store=store,
+        claim_id=claim.identity.name,
+    )
+    if reuse_class == "claim_bound_mismatch":
+        return (
+            "playbill.claim.self_source_capture_unbound",
+            "The Claim-bound Capture belongs to another Claim or has mismatched family signals.",
+        )
+    if reuse_class == "not_shareable":
+        return (
+            "playbill.authoring.capture_not_shareable",
+            "Only a verified observed Capture may be shared across Claims.",
+        )
     direct_self_source = capture_is_direct_self_source(
         envelope,
         contract=contract,

@@ -31,6 +31,12 @@ from cruxible_client.contracts.authoring.models import (
     build_preflight_certificate,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    parse_capture_contract,
+    parse_capture_envelope,
+)
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_types import (
     claim_type_digest,
     claim_type_path,
@@ -165,6 +171,37 @@ def _payload_value_matches_reference(
     return False
 
 
+def _existing_capture_contract_matches_reference(
+    instance: PlaybillInstance,
+    *,
+    value: object,
+    artifact_path: str,
+    artifact_content: bytes,
+) -> bool:
+    """Bind an existing-Capture payload ref to its exact accepted contract bytes."""
+
+    if not (
+        isinstance(value, dict)
+        and value.get("tag") == "playbill-existing-capture-citation-source-v1"
+        and isinstance(value.get("capture_digest"), str)
+    ):
+        return False
+    try:
+        envelope = parse_capture_envelope(
+            instance.body_store().read(
+                value["capture_digest"],
+                access=BodyAccessContext(
+                    principal_id="playbill-authoring",
+                    can_read_body=True,
+                ),
+            )
+        )
+        contract = parse_capture_contract(artifact_content, path=artifact_path)
+    except (PlaybillError, ValueError):
+        return False
+    return capture_contract_digest(contract).tagged == envelope.capture_contract_digest
+
+
 def _reference_diagnostics(
     instance: PlaybillInstance,
     *,
@@ -198,7 +235,12 @@ def _reference_diagnostics(
                 )
             )
             continue
-        if not _payload_value_matches_reference(
+        existing_capture_contract_ref = (
+            expectation.artifact_kind == "Source"
+            and isinstance(value, dict)
+            and value.get("tag") == "playbill-existing-capture-citation-source-v1"
+        )
+        if not existing_capture_contract_ref and not _payload_value_matches_reference(
             value,
             expectation=expectation,
             artifact_path=path,
@@ -263,6 +305,31 @@ def _reference_diagnostics(
                     owner="daemon",
                     disposition="terminal",
                     repairs=(),
+                )
+            )
+            continue
+        if existing_capture_contract_ref and not _existing_capture_contract_matches_reference(
+            instance,
+            value=value,
+            artifact_path=path,
+            artifact_content=minted_content,
+        ):
+            diagnostics.append(
+                _diagnostic(
+                    code="playbill.authoring.reference_payload_mismatch",
+                    stage="reference_assertion",
+                    offending_element=expectation.payload_path,
+                    message="The existing Capture names another exact CaptureContract.",
+                    repairs=(
+                        _repair(
+                            "replace_reference",
+                            "Use the contract reference minted with this Capture.",
+                            {
+                                "address": expectation.address,
+                                "artifact_kind": expectation.artifact_kind,
+                            },
+                        ),
+                    ),
                 )
             )
             continue
@@ -516,51 +583,58 @@ def compute_preflight(
 
     try:
         lowered = lower_authoring(instance, intent=intent, actor_id=actor.actor_id)
-        try:
-            proposed_tree = validate_proposal_tree(
-                lowered.proposed_tree,
-                limits=service.receive_limits,
-                base_tree=base_tree,
-            )
-        except ProposalAdmissionError as exc:
-            diagnostics.append(
-                _diagnostic(
-                    code="playbill.authoring.proposal_receive_refused",
-                    stage="proposal_receive",
-                    offending_element="payload",
-                    message=str(exc),
-                    repairs=(
-                        _repair(
-                            "reduce_authoring",
-                            "Reduce the authored member count or byte size named by this refusal.",
-                        ),
-                    ),
-                )
-            )
-            blocked.append(
-                BlockedCheckV1(
-                    check="proposal_evaluation",
-                    blocked_by=("playbill.authoring.proposal_receive_refused",),
-                    reason="The candidate tree must pass bounded receive before semantic laws run.",
-                )
-            )
-            proposed_tree = lowered.proposed_tree
+        if lowered.idempotent:
+            evaluated_tree = current_tree
+            resolved_payload = lowered.resolved_authoring
         else:
-            evaluation = evaluate_proposal_tree(
-                base_tree=base_tree,
-                current_tree=current_tree,
-                proposed_tree=proposed_tree,
-                current=current,
-                bodies=instance.body_store(),
-                timestamp=intent.canonical_timestamp,
-                rebased=base.git_oid != current.git_oid,
-                actor_id=actor.actor_id,
-                promotion_verifier=service.promotion_verifier,
-                query_facts_provider=service.query_facts_provider,
-            )
-            evaluated_tree = evaluation.tree
-            diagnostics.extend(_compiler_diagnostic(item) for item in evaluation.diagnostics)
-        resolved_payload = lowered.resolved_authoring
+            proposed_tree = lowered.proposed_tree
+            try:
+                proposed_tree = validate_proposal_tree(
+                    proposed_tree,
+                    limits=service.receive_limits,
+                    base_tree=base_tree,
+                )
+            except ProposalAdmissionError as exc:
+                diagnostics.append(
+                    _diagnostic(
+                        code="playbill.authoring.proposal_receive_refused",
+                        stage="proposal_receive",
+                        offending_element="payload",
+                        message=str(exc),
+                        repairs=(
+                            _repair(
+                                "reduce_authoring",
+                                "Reduce the authored member count or byte size named by this "
+                                "refusal.",
+                            ),
+                        ),
+                    )
+                )
+                blocked.append(
+                    BlockedCheckV1(
+                        check="proposal_evaluation",
+                        blocked_by=("playbill.authoring.proposal_receive_refused",),
+                        reason=(
+                            "The candidate tree must pass bounded receive before semantic laws run."
+                        ),
+                    )
+                )
+            else:
+                evaluation = evaluate_proposal_tree(
+                    base_tree=base_tree,
+                    current_tree=current_tree,
+                    proposed_tree=proposed_tree,
+                    current=current,
+                    bodies=instance.body_store(),
+                    timestamp=intent.canonical_timestamp,
+                    rebased=base.git_oid != current.git_oid,
+                    actor_id=actor.actor_id,
+                    promotion_verifier=service.promotion_verifier,
+                    query_facts_provider=service.query_facts_provider,
+                )
+                evaluated_tree = evaluation.tree
+                diagnostics.extend(_compiler_diagnostic(item) for item in evaluation.diagnostics)
+            resolved_payload = lowered.resolved_authoring
     except AuthoringLoweringError as exc:
         diagnostics.append(
             _diagnostic(

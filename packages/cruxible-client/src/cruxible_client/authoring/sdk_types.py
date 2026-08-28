@@ -81,6 +81,15 @@ class SourceRef:
 
 
 @dataclass(frozen=True)
+class CaptureRef:
+    """Opaque accepted Capture plus the exact contract assertion that minted it."""
+
+    capture_digest: str
+    contract_address: str
+    coordinate: AcceptedCoordinate
+
+
+@dataclass(frozen=True)
 class SlotRef:
     address: str
     coordinate: AcceptedCoordinate
@@ -306,6 +315,7 @@ __all__ = [
     "ProcedureRef",
     "QueryRef",
     "RefKind",
+    "CaptureRef",
     "ReferenceKindError",
     "ReferentSensitivity",
     "SlotRef",

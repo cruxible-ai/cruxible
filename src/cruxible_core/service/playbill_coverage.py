@@ -51,6 +51,10 @@ from cruxible_client.contracts.source_references import (
     SourceAccessClass,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.citation_relations import (
+    RELATION_SOURCE_USE_SCHEMA,
+    logical_source_relation_subject,
+)
 from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
     build_overlay,
@@ -332,57 +336,126 @@ def _citation_window_observations(
     index: EvidenceCitationIndexV2,
     observations: Sequence[WorkingSourceObservationV1],
     envelopes: Mapping[str, CaptureEnvelopeV1],
+    retired_associations: Sequence[tuple[LogicalSourceIdentityV1, str, str]] = (),
 ) -> tuple[PlaybillCitationWindowObservationV1, ...]:
     """Observe each accepted citation's original window in its named working source."""
 
     by_source = {item.source.sort_key: item for item in observations}
     windows: dict[tuple[bytes, bytes, int, int], PlaybillCitationWindowObservationV1] = {}
+    associations: list[tuple[LogicalSourceIdentityV1, str, str, str]] = []
     for citation in index.citations:
         if citation.accepted_source is None or citation.byte_length is None:
             continue
-        observed = by_source.get(citation.accepted_source.sort_key)
         for association in citation.citation_associations:
-            envelope = envelopes[association.capture_digest]
-            if not isinstance(envelope.source, ExternalSourceReferenceV1):
-                continue
-            selector = envelope.source.selector
-            if not isinstance(selector, Mapping):
-                continue
-            window = selector.get("working_selection", selector)
-            raw_start = window.get("start_byte") if isinstance(window, Mapping) else None
-            raw_end = window.get("end_byte") if isinstance(window, Mapping) else None
-            if (
-                not isinstance(raw_start, int)
-                or isinstance(raw_start, bool)
-                or not isinstance(raw_end, int)
-                or isinstance(raw_end, bool)
-                or not 0 <= raw_start <= raw_end
-            ):
-                continue
-            start, end = raw_start, raw_end
-            addressable = observed is not None and end <= observed.byte_length
-            observed_digest = None
-            if addressable and observed is not None:
-                observed_digest = (
-                    f"sha256:{hashlib.sha256(observed.content[start:end]).hexdigest()}"
+            associations.append(
+                (
+                    citation.accepted_source,
+                    association.reference.citation_id,
+                    association.capture_digest,
+                    citation.commitment_digest,
                 )
-            item = PlaybillCitationWindowObservationV1(
-                source=citation.accepted_source,
-                citation_id=association.reference.citation_id,
-                commitment_digest=citation.commitment_digest,
-                original_start=start,
-                original_end=end,
-                addressable=addressable,
-                observed_window_digest=observed_digest,
             )
-            key = (
-                item.source.sort_key,
-                item.citation_id.encode("ascii"),
-                item.original_start,
-                item.original_end,
-            )
-            windows[key] = item
+    for source, citation_id, capture_digest in retired_associations:
+        envelope = envelopes.get(capture_digest)
+        if envelope is None:
+            continue
+        associations.append((source, citation_id, capture_digest, envelope.commitment.digest))
+
+    for accepted_source, citation_id, capture_digest, commitment_digest in associations:
+        observed = by_source.get(accepted_source.sort_key)
+        envelope = envelopes[capture_digest]
+        if not isinstance(envelope.source, ExternalSourceReferenceV1):
+            continue
+        selector = envelope.source.selector
+        if not isinstance(selector, Mapping):
+            continue
+        window = selector.get("working_selection", selector)
+        raw_start = window.get("start_byte") if isinstance(window, Mapping) else None
+        raw_end = window.get("end_byte") if isinstance(window, Mapping) else None
+        if (
+            not isinstance(raw_start, int)
+            or isinstance(raw_start, bool)
+            or not isinstance(raw_end, int)
+            or isinstance(raw_end, bool)
+            or not 0 <= raw_start <= raw_end
+        ):
+            continue
+        start, end = raw_start, raw_end
+        addressable = observed is not None and end <= observed.byte_length
+        observed_digest = None
+        if addressable and observed is not None:
+            observed_digest = f"sha256:{hashlib.sha256(observed.content[start:end]).hexdigest()}"
+        item = PlaybillCitationWindowObservationV1(
+            source=accepted_source,
+            citation_id=citation_id,
+            commitment_digest=commitment_digest,
+            original_start=start,
+            original_end=end,
+            addressable=addressable,
+            observed_window_digest=observed_digest,
+        )
+        key = (
+            item.source.sort_key,
+            item.citation_id.encode("ascii"),
+            item.original_start,
+            item.original_end,
+        )
+        windows[key] = item
     return tuple(windows[key] for key in sorted(windows))
+
+
+def _retired_citation_window_inputs(
+    instance: PlaybillInstance,
+    *,
+    coordinate: PlaybillAcceptedCoordinate,
+    observations: Sequence[WorkingSourceObservationV1],
+) -> tuple[tuple[LogicalSourceIdentityV1, str, str], ...]:
+    """Read retired citation windows from the coordinate-bound relation projection.
+
+    These inputs extend only the authenticated citation-window observation set.
+    They never enter coverage cards, so a retired Claim remains absent from the
+    ordinary coverage surface.
+    """
+
+    internal = instance.resolve_accepted_coordinate(
+        git_oid=coordinate.git_oid,
+        semantic_root=coordinate.semantic_root,
+        generation_root=coordinate.generation_root,
+        compiler_digest=coordinate.compiler_digest,
+    )
+    inputs: dict[tuple[bytes, bytes], tuple[LogicalSourceIdentityV1, str, str]] = {}
+    with instance.bind_accepted_projection(internal) as projection:
+        observed_sources = {
+            item.source.identity for item in observations if item.source.plane == "external"
+        }
+        for source_id in sorted(observed_sources, key=lambda item: item.encode("utf-8")):
+            for fact in projection.semantic_facts(
+                RELATION_SOURCE_USE_SCHEMA,
+                subject_identity=logical_source_relation_subject(source_id),
+            ):
+                value = fact.value
+                if not isinstance(value, Mapping):
+                    raise ProposalIntegrityError("retired citation relation is malformed")
+                if value.get("claim_lifecycle") != "retired":
+                    continue
+                source = value.get("source")
+                capture = value.get("capture_digest")
+                citation_id = value.get("citation_id")
+                if (
+                    not isinstance(source, Mapping)
+                    or not isinstance(capture, Mapping)
+                    or not isinstance(capture.get("$digest"), str)
+                    or not isinstance(citation_id, str)
+                ):
+                    raise ProposalIntegrityError("retired citation relation is malformed")
+                external = ExternalSourceReferenceV1.model_validate(source)
+                logical = LogicalSourceIdentityV1(
+                    plane="external",
+                    identity=external.source_identity,
+                )
+                item = (logical, citation_id, capture["$digest"])
+                inputs[(logical.sort_key, citation_id.encode("ascii"))] = item
+    return tuple(inputs[key] for key in sorted(inputs))
 
 
 def _capture_envelopes(
@@ -502,6 +575,11 @@ def service_resolve_playbill_coverage(
     coordinate = _resolve_coordinate(instance, at)
     index = build_accepted_evidence_index_v2(instance, at=coordinate)
     envelopes = _capture_envelopes(instance, index=index)
+    retired_associations = _retired_citation_window_inputs(
+        instance,
+        coordinate=coordinate,
+        observations=observations,
+    )
     overlay = build_overlay(
         observations,
         wanted=_materialized_wanted_selections(instance, index=index, envelopes=envelopes),
@@ -531,6 +609,10 @@ def service_resolve_playbill_coverage(
             index=index,
             observations=observations,
             envelopes=envelopes,
+            retired_associations=retired_associations,
+        ),
+        additional_window_citation_ids=frozenset(
+            citation_id for _source, citation_id, _capture in retired_associations
         ),
     )
 

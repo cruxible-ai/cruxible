@@ -19,6 +19,7 @@ from cruxible_client.contracts.captures import (
     build_direct_claim_selection_capture,
     capture_contract_digest,
     capture_contract_path,
+    classify_capture_reuse,
     render_capture_contract,
 )
 from cruxible_client.contracts.claim_types import render_claim_type
@@ -269,6 +270,24 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
                 end_byte=len(substrate),
             )
         ),
+    )
+    assert (
+        classify_capture_reuse(
+            selection_capture.envelope,
+            contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+            store=instance.body_store(),
+            claim_id=CLAIM_ID,
+        )
+        == "claim_bound"
+    )
+    assert (
+        classify_capture_reuse(
+            selection_capture.envelope,
+            contract=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+            store=instance.body_store(),
+            claim_id="CLM-abcdefabcdefabcdefabcdefabcdefab",
+        )
+        == "claim_bound_mismatch"
     )
     copy_citation = build_claim_citation(
         legacy.identity,

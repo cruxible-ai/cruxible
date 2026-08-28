@@ -8,6 +8,7 @@ from cruxible_client.authoring.inputs import (
     AuthoringInputV1,
     CarriedContractInput,
     ClaimInput,
+    ExistingCaptureInput,
     LiteralObjectInput,
     ProcedureInput,
     SelfSourceInput,
@@ -16,10 +17,27 @@ from cruxible_client.authoring.inputs import (
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 
 AuthoringExampleName = Literal[
+    "claim-existing-capture",
     "claim-flow-a",
     "claim-self-source",
     "procedure",
 ]
+
+
+def claim_existing_capture_example() -> ClaimInput:
+    return ClaimInput(
+        kind="claim",
+        subject="project.work_item/replace-me",
+        predicate="project.work_item.status",
+        object=LiteralObjectInput(kind="literal", value="replace-me"),
+        role="observation",
+        rationale="Replace with why the accepted Capture supports this statement.",
+        source=ExistingCaptureInput(
+            kind="existing_capture",
+            capture_digest="sha256:" + "0" * 64,
+        ),
+        citation_role="evidence",
+    )
 
 
 def claim_flow_a_example() -> ClaimInput:
@@ -139,6 +157,7 @@ def procedure_example() -> ProcedureInput:
 
 
 AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], AuthoringInputV1]]] = {
+    "claim-existing-capture": claim_existing_capture_example,
     "claim-flow-a": claim_flow_a_example,
     "claim-self-source": claim_self_source_example,
     "procedure": procedure_example,
@@ -153,6 +172,7 @@ __all__ = [
     "AUTHORING_EXAMPLE_FACTORIES",
     "AuthoringExampleName",
     "authoring_example",
+    "claim_existing_capture_example",
     "claim_flow_a_example",
     "claim_self_source_example",
     "procedure_example",

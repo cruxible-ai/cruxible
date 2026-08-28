@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from cruxible_client import (
+    CaptureRef,
     Cardinality,
     ClaimObjectKind,
     ClaimRole,
@@ -27,7 +28,10 @@ from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
 )
-from cruxible_client.contracts.authoring.models import ClaimAuthoringPayloadV2
+from cruxible_client.contracts.authoring.models import (
+    ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayloadV3,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimAttestationConsequenceRuleV1,
@@ -908,6 +912,108 @@ def test_plain_strings_never_forge_coordinate_assertions_or_change_yaml_shorthan
     )
     assert fresh.reference_expectations == ()
     assert revision.reference_expectations == ()
+
+
+def test_capture_ref_builds_v3_authoring_and_owns_the_contract_expectation(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        _Client(),
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+    capture = CaptureRef(
+        capture_digest="sha256:" + "7" * 64,
+        contract_address="capture-contracts/repo.work-items.yaml",
+        coordinate=pb.coordinate,
+    )
+
+    draft = pb.claim(
+        subject="secops.policy/patch-sla",
+        predicate="secops.policy.patch_sla",
+        value=48,
+        role=ClaimRole.NORMATIVE,
+        rationale="Reuse the already accepted observation.",
+        supported_by=capture,
+        copied_from=None,
+        self_source=None,
+        qualifier=None,
+        effective_period=None,
+        revises=None,
+        dispositions={},
+        publish_to=None,
+        subject_definition=None,
+        claim_type_definition=None,
+    )
+
+    assert isinstance(draft.payload, ClaimAuthoringPayloadV3)
+    assert draft.payload.source.capture_digest == capture.capture_digest
+    assert [item.payload_path for item in draft.reference_expectations] == ["source"]
+    assert draft.reference_expectations[0].address == capture.contract_address
+
+
+def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+
+    class ClaimClient(_Client):
+        def get_playbill_claim(
+            self,
+            _instance_id: str,
+            _identity: str,
+        ) -> api.PlaybillClaimViewV2:
+            return api.PlaybillClaimViewV2(
+                tag="playbill-claim-read-v2",
+                coordinate_kind="canonical",
+                coordinate=_COORDINATE,
+                envelope={"identity": "Claim:CLM-typed", "revision": 2},
+                facts=[
+                    {
+                        "schema_id": "playbill.claim.statement",
+                        "value": {
+                            "subject": {"artifact_path": "subjects/secops.policy/a.yaml"},
+                            "predicate": "secops.policy.patch_sla",
+                            "qualifier": None,
+                            "role": "normative",
+                            "object": {"kind": "literal", "value": 48},
+                        },
+                    },
+                    {
+                        "schema_id": "playbill.claim.lifecycle",
+                        "value": {"lifecycle": {"state": "live"}},
+                    },
+                    {
+                        "schema_id": "playbill.claim.current_verdict",
+                        "value": {"verdict": "supported"},
+                    },
+                ],
+                admission_evaluation_time="2026-08-28T12:00:00Z",
+                admission_accounts=[
+                    api.PlaybillCaptureAdmissionAccount(
+                        tag="playbill-capture-admission-account-v1",
+                        citation_id="sha256:" + "6" * 64,
+                        capture_digest="sha256:" + "7" * 64,
+                        citation_role="evidence",
+                        citation_origin="independent",
+                        capture_contract_identity="CaptureContract:repo.work-items",
+                        capture_contract_digest="sha256:" + "8" * 64,
+                        status="admitted",
+                        decisions=[],
+                    )
+                ],
+            )
+
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        ClaimClient(),
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+
+    (capture,) = pb.claim_view("Claim:CLM-typed").captures
+
+    assert capture.capture_digest == "sha256:" + "7" * 64
+    assert capture.contract_address == "capture-contracts/repo.work-items.yaml"
+    assert capture.coordinate == pb.coordinate
 
 
 def test_connect_refuses_an_unknown_daemon_before_instance_io(

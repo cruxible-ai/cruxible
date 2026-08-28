@@ -23,6 +23,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
     ClaimAuthoringPayloadV2,
+    ClaimAuthoringPayloadV3,
     InsertionConfirmationObservationV2,
     PreflightResultV1,
     PublicationSourceObservationV2,
@@ -925,7 +926,7 @@ def _authoring_preflight_result(
         result.certificate.intent_id,
         actor_id=actor.actor_id,
     ).payload
-    if isinstance(payload, ClaimAuthoringPayloadV2):
+    if isinstance(payload, ClaimAuthoringPayloadV2 | ClaimAuthoringPayloadV3):
         claim_type = payload.dependency_drafts.claim_type
         if claim_type is not None:
             at = result.certificate.accepted_coordinate

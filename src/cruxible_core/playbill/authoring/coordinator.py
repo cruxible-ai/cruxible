@@ -27,6 +27,7 @@ from cruxible_client.contracts.authoring.models import (
     CandidateStatusState,
     CandidateStatusV1,
     ClaimAuthoringPayloadV1,
+    ExistingCaptureCitationSourceV1,
     InsertionAbandonResultV1,
     InsertionConfirmationObservationV2,
     InsertionConfirmResultV2,
@@ -87,8 +88,12 @@ from cruxible_core.playbill.authoring.insertions import (
 )
 from cruxible_core.playbill.authoring.preflight import ComputedPreflight, compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
+from cruxible_core.playbill.citation_relations import (
+    RELATION_CONTRACT_SCHEMA,
+    capture_contract_relation_subject,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_artifacts import projected_revision
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -165,6 +170,36 @@ class AuthoringIntentCoordinator:
         reference_expectations: tuple[AuthoringReferenceExpectationV1, ...] | None = None,
         program_stamp: AuthoringProgramStampV1 | None = None,
     ) -> AuthoringIntentViewV1:
+        at = base_coordinate or AcceptedCoordinate.from_internal(
+            self.instance.accepted_coordinate()
+        )
+        if isinstance(payload, ClaimAuthoringPayloadV1) and isinstance(
+            payload.source,
+            ExistingCaptureCitationSourceV1,
+        ):
+            bound = self.instance.resolve_accepted_coordinate(
+                git_oid=at.git_oid,
+                semantic_root=at.semantic_root,
+                generation_root=at.generation_root,
+                compiler_digest=at.compiler_digest,
+            )
+            generated = self._existing_capture_reference_expectations(
+                payload,
+                coordinate=bound,
+            )
+            supplied = reference_expectations or ()
+            if not any(item.payload_path == "source" for item in supplied):
+                supplied = (*supplied, *generated)
+            reference_expectations = tuple(
+                sorted(
+                    supplied,
+                    key=lambda item: (
+                        item.payload_path.encode("utf-8"),
+                        item.artifact_kind.encode("ascii"),
+                        item.address.encode("utf-8"),
+                    ),
+                )
+            )
         if program_stamp is not None:
             _validate_program_stamp(program_stamp)
             if reference_expectations is None:
@@ -172,9 +207,6 @@ class AuthoringIntentCoordinator:
                     "playbill.authoring.program_stamp_contract_mismatch",
                     "a v3 program stamp requires the v2 reference-assertion envelope",
                 )
-        at = base_coordinate or AcceptedCoordinate.from_internal(
-            self.instance.accepted_coordinate()
-        )
         intent_id = self.store.mint_intent_id()
         semantic_identity = self._mint_semantic_identity(payload)
         status = CandidateStatusV1(
@@ -246,11 +278,16 @@ class AuthoringIntentCoordinator:
         base = self.instance.accepted_coordinate()
         coordinate = AcceptedCoordinate.from_internal(base)
         payload = lower_authoring_input(input, tree=self.instance.tree_at(base.git_oid))
+        expectations = self._existing_capture_reference_expectations(
+            payload,
+            coordinate=base,
+        )
         return self.create(
             actor=actor,
             payload=payload,
             canonical_timestamp=canonical_timestamp,
             base_coordinate=coordinate,
+            reference_expectations=expectations,
         )
 
     def get(self, intent_id: str, *, actor: AuthenticatedActor) -> AuthoringIntentViewV1:
@@ -443,8 +480,69 @@ class AuthoringIntentCoordinator:
                 input,
                 tree=self.instance.tree_at(current.base_coordinate.git_oid),
             )
-            view = self.replace_payload(intent_id, actor=actor, payload=payload)
+            base = self.instance.resolve_accepted_coordinate(
+                git_oid=current.base_coordinate.git_oid,
+                semantic_root=current.base_coordinate.semantic_root,
+                generation_root=current.base_coordinate.generation_root,
+                compiler_digest=current.base_coordinate.compiler_digest,
+            )
+            view = self.replace_payload(
+                intent_id,
+                actor=actor,
+                payload=payload,
+                reference_expectations=self._existing_capture_reference_expectations(
+                    payload,
+                    coordinate=base,
+                ),
+            )
         return self.preflight(view.intent.intent_id, actor=actor)
+
+    def _existing_capture_reference_expectations(
+        self,
+        payload: AuthoringPayloadV1,
+        *,
+        coordinate: AcceptedProjectionCoordinate,
+    ) -> tuple[AuthoringReferenceExpectationV1, ...] | None:
+        """Assert the exact accepted contract behind a decision-input Capture ref."""
+
+        if not isinstance(payload, ClaimAuthoringPayloadV1) or not isinstance(
+            payload.source,
+            ExistingCaptureCitationSourceV1,
+        ):
+            return None
+        try:
+            envelope = parse_capture_envelope(
+                self.instance.body_store().read(
+                    payload.source.capture_digest,
+                    access=BodyAccessContext(
+                        principal_id="playbill-authoring",
+                        can_read_body=True,
+                    ),
+                )
+            )
+            with self.instance.bind_accepted_projection(coordinate) as projection:
+                facts = projection.semantic_facts(
+                    RELATION_CONTRACT_SCHEMA,
+                    subject_identity=capture_contract_relation_subject(
+                        envelope.capture_contract_digest
+                    ),
+                )
+            if len(facts) != 1 or not isinstance(facts[0].value, dict):
+                return ()
+            raw_path = facts[0].value.get("path")
+            path = raw_path.get("$path") if isinstance(raw_path, dict) else None
+            if not isinstance(path, str):
+                return ()
+        except (PlaybillError, ValueError):
+            return ()
+        return (
+            AuthoringReferenceExpectationV1(
+                payload_path="source",
+                artifact_kind="Source",
+                address=path,
+                minted_coordinate=AcceptedCoordinate.from_internal(coordinate),
+            ),
+        )
 
     def _revision_marker(
         self,
@@ -507,9 +605,22 @@ class AuthoringIntentCoordinator:
         )
         reduced = current.candidate_status
         if reduced.state == "accepted":
+            idempotent_existing = (
+                reduced.proposal_id is None
+                and isinstance(current.payload, ClaimAuthoringPayloadV1)
+                and isinstance(current.payload.source, ExistingCaptureCitationSourceV1)
+            )
+            revision: int | None = None
+            if idempotent_existing:
+                coordinate = self.instance.accepted_coordinate()
+                with self.instance.bind_accepted_projection(coordinate) as projection:
+                    projected = projection.claim(f"Claim:{current.semantic_identity}")
+                revision = None if projected is None else projected.envelope.revision
             return AuthoringSubmitResultV1(
                 intent=current.model_copy(update={"candidate_status": reduced}),
                 status=reduced,
+                identity_stable=idempotent_existing,
+                claim_revision=revision,
             )
         if current.candidate_status.proposal_id is not None:
             candidate = self.instance.proposal_evidence().read_candidate(
@@ -532,6 +643,42 @@ class AuthoringIntentCoordinator:
             return AuthoringSubmitResultV1(
                 intent=preflighted.model_copy(update={"candidate_status": status}),
                 status=status,
+            )
+        if computed.lowered is not None and computed.lowered.idempotent:
+            accepted = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
+            status = CandidateStatusV1(
+                state="accepted",
+                current_accepted_coordinate=accepted,
+                accepted_generation=accepted,
+            )
+            operation_key = typed_digest(
+                Sha256Value,
+                "playbill-authoring-submit-existing-association-v1",
+                {
+                    "certificate_digest": computed.result.certificate.certificate_digest,
+                    "intent_id": intent_id,
+                },
+            ).tagged
+
+            def accept_existing(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+                return intent.model_copy(update={"candidate_status": status})
+
+            accepted_intent = self.store.transition(
+                intent_id,
+                actor_id=actor.actor_id,
+                operation_key=operation_key,
+                transform=accept_existing,
+            )
+            with self.instance.bind_accepted_projection(
+                self.instance.accepted_coordinate()
+            ) as projection:
+                projected = projection.claim(f"Claim:{preflighted.semantic_identity}")
+            claim_revision = None if projected is None else projected.envelope.revision
+            return AuthoringSubmitResultV1(
+                intent=accepted_intent,
+                status=accepted_intent.candidate_status,
+                identity_stable=True,
+                claim_revision=claim_revision,
             )
         if computed.evaluation is None or computed.evaluation.candidate is None:
             raise RuntimeError("passing preflight omitted its evaluated candidate")

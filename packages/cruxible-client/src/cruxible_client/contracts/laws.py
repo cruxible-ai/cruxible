@@ -157,12 +157,12 @@ def _artifact_law_coordinate(
 CLAIM_LAW_V2 = _artifact_law_coordinate(
     CLAIM_LAW_V2_IDENTIFIER,
     "playbill-claim-v2",
-    semantic_revision=4,
+    semantic_revision=5,
 )
 CLAIM_LAW_V3 = _artifact_law_coordinate(
     CLAIM_LAW_V3_IDENTIFIER,
     "playbill-claim-v3",
-    semantic_revision=4,
+    semantic_revision=5,
 )
 CLAIM_TYPE_LAW_V3 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,

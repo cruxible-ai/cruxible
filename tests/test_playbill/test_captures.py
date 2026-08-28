@@ -5,6 +5,7 @@ from pathlib import Path
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CaptureRunCoordinateV1,
     InputReceiptSetManifestV1,
     build_cas_capture,
@@ -14,6 +15,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
+    classify_capture_reuse,
     evaluate_capture_contract_law,
     verify_capture,
 )
@@ -150,6 +152,15 @@ def test_derived_capture_requires_and_replays_exact_input_manifest(tmp_path: Pat
         )
         == result.envelope
     )
+    assert (
+        classify_capture_reuse(
+            result.envelope,
+            contract=contract,
+            store=store,
+            claim_id="CLM-0123456789abcdef0123456789abcdef",
+        )
+        == "not_shareable"
+    )
 
 
 def test_contract_run_can_produce_capture_without_claiming_provider_identity(
@@ -215,6 +226,31 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
         result.envelope,
         contract=contract,
         claim_id="CLM-abcdefabcdefabcdefabcdefabcdefab",
+    )
+    assert (
+        classify_capture_reuse(
+            result.envelope,
+            contract=contract,
+            store=store,
+            claim_id=claim_id,
+        )
+        == "claim_bound"
+    )
+    mixed_family = contract.model_copy(
+        update={
+            "source_subject_mapping_digest": (
+                DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.source_subject_mapping_digest
+            )
+        }
+    )
+    assert (
+        classify_capture_reuse(
+            result.envelope,
+            contract=mixed_family,
+            store=store,
+            claim_id=claim_id,
+        )
+        == "claim_bound_mismatch"
     )
     assert (
         evaluate_capture_contract_law(

@@ -81,6 +81,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
     example_schema = schemas["cruxible_playbill_authoring_example"].inputSchema
     assert example_schema["properties"]["name"]["enum"] == [
         "claim-type",
+        "claim-existing-capture",
         "claim-flow-a",
         "claim-self-source",
         "procedure",
