@@ -589,14 +589,43 @@ _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.document.propose": "playbill document propose",
 }
 
-# Each of these needs a local file the queue cannot know the path of, so the
-# composed line names the placeholder rather than pretending to be complete.
+# Each of these needs a local file. The queue knows the path only if the row
+# carried it, so the placeholder is filled from the arguments when they name it
+# and dropped -- with the flag that introduces it -- when they do not. A bare
+# `REQUEST_FILE` left in the line is not a hint, it is an unrunnable command
+# presented as a runnable one, which is the one thing `command` must never be.
 _REPAIR_COMMAND_OPERANDS: Mapping[str, tuple[str, ...]] = {
     "playbill.authoring.create": ("PAYLOAD_FILE",),
     "playbill.authoring.bind": ("--payload-file", "PAYLOAD_FILE"),
     "playbill.claim.retire": ("REQUEST_FILE",),
     "playbill.document.propose": ("--envelope", "ENVELOPE_FILE"),
 }
+_REPAIR_COMMAND_PLACEHOLDERS: Mapping[str, str] = {
+    "PAYLOAD_FILE": "payload_file",
+    "REQUEST_FILE": "request_file",
+    "ENVELOPE_FILE": "envelope_file",
+}
+
+
+def _repair_operands(operation: NextRepairOperation, values: Mapping[str, object]) -> list[str]:
+    """Render one operation's file operands, filling or dropping each placeholder."""
+
+    rendered: list[str] = []
+    pending_flag: str | None = None
+    for operand in _REPAIR_COMMAND_OPERANDS[operation]:
+        key = _REPAIR_COMMAND_PLACEHOLDERS.get(operand)
+        if key is None:
+            pending_flag = operand
+            continue
+        supplied = values.get(key)
+        if not isinstance(supplied, str) or not supplied:
+            pending_flag = None
+            continue
+        if pending_flag is not None:
+            rendered.append(pending_flag)
+            pending_flag = None
+        rendered.append(shlex.quote(supplied))
+    return rendered
 
 
 def _repair_command(
@@ -617,11 +646,11 @@ def _repair_command(
         claim_id = values.get("claim_id")
         if isinstance(claim_id, str):
             parts.append(shlex.quote(claim_id))
-        parts.extend(_REPAIR_COMMAND_OPERANDS[operation])
+        parts.extend(_repair_operands(operation, values))
     elif operation == "playbill.floor.export":
         parts.extend(["--output", "FLOOR_DIR"])
-    else:
-        parts.extend(_REPAIR_COMMAND_OPERANDS[operation])
+    elif operation in _REPAIR_COMMAND_OPERANDS:
+        parts.extend(_repair_operands(operation, values))
     return " ".join(parts)
 
 
