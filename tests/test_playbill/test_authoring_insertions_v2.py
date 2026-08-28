@@ -683,6 +683,29 @@ def test_prepare_response_loss_and_terminal_conflicts_are_deterministic(tmp_path
         )
 
 
+def test_pending_abandon_is_idempotent_and_retains_one_terminal_tombstone(
+    tmp_path: Path,
+) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+
+    abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
+    retry = coordinator.abandon_insertion(intent_id, actor=actor)
+
+    assert abandoned.expectation.state == "abandoned"
+    assert abandoned.expectation.terminal_tombstone is not None
+    assert retry.model_dump_json() == abandoned.model_dump_json()
+    resumed = coordinator.resume(intent_id, actor=actor).intent
+    assert resumed.insertion_expectation == abandoned.expectation
+    with pytest.raises(PublicationTerminalStateRefused):
+        coordinator.prepare_publication(
+            intent_id,
+            actor=actor,
+            observation=_observation(preimage),
+        )
+
+
 def test_prepared_to_expired_prepare_response_loss_replays_terminal_result(
     tmp_path: Path,
 ) -> None:
@@ -864,6 +887,56 @@ def test_prepared_currency_change_is_passive_until_exact_confirmation(tmp_path: 
     assert confirmation is not None
     bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
     assert bound.outcome == "bound"
+
+
+def test_confirmation_rebases_over_a_concurrent_backing_only_successor(tmp_path: Path) -> None:
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    final = _final_source(intent_id, prepared, preimage)
+    original_intent = coordinator.store.get(intent_id, actor_id=actor.actor_id)
+
+    backing_coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    backing_intent = backing_coordinator.create(
+        actor=actor,
+        payload=_working_payload(occurrence_count=1).model_copy(
+            update={"claim_ref": original_intent.semantic_identity}
+        ),
+        canonical_timestamp="2026-08-21T12:00:02.000000Z",
+    ).intent
+    submitted = backing_coordinator.submit(backing_intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=submitted.status.proposal_id,
+        candidate_digest=submitted.status.candidate_digest,
+    )
+    path = claim_path(original_intent.semantic_identity)
+    before = parse_claim(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
+    assert isinstance(before, ClaimArtifactV2)
+
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(final),
+    )
+    assert confirmation is not None
+    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+    after = parse_claim(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
+
+    assert bound.outcome == "bound"
+    assert isinstance(after, ClaimArtifactV2)
+    assert after.statement == before.statement
+    assert {item.citation_id for item in before.backing.citations}.issubset(
+        item.citation_id for item in after.backing.citations
+    )
 
 
 # Kept here so the frozen test module owns one absolute instant used by the
