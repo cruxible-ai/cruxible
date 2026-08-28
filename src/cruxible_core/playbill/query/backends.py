@@ -210,11 +210,13 @@ def claim_row_outcome(
         referent_current=row.referent_current,
         resolved_authority_basis=row.resolved_authority_basis,
     )
-    if verdict.verdict not in policy.visible_verdicts:
-        return ClaimRowOutcomeV1(
-            visible=None,
-            hidden_verdict=claim_verdict_v1_compat(verdict).verdict,
-        )
+    # Compare and record the same form. The policy is written in the compat
+    # vocabulary and the visible row already reports that form, so testing the
+    # raw verdict while recording the mapped one could name an exclusion reason
+    # that is itself listed in visible_verdicts.
+    reported = claim_verdict_v1_compat(verdict).verdict
+    if reported not in policy.visible_verdicts:
+        return ClaimRowOutcomeV1(visible=None, hidden_verdict=reported)
     if verdict.currency not in policy.visible_currency:
         return ClaimRowOutcomeV1(visible=None)
     return ClaimRowOutcomeV1(
@@ -226,7 +228,7 @@ def claim_row_outcome(
                 artifact_digest=row.accepted.artifact_digest,
                 predicate=statement.predicate,
                 subject_identity=subject.shell.identity.qualified,
-                verdict=claim_verdict_v1_compat(verdict).verdict,
+                verdict=reported,
                 currency=verdict.currency,
             ),
         )
@@ -515,22 +517,25 @@ class DirectClaimFactIndex:
         }
         self._by_subject: dict[tuple[str, str], list[VisibleClaimRow]] = {}
         self._by_object: dict[tuple[str, str], list[VisibleClaimRow]] = {}
-        excluded: dict[str, int] = {}
+        # Hidden rows are bucketed by the same keys the read primitives use, so
+        # the accounting can report what THIS evaluation declined rather than
+        # everything the instance happens to hold. A row nothing asked for is
+        # not something this query hid.
+        self._hidden_by_subject: dict[tuple[str, str], list[str]] = {}
+        self._hidden_by_object: dict[tuple[str, str], list[str]] = {}
+        self._touched: set[tuple[str, tuple[str, str]]] = set()
         for row in facts.claims:
             outcome = self._outcome(row)
             visible = outcome.visible
             if visible is None:
                 if outcome.hidden_verdict is not None:
-                    excluded[outcome.hidden_verdict] = excluded.get(outcome.hidden_verdict, 0) + 1
+                    self._record_hidden(row, verdict=outcome.hidden_verdict)
                 continue
             predicate = row.accepted.claim.statement.predicate
             self._by_subject.setdefault((row.subject_path, predicate), []).append(visible)
             target = visible.object_subject_path
             if target is not None:
                 self._by_object.setdefault((target, predicate), []).append(visible)
-        self._excluded_by_verdict = tuple(
-            sorted(excluded.items(), key=lambda item: item[0].encode("utf-8"))
-        )
 
     @property
     def coordinate(self) -> AcceptedProjectionCoordinate:
@@ -538,11 +543,28 @@ class DirectClaimFactIndex:
 
         return self._facts.coordinate
 
+    def _record_hidden(self, row: ClaimFactRowV1, *, verdict: str) -> None:
+        predicate = row.accepted.claim.statement.predicate
+        self._hidden_by_subject.setdefault((row.subject_path, predicate), []).append(verdict)
+        item = row.accepted.claim.statement.object
+        if isinstance(item, SubjectClaimObject):
+            key = (item.address.artifact_path, predicate)
+            self._hidden_by_object.setdefault(key, []).append(verdict)
+
     @property
     def excluded_by_verdict(self) -> tuple[tuple[str, int], ...]:
-        """Return how many Claims each out-of-policy verdict hid, verdict-sorted."""
+        """Return how many Claims each out-of-policy verdict hid, verdict-sorted.
 
-        return self._excluded_by_verdict
+        Only the buckets this evaluation actually read from count: a Claim on a
+        Subject or predicate the query never asked about was not hidden from it.
+        """
+
+        counts: dict[str, int] = {}
+        for direction, key in self._touched:
+            source = self._hidden_by_subject if direction == "on" else self._hidden_by_object
+            for verdict in source.get(key, ()):
+                counts[verdict] = counts.get(verdict, 0) + 1
+        return tuple(sorted(counts.items(), key=lambda item: item[0].encode("utf-8")))
 
     def _outcome(self, row: ClaimFactRowV1) -> ClaimRowOutcomeV1:
         return claim_row_outcome(
@@ -577,11 +599,13 @@ class DirectClaimFactIndex:
     def claims_on(self, artifact_path: str, predicate: str) -> tuple[VisibleClaimRow, ...]:
         """Return the visible Claims whose statement subject is that Subject."""
 
+        self._touched.add(("on", (artifact_path, predicate)))
         return tuple(self._by_subject.get((artifact_path, predicate), ()))
 
     def claims_to(self, artifact_path: str, predicate: str) -> tuple[VisibleClaimRow, ...]:
         """Return the visible Claims whose Subject-typed object is that Subject."""
 
+        self._touched.add(("to", (artifact_path, predicate)))
         return tuple(self._by_object.get((artifact_path, predicate), ()))
 
 

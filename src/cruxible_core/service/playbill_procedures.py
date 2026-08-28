@@ -35,6 +35,7 @@ from cruxible_core.playbill.procedures.execution import (
 )
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.query.engine import ClaimQueryResultV1
 from cruxible_core.playbill.service.query_definitions import accepted_query_definition
 from cruxible_core.service.playbill_query import service_run_playbill_query
 
@@ -154,7 +155,23 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         if run.result.verdict != "completed":
             code = None if run.result.refusal is None else run.result.refusal.code
             raise PlaybillExecutionError(f"state tap query refused: {code or 'unknown'}")
-        return run.result.model_dump(mode="json")
+        return state_tap_value(run.result)
+
+
+def state_tap_value(result: ClaimQueryResultV1) -> dict[str, object]:
+    """Render one query result as the governed value a state tap consumes.
+
+    A tap consumes governed data, not advisories. `verdict_visibility` is
+    accounting of the rows the policy declined to show, and it is kept out of
+    the query's own result digest for exactly that reason; letting it into this
+    value would put it straight back into the state-result digest that admits
+    and replays the run, so which rows were hidden could change a run's
+    identity.
+    """
+
+    value = result.model_dump(mode="json")
+    value.pop("verdict_visibility", None)
+    return value
 
 
 def service_execute_direct_procedure(

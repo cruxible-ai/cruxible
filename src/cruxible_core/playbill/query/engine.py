@@ -1341,7 +1341,7 @@ def _verdict_visibility(
     reads carries no advisory at all.
     """
 
-    excluded = tuple(getattr(backend, "excluded_by_verdict", ()))
+    excluded = tuple(backend.excluded_by_verdict)
     if not excluded:
         return None
     return QueryVerdictVisibilityV1(
