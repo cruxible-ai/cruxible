@@ -40,6 +40,7 @@ METADATA_KEYS = {"metadata", "actor_context", "provenance"}
 # helpers
 # --------------------------------------------------------------------------
 
+
 def load_bearer_token(source: dict) -> str:
     """Read the bearer token from its file at runtime. Never store it."""
     path = Path(os.path.expanduser(source["file"]))
@@ -54,11 +55,7 @@ def load_bearer_token(source: dict) -> str:
 def strip_metadata(obj):
     """Recursively remove metadata/actor_context/provenance keys."""
     if isinstance(obj, dict):
-        return {
-            k: strip_metadata(v)
-            for k, v in obj.items()
-            if k not in METADATA_KEYS
-        }
+        return {k: strip_metadata(v) for k, v in obj.items() if k not in METADATA_KEYS}
     if isinstance(obj, list):
         return [strip_metadata(v) for v in obj]
     return obj
@@ -92,13 +89,9 @@ def build_argv(instance_cfg: dict, call_args: list[str]) -> list[str]:
     return argv + list(call_args)
 
 
-def run_call(
-    argv: list[str], env: dict, cwd: Path = REPO_ROOT
-) -> tuple[bytes, bytes, int, float]:
+def run_call(argv: list[str], env: dict, cwd: Path = REPO_ROOT) -> tuple[bytes, bytes, int, float]:
     t0 = time.perf_counter()
-    proc = subprocess.run(
-        argv, cwd=cwd, env=env, capture_output=True, timeout=300
-    )
+    proc = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, timeout=300)
     latency = time.perf_counter() - t0
     return proc.stdout, proc.stderr, proc.returncode, latency
 
@@ -106,6 +99,7 @@ def run_call(
 # --------------------------------------------------------------------------
 # correctness checkers (keyed by expect.kind)
 # --------------------------------------------------------------------------
+
 
 def _final_json(outputs: list[bytes]):
     return json.loads(outputs[-1].decode("utf-8"))
@@ -118,10 +112,7 @@ def check_neighbor_edge(expect, outputs):
         if (
             n.get("relationship_type") == expect["relationship_type"]
             and ent.get("entity_id") == expect["entity_id"]
-            and (
-                "direction" not in expect
-                or n.get("direction") == expect["direction"]
-            )
+            and ("direction" not in expect or n.get("direction") == expect["direction"])
         ):
             return True, f"found {expect['relationship_type']} -> {expect['entity_id']}"
     return False, f"edge {expect['relationship_type']} -> {expect['entity_id']} not found"
@@ -170,9 +161,9 @@ def check_graph_edge(expect, outputs):
     """Edge assertion for the expanded bounded-neighborhood (nodes/edges) shape."""
     doc = _final_json(outputs)
     for e in doc.get("edges", []):
-        if (
-            e.get("relationship_type") == expect["relationship_type"]
-            and expect["entity_id"] in (e.get("to_id"), e.get("from_id"))
+        if e.get("relationship_type") == expect["relationship_type"] and expect["entity_id"] in (
+            e.get("to_id"),
+            e.get("from_id"),
         ):
             return True, f"found {expect['relationship_type']} -> {expect['entity_id']}"
     return False, f"edge {expect['relationship_type']} -> {expect['entity_id']} not found"
@@ -205,6 +196,7 @@ CHECKERS = {
 # main
 # --------------------------------------------------------------------------
 
+
 def measure_cli_overhead(env: dict) -> float:
     """Median wall time of a no-network CLI invocation (uv + click startup)."""
     samples = []
@@ -212,7 +204,9 @@ def measure_cli_overhead(env: dict) -> float:
         t0 = time.perf_counter()
         subprocess.run(
             ["uv", "run", "cruxible", "--version"],
-            cwd=REPO_ROOT, env=env, capture_output=True,
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
         )
         samples.append(time.perf_counter() - t0)
     return statistics.median(samples)
@@ -280,12 +274,8 @@ def run_task(
         "num_calls": len(call_records),
         "total_bytes": total_bytes,
         "total_est_tokens": round(total_bytes / 4),
-        "total_latency_run2_s": round(
-            sum(c["latency_run2_s"] for c in call_records), 3
-        ),
-        "total_latency_run1_s": round(
-            sum(c["latency_run1_s"] for c in call_records), 3
-        ),
+        "total_latency_run2_s": round(sum(c["latency_run2_s"] for c in call_records), 3),
+        "total_latency_run1_s": round(sum(c["latency_run1_s"] for c in call_records), 3),
         "correct": correct,
         "verification_detail": detail,
         "calls": call_records,
@@ -294,12 +284,8 @@ def run_task(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--tasks", default=str(Path(__file__).parent / "tasks.json")
-    )
-    parser.add_argument(
-        "--out", default=str(Path(__file__).parent / "baseline_results.json")
-    )
+    parser.add_argument("--tasks", default=str(Path(__file__).parent / "tasks.json"))
+    parser.add_argument("--out", default=str(Path(__file__).parent / "baseline_results.json"))
     parser.add_argument("--only", nargs="*", default=None, help="task ids to run")
     parser.add_argument(
         "--flow",
