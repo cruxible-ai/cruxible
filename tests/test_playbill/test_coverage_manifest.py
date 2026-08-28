@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.playbill.coverage.contracts import CoverageWatcherHealthV1
 from cruxible_core.playbill.coverage.indexes import (
     CaptureCitationInputV2,
@@ -22,14 +23,13 @@ from cruxible_core.playbill.coverage.indexes import (
     build_working_occurrence_overlay,
 )
 from cruxible_core.playbill.coverage.manifest import (
-    COVERAGE_MANIFEST_FILE,
     COVERAGE_MANIFEST_FILE_V2,
     CoverageManifestError,
     CoverageWorkingSetScopeV1,
     advance_coverage_manifest,
     coverage_manifest_body,
     coverage_manifest_body_v2,
-    coverage_manifest_digest,
+    coverage_manifest_digest_v2,
     coverage_manifest_path,
     coverage_manifest_path_v2,
     discard_coverage_manifest,
@@ -72,23 +72,42 @@ def _built() -> tuple[object, object]:
 
 
 def test_manifest_deletion_and_rebuild_reproduce_the_same_projection(tmp_path: Path) -> None:
-    citations, snapshot = _built()
-    body = manifest(citations, snapshot)
+    citations = index_v2(capture(HANDBOOK, CITED, with_handle=True))
+    snapshot = overlay(working(HANDBOOK, HANDBOOK_BODY), citations=citations)
+    body = manifest_v2(citations, snapshot)
+    before = resolve_coverage_v3(
+        request(HANDBOOK),
+        index=citations,
+        overlay=snapshot,
+        access=profile(),
+        manifest=body,
+    )
 
-    write_coverage_manifest(tmp_path, body, written_at="2026-08-19T09:00:00Z")
+    write_coverage_manifest_v2(tmp_path, body, written_at="2026-08-19T09:00:00Z")
     discard_coverage_manifest(tmp_path)
-    assert load_coverage_manifest_file(tmp_path) is None
+    assert load_coverage_manifest_file_v2(tmp_path) is None
 
-    rebuilt_citations, rebuilt_snapshot = _built()
-    rebuilt = manifest(rebuilt_citations, rebuilt_snapshot)
-    written = write_coverage_manifest(tmp_path, rebuilt, written_at="2026-08-19T11:30:00Z")
-    reloaded = load_coverage_manifest_file(tmp_path)
+    rebuilt_citations = index_v2(capture(HANDBOOK, CITED, with_handle=True))
+    rebuilt_snapshot = overlay(working(HANDBOOK, HANDBOOK_BODY), citations=rebuilt_citations)
+    rebuilt = manifest_v2(rebuilt_citations, rebuilt_snapshot)
+    written = write_coverage_manifest_v2(tmp_path, rebuilt, written_at="2026-08-19T11:30:00Z")
+    reloaded = load_coverage_manifest_file_v2(tmp_path)
+    after = resolve_coverage_v3(
+        request(HANDBOOK),
+        index=rebuilt_citations,
+        overlay=rebuilt_snapshot,
+        access=profile(),
+        manifest=rebuilt,
+    )
 
-    assert written.name == COVERAGE_MANIFEST_FILE
+    assert written.name == COVERAGE_MANIFEST_FILE_V2
     assert reloaded is not None
     assert reloaded.body == rebuilt
-    assert coverage_manifest_digest(rebuilt) == coverage_manifest_digest(body)
+    assert coverage_manifest_digest_v2(rebuilt) == coverage_manifest_digest_v2(body)
     assert reloaded.body == body
+    assert canonical_bytes(after.model_dump(mode="json")) == canonical_bytes(
+        before.model_dump(mode="json")
+    )
 
 
 def test_v2_manifest_discards_the_local_v1_cache_instead_of_migrating_it(

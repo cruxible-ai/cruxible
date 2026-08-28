@@ -1,0 +1,42 @@
+{
+  "health_absence_is_factual": {
+    "complete": true,
+    "denied": false,
+    "partial": false,
+    "stale": false,
+    "unavailable": false
+  },
+  "health_proves_freshness": {
+    "complete": true,
+    "denied": false,
+    "partial": true,
+    "stale": false,
+    "unavailable": false
+  },
+  "health_rank": {
+    "complete": 4,
+    "denied": 1,
+    "partial": 3,
+    "stale": 2,
+    "unavailable": 0
+  },
+  "health_states": [
+    "complete",
+    "partial",
+    "stale",
+    "denied",
+    "unavailable"
+  ],
+  "match_state_precedence": {
+    "candidate": 2,
+    "drifted": 1,
+    "exact": 0,
+    "none": 3
+  },
+  "match_states": [
+    "exact",
+    "drifted",
+    "candidate",
+    "none"
+  ]
+}
