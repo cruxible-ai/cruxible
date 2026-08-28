@@ -1089,7 +1089,7 @@ def capture_is_coordinator_self_source(
     )
 
 
-def _capture_is_direct_selection_bound(
+def capture_is_direct_selection_bound(
     envelope: CaptureEnvelopeV1,
     *,
     contract: CaptureContractV1,
@@ -1170,7 +1170,7 @@ def classify_capture_reuse(
                     store=store,
                     claim_id=claim_id,
                 )
-                or _capture_is_direct_selection_bound(
+                or capture_is_direct_selection_bound(
                     envelope,
                     contract=contract,
                     claim_id=claim_id,
@@ -2023,6 +2023,7 @@ __all__ = [
     "capture_contract_digest",
     "capture_contract_is_self_asserted",
     "capture_is_coordinator_self_source",
+    "capture_is_direct_selection_bound",
     "capture_is_direct_self_source",
     "classify_capture_reuse",
     "capture_contract_path",

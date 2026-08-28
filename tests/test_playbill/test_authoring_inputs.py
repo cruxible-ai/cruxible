@@ -114,6 +114,24 @@ def test_existing_capture_input_lowers_to_the_v3_payload_without_digest_relay() 
     assert payload.source.capture_digest == capture_digest  # type: ignore[union-attr]
 
 
+def test_existing_capture_input_requires_an_explicit_admitted_citation_role() -> None:
+    input_value = _claim_input().model_copy(
+        update={
+            "source": ExistingCaptureInput(
+                kind="existing_capture",
+                capture_digest="sha256:" + "7" * 64,
+            ),
+            "citation_role": None,
+        }
+    )
+
+    with pytest.raises(AuthoringInputError) as raised:
+        lower_authoring_input(input_value, tree={})
+
+    assert raised.value.code == "playbill.authoring.existing_capture_not_admitted"
+    assert raised.value.field_path == "input.citation_role"
+
+
 def test_input_compile_typed_refuses_a_terminal_v3_claim_with_v2_backing(
     tmp_path: Path,
 ) -> None:

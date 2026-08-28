@@ -35,6 +35,7 @@ from cruxible_client.contracts.captures import (
     LedgerMaterialResolverProtocol,
     capture_contract_is_self_asserted,
     capture_is_coordinator_self_source,
+    capture_is_direct_selection_bound,
     capture_is_direct_self_source,
     classify_capture_reuse,
     verify_capture,
@@ -1141,6 +1142,10 @@ def _citation_origin_refusal(
         envelope,
         contract=contract,
         store=store,
+        claim_id=claim.identity.name,
+    ) or capture_is_direct_selection_bound(
+        envelope,
+        contract=contract,
         claim_id=claim.identity.name,
     )
     coordinator_contract = contract == COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT

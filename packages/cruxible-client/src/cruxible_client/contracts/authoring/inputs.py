@@ -218,7 +218,7 @@ def _claim_payload(value: ClaimInput) -> ClaimAuthoringPayloadV1:
     if isinstance(value.source, ExistingCaptureInput):
         if value.citation_role is None:
             raise AuthoringInputError(
-                "playbill.authoring.existing_capture_citation_role_required",
+                "playbill.authoring.existing_capture_not_admitted",
                 "input.citation_role",
                 "An existing Capture requires evidence or copy intent.",
                 "Set citation_role to evidence or copy.",
