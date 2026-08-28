@@ -471,6 +471,39 @@ class AuthoringIntentCoordinator:
             view = self.replace_payload(intent_id, actor=actor, payload=payload)
         return self.preflight(view.intent.intent_id, actor=actor)
 
+    def _revision_marker(
+        self,
+        computed: ComputedPreflight,
+        preflighted: AuthoringIntentV1,
+    ) -> tuple[bool, int | None]:
+        """Say whether this submit amends a Claim identity in place, and to which revision.
+
+        `revises` reuses one Claim identity rather than adding a second Claim, and
+        the submit result read exactly like an ordinary create -- the caller had to
+        re-read the artifact to discover the identity was reused. The lowering
+        already knows: a non-null predecessor_digest IS amend-in-place.
+
+        The revision is projection-derived, matching `_projected_revision`: the
+        candidate is not accepted yet at submit time, so it becomes the revision
+        after every accepted change-set member already at this path.
+        """
+
+        lowered = computed.lowered
+        if lowered is None:
+            return False, None
+        predecessor = lowered.resolved_authoring.get("predecessor_digest")
+        if not isinstance(predecessor, str):
+            return False, None
+        path = claim_path(preflighted.semantic_identity)
+        accepted_members = sum(
+            1
+            for generation in self.instance.accepted_history()
+            if generation.record is not None
+            for member in generation.record.members
+            if str(member.path) == path
+        )
+        return True, accepted_members + 1
+
     def submit(
         self,
         intent_id: str,
@@ -614,9 +647,12 @@ class AuthoringIntentCoordinator:
             operation_key=operation_key,
             transform=bind_submit,
         )
+        identity_stable, claim_revision = self._revision_marker(computed, preflighted)
         return AuthoringSubmitResultV1(
             intent=submitted,
             status=submitted.candidate_status,
+            identity_stable=identity_stable,
+            claim_revision=claim_revision,
         )
 
     def status(self, intent_id: str, *, actor: AuthenticatedActor) -> CandidateStatusV1:
