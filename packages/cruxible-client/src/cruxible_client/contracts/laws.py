@@ -31,7 +31,7 @@ def _document_law_coordinate() -> AcceptanceLawCoordinate:
     """Return the reviewed semantic coordinate for the v1 Document law.
 
     The revision is deliberately explicit rather than derived from Python source
-    bytes. G12's unreleased lineage uses the authorized in-place revision-2 re-pin;
+    bytes. C1's unreleased lineage uses the authorized in-place revision-3 re-pin;
     after the first public release, semantic changes must register a successor
     coordinate and retain the deployed implementation for historical replay.
     """
@@ -42,7 +42,7 @@ def _document_law_coordinate() -> AcceptanceLawCoordinate:
         {
             "identifier": DOCUMENT_LAW_IDENTIFIER,
             "artifact_tag": "playbill-document-v1",
-            "semantic_revision": 2,
+            "semantic_revision": 3,
         },
     )
     return AcceptanceLawCoordinate(
@@ -63,7 +63,7 @@ def _principal_lifecycle_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-principal-v1",
-                "semantic_revision": 5,
+                "semantic_revision": 6,
             },
         ).tagged,
     )
@@ -81,7 +81,7 @@ def _subject_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": SUBJECT_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-subject-v1",
-                "semantic_revision": 2,
+                "semantic_revision": 3,
             },
         ).tagged,
     )
@@ -99,7 +99,7 @@ def _claim_type_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": CLAIM_TYPE_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-claim-type-v1",
-                "semantic_revision": 3,
+                "semantic_revision": 4,
             },
         ).tagged,
     )
@@ -117,7 +117,7 @@ def _capture_contract_law_coordinate() -> AcceptanceLawCoordinate:
             {
                 "identifier": CAPTURE_CONTRACT_LAW_IDENTIFIER,
                 "artifact_tag": "playbill-capture-contract-v1",
-                "semantic_revision": 2,
+                "semantic_revision": 3,
             },
         ).tagged,
     )
@@ -157,50 +157,63 @@ def _artifact_law_coordinate(
 CLAIM_LAW_V2 = _artifact_law_coordinate(
     CLAIM_LAW_V2_IDENTIFIER,
     "playbill-claim-v2",
-    semantic_revision=3,
+    semantic_revision=4,
 )
 CLAIM_LAW_V3 = _artifact_law_coordinate(
     CLAIM_LAW_V3_IDENTIFIER,
     "playbill-claim-v3",
-    semantic_revision=3,
+    semantic_revision=4,
 )
 CLAIM_TYPE_LAW_V3 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,
     "playbill-claim-type-v3",
-    semantic_revision=3,
+    semantic_revision=4,
 )
 CLAIM_TYPE_LAW_V4 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V4_IDENTIFIER,
     "playbill-claim-type-v4",
+    semantic_revision=4,
+)
+PROVIDER_LAW = _artifact_law_coordinate(
+    PROVIDER_LAW_IDENTIFIER,
+    "playbill-provider-v1",
     semantic_revision=3,
 )
-PROVIDER_LAW = _artifact_law_coordinate(PROVIDER_LAW_IDENTIFIER, "playbill-provider-v1")
 SOURCE_ACQUISITION_POLICY_LAW = _artifact_law_coordinate(
     SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER,
     "playbill-source-acquisition-policy-v1",
+    semantic_revision=3,
 )
 STANDING_MANDATE_LAW = _artifact_law_coordinate(
     STANDING_MANDATE_LAW_IDENTIFIER,
     "playbill-standing-mandate-v1",
+    semantic_revision=3,
 )
-PROCEDURE_LAW = _artifact_law_coordinate(PROCEDURE_LAW_IDENTIFIER, "playbill-procedure-v1")
+PROCEDURE_LAW = _artifact_law_coordinate(
+    PROCEDURE_LAW_IDENTIFIER,
+    "playbill-procedure-v1",
+    semantic_revision=3,
+)
 PROCEDURE_LAW_V2 = _artifact_law_coordinate(
     PROCEDURE_LAW_V2_IDENTIFIER,
     "playbill-procedure-v2",
+    semantic_revision=3,
 )
-LINE_LAW = _artifact_law_coordinate(LINE_LAW_IDENTIFIER, "playbill-line-v1")
-# Revision 3: the law refuses a relation traversal whose predicate names a
-# ClaimType that cannot carry a Subject-typed object. Definitions that were
-# accepted under revision 2 and contain such a traversal no longer satisfy it,
-# so the meaning moved and the digest moves with it.
+LINE_LAW = _artifact_law_coordinate(
+    LINE_LAW_IDENTIFIER,
+    "playbill-line-v1",
+    semantic_revision=3,
+)
+# Revision 4 retains the relation-traversal refusal and removes dormant role authority.
 QUERY_DEFINITION_LAW = _artifact_law_coordinate(
     QUERY_DEFINITION_LAW_IDENTIFIER,
     "playbill-query-definition-v1",
-    semantic_revision=3,
+    semantic_revision=4,
 )
 EXHAUST_PROMOTION_LAW = _artifact_law_coordinate(
     EXHAUST_PROMOTION_LAW_IDENTIFIER,
     "playbill-exhaust-promotion-v1",
+    semantic_revision=3,
 )
 
 
