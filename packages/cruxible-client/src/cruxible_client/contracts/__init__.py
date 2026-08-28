@@ -919,6 +919,9 @@ class PlaybillNextResult(BaseModel):
     unobserved_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
     items: list[dict[str, Any]]
     result_digest: str
+    # Set only on a delta: result_digest still names the whole queue, so it is
+    # the cursor to echo back, not a description of the rows carried here.
+    delta_since: str | None = None
 
 
 class PlaybillCurationListResult(BaseModel):

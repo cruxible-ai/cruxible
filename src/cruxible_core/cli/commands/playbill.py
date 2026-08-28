@@ -766,7 +766,11 @@ def activate_proposal(
             outcome=result.status,
             ids={
                 "proposal": result.proposal_id,
-                "coordinate": result.accepted_coordinate.git_oid,
+                "coordinate": (
+                    None
+                    if result.accepted_coordinate is None
+                    else result.accepted_coordinate.git_oid
+                ),
             },
             next_command="cruxible playbill next --brief",
         )
@@ -2244,6 +2248,12 @@ def procedure_run_status(run_id: str, output_json: bool) -> None:
     type=click.Path(file_okay=False),
     help="Workspace whose configured floor is observed locally.",
 )
+@click.option(
+    "--delta",
+    "since_result_digest",
+    default=None,
+    help="A prior result_digest; return only the rows new since that queue.",
+)
 @brief_option
 @json_option
 @handle_errors
@@ -2252,6 +2262,7 @@ def next_work(
     access_profile_path: str | None,
     expiring_within: int,
     workspace_root: str,
+    since_result_digest: str | None,
     output_brief: bool,
     output_json: bool,
 ) -> None:
@@ -2287,6 +2298,7 @@ def next_work(
             at=coordinate,
             expiring_within={"microseconds": expiring_within},
             workspace_observation=observed,
+            since_result_digest=since_result_digest,
         )
 
     result = _server_call(

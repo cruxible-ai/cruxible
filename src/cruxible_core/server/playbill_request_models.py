@@ -240,6 +240,7 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
     access_profile: dict[str, Any]
     expiring_within: dict[str, Any] | None = None
     workspace_observation: dict[str, Any] | None = None
+    since_result_digest: str | None = None
 
 
 class PlaybillCurationListRequest(_StrictPlaybillRequest):

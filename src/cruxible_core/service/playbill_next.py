@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shlex
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -462,6 +462,11 @@ class PlaybillNextRequestV1(_StrictNextModel):
         microseconds=DEFAULT_EXPIRING_WITHIN_MICROSECONDS
     )
     workspace_observation: PlaybillNextWorkspaceObservationV1 | None = None
+    # The result_digest of a queue this caller has already seen. A digest this
+    # process still remembers yields only the rows that are new since it; one it
+    # does not -- a restart, an eviction, a digest from elsewhere -- yields the
+    # whole queue, which is always a correct answer to "what is outstanding".
+    since_result_digest: str | None = None
 
     @field_validator("evaluation_time")
     @classmethod
@@ -548,6 +553,10 @@ class PlaybillNextResultV1(_StrictNextModel):
     unobserved_domains: tuple[NextDomain, ...]
     items: tuple[PlaybillNextItemV1, ...]
     result_digest: str
+    # Set only on a delta. `result_digest` then still names the WHOLE queue --
+    # it is the cursor the caller echoes back next time -- so it deliberately
+    # does not reproduce from the partial `items` carried here.
+    delta_since: str | None = None
 
     @field_validator("evaluation_time")
     @classmethod
@@ -568,7 +577,7 @@ class PlaybillNextResultV1(_StrictNextModel):
             raise ValueError("next result must account for every observation domain")
         if self.items != tuple(sorted(self.items, key=_item_sort_key)):
             raise ValueError("next items do not follow the deterministic order")
-        if self.result_digest != playbill_next_result_digest(self):
+        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next result digest does not reproduce")
         return self
 
@@ -2251,9 +2260,40 @@ def service_playbill_next(
         unobserved_domains=unobserved,
         items=items,
     )
-    return PlaybillNextResultV1.model_validate(
-        {**values, "result_digest": playbill_next_result_digest(provisional)}
-    )
+    result_digest = playbill_next_result_digest(provisional)
+    full = PlaybillNextResultV1.model_validate({**values, "result_digest": result_digest})
+    _remember_queue(result_digest, full.items)
+    if request.since_result_digest is None:
+        return full
+    return _delta_of(full, since=request.since_result_digest)
+
+
+# Bounded, per-process memory of which rows each queue digest stood for. A miss
+# -- restart, eviction, a digest minted elsewhere -- is not an error: it yields
+# the whole queue, which answers the caller's question either way.
+_QUEUE_MEMO: OrderedDict[str, frozenset[str]] = OrderedDict()
+_QUEUE_MEMO_LIMIT = 32
+
+
+def _remember_queue(result_digest: str, items: tuple[PlaybillNextItemV1, ...]) -> None:
+    _QUEUE_MEMO.pop(result_digest, None)
+    _QUEUE_MEMO[result_digest] = frozenset(item.item_id for item in items)
+    while len(_QUEUE_MEMO) > _QUEUE_MEMO_LIMIT:
+        _QUEUE_MEMO.popitem(last=False)
+
+
+def _delta_of(full: PlaybillNextResultV1, *, since: str) -> PlaybillNextResultV1:
+    """Return only the rows new since a remembered queue, keeping the full cursor.
+
+    `result_digest` still names the whole queue: it is what the caller echoes
+    back next time, so it must not describe the subset carried here.
+    """
+
+    seen = _QUEUE_MEMO.get(since)
+    if seen is None:
+        return full
+    fresh = tuple(item for item in full.items if item.item_id not in seen)
+    return full.model_copy(update={"items": fresh, "delta_since": since})
 
 
 __all__ = [

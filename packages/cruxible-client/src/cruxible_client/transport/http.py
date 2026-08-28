@@ -1118,6 +1118,7 @@ class CruxibleClient:
         at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         expiring_within: Mapping[str, Any] | None = None,
         workspace_observation: Mapping[str, Any] | None = None,
+        since_result_digest: str | None = None,
     ) -> contracts.PlaybillNextResult:
         payload: dict[str, Any] = {
             "tag": "playbill-next-request-v1",
@@ -1130,6 +1131,8 @@ class CruxibleClient:
         }
         if expiring_within is not None:
             payload["expiring_within"] = dict(expiring_within)
+        if since_result_digest is not None:
+            payload["since_result_digest"] = since_result_digest
         response = self._client.post(f"/api/v1/{instance_id}/playbill/next", json=payload)
         return self._parse_model(response, contracts.PlaybillNextResult)
 

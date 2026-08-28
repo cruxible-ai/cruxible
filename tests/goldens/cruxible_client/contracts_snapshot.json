@@ -12196,6 +12196,26 @@
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           }
         },
+        "delta_since": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "delta_since",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delta Since"
+          }
+        },
         "evaluation_time": {
           "has_default": false,
           "has_default_factory": false,
@@ -12327,6 +12347,18 @@
         "properties": {
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "delta_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Delta Since"
           },
           "evaluation_time": {
             "title": "Evaluation Time",
