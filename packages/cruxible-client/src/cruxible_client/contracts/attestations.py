@@ -164,6 +164,8 @@ def verify_approval(
         raise ApprovalIntegrityError(str(exc)) from exc
     if principal.authority_roles == ("daemon",):
         raise ApprovalIntegrityError("the daemon principal cannot provide client approval")
+    if purpose == "ordinary-artifact" and principal.authority_roles == ("recovery",):
+        raise ApprovalIntegrityError("recovery principals cannot approve ordinary artifacts")
     try:
         public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(principal.public_key))
         public_key.verify(

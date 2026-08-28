@@ -59,6 +59,8 @@ class PrincipalRecord(StrictModel):
             raise ValueError("authority_roles must be sorted and unique")
         if "daemon" in value and value != ("daemon",):
             raise ValueError("daemon authority cannot be combined with client roles")
+        if "recovery" in value and value != ("recovery",):
+            raise ValueError("recovery authority is key-management-only")
         return value
 
     @property
