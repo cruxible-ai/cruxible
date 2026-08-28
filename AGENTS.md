@@ -6,9 +6,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 **GitHub:** https://github.com/cruxible-ai/cruxible
 
-Cruxible Core is a deterministic decision engine with receipts. AI agents (Codex, etc.) write configs and orchestrate workflows. Core executes deterministically with proof — no LLM inside.
-
-Four primitives: **Config**, **Ingest**, **Query**, **Feedback**.
+Cruxible Core is governed state for AI agents: deterministic proposals,
+signed approvals, provenance, reproducible accepted generations, and receipts.
+The core contains no LLM.
 
 ## Commands
 
@@ -23,7 +23,7 @@ uv run pytest
 CRUXIBLE_RUN_DOCKER_TESTS=1 uv run pytest tests/test_image -m docker
 
 # Run single test file
-uv run pytest tests/test_config/test_schema.py -v
+uv run pytest tests/test_playbill/test_claims.py -v
 
 # Lint
 uv run ruff check src tests
@@ -56,7 +56,7 @@ Version lives in two places — keep them in sync:
 - `pyproject.toml` (`version = "X.Y.Z"`)
 - `src/cruxible_core/__init__.py` (`__version__ = "X.Y.Z"`)
 
-The MCP server name includes the version (`cruxible-core v0.2.0`) so agents and users can confirm which build is running.
+The MCP server name includes the version (`cruxible-core v0.4.0`) so agents and users can confirm which build is running.
 
 **When to bump:**
 - **Patch (0.2.x):** Bug fixes, doc/prompt wording changes, test additions
@@ -111,13 +111,14 @@ Service functions accept a `PlaybillInstance` and return typed Pydantic results.
 `PlaybillInstance` in `playbill/instance.py` manages the daemon-owned repository and stores:
 
 ```
-.cruxible-playbill/
+<managed-root>/
   instance.json       # instance descriptor
-  repository.git/     # accepted and proposal trees
-  bodies/             # content-addressed bodies
-  journal/            # signed generation/procedure journals
+  ledger.git/         # accepted and proposal trees
+  cas/                # content-addressed bodies
+  exhaust/            # journals, proposal evidence, and operational stores
   projections/        # rebuildable served indexes
-  operational/        # non-governed curation/audit/authoring state
+  credentials/        # daemon signing custody
+  leases/             # local writer leases
 ```
 
 The signed generation ledger and accepted Git tree are authority. Projections,
