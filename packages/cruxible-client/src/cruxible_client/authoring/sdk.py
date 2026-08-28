@@ -13,7 +13,6 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import Any, Literal, cast
 
 from pydantic import SecretStr, TypeAdapter
@@ -25,7 +24,6 @@ from cruxible_client.authoring.blocks import (
     repin_projection_block,
 )
 from cruxible_client.authoring.insertions import (
-    apply_playbill_insertion,
     apply_playbill_publication,
     replace_publication_file,
 )
@@ -663,8 +661,6 @@ class Publication:
         return self._intent._playbill._sources.path_for_source(str(source["source_id"]))
 
     def prepare(self) -> Publication:
-        if self._expectation.get("tag") != "playbill-insertion-expectation-v2":
-            return self
         path = self._path()
         content = path.read_bytes()
         target = cast(Mapping[str, object], self._expectation["target"])
@@ -684,57 +680,30 @@ class Publication:
         return self
 
     def apply(self) -> Publication:
-        if self._expectation.get("tag") == "playbill-insertion-expectation-v2":
-            self.prepare()
-            if self.state == "bound":
-                return self
-            if self.state != "prepared":
-                raise ValueError(f"publication cannot apply from state {self.state!r}")
-            path = self._path()
-            payload = self._intent._draft.payload
-            if not isinstance(payload, ClaimAuthoringPayloadV2) or not isinstance(
-                payload.source, SelfSourceBodyV1
-            ):
-                raise ValueError("publication requires a retained self-source body")
-            expected = path.read_bytes()
-            application = apply_playbill_publication(
-                expected,
-                intent_id=self._intent.intent_id,
-                expectation=self._expectation,
-                retained_body=payload.source.content,
-            )
-            if application.outcome == "applied":
-                replace_publication_file(
-                    path,
-                    expected=expected,
-                    replacement=application.content,
-                )
-            result = self._intent._playbill._client.confirm_playbill_authoring_insertion(
-                self._intent._playbill._instance_id,
-                self._intent.intent_id,
-                observation=application.observation,
-            )
-            self._intent._raw = result.intent
-            self._expectation = result.expectation
+        self.prepare()
+        if self.state == "bound":
             return self
-
+        if self.state != "prepared":
+            raise ValueError(f"publication cannot apply from state {self.state!r}")
         path = self._path()
         payload = self._intent._draft.payload
         if not isinstance(payload, ClaimAuthoringPayloadV2) or not isinstance(
             payload.source, SelfSourceBodyV1
         ):
             raise ValueError("publication requires a retained self-source body")
-        application = apply_playbill_insertion(
-            path.read_bytes(),
+        expected = path.read_bytes()
+        application = apply_playbill_publication(
+            expected,
+            intent_id=self._intent.intent_id,
             expectation=self._expectation,
             retained_body=payload.source.content,
         )
-        original_mode = path.stat().st_mode
-        with NamedTemporaryFile("wb", dir=path.parent, delete=False) as handle:
-            handle.write(application.content)
-            temporary = Path(handle.name)
-        temporary.chmod(original_mode)
-        temporary.replace(path)
+        if application.outcome == "applied":
+            replace_publication_file(
+                path,
+                expected=expected,
+                replacement=application.content,
+            )
         result = self._intent._playbill._client.confirm_playbill_authoring_insertion(
             self._intent._playbill._instance_id,
             self._intent.intent_id,

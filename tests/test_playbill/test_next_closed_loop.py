@@ -53,7 +53,6 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.subjects import render_subject, subject_path
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.playbill.claim_type_migrations import (
@@ -103,15 +102,6 @@ from tests.test_playbill._knowledge_loop_support import (
 )
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
-from tests.test_playbill.test_authoring_insertions import (
-    _activate as _activate_insertion,
-)
-from tests.test_playbill.test_authoring_insertions import (
-    _observation as _insertion_observation,
-)
-from tests.test_playbill.test_authoring_insertions import (
-    _payload as _insertion_payload,
-)
 from tests.test_playbill.test_claims import _claim_type
 from tests.test_playbill.test_dependency_impact import (
     DERIVED_INDEX,
@@ -139,6 +129,7 @@ from tests.test_playbill.test_projection_next import (
     _request as _projection_request,
 )
 from tests.test_playbill.test_reverse_drift_next import (
+    _publish_self_published_claim,
     _published_world,
     _retire,
 )
@@ -932,45 +923,12 @@ def _projection_backing_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def _publish_replacement_claim(instance, owner) -> None:  # type: ignore[no-untyped-def]
-    coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-    intent = coordinator.create(
-        actor=actor,
-        payload=_insertion_payload(),
-        canonical_timestamp="2026-08-21T12:02:00.000000Z",
-    ).intent
-    submitted = coordinator.submit(intent.intent_id, actor=actor)
-    assert submitted.status.proposal_id is not None
-    assert submitted.status.candidate_digest is not None
-    _activate_insertion(
+    _publish_self_published_claim(
         instance,
         owner,
-        proposal_id=submitted.status.proposal_id,
-        candidate_digest=submitted.status.candidate_digest,
-    )
-    pending = coordinator.resume(intent.intent_id, actor=actor).intent.insertion_expectation
-    assert pending is not None
-    confirmation = coordinator.confirm_insertion(
-        intent.intent_id,
-        actor=actor,
-        observation=_insertion_observation(pending.expectation_id),
-    )
-    assert confirmation.successor_status is not None
-    assert confirmation.successor_status.proposal_id is not None
-    assert confirmation.successor_status.candidate_digest is not None
-    _activate_insertion(
-        instance,
-        owner,
-        proposal_id=confirmation.successor_status.proposal_id,
-        candidate_digest=confirmation.successor_status.candidate_digest,
-    )
-    assert (
-        coordinator.confirm_insertion(
-            intent.intent_id,
-            actor=actor,
-            observation=_insertion_observation(pending.expectation_id),
-        ).outcome
-        == "bound"
+        timestamp="2026-08-21T12:02:00.000000Z",
+        successor_timestamp="2026-08-21T12:02:01.000000Z",
+        proposal_suffix="replacement-self-published-copy",
     )
 
 

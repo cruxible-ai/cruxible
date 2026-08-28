@@ -32,6 +32,7 @@ from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import get_registry, reset_registry
+from tests.test_client.test_playbill_authoring import OBSERVATION
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -40,10 +41,6 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
     compiler_digest="sha256:" + "4" * 64,
 )
 INTENT_ID = "AIT-" + "5" * 32
-OBSERVATION = {
-    "tag": "playbill-insertion-confirmation-observation-v1",
-    "expectation_id": "sha256:" + "6" * 64,
-}
 SEED_EXAMPLE = Path(__file__).resolve().parents[2] / "benchmarks/playbill_taubench/seed-example"
 
 
@@ -506,12 +503,13 @@ def test_cli_insertion_confirm_and_abandon_use_the_opaque_intent(
             intent_id: str,
             *,
             observation: dict[str, object],
-        ) -> contracts.PlaybillInsertionConfirmResult:
+        ) -> contracts.PlaybillInsertionConfirmResultV2:
             calls.append((intent_id, observation))
-            return contracts.PlaybillInsertionConfirmResult(
-                outcome="stale_target",
+            return contracts.PlaybillInsertionConfirmResultV2(
+                tag="playbill-insertion-confirm-result-v2",
+                outcome="bound",
                 intent={"intent_id": intent_id},
-                expectation={"state": "pending"},
+                expectation={"state": "bound"},
             )
 
         def abandon_playbill_authoring_insertion(

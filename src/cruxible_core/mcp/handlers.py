@@ -32,7 +32,6 @@ from cruxible_client.authoring.sources import (
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.models import (
-    InsertionConfirmationObservationV1,
     InsertionConfirmationObservationV2,
     PublicationSourceObservationV2,
 )
@@ -940,12 +939,8 @@ def handle_playbill_authoring_confirm_insertion(
     instance_id: str,
     intent_id: str,
     observation: dict[str, Any],
-) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
-    request = (
-        InsertionConfirmationObservationV2.model_validate(observation)
-        if observation.get("tag") == "playbill-insertion-confirmation-observation-v2"
-        else InsertionConfirmationObservationV1.model_validate(observation)
-    )
+) -> contracts.PlaybillInsertionConfirmResultV2:
+    request = InsertionConfirmationObservationV2.model_validate(observation)
     return _dispatch_remote_or_local(
         lambda client: client.confirm_playbill_authoring_insertion(
             instance_id,

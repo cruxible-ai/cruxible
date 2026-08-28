@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,7 +16,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCreateRequestV1,
     AuthoringIntentCreateRequestV2,
     AuthoringIntentCreateRequestV3,
-    InsertionConfirmRequestV1,
     InsertionConfirmRequestV2,
     InsertionPrepareRequestV2,
 )
@@ -184,10 +183,7 @@ class PlaybillInsertionAbandonRequest(_StrictPlaybillRequest):
 
 
 PlaybillInsertionPrepareRequest = InsertionPrepareRequestV2
-PlaybillInsertionConfirmRequest = Annotated[
-    InsertionConfirmRequestV1 | InsertionConfirmRequestV2,
-    Field(discriminator="tag"),
-]
+PlaybillInsertionConfirmRequest = InsertionConfirmRequestV2
 
 
 class PlaybillProposeQueryDefinitionRequest(_StrictPlaybillRequest):

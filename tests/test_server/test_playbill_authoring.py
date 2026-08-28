@@ -537,10 +537,11 @@ def test_http_insertion_confirm_and_abandon_are_typed(
         assert selected == instance_id
         assert intent_id == INTENT_ID
         seen.append("confirm")
-        return contracts.PlaybillInsertionConfirmResult(
-            outcome="stale_target",
+        return contracts.PlaybillInsertionConfirmResultV2(
+            tag="playbill-insertion-confirm-result-v2",
+            outcome="bound",
             intent={"intent_id": intent_id},
-            expectation={"state": "pending"},
+            expectation={"state": "bound"},
         )
 
     def abandon_stub(selected: str, intent_id: str):
@@ -585,7 +586,7 @@ def test_http_insertion_confirm_and_abandon_are_typed(
     )
     confirmed = client.post(
         f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/confirm",
-        json={"tag": "playbill-insertion-confirm-request-v1", "observation": OBSERVATION},
+        json={"tag": "playbill-insertion-confirm-request-v2", "observation": OBSERVATION},
     )
     abandoned = client.post(
         f"/api/v1/{instance_id}/playbill/authoring/intents/{INTENT_ID}/insertion/abandon",
@@ -608,7 +609,7 @@ def test_http_insertion_confirm_and_abandon_are_typed(
     )
 
     assert confirmed.status_code == prepared.status_code == abandoned.status_code == 200
-    assert confirmed.json()["outcome"] == "stale_target"
+    assert confirmed.json()["outcome"] == "bound"
     assert prepared.json()["outcome"] == "prepared"
     assert prepared.json()["warnings"][0]["citation_ids"] == ["sha256:" + "8" * 64]
     assert seen == ["confirm", "abandon", "prepare"]

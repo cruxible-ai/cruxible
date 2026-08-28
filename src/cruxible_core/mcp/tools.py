@@ -448,8 +448,8 @@ def register_tools(
         instance_id: str,
         intent_id: str,
         observation: dict[str, Any],
-    ) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
-        """Confirm an exact client-applied v1 insertion or v2 stamped publication."""
+    ) -> contracts.PlaybillInsertionConfirmResultV2:
+        """Confirm an exact stamped publication."""
         return handlers.handle_playbill_authoring_confirm_insertion(
             instance_id,
             intent_id,

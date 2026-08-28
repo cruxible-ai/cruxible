@@ -776,15 +776,13 @@ async def prepare_authoring_publication(
 
 @router.post(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm",
-    response_model=(
-        contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2
-    ),
+    response_model=contracts.PlaybillInsertionConfirmResultV2,
 )
 async def confirm_authoring_insertion(
     instance_id: str,
     intent_id: str,
     req: PlaybillInsertionConfirmRequest,
-) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
+) -> contracts.PlaybillInsertionConfirmResultV2:
     return playbill_api.playbill_authoring_confirm_insertion(
         resolve_server_instance_id(instance_id),
         intent_id,

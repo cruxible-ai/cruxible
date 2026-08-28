@@ -89,7 +89,6 @@ __all__ = [
     "PlaybillInsertionApplyError",
     "PlaybillWorkspaceError",
     "activate_with_workspace_refresh",
-    "apply_playbill_insertion",
     "inspect_workspace_floor",
     "observe_playbill_next_workspace",
     "materialize_playbill_floor",
@@ -185,7 +184,6 @@ def __getattr__(name: str) -> Any:
     if name in {
         "PlaybillInsertionApplication",
         "PlaybillInsertionApplyError",
-        "apply_playbill_insertion",
     }:
         from cruxible_client.authoring import insertions
 

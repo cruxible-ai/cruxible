@@ -23,7 +23,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringProgramStampV1,
     AuthoringReferenceExpectationV1,
     ClaimAuthoringPayloadV2,
-    InsertionConfirmationObservationV1,
     InsertionConfirmationObservationV2,
     PreflightResultV1,
     PublicationSourceObservationV2,
@@ -1081,17 +1080,12 @@ def playbill_authoring_confirm_insertion(
     instance_id: str,
     intent_id: str,
     *,
-    observation: InsertionConfirmationObservationV1 | InsertionConfirmationObservationV2,
-) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
+    observation: InsertionConfirmationObservationV2,
+) -> contracts.PlaybillInsertionConfirmResultV2:
     check_permission("cruxible_playbill_authoring_confirm_insertion", instance_id=instance_id)
     coordinator, actor = _authoring_coordinator(instance_id)
     result = coordinator.confirm_insertion(intent_id, actor=actor, observation=observation)
-    payload = result.model_dump(mode="json")
-    return (
-        contracts.PlaybillInsertionConfirmResultV2.model_validate(payload)
-        if isinstance(observation, InsertionConfirmationObservationV2)
-        else contracts.PlaybillInsertionConfirmResult.model_validate(payload)
-    )
+    return contracts.PlaybillInsertionConfirmResultV2.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_authoring_prepare_publication(

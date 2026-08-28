@@ -24,7 +24,6 @@ from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV1,
     DiagnosticFrontierLimitsV1,
     DiagnosticFrontierV1,
-    InsertionTargetV1,
     PreflightResultV1,
     RepairAlternativeV1,
     SelfSourceBodyV1,
@@ -457,35 +456,6 @@ def compute_preflight(
                         ),
                     )
                 )
-            elif isinstance(payload.insertion_target, InsertionTargetV1):
-                target = payload.insertion_target
-                removed = (
-                    target.selector.end_byte - target.selector.start_byte
-                    if target.operation == "replace_window"
-                    else 0
-                )
-                expected_length = (
-                    target.coordinate.source_byte_length - removed + len(payload.source.content)
-                )
-                if expected_length != target.postimage_byte_length:
-                    diagnostics.append(
-                        _diagnostic(
-                            code="playbill.authoring.insertion_postimage_length_mismatch",
-                            stage="source_binding",
-                            offending_element="insertion_target.postimage_byte_length",
-                            message=(
-                                "The proposer-observed postimage length does not match the "
-                                "exact patch arithmetic."
-                            ),
-                            repairs=(
-                                _repair(
-                                    "replace_postimage_observation",
-                                    "Recompute the postimage digest and byte length locally.",
-                                    {"postimage_byte_length": expected_length},
-                                ),
-                            ),
-                        )
-                    )
         if isinstance(payload.source, WorkingSelectionObservationV1):
             count = payload.source.selector.observed_occurrence_count
             if count != 1:

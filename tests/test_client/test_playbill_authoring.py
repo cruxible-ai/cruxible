@@ -24,21 +24,13 @@ COORDINATE = {
     "compiler_digest": "sha256:" + "4" * 64,
 }
 INTENT_ID = "AIT-" + "5" * 32
-OBSERVATION = {
-    "tag": "playbill-insertion-confirmation-observation-v1",
-    "expectation_id": "sha256:" + "6" * 64,
-    "source_id": "repo.work-items",
-    "coordinate": {
-        "kind": "observed_digest",
-        "source_content_digest": "sha256:" + "7" * 64,
-        "source_byte_length": 5,
-    },
-    "observed_content_digest": "sha256:" + "7" * 64,
-    "selected_start_byte": 0,
-    "selected_end_byte": 5,
-    "selected_bytes_digest": "sha256:" + "8" * 64,
-    "observed_occurrence_count": 1,
-}
+_PUBLICATION_EXPECTATION, _PUBLICATION_PREPARATION = _prepared()
+OBSERVATION = apply_playbill_publication(
+    b"status: \n",
+    intent_id=INTENT_ID,
+    expectation=_PUBLICATION_EXPECTATION.model_dump(mode="json"),
+    retained_body=b"ready\n",
+).observation
 
 
 def _client(handler: Any) -> CruxibleClient:
@@ -338,48 +330,6 @@ def test_client_whoami_and_proposal_list_use_read_routes_and_status_query() -> N
     assert proposals.status_filter == "open"
     assert [item.method for item in captured] == ["GET", "GET"]
     assert dict(captured[1].url.params) == {"status": "open"}
-
-
-def test_client_speaks_frozen_insertion_confirm_and_abandon_requests() -> None:
-    captured: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured.append(request)
-        if request.url.path.endswith("/confirm"):
-            return httpx.Response(
-                200,
-                json={
-                    "tag": "playbill-insertion-confirm-result-v1",
-                    "outcome": "stale_target",
-                    "intent": {"intent_id": INTENT_ID},
-                    "expectation": {"expectation_id": OBSERVATION["expectation_id"]},
-                    "successor_status": None,
-                },
-            )
-        return httpx.Response(
-            200,
-            json={
-                "tag": "playbill-insertion-abandon-result-v1",
-                "intent": {"intent_id": INTENT_ID},
-                "expectation": {"state": "abandoned"},
-            },
-        )
-
-    client = _client(handler)
-    confirmed = client.confirm_playbill_authoring_insertion(
-        "inst",
-        INTENT_ID,
-        observation=OBSERVATION,
-    )
-    abandoned = client.abandon_playbill_authoring_insertion("inst", INTENT_ID)
-
-    assert confirmed.outcome == "stale_target"
-    assert abandoned.expectation["state"] == "abandoned"
-    assert json.loads(captured[0].content) == {
-        "tag": "playbill-insertion-confirm-request-v1",
-        "observation": OBSERVATION,
-    }
-    assert json.loads(captured[1].content) == {"tag": "playbill-insertion-abandon-request-v1"}
 
 
 def test_client_speaks_typed_publication_prepare_and_confirm_v2_requests() -> None:

@@ -10,7 +10,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringClaimStatementV1,
     ClaimAuthoringPayloadV1,
     InsertionAnchorWindowV1,
-    InsertionTargetV1,
+    InsertionTargetV2,
     SelfSourceBodyV1,
     WorkingAnchorWindowV1,
     WorkingDigestCoordinateV1,
@@ -184,16 +184,16 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     preimage = b"Status: "
-    body = b"status: ready"
     payload = _working_payload(occurrence_count=2).model_copy(
         update={
-            "insertion_target": InsertionTargetV1(
+            "insertion_target": InsertionTargetV2(
                 source_id="repo.work-items",
                 coordinate=WorkingDigestCoordinateV1(
                     source_content_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
                     source_byte_length=len(preimage),
                 ),
-                preimage_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
+                initial_preimage_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
+                initial_preimage_byte_length=len(preimage),
                 selector=InsertionAnchorWindowV1(
                     anchor_content_base64=base64.b64encode(preimage).decode("ascii"),
                     anchor_bytes_digest="sha256:" + hashlib.sha256(preimage).hexdigest(),
@@ -203,8 +203,6 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
                     observed_occurrence_count=1,
                 ),
                 operation="insert_after",
-                postimage_digest="sha256:" + hashlib.sha256(preimage + body).hexdigest(),
-                postimage_byte_length=len(preimage + body),
             )
         }
     )

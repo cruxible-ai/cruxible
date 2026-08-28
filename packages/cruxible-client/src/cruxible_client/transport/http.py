@@ -17,7 +17,6 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringIntentCreateRequestV1,
     AuthoringIntentCreateRequestV2,
     AuthoringIntentCreateRequestV3,
-    InsertionConfirmRequestV1,
     InsertionConfirmRequestV2,
     InsertionPrepareRequestV2,
 )
@@ -884,19 +883,13 @@ class CruxibleClient:
         intent_id: str,
         *,
         observation: Mapping[str, Any],
-    ) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
-        request = (
-            InsertionConfirmRequestV2.model_validate({"observation": dict(observation)})
-            if observation.get("tag") == "playbill-insertion-confirmation-observation-v2"
-            else InsertionConfirmRequestV1.model_validate({"observation": dict(observation)})
-        )
+    ) -> contracts.PlaybillInsertionConfirmResultV2:
+        request = InsertionConfirmRequestV2.model_validate({"observation": dict(observation)})
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm",
             json=request.model_dump(mode="json"),
         )
-        if isinstance(request, InsertionConfirmRequestV2):
-            return self._parse_model(response, contracts.PlaybillInsertionConfirmResultV2)
-        return self._parse_model(response, contracts.PlaybillInsertionConfirmResult)
+        return self._parse_model(response, contracts.PlaybillInsertionConfirmResultV2)
 
     def prepare_playbill_authoring_publication(
         self,
