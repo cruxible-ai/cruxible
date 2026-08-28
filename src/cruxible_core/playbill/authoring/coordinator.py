@@ -491,6 +491,13 @@ class AuthoringIntentCoordinator:
         lowered = computed.lowered
         if lowered is None:
             return False, None
+        # Claims only. Procedure lowering also records a predecessor_digest, and
+        # claim_path() refuses a Procedure identity -- so without this guard every
+        # Procedure revision raised on the terminal success path, AFTER the submit
+        # and the store transition had already landed: the write happened and the
+        # call reported failure.
+        if not isinstance(preflighted.payload, ClaimAuthoringPayloadV1):
+            return False, None
         predecessor = lowered.resolved_authoring.get("predecessor_digest")
         if not isinstance(predecessor, str):
             return False, None

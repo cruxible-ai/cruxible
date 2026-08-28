@@ -18,9 +18,11 @@ from cruxible_client.contracts.procedures.models import (
     StateTapNodeV3,
 )
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.preflight import compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
@@ -151,3 +153,60 @@ def test_caller_originated_exact_procedure_pin_is_typed_refusal(tmp_path: Path) 
     )
     assert diagnostic.offending_element == "definition.contract_in"
     assert diagnostic.repairs[0].kind == "replace_reference"
+
+
+def test_a_procedure_revision_submits_without_reaching_the_claim_revision_marker(
+    tmp_path: Path,
+) -> None:
+    """A Procedure amend must not raise on the terminal success path.
+
+    The submit and the store transition land before the result is built, so a
+    raise there means the write happened and the call reported failure. The
+    Claim revision marker used to run for every payload kind and refuse a
+    Procedure identity.
+    """
+    instance, owner = initialize_local(tmp_path)
+    minted = iter(("4" * 32, "5" * 32))
+    store = AuthoringIntentStore(
+        instance.root / instance.descriptor.storage.exhaust,
+        token_factory=lambda: next(minted),
+    )
+    coordinator = AuthoringIntentCoordinator(instance=instance, store=store)
+    actor = AuthenticatedActor(actor_id="owner")
+
+    # An accepted Procedure, so the next authoring of the same name lowers with
+    # a predecessor_digest -- the exact state the marker mishandled.
+    definition = _slot_definition()
+    first = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition.model_dump(mode="json", by_alias=True)),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert first.verdict == "passed"
+    pending = coordinator.list_pending(actor=actor).intents[0]
+    lowered = compute_preflight(instance, intent=pending, actor=actor).lowered
+    assert lowered is not None
+    _accept_tree(
+        instance,
+        owner,
+        lowered.proposed_tree,
+        timestamp=TIMESTAMP,
+        proposal_name="seed-procedure",
+    )
+
+    revised = definition.model_copy(update={"description": "A revised triage."})
+    compiled = coordinator.compile(
+        actor=actor,
+        payload=_payload(revised.model_dump(mode="json", by_alias=True)),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert compiled.verdict == "passed", compiled.frontier
+
+    intent_id = coordinator.list_pending(actor=actor).intents[-1].intent_id
+    submitted = coordinator.submit(intent_id, actor=actor)
+
+    assert submitted.tag == "playbill-authoring-submit-result-v1"
+    assert submitted.intent.semantic_identity == "Procedure:triage"
+    # The marker is a Claim concept; a Procedure carries the default.
+    assert submitted.identity_stable is False
+    assert submitted.claim_revision is None
