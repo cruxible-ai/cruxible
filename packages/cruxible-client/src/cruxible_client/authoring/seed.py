@@ -17,10 +17,10 @@ one proposal for the whole bundle. Two facts make that impossible and both are
 load-bearing:
 
 *The frozen v1 plan grammar grouped expert Claims under one plural operation.*
-That authoring operation has since retired, but its name remains in the pure
-plan bytes so historical plan digests do not change. Seed application is no
-longer a sanctioned write surface; this module only renders the deterministic
-historical grouping.
+That authoring operation has since retired, and legacy-shaped Claim payloads
+now refuse at plan time rather than grouping under the retired name. Seed
+application is no longer a sanctioned write surface; this module renders the
+deterministic plan for ClaimInput-shaped bundles only.
 
 *A proposal settles against the base it was admitted at.* Two proposals opened
 against one accepted head cannot both activate -- the second refuses with
@@ -36,9 +36,10 @@ Legacy Claim payloads declared dependency closures. A ClaimType or Subject that
 one of those payloads carries needs no separate group in the frozen plan. So
 the plan is:
 
-* every Claim in the bundle -> **one** batch proposal;
-* every ClaimType and Subject *carried* by one of those Claims -> **no**
-  proposal, and the plan says so by name;
+* every Claim in the bundle -> its own authoring group;
+* carried entries are a frozen-grammar concept with no reachable producer
+  (legacy dependency-closure payloads refuse), so ``plan.carried`` is always
+  empty in any returned plan;
 * everything else -> one proposal each, on the operation that already exists
   for it.
 

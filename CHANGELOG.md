@@ -87,6 +87,12 @@
   pre-release fixtures and ledgers carrying `playbill-claim-v1` must be rebuilt
   or migrated before upgrading.
 
+- **Flow-A authoring remains the canonical Claim path after the retirement.**
+  Client-side source binding (`playbill authoring bind`), model-generated
+  authoring examples (including the `cruxible_playbill_authoring_example`
+  MCP tool), bare and qualified Claim reads, and the actor/repair-authority
+  refusal texts all continue unchanged.
+
 Every user-visible fix or feature adds its entry here in the same change
 that lands it; entries move under a version heading when the release is
 tagged. Work items for these changes live on the active release line in
