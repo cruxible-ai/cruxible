@@ -77,11 +77,17 @@ def _context(
     )
 
 
-def test_review_request_policy_enforces_evidence_without_actor_or_transition_facades() -> None:
+def test_retained_evidence_requirement_is_dormant_without_query_wiring() -> None:
     candidate = evaluate_claim_admission_candidate(_review_policy(), _context())
+    truncated = evaluate_claim_admission_candidate(
+        _review_policy(),
+        _context(truncated=True),
+    )
 
     assert candidate.verdict == "eligible"
-    assert candidate.evidence_results[0].requirement_id == "one-valid-approval"
+    assert candidate.evidence_results == ()
+    assert truncated.verdict == "eligible"
+    assert truncated.refusal_codes == ()
     assert set(candidate.model_fields_set) == {"verdict", "evidence_results", "refusal_codes"}
 
 
@@ -111,13 +117,7 @@ def test_deleted_evidence_requirement_fields_refuse(field: str) -> None:
         EvidenceRequirementV1.model_validate(payload)
 
 
-def test_admission_refuses_truncated_query_freeze_bypass_and_unknown_predicate() -> None:
-    truncated = evaluate_claim_admission_candidate(
-        _review_policy(),
-        _context(truncated=True),
-    )
-    assert truncated.refusal_codes == ("playbill.claim_policy.evidence_query_truncated",)
-
+def test_admission_refuses_freeze_bypass_and_unknown_predicate() -> None:
     frozen_context = _context(parent_status="approved", candidate_status="approved")
     frozen_context = frozen_context.model_copy(
         update={
@@ -135,27 +135,12 @@ def test_admission_refuses_truncated_query_freeze_bypass_and_unknown_predicate()
     assert "playbill.claim_policy.unknown_predicate" in refused.refusal_codes
 
 
-def test_retained_freeze_exception_bytes_cannot_bypass_without_transitions() -> None:
-    policy = _review_policy()
-    freeze = policy.freeze_requirements[0].model_copy(
-        update={"except_transition_requirements": ("retired-transition",)}
-    )
-    frozen_context = _context(parent_status="approved", candidate_status="approved")
-    frozen_context = frozen_context.model_copy(
-        update={
-            "candidate_values": {
-                **frozen_context.candidate_values,
-                "review.summary": ("changed",),
-            }
-        }
-    )
+def test_retained_freeze_exception_must_name_an_existing_transition() -> None:
+    payload = _review_policy().model_dump(mode="json")
+    payload["freeze_requirements"][0]["except_transition_requirements"] = ["retired-transition"]
 
-    result = evaluate_claim_admission_candidate(
-        policy.model_copy(update={"freeze_requirements": (freeze,)}),
-        frozen_context,
-    )
-
-    assert "playbill.claim_policy.freeze_active" in result.refusal_codes
+    with pytest.raises(ValidationError, match="unknown transition requirement"):
+        ClaimAdmissionPolicyV1.model_validate(payload)
 
 
 def _evidence_policy() -> ClaimEvidenceAdmissionPolicyV1:

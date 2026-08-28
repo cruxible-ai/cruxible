@@ -764,7 +764,10 @@ def _effective_claim_values(
 
 
 def _policy_has_requirements(policy: ClaimAdmissionPolicyV1) -> bool:
-    return bool(policy.evidence_requirements or policy.freeze_requirements)
+    # Evidence requirements remain retained-but-dormant until their governed
+    # QueryDefinition result plane is wired. A deletion batch must not promote
+    # their mere presence into unconditional admission enforcement.
+    return bool(policy.freeze_requirements)
 
 
 def _claim_admission_evaluations(
@@ -831,9 +834,8 @@ def _claim_admission_evaluations(
             declared_predicates=declared_predicates,
             parent_values=parent_values.get(subject_path, {}),
             candidate_values=candidate_values.get(subject_path, {}),
-            # QueryDefinition execution is introduced in PC-F. Until then an
-            # evidence requirement refuses as missing rather than trusting
-            # caller-authored query output.
+            # Query-backed evidence remains dormant until its governed result
+            # plane is wired; caller-authored query output is never trusted.
             query_results=(),
         )
         entries: list[dict[str, object]] = []
@@ -2131,19 +2133,20 @@ def _evaluate_scoped_members(
                         path,
                     )
                 )
-    (
-        claim_admission_by_path,
-        claim_admission_digests_by_path,
-        claim_admission_diagnostics,
-    ) = _claim_admission_evaluations(
-        current_tree=current_tree,
-        candidate_tree=candidate_tree,
-        scope=scope,
-        timestamp=timestamp,
-        subjects=resolved.subjects,
-        claim_types=resolved.claim_types,
-    )
-    diagnostics.extend(claim_admission_diagnostics)
+    if actor_id is not None:
+        (
+            claim_admission_by_path,
+            claim_admission_digests_by_path,
+            claim_admission_diagnostics,
+        ) = _claim_admission_evaluations(
+            current_tree=current_tree,
+            candidate_tree=candidate_tree,
+            scope=scope,
+            timestamp=timestamp,
+            subjects=resolved.subjects,
+            claim_types=resolved.claim_types,
+        )
+        diagnostics.extend(claim_admission_diagnostics)
 
     used_expansions: set[str] = set()
     accepted: list[_AcceptedMember] = []

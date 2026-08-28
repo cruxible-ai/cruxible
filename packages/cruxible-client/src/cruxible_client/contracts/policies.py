@@ -154,6 +154,8 @@ class ClaimAdmissionPolicyV1(_StrictPolicyModel):
         all_ids = tuple(item for group in groups for item in group)
         if len(all_ids) != len(set(all_ids)):
             raise ValueError("policy requirement IDs must be unique across requirement kinds")
+        if any(item.except_transition_requirements for item in self.freeze_requirements):
+            raise ValueError("freeze exception refers to an unknown transition requirement")
         return self
 
 
@@ -314,7 +316,7 @@ def evaluate_claim_admission_candidate(
     policy: ClaimAdmissionPolicyV1,
     context: ClaimAdmissionCandidateContextV1,
 ) -> ClaimAdmissionCandidateResultV1:
-    """Evaluate the surviving evidence and freeze admission requirements."""
+    """Evaluate freeze requirements while query-backed evidence remains dormant."""
 
     declared = set(context.declared_predicates)
     policy_predicates = {item.while_predicate for item in policy.freeze_requirements} | {
@@ -338,27 +340,10 @@ def evaluate_claim_admission_candidate(
         if active and changed:
             refusal_codes.add("playbill.claim_policy.freeze_active")
 
-    evidence_by_id = {item.requirement_id: item for item in policy.evidence_requirements}
-    query_by_id = {item.requirement_id: item for item in context.query_results}
-    used_evidence: list[QueryEvidenceResultV1] = []
-    for requirement_id in sorted(evidence_by_id, key=lambda item: item.encode("utf-8")):
-        evidence = evidence_by_id[requirement_id]
-        result = query_by_id.get(requirement_id)
-        if result is None or result.query_definition_digest != evidence.query_definition_digest:
-            refusal_codes.add("playbill.claim_policy.evidence_query_missing")
-        elif result.truncated:
-            refusal_codes.add("playbill.claim_policy.evidence_query_truncated")
-        elif result.matching_count < evidence.min_count:
-            refusal_codes.add("playbill.claim_policy.evidence_min_count")
-        else:
-            used_evidence.append(result)
-
     codes = tuple(sorted(refusal_codes, key=lambda item: item.encode("utf-8")))
     return ClaimAdmissionCandidateResultV1(
         verdict="refused" if codes else "eligible",
-        evidence_results=tuple(
-            sorted(used_evidence, key=lambda item: item.requirement_id.encode("utf-8"))
-        ),
+        evidence_results=(),
         refusal_codes=codes,
     )
 
@@ -594,18 +579,16 @@ def resolve_claim_contenders(
             selected_claim_identities=identities,
             contender_claim_identities=identities,
         )
-    if policy.selector == "only_contender":
-        if len(eligible) == 1:
-            return ClaimResolutionResultV1(
-                status="resolved",
-                selected_claim_identities=identities,
-                contender_claim_identities=identities,
-            )
+    if len(eligible) == 1:
         return ClaimResolutionResultV1(
-            status="refused" if policy.conflict_result == "refuse" else "unresolved",
+            status="resolved",
+            selected_claim_identities=identities,
             contender_claim_identities=identities,
         )
-    raise AssertionError("closed ClaimResolutionPolicy selector was not handled")
+    return ClaimResolutionResultV1(
+        status="refused" if policy.conflict_result == "refuse" else "unresolved",
+        contender_claim_identities=identities,
+    )
 
 
 __all__ = [

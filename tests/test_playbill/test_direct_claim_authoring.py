@@ -35,6 +35,7 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
+    EvidenceRequirementV1,
     FreezeRequirementV1,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
@@ -42,6 +43,7 @@ from cruxible_client.contracts.source_references import EvidenceCommitmentV1, Op
 from cruxible_client.contracts.subjects import subject_digest
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.proposals import evaluate_proposal_tree
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_claims import (
@@ -95,6 +97,8 @@ def test_direct_authoring_refuses_caller_authored_observed_at() -> None:
 
 def test_subject_level_freeze_policy_refuses_an_adjacent_claim_change(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    base_tree = instance.tree_at(base.git_oid)
     status_type = _claim_type().model_copy(
         update={
             "admission_policy": ClaimAdmissionPolicyV1(
@@ -136,6 +140,29 @@ def test_subject_level_freeze_policy_refuses_an_adjacent_claim_change(tmp_path: 
         proposal_name="ready-with-freeze",
         timestamp=TIMESTAMP,
     )
+    candidate = ready.proposal.proposal.candidate
+    assert candidate is not None
+    claim_result = next(
+        item.result for item in candidate.law_evidence if item.path.startswith("claims/")
+    )
+    assert len(claim_result["claim_admission"]) == 1
+    evaluated_oid = ready.proposal.proposal.evaluation.evaluated_tree_oid
+    assert evaluated_oid is not None
+    actorless = evaluate_proposal_tree(
+        base_tree=base_tree,
+        current_tree=base_tree,
+        proposed_tree=instance.proposal_tree(evaluated_oid),
+        current=base,
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id=None,
+    )
+    assert actorless.candidate is not None
+    actorless_claim_result = next(
+        item.result for item in actorless.candidate.law_evidence if item.path.startswith("claims/")
+    )
+    assert actorless_claim_result["claim_admission"] == []
     _activate_direct_claim(instance, owner, ready)
 
     summary = service_propose_playbill_claim(
@@ -159,6 +186,46 @@ def test_subject_level_freeze_policy_refuses_an_adjacent_claim_change(tmp_path: 
     assert tuple(item.code for item in summary.proposal.proposal.evaluation.diagnostics) == (
         "playbill.claim_policy.freeze_active",
     )
+
+
+def test_retained_query_evidence_requirement_is_dormant_in_proposals(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    claim_type = _claim_type().model_copy(
+        update={
+            "admission_policy": ClaimAdmissionPolicyV1(
+                evidence_requirements=(
+                    EvidenceRequirementV1(
+                        requirement_id="supporting-query",
+                        query_definition_digest="sha256:" + "44" * 32,
+                        min_count=1,
+                    ),
+                )
+            )
+        }
+    )
+    authoring = _authoring().model_copy(
+        update={
+            "statement": _authoring().statement.model_copy(
+                update={"claim_type_digest": claim_type_digest(claim_type).tagged}
+            ),
+            "claim_type_artifact": claim_type,
+        }
+    )
+
+    proposed = service_propose_playbill_claim(
+        instance,
+        authoring=authoring,
+        actor_id="owner",
+        proposal_name="evidence-requirement-dormant",
+        timestamp=TIMESTAMP,
+    )
+
+    candidate = proposed.proposal.proposal.candidate
+    assert candidate is not None
+    claim_result = next(
+        item.result for item in candidate.law_evidence if item.path.startswith("claims/")
+    )
+    assert claim_result["claim_admission"] == []
 
 
 def test_one_call_claim_proposal_activation_query_history_explain_and_source(
