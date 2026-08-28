@@ -10,9 +10,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.captures import CaptureObjectStoreProtocol
 from cruxible_client.contracts.claims import (
-    AcceptedClaim,
     ClaimArtifactAny,
     ClaimArtifactV3,
     ClaimRetireDependentV1,
@@ -22,7 +20,6 @@ from cruxible_client.contracts.claims import (
     ClaimStatement,
     claim_artifact_digest,
     claim_path,
-    claim_statement_digest,
     parse_claim,
     render_claim,
 )
@@ -30,10 +27,6 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.closure import ReversePinClosureItem, reverse_pin_closure
-from cruxible_core.playbill.coverage.indexes import (
-    claim_cited_content_digests,
-    live_claim_captures_by_content,
-)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -69,11 +62,17 @@ class ClaimRetirementResultItemV1(_StrictRetirementModel):
 
 
 class ClaimRetireCitingClaimV1(_StrictRetirementModel):
-    """One live Claim resting on evidence the retiring Claim also rests on.
+    """RESERVED. The advisory that produced these rows is withdrawn.
 
-    `capture_digests` are this Claim's OWN Captures over the shared commitment.
-    Two Claims never share a Capture -- each mints its own envelope -- so the
-    shared thing is the committed content underneath, not the digest listed here.
+    Retiring a Claim withdraws an assertion, not the evidence under it, so the
+    Claims that read the same bytes are not stranded by it. The only key that
+    could have named a real relation -- byte equality of the committed content --
+    joins unrelated Claims that happen to read identical spans of different
+    sources. The sound key is an explicit copy edge on the citation itself, which
+    is the maintainer's shared-Capture/copy-edge design decision to make.
+
+    The model and its field stay on the wire, always empty, so that decision does
+    not have to move the catalogued surface a second time.
     """
 
     artifact_identity: ArtifactIdentity
@@ -90,10 +89,8 @@ class ClaimRetirePreflightV1(_StrictRetirementModel):
     reason: ClaimRetirementReason
     effective_until: datetime | None
     required_dependents: tuple[ClaimRetireInventoryItemV1, ...]
-    # Advisory, never required. A citation is not a dependency edge the closure
-    # can retire, so these Claims are not dispositionable as dependents; they are
-    # named because retiring this Claim leaves each of them resting on evidence
-    # whose asserting Claim is gone, which the retirement used to do silently.
+    # RESERVED, always empty -- see ClaimRetireCitingClaimV1. Retirement makes no
+    # claim about who else read the same bytes.
     citing_claims: tuple[ClaimRetireCitingClaimV1, ...] = ()
     diagnostics: tuple[CompilerDiagnostic, ...]
     submit_ready: bool
@@ -132,64 +129,6 @@ def _generation_timestamp(instance: PlaybillInstance) -> str:
     if record is None:
         raise ClaimRetireError("an accepted Claim cannot exist at genesis")
     return record.candidate.timestamp
-
-
-def _citing_claims(
-    tree: Mapping[str, bytes],
-    *,
-    root_path: str,
-    root: ClaimArtifactAny,
-    store: CaptureObjectStoreProtocol,
-    exclude: frozenset[str] = frozenset(),
-) -> tuple[ClaimRetireCitingClaimV1, ...]:
-    """Name the live Claims left standing on this Claim's evidence once it retires.
-
-    Advisory only. `reverse_pin_closure` walks pins and derivation inputs, so a
-    Claim that merely rests on the same evidence is invisible to it and cannot be
-    dispositioned as a dependent -- but it is exactly what goes stale, silently,
-    when the cited Claim goes away.
-
-    The join is on committed CONTENT, not on Capture digest. Every Capture
-    builder binds `claim_id` into the envelope it mints, so two Claims never
-    share a Capture and a Capture-keyed match could only ever return nothing. A
-    second Claim copying a published span mints its own envelope over the same
-    commitment -- that is the reachable case, and the commitment is where the two
-    meet. `capture_digests` reports the CITING Claim's own Captures over that
-    shared content.
-    """
-
-    cited = set(claim_cited_content_digests(root, store=store).values())
-    if not cited:
-        return ()
-    accepted = tuple(
-        AcceptedClaim(
-            path=path,
-            claim=parsed,
-            statement_digest=claim_statement_digest(parsed.statement).tagged,
-            artifact_digest=claim_artifact_digest(parsed).tagged,
-        )
-        for path, parsed in (
-            (path, parse_claim(tree[path], path=path))
-            for path in sorted(tree, key=lambda item: item.encode("utf-8"))
-            if path.startswith("claims/") and path != root_path and path not in exclude
-        )
-    )
-    by_content = live_claim_captures_by_content(accepted, store=store)
-    identities = {item.path: item.claim.identity for item in accepted}
-    captures_by_path: dict[str, set[str]] = {}
-    for content in sorted(cited, key=lambda item: item.encode("utf-8")):
-        for path, captures in by_content.get(content, {}).items():
-            captures_by_path.setdefault(path, set()).update(captures)
-    return tuple(
-        ClaimRetireCitingClaimV1(
-            artifact_identity=identities[path],
-            claim_path=path,
-            capture_digests=tuple(sorted(captures, key=lambda item: item.encode("utf-8"))),
-        )
-        for path, captures in sorted(
-            captures_by_path.items(), key=lambda item: item[0].encode("utf-8")
-        )
-    )
 
 
 def _claim_identity_by_digest(
@@ -531,16 +470,6 @@ def service_retire_claim(
     )
     unsupported = tuple(item for item in closure if item.state.artifact_kind != "claim")
     inventory = _inventory(closure)
-    # The closure's own members are already required dependents; naming them
-    # again as advisory citers would double-report the same Claims.
-    closure_paths = frozenset(item.state.path for item in closure)
-    citing = _citing_claims(
-        tree,
-        root_path=path,
-        root=claim,
-        store=instance.body_store(),
-        exclude=closure_paths,
-    )
     root_request = ClaimRetireDependentV1(
         artifact_identity=claim.identity,
         predecessor_digest=claim_artifact_digest(claim).tagged,
@@ -573,7 +502,6 @@ def service_retire_claim(
             reason=request.reason,
             effective_until=request.effective_until,
             required_dependents=inventory,
-            citing_claims=citing,
             diagnostics=(),
             submit_ready=not inventory,
         )
@@ -613,7 +541,6 @@ def service_retire_claim(
             reason=request.reason,
             effective_until=request.effective_until,
             required_dependents=inventory,
-            citing_claims=citing,
             diagnostics=evaluation.diagnostics,
             submit_ready=evaluation.candidate is not None,
         )

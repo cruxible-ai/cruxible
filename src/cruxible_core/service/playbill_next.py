@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shlex
 from collections import OrderedDict, defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, TypeAlias
@@ -22,7 +22,6 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.captures import (
     FOREIGN_SOURCE_COORDINATE_TYPE,
     CanonicalDurationV1,
-    CaptureObjectStoreProtocol,
     parse_capture_envelope,
 )
 from cruxible_client.contracts.claim_types import (
@@ -35,7 +34,6 @@ from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResultV2,
 )
 from cruxible_client.contracts.claims import (
-    AcceptedClaim,
     ClaimArtifactAny,
     ClaimCitationV1,
     LiteralClaimObject,
@@ -72,8 +70,6 @@ from cruxible_core.playbill.coverage.contracts import (
 )
 from cruxible_core.playbill.coverage.indexes import (
     WorkingOccurrenceV1,
-    claim_cited_content_digests,
-    live_claim_captures_by_content,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -1412,107 +1408,6 @@ def _bounded_claim_lineages(
     )
 
 
-def _claim_cites_retired_items(
-    instance: PlaybillInstance,
-    *,
-    coordinate: AcceptedProjectionCoordinate,
-    access_profile: CoverageAccessProfileV1,
-) -> tuple[PlaybillNextItemV1, ...]:
-    """Surface each live Claim left standing on a retired Claim's evidence.
-
-    Retirement cannot demand these as dependents -- resting on the same evidence
-    is not a dependency edge its closure walks -- so the stranding is invisible
-    at retirement time and stays invisible afterwards. The queue is where it
-    becomes actionable: the citing Claim still asserts something whose only
-    other asserter has been withdrawn.
-
-    The join is on committed CONTENT. Every Capture builder binds `claim_id`
-    into the envelope it mints, so two Claims never share a Capture digest; the
-    Claim that copied a published span minted its own envelope over the same
-    commitment, and the commitment is the only key under which the two meet.
-    """
-
-    if not access_profile.permits("instance"):
-        return ()
-    facts = build_accepted_query_facts(
-        instance,
-        coordinate=coordinate,
-        include_retired=True,
-    )
-    store = instance.body_store()
-    retired_content: dict[str, set[str]] = {}
-    live: list[AcceptedClaim] = []
-    for row in facts.claims:
-        accepted = row.accepted
-        if accepted.claim.lifecycle.state == "live":
-            live.append(accepted)
-            continue
-        if accepted.claim.lifecycle.state != "retired":
-            continue
-        for content in claim_cited_content_digests(accepted.claim, store=store).values():
-            retired_content.setdefault(content, set()).add(accepted.claim.identity.qualified)
-    if not retired_content:
-        return ()
-    return _stranded_citation_items(retired_content, live=live, store=store)
-
-
-def _stranded_citation_items(
-    retired_content: Mapping[str, set[str]],
-    *,
-    live: Sequence[AcceptedClaim],
-    store: CaptureObjectStoreProtocol,
-) -> tuple[PlaybillNextItemV1, ...]:
-    """Turn "whose evidence did retired Claims rest on" into one row per stranded citer.
-
-    `capture_digests` in the row detail are the CITING Claim's own Captures over
-    the shared commitment, not a digest the two Claims have in common -- there is
-    no such digest.
-    """
-
-    by_content = live_claim_captures_by_content(live, store=store)
-    identities = {item.path: item.claim.identity.qualified for item in live}
-    stranded: dict[str, dict[str, set[str]]] = {}
-    for content in sorted(retired_content, key=lambda item: item.encode("utf-8")):
-        for path, captures in by_content.get(content, {}).items():
-            entry = stranded.setdefault(identities[path], {})
-            for capture in captures:
-                entry.setdefault(capture, set()).update(retired_content[content])
-
-    items: list[PlaybillNextItemV1] = []
-    for citing in sorted(stranded, key=lambda item: item.encode("utf-8")):
-        owned = stranded[citing]
-        retired = sorted(
-            {identity for owners in owned.values() for identity in owners},
-            key=lambda item: item.encode("utf-8"),
-        )
-        items.append(
-            _item(
-                severity="warning",
-                reason="claim_cites_retired",
-                subject_identity=citing,
-                related_identities=tuple(retired),
-                detail={
-                    "citing_claim": citing,
-                    "retired_claims": retired,
-                    "capture_digests": sorted(owned, key=lambda item: item.encode("utf-8")),
-                },
-                repair=PlaybillNextRepairV1(
-                    # Retire, not revise. A revision unions the predecessor's
-                    # citations forward -- the evidence trail is append-only --
-                    # so authoring a new revision of this Claim can never drop
-                    # the citation that strands it. Either this Claim goes, or a
-                    # fresh Claim stands on evidence of its own. Same shape as a
-                    # `gone` citation drift, which resolves the same way.
-                    operation="playbill.claim.retire",
-                    target=citing,
-                    required_change="retire_or_restate_on_independent_evidence",
-                    arguments={"claim_id": citing.removeprefix("Claim:")},
-                ),
-            )
-        )
-    return tuple(items)
-
-
 def _claim_dependency_items(
     instance: PlaybillInstance,
     *,
@@ -2244,11 +2139,6 @@ def service_playbill_next(
                     instance,
                     coordinate=coordinate,
                     evaluation_time=request.evaluation_time,
-                    access_profile=request.access_profile,
-                ),
-                *_claim_cites_retired_items(
-                    instance,
-                    coordinate=coordinate,
                     access_profile=request.access_profile,
                 ),
                 *_document_items(

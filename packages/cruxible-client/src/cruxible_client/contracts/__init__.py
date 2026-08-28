@@ -40,6 +40,12 @@ PlaybillNextReason: TypeAlias = Literal[
     "claim_dependency_stale",
     "claim_attestation_threshold_met",
     "document_modified",
+    # RESERVED, never emitted. The stranded-citation row was withdrawn: retiring
+    # a Claim withdraws an assertion, not the evidence under it, and the only
+    # available key -- byte equality of the committed content -- joins unrelated
+    # Claims that read identical spans of different sources. The sound key is an
+    # explicit copy edge on the citation, which is a separate design decision.
+    # The value stays so that decision does not move this wire a second time.
     "claim_cites_retired",
 ]
 
