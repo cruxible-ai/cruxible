@@ -1,13 +1,5 @@
 {
   "artifact_format": "playbill-subject-v1",
-  "authority": {
-    "approve_roles": [
-      "owner"
-    ],
-    "propose_roles": [
-      "owner"
-    ]
-  },
   "identity": {
     "kind": "Subject",
     "name": "project.work_item/wi-101"

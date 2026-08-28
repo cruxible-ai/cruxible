@@ -1,9 +1,9 @@
 {
-  "artifact_digest": "sha256:bb336cc0f65017597703b86e62a250a853209f10a5a1cbf2348f82bf8c397afe",
-  "canonical_wire": "{\"admission_policy\":{\"evidence_requirements\":[],\"freeze_requirements\":[],\"tag\":\"playbill-claim-admission-policy-v1\"},\"allowed_object_subject_kinds\":[],\"allowed_subject_kinds\":[\"project.work_item\"],\"artifact_format\":\"playbill-claim-type-v1\",\"authority\":{\"approve_roles\":[\"owner\"],\"propose_roles\":[\"owner\"]},\"cardinality\":\"one\",\"evidence_admission_policy\":{\"rules\":[],\"tag\":\"playbill-claim-evidence-admission-policy-v1\"},\"identity\":{\"kind\":\"ClaimType\",\"name\":\"project.work_item.status\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"literal_schema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"enum\":[\"blocked\",\"done\",\"ready\"],\"type\":\"string\"},\"object_kind\":\"literal\",\"permitted_roles\":[\"normative\",\"observation\"],\"pins\":[],\"predicate\":\"project.work_item.status\",\"referent_sensitivity\":\"identity\",\"resolution_policy\":{\"cardinality\":\"one\",\"conflict_result\":\"unresolved\",\"eligible_verdicts\":[\"supported\"],\"require_current\":true,\"required_basis_kinds\":[],\"selector\":\"only_contender\",\"tag\":\"playbill-claim-resolution-policy-v1\"}}\n",
+  "artifact_digest": "sha256:da68b96ac81805e16b6cefbc94d76060812d36b6eb3a7e8f9b5041006b0434bc",
+  "canonical_wire": "{\"admission_policy\":{\"corroboration_requirements\":[],\"freeze_requirements\":[],\"tag\":\"playbill-claim-admission-policy-v1\"},\"allowed_object_subject_kinds\":[],\"allowed_subject_kinds\":[\"project.work_item\"],\"artifact_format\":\"playbill-claim-type-v1\",\"cardinality\":\"one\",\"evidence_admission_policy\":{\"rules\":[],\"tag\":\"playbill-claim-evidence-admission-policy-v1\"},\"identity\":{\"kind\":\"ClaimType\",\"name\":\"project.work_item.status\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"literal_schema\":{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"enum\":[\"blocked\",\"done\",\"ready\"],\"type\":\"string\"},\"object_kind\":\"literal\",\"permitted_roles\":[\"normative\",\"observation\"],\"pins\":[],\"predicate\":\"project.work_item.status\",\"referent_sensitivity\":\"identity\",\"resolution_policy\":{\"cardinality\":\"one\",\"conflict_result\":\"unresolved\",\"eligible_verdicts\":[\"supported\"],\"require_current\":true,\"required_basis_kinds\":[],\"selector\":\"only_contender\",\"tag\":\"playbill-claim-resolution-policy-v1\"}}\n",
   "claim_type": {
     "admission_policy": {
-      "evidence_requirements": [],
+      "corroboration_requirements": [],
       "freeze_requirements": [],
       "tag": "playbill-claim-admission-policy-v1"
     },
@@ -12,14 +12,6 @@
       "project.work_item"
     ],
     "artifact_format": "playbill-claim-type-v1",
-    "authority": {
-      "approve_roles": [
-        "owner"
-      ],
-      "propose_roles": [
-        "owner"
-      ]
-    },
     "cardinality": "one",
     "evidence_admission_policy": {
       "rules": [],

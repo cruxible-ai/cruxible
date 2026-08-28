@@ -1,6 +1,6 @@
 {
   "admission_policy": {
-    "evidence_requirements": [],
+    "corroboration_requirements": [],
     "freeze_requirements": [],
     "tag": "playbill-claim-admission-policy-v1"
   },
@@ -9,14 +9,6 @@
     "project.work_item"
   ],
   "artifact_format": "playbill-claim-type-v1",
-  "authority": {
-    "approve_roles": [
-      "owner"
-    ],
-    "propose_roles": [
-      "owner"
-    ]
-  },
   "cardinality": "one",
   "evidence_admission_policy": {
     "rules": [

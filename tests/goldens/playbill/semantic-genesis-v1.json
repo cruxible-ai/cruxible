@@ -1,39 +1,44 @@
 {
+  "expected": {
+    "bootstrap_root": "sha256:6e976c089fe7038f6f657e17bb4fe89de4dd4a56557da5ddb0afa80e5b7c1830",
+    "canonical_tree": {
+      "principals/daemon.yaml": "{\"algorithm\":\"ed25519-v1\",\"kind\":\"daemon\",\"principal_id\":\"daemon\",\"public_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n",
+      "principals/owner.yaml": "{\"algorithm\":\"ed25519-v1\",\"kind\":\"ordinary\",\"principal_id\":\"owner\",\"public_key\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n",
+      "principals/reviewer.yaml": "{\"algorithm\":\"ed25519-v1\",\"kind\":\"ordinary\",\"principal_id\":\"reviewer\",\"public_key\":\"0303030303030303030303030303030303030303030303030303030303030303\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n"
+    },
+    "changeset_digest": "sha256:b350212b4995e277b9b89cd536a9a7d5967340d15f793ccd8bdde63f73516ea2",
+    "manifest_root": "sha256:79727f01c102ff88eea7d0b2a165142e7103d97c0fe1b15550590cd0bbd1e197",
+    "semantic_root": "sha256:027a2a3ba1f2334b9ee2f89de4bb019620c24875c72782a488638707a7e15e56"
+  },
   "format": "playbill-semantic-genesis-golden-v1",
   "input": {
-    "instance_id": "inst_golden",
     "daemon_public_key": "0101010101010101010101010101010101010101010101010101010101010101",
+    "instance_id": "inst_golden",
     "principals": [
       {
-        "tag": "playbill-principal-v1",
-        "principal_id": "daemon",
         "algorithm": "ed25519-v1",
+        "kind": "daemon",
+        "principal_id": "daemon",
         "public_key": "0101010101010101010101010101010101010101010101010101010101010101",
-        "authority_roles": [
-          "daemon"
-        ],
-        "status": "active"
+        "status": "active",
+        "tag": "playbill-principal-v1"
       },
       {
-        "tag": "playbill-principal-v1",
-        "principal_id": "owner",
         "algorithm": "ed25519-v1",
+        "kind": "ordinary",
+        "principal_id": "owner",
         "public_key": "0202020202020202020202020202020202020202020202020202020202020202",
-        "authority_roles": [
-          "owner"
-        ],
-        "status": "active"
+        "status": "active",
+        "tag": "playbill-principal-v1"
+      },
+      {
+        "algorithm": "ed25519-v1",
+        "kind": "ordinary",
+        "principal_id": "reviewer",
+        "public_key": "0303030303030303030303030303030303030303030303030303030303030303",
+        "status": "active",
+        "tag": "playbill-principal-v1"
       }
     ]
-  },
-  "expected": {
-    "canonical_tree": {
-      "principals/daemon.yaml": "{\"algorithm\":\"ed25519-v1\",\"authority_roles\":[\"daemon\"],\"principal_id\":\"daemon\",\"public_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n",
-      "principals/owner.yaml": "{\"algorithm\":\"ed25519-v1\",\"authority_roles\":[\"owner\"],\"principal_id\":\"owner\",\"public_key\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n"
-    },
-    "bootstrap_root": "sha256:6e976c089fe7038f6f657e17bb4fe89de4dd4a56557da5ddb0afa80e5b7c1830",
-    "manifest_root": "sha256:86670200adf2578bf98924c1ae3d936d04d4351d71856b6e2724effb2e658307",
-    "changeset_digest": "sha256:b350212b4995e277b9b89cd536a9a7d5967340d15f793ccd8bdde63f73516ea2",
-    "semantic_root": "sha256:3af36fef0bb5e903b0ef52bfcd4937444bff42b8bccd42721bbf16d83fd31df5"
   }
 }

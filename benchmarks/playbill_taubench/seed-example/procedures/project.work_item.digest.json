@@ -1,13 +1,5 @@
 {
   "activation_policy": "abort",
-  "authority": {
-    "approve_roles": [
-      "owner"
-    ],
-    "propose_roles": [
-      "owner"
-    ]
-  },
   "contracts": [
     {
       "allow_extra": false,
