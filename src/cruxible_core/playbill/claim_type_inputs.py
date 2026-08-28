@@ -152,8 +152,6 @@ def claim_type_input_example() -> ClaimTypeInputV1:
         permitted_roles=("normative", "observation"),
         evidence_admission_policy={"rules": []},
         admission_policy={
-            "transition_requirements": [],
-            "actor_requirements": [],
             "evidence_requirements": [],
             "freeze_requirements": [],
         },
@@ -163,7 +161,6 @@ def claim_type_input_example() -> ClaimTypeInputV1:
             "required_basis_kinds": [],
             "require_current": True,
             "selector": "only_contender",
-            "authority_rule_digest": None,
             "conflict_result": "unresolved",
         },
         authority=ArtifactAuthority(

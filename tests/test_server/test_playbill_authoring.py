@@ -304,8 +304,6 @@ def test_http_migration_route_delegates_the_typed_request(
                 "permitted_roles": ["observation"],
                 "evidence_admission_policy": {"rules": []},
                 "admission_policy": {
-                    "transition_requirements": [],
-                    "actor_requirements": [],
                     "evidence_requirements": [],
                     "freeze_requirements": [],
                 },

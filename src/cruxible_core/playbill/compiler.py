@@ -47,7 +47,7 @@ PC_C_COMPILER = _coordinate(projection_content="claims-procedures-evidence-v1")
 PC_D_COMPILER = _coordinate(projection_content="claims-procedures-procedure-v1")
 PC_E1_COMPILER = _coordinate(
     projection_content="claims-procedures-runtime-v1",
-    semantic_revision=3,
+    semantic_revision=4,
 )
 SUPPORTED_COMPILERS = (
     PB_B_COMPILER,

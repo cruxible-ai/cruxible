@@ -1,10 +1,8 @@
 {
   "admission_policy": {
-    "actor_requirements": [],
     "evidence_requirements": [],
     "freeze_requirements": [],
-    "tag": "playbill-claim-admission-policy-v1",
-    "transition_requirements": []
+    "tag": "playbill-claim-admission-policy-v1"
   },
   "allowed_object_subject_kinds": [],
   "allowed_subject_kinds": [
@@ -68,7 +66,6 @@
   "predicate": "project.work_item.status",
   "referent_sensitivity": "identity",
   "resolution_policy": {
-    "authority_rule_digest": null,
     "cardinality": "one",
     "conflict_result": "unresolved",
     "eligible_verdicts": [

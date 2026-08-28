@@ -367,17 +367,13 @@ def _policy_summaries(claim_type: ClaimType) -> tuple[InterfacePolicySummaryV1, 
     admission = claim_type.admission_policy
     evidence = claim_type.evidence_admission_policy
     resolution = claim_type.resolution_policy
-    signers = tuple(item.minimum_distinct_signers for item in admission.actor_requirements)
     summaries = [
         InterfacePolicySummaryV1(
             policy="admission",
             policy_digest=_policy_digest("admission", admission.model_dump(mode="json")),
             summary=(
-                f"transition={len(admission.transition_requirements)} "
-                f"actor={len(admission.actor_requirements)} "
                 f"evidence={len(admission.evidence_requirements)} "
-                f"freeze={len(admission.freeze_requirements)} "
-                f"min_distinct_signers={max(signers) if signers else 0}"
+                f"freeze={len(admission.freeze_requirements)}"
             ),
         ),
         InterfacePolicySummaryV1(

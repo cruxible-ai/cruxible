@@ -210,7 +210,7 @@ def test_bootstrap_accepts_one_owner_and_optional_recovery(tmp_path: Path) -> No
     assert recovered.inspect().recovery_posture == "recovery-configured"
 
 
-def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> None:
+def test_cloud_profile_does_not_assign_special_meaning_to_recovery_role(tmp_path: Path) -> None:
     managed = tmp_path / "managed-cloud"
     owner = generate_client(
         tmp_path,
@@ -218,31 +218,15 @@ def test_cloud_profile_requires_explicit_recovery_principal(tmp_path: Path) -> N
         principal_id="owner",
         roles=("owner",),
     )
-    with pytest.raises(PlaybillBootstrapError, match="recovery"):
-        PlaybillInstance.initialize(
-            managed,
-            instance_id="inst_cloud",
-            client_principals=(owner.principal,),
-            workspace_roots=(tmp_path / "workspace",),
-            operating_profile="cloud",
-            timestamp=FIXED_TIMESTAMP,
-        )
-
-    recovery = generate_client(
-        tmp_path,
-        managed_root=managed,
-        principal_id="recovery",
-        roles=("recovery",),
-    )
     instance = PlaybillInstance.initialize(
         managed,
         instance_id="inst_cloud",
-        client_principals=(owner.principal, recovery.principal),
+        client_principals=(owner.principal,),
         workspace_roots=(tmp_path / "workspace",),
         operating_profile="cloud",
         timestamp=FIXED_TIMESTAMP,
     )
-    assert instance.inspect().recovery_posture == "recovery-configured"
+    assert instance.inspect().recovery_posture == "narrowed-no-recovery"
 
 
 def test_bootstrap_without_an_owner_refuses_typed(tmp_path: Path) -> None:

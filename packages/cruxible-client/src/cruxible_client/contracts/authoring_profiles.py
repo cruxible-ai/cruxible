@@ -22,19 +22,15 @@ from cruxible_client.contracts.claim_type_structure import ClaimTypeStructure
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.policies import (
-    ActorRequirementV1,
     AttestationRequirement,
     ClaimAdmissionPolicyV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
-    EvidenceRequirementV1,
-    TransitionRequirementV1,
 )
 
 ClaimTypeProfileId = Literal[
     "ordinary-project-fact-v1",
-    "governed-single-valued-status-transition-v1",
     "append-only-source-observation-v1",
     "policy-owner-normative-claim-v1",
     "replay-verifiable-derivation-v1",
@@ -124,15 +120,6 @@ CLAIM_TYPE_AUTHORING_PROFILES: tuple[ClaimTypeProfileDefinitionV1, ...] = (
         "append-only-source-observation-v1",
         required=("capture_contract_digest", "evidence_kind"),
         optional=("attestation_requirement",),
-    ),
-    _profile(
-        "governed-single-valued-status-transition-v1",
-        required=(
-            "approval_query_digest",
-            "from_values",
-            "reviewer_role",
-            "to_value",
-        ),
     ),
     _profile("ordinary-project-fact-v1"),
     _profile("policy-owner-normative-claim-v1"),
@@ -271,40 +258,7 @@ def _profile_policies(
 ) -> tuple[ClaimEvidenceAdmissionPolicyV1, ClaimAdmissionPolicyV1, ClaimResolutionPolicyV1]:
     evidence = ClaimEvidenceAdmissionPolicyV1()
     admission = ClaimAdmissionPolicyV1()
-    if profile_id == "governed-single-valued-status-transition-v1":
-        if structure.cardinality != "one":
-            raise AuthoringProfileError("governed status profile requires cardinality='one'")
-        reviewer_role = parameters["reviewer_role"]
-        from_values = parameters["from_values"]
-        to_value = parameters["to_value"]
-        if not isinstance(reviewer_role, str) or not isinstance(from_values, list):
-            raise AuthoringProfileError("status transition parameters are ambiguous")
-        admission = ClaimAdmissionPolicyV1(
-            transition_requirements=(
-                TransitionRequirementV1(
-                    requirement_id="governed-transition",
-                    when_predicate=structure.predicate,
-                    from_values=tuple(from_values),
-                    to_value=to_value,
-                    require=("accepted-evidence", "reviewer-role"),
-                ),
-            ),
-            actor_requirements=(
-                ActorRequirementV1(
-                    requirement_id="reviewer-role",
-                    signer_roles=(reviewer_role,),
-                    signer_distinct_from_lineage_creation_actor=True,
-                ),
-            ),
-            evidence_requirements=(
-                EvidenceRequirementV1(
-                    requirement_id="accepted-evidence",
-                    query_definition_digest=_require_digest(parameters, "approval_query_digest"),
-                    min_count=1,
-                ),
-            ),
-        )
-    elif profile_id in {
+    if profile_id in {
         "append-only-source-observation-v1",
         "source-backed-scientific-result-v1",
     }:

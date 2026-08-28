@@ -34,16 +34,16 @@ from cruxible_client.contracts.errors import (
     ProposalIntegrityError,
 )
 from cruxible_client.contracts.policies import (
-    ActorRequirementV1,
     ClaimAdmissionPolicyV1,
+    EvidenceRequirementV1,
     FreezeRequirementV1,
-    TransitionRequirementV1,
 )
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.source_references import EvidenceCommitmentV1, OpenSourceRequestV1
 from cruxible_client.contracts.subjects import subject_digest
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.proposals import evaluate_proposal_tree
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_claims import (
@@ -59,9 +59,7 @@ from cruxible_core.service.playbill_claims import (
     service_query_playbill_claims,
 )
 from tests.test_playbill._support import (
-    FIXED_TIMESTAMP,
     client_material,
-    generate_client,
     initialize_local,
 )
 from tests.test_playbill.test_activation import _sign
@@ -90,30 +88,6 @@ def _authoring() -> DirectClaimAuthoringV1:
     )
 
 
-def _instance_with_reviewer(tmp_path: Path):
-    managed = tmp_path / "managed"
-    owner = generate_client(
-        tmp_path,
-        managed_root=managed,
-        principal_id="owner",
-        roles=("owner",),
-    )
-    reviewer = generate_client(
-        tmp_path,
-        managed_root=managed,
-        principal_id="reviewer",
-        roles=("reviewer",),
-    )
-    instance = PlaybillInstance.initialize(
-        managed,
-        instance_id="inst_claim_policy_test",
-        client_principals=(owner.principal, reviewer.principal),
-        workspace_roots=(tmp_path / "workspace",),
-        timestamp=FIXED_TIMESTAMP,
-    )
-    return instance, owner, reviewer
-
-
 def test_direct_authoring_refuses_caller_authored_observed_at() -> None:
     payload = _authoring().model_dump(mode="json")
     payload["observed_at"] = TIMESTAMP
@@ -123,6 +97,8 @@ def test_direct_authoring_refuses_caller_authored_observed_at() -> None:
 
 def test_subject_level_freeze_policy_refuses_an_adjacent_claim_change(tmp_path: Path) -> None:
     instance, owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    base_tree = instance.tree_at(base.git_oid)
     status_type = _claim_type().model_copy(
         update={
             "admission_policy": ClaimAdmissionPolicyV1(
@@ -164,6 +140,29 @@ def test_subject_level_freeze_policy_refuses_an_adjacent_claim_change(tmp_path: 
         proposal_name="ready-with-freeze",
         timestamp=TIMESTAMP,
     )
+    candidate = ready.proposal.proposal.candidate
+    assert candidate is not None
+    claim_result = next(
+        item.result for item in candidate.law_evidence if item.path.startswith("claims/")
+    )
+    assert len(claim_result["claim_admission"]) == 1
+    evaluated_oid = ready.proposal.proposal.evaluation.evaluated_tree_oid
+    assert evaluated_oid is not None
+    actorless = evaluate_proposal_tree(
+        base_tree=base_tree,
+        current_tree=base_tree,
+        proposed_tree=instance.proposal_tree(evaluated_oid),
+        current=base,
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id=None,
+    )
+    assert actorless.candidate is not None
+    actorless_claim_result = next(
+        item.result for item in actorless.candidate.law_evidence if item.path.startswith("claims/")
+    )
+    assert actorless_claim_result["claim_admission"] == []
     _activate_direct_claim(instance, owner, ready)
 
     summary = service_propose_playbill_claim(
@@ -189,96 +188,44 @@ def test_subject_level_freeze_policy_refuses_an_adjacent_claim_change(tmp_path: 
     )
 
 
-def test_claim_policy_actor_requirement_is_dormant_at_candidate_and_settlement(
-    tmp_path: Path,
-) -> None:
-    instance, owner, reviewer = _instance_with_reviewer(tmp_path)
-    status_type = _claim_type().model_copy(
+def test_retained_query_evidence_requirement_is_dormant_in_proposals(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    claim_type = _claim_type().model_copy(
         update={
-            "literal_schema": {"enum": ["approved", "open"], "type": "string"},
             "admission_policy": ClaimAdmissionPolicyV1(
-                transition_requirements=(
-                    TransitionRequirementV1(
-                        requirement_id="approve-transition",
-                        when_predicate="project.work_item.status",
-                        from_values=("open",),
-                        to_value="approved",
-                        require=("reviewer-role",),
+                evidence_requirements=(
+                    EvidenceRequirementV1(
+                        requirement_id="supporting-query",
+                        query_definition_digest="sha256:" + "44" * 32,
+                        min_count=1,
                     ),
-                ),
-                actor_requirements=(
-                    ActorRequirementV1(
-                        requirement_id="reviewer-role",
-                        signer_roles=("reviewer",),
-                        signer_distinct_from_lineage_creation_actor=True,
-                    ),
-                ),
-            ),
+                )
+            )
         }
     )
-    opened = service_propose_playbill_claim(
+    authoring = _authoring().model_copy(
+        update={
+            "statement": _authoring().statement.model_copy(
+                update={"claim_type_digest": claim_type_digest(claim_type).tagged}
+            ),
+            "claim_type_artifact": claim_type,
+        }
+    )
+
+    proposed = service_propose_playbill_claim(
         instance,
-        authoring=_authoring().model_copy(
-            update={
-                "statement": _authoring().statement.model_copy(
-                    update={
-                        "claim_type_digest": claim_type_digest(status_type).tagged,
-                        "object": LiteralClaimObject(value="open"),
-                    }
-                ),
-                "claim_type_artifact": status_type,
-            }
-        ),
+        authoring=authoring,
         actor_id="owner",
-        proposal_name="open-review",
+        proposal_name="evidence-requirement-dormant",
         timestamp=TIMESTAMP,
     )
-    _activate_direct_claim(instance, owner, opened)
 
-    approved = service_propose_playbill_claim(
-        instance,
-        authoring=DirectClaimAuthoringV1(
-            statement=_authoring().statement.model_copy(
-                update={
-                    "claim_type_digest": claim_type_digest(status_type).tagged,
-                    "object": LiteralClaimObject(value="approved"),
-                }
-            ),
-            rationale="A distinct reviewer has approved this transition.",
-            claim_id=opened.claim_identity.removeprefix("Claim:"),
-            predecessor_artifact_digest=opened.artifact_digest,
-            existing_statement_handoffs=(
-                ExistingStatementHandoffV1(
-                    statement_digest=opened.statement_digest,
-                    disposition="not_tested",
-                ),
-            ),
-        ),
-        actor_id="owner",
-        proposal_name="approve-review",
-        timestamp="2026-08-16T20:01:00.000000Z",
-    )
-    candidate = approved.proposal.proposal.candidate
+    candidate = proposed.proposal.proposal.candidate
     assert candidate is not None
-    admission = next(
-        item.result["claim_admission"]
-        for item in candidate.law_evidence
-        if item.path == approved.claim_path
+    claim_result = next(
+        item.result for item in candidate.law_evidence if item.path.startswith("claims/")
     )
-    assert admission[0]["candidate_result"]["required_signers"] == []
-    base = instance.accepted_coordinate()
-    evaluated_oid = approved.proposal.proposal.evaluation.evaluated_tree_oid
-    assert evaluated_oid is not None
-    bundle = instance.prepare_generation(
-        base=base,
-        candidate_tree=instance.proposal_tree(evaluated_oid),
-        candidate=candidate,
-        approvals=(_sign(reviewer, candidate.candidate_digest, base.semantic_root),),
-        actor_binding=ChangeActorBinding(actor_id="owner"),
-        proposal_actor_id="owner",
-        sequence=2,
-    )
-    assert tuple(item.signer_id for item in bundle.approvals) == ("reviewer",)
+    assert claim_result["claim_admission"] == []
 
 
 def test_one_call_claim_proposal_activation_query_history_explain_and_source(

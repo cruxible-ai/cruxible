@@ -272,12 +272,6 @@ class PlaybillDescriptor(StrictModel):
             raise ValueError("daemon_public_key must contain 32 bytes of lowercase hex")
         return value
 
-    @model_validator(mode="after")
-    def _profile_recovery(self) -> "PlaybillDescriptor":
-        if self.operating_profile == "cloud" and self.recovery_posture != "recovery-configured":
-            raise ValueError("cloud profile requires configured recovery")
-        return self
-
 
 class PrincipalInspection(StrictModel):
     principal_id: str

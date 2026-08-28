@@ -197,9 +197,8 @@ class CandidateRecord(_StrictCandidateModel):
     def _approval_requirements(
         cls, value: tuple[ApprovalRequirement, ...]
     ) -> tuple[ApprovalRequirement, ...]:
-        roles = [requirement.role for requirement in value]
-        if roles != sorted(set(roles), key=lambda item: item.encode("utf-8")):
-            raise ValueError("approval requirements must be sorted and unique by role")
+        if value:
+            raise ValueError("approval requirements are retired and must be empty")
         return value
 
     @field_validator("law_digests")
@@ -620,9 +619,8 @@ def _validated_multi_member_approval_requirements(
     *,
     label: str,
 ) -> tuple[ApprovalRequirement, ...]:
-    identities = tuple((item.role, item.minimum_distinct_signers) for item in value)
-    if identities != tuple(sorted(set(identities), key=lambda item: item[0].encode("utf-8"))):
-        raise ValueError(f"{label} approval requirements must be sorted and unique")
+    if value:
+        raise ValueError(f"{label} approval requirements are retired and must be empty")
     return value
 
 

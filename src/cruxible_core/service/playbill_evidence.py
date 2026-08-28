@@ -549,11 +549,11 @@ def _reproduced_claim_adjudication_rule(
 ) -> ClaimAdjudicationRuleV1:
     """Return the current rule when accepted evidence proves the same verdict contract.
 
-    Queue-only policy, dormant authority, and dormant actor-requirement changes
-    cannot invalidate an otherwise identical adjudication receipt. The
-    exact-current digest remains preferred. Recovery compares every historical
-    predecessor's verdict-bearing projection directly with the current rule, so
-    a verdict-semantic change cannot be hidden by a later revert.
+    Queue-only policy changes cannot invalidate an otherwise identical
+    adjudication receipt. The exact-current digest remains preferred. Recovery
+    compares every historical predecessor's verdict-bearing projection directly
+    with the current rule, so a verdict-semantic change cannot be hidden by a
+    later revert.
     """
 
     def verdict_projection(item: ClaimType) -> dict[str, object]:
@@ -574,22 +574,6 @@ def _reproduced_claim_adjudication_rule(
             if item.evidence_freshness is None
             else item.evidence_freshness.model_dump(mode="json")
         )
-        admission = payload["admission_policy"]
-        if not isinstance(admission, dict):  # pragma: no cover - model_dump invariant
-            raise ProposalIntegrityError("accepted ClaimType admission policy is invalid")
-        actor_requirement_ids = {
-            item["requirement_id"]
-            for item in admission["actor_requirements"]
-            if isinstance(item, dict) and isinstance(item.get("requirement_id"), str)
-        }
-        admission["actor_requirements"] = []
-        for transition in admission["transition_requirements"]:
-            if isinstance(transition, dict) and isinstance(transition.get("require"), list):
-                transition["require"] = [
-                    requirement
-                    for requirement in transition["require"]
-                    if requirement not in actor_requirement_ids
-                ]
         return payload
 
     current_digest = claim_type_digest(claim_type).tagged

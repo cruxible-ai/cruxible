@@ -42,7 +42,7 @@ def _review() -> dict[str, Any]:
         },
         "candidate_digest": "sha256:" + "7" * 64,
         "required_tier": "graph_write",
-        "approval_requirements": [{"role": "owner", "minimum_distinct_signers": 1}],
+        "approval_requirements": [],
         "activation_policy": "snapshot",
         "closure_paths": ["documents/design.yaml"],
         "members": [],

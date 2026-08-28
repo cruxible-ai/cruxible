@@ -116,8 +116,6 @@ def _exclusive_write(path: Path, content: bytes, mode: int = 0o600) -> None:
 
 def _validate_client_principals(
     records: Sequence[PrincipalRecord],
-    *,
-    operating_profile: OperatingProfile,
 ) -> tuple[tuple[PrincipalRecord, ...], RecoveryPosture]:
     ordered = tuple(sorted(records, key=lambda record: record.principal_id))
     identifiers = [record.principal_id for record in ordered]
@@ -134,8 +132,6 @@ def _validate_client_principals(
     if any("daemon" in record.authority_roles for record in ordered):
         raise PlaybillBootstrapError("client principals cannot carry daemon authority")
     recovery_configured = any("recovery" in record.authority_roles for record in ordered)
-    if operating_profile == "cloud" and not recovery_configured:
-        raise PlaybillBootstrapError("cloud Playbill instances require a recovery principal")
     posture: RecoveryPosture = (
         "recovery-configured" if recovery_configured else "narrowed-no-recovery"
     )
@@ -189,10 +185,7 @@ class PlaybillInstance:
         if managed_root.exists():
             raise PlaybillBootstrapError(f"managed Playbill root already exists: {managed_root}")
 
-        clients, recovery_posture = _validate_client_principals(
-            client_principals,
-            operating_profile=operating_profile,
-        )
+        clients, recovery_posture = _validate_client_principals(client_principals)
         layout = StorageLayout()
         managed_root.parent.mkdir(parents=True, exist_ok=True)
         managed_root.mkdir(mode=0o700)
