@@ -22,8 +22,8 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimArtifact,
-    ClaimBacking,
+    ClaimArtifactV2,
+    ClaimBackingV2,
     ClaimReferentContext,
     ClaimStatement,
     LiteralClaimObject,
@@ -174,7 +174,7 @@ def claim_fact(
     )
     digest = claim_type_digest(contract).tagged
     claim_id = f"CLM-{index:032x}"
-    artifact = ClaimArtifact(
+    artifact = ClaimArtifactV2(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_row.path),
@@ -186,7 +186,7 @@ def claim_fact(
             effective_from=effective_from,
             effective_until=effective_until,
         ),
-        backing=ClaimBacking(
+        backing=ClaimBackingV2(
             referent_context=ClaimReferentContext(
                 subject_content_digest=subject_row.artifact_digest,
                 observed_at=OBSERVED_AT,

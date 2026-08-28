@@ -35,7 +35,6 @@ from cruxible_client.contracts.authoring.models import (
     InsertionConfirmationObservationV2,
     PublicationSourceObservationV2,
 )
-from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
@@ -71,7 +70,6 @@ from cruxible_core.playbill.search import (
 )
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
-from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
 from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
@@ -727,27 +725,6 @@ def handle_playbill_get_claim_type(
     )
 
 
-def handle_playbill_propose_claim(
-    instance_id: str,
-    authoring: dict[str, Any],
-    proposal_name: str,
-) -> contracts.PlaybillClaimProposal:
-    request = DirectClaimAuthoringV1.model_validate(authoring)
-    return _dispatch_remote_or_local(
-        lambda client: client.propose_playbill_claim(
-            instance_id,
-            authoring=request.model_dump(mode="json"),
-            proposal_name=proposal_name,
-        ),
-        lambda: playbill_api.playbill_propose_claim(
-            instance_id,
-            authoring=request,
-            proposal_name=proposal_name,
-        ),
-        operation_name="cruxible_playbill_propose_claim",
-    )
-
-
 def handle_playbill_retire_claim(
     instance_id: str,
     claim_id: str,
@@ -766,27 +743,6 @@ def handle_playbill_retire_claim(
             request=retirement,
         ),
         operation_name="cruxible_playbill_claim_retire",
-    )
-
-
-def handle_playbill_propose_claims(
-    instance_id: str,
-    authorings: list[dict[str, Any]],
-    proposal_name: str,
-) -> contracts.PlaybillClaimBatchProposal:
-    requests = tuple(DirectClaimAuthoringV1.model_validate(item) for item in authorings)
-    return _dispatch_remote_or_local(
-        lambda client: client.propose_playbill_claims(
-            instance_id,
-            authorings=[item.model_dump(mode="json") for item in requests],
-            proposal_name=proposal_name,
-        ),
-        lambda: playbill_api.playbill_propose_claims(
-            instance_id,
-            authorings=requests,
-            proposal_name=proposal_name,
-        ),
-        operation_name="cruxible_playbill_propose_claims",
     )
 
 

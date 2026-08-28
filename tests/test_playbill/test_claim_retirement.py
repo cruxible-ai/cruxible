@@ -23,7 +23,6 @@ from cruxible_client.contracts.claims import (
     parse_claim,
     render_claim,
 )
-from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.query.definitions import (
     query_definition_path,
@@ -50,12 +49,17 @@ from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from cruxible_core.service.playbill_claims import (
-    DirectClaimAuthoringV1,
-    service_propose_playbill_claim,
-    service_propose_playbill_claims,
-)
 from tests.test_playbill._adoption_fixture import _query_definition
+from tests.test_playbill._claim_authoring_support import (
+    STATUS_CLAIM_ID,
+    SUMMARY_CLAIM_ID,
+    TIMESTAMP,
+    DirectClaimAuthoringV1,
+    _activate_direct_claim,
+    _status_authoring,
+    _summary_authoring,
+    service_propose_playbill_claim,
+)
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_claim_type_migrations import (
@@ -63,16 +67,6 @@ from tests.test_playbill.test_claim_type_migrations import (
     _decision_only_successor,
 )
 from tests.test_playbill.test_claims import _claim_type
-from tests.test_playbill.test_multi_claim_authoring import (
-    STATUS_CLAIM_ID,
-    SUMMARY_CLAIM_ID,
-    TIMESTAMP,
-    _status_authoring,
-    _summary_authoring,
-)
-from tests.test_playbill.test_multi_claim_authoring import (
-    _activate as _activate_batch,
-)
 from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 
@@ -157,21 +151,30 @@ def _accepted_dependency_world(tmp_path: Path):  # type: ignore[no-untyped-def]
 
     instance, owner = initialize_local(tmp_path)
     leaf_id = "CLM-" + "3" * 32
-    seeded = service_propose_playbill_claims(
-        instance,
-        authorings=(
-            _status_authoring(),
-            _derivation_capable(_summary_authoring()),
+    for authoring, name in (
+        (_status_authoring(), "retirement-chain-root"),
+        (_derivation_capable(_summary_authoring()), "retirement-chain-middle-seed"),
+        (
             _derivation_capable(
                 _summary_authoring(claim_id=leaf_id),
                 value="A second derived summary",
             ),
+            "retirement-chain-leaf-seed",
         ),
-        actor_id="owner",
-        proposal_name="retirement-chain-seed",
-        timestamp=TIMESTAMP,
-    )
-    _activate_batch(instance, owner, seeded)
+    ):
+        seeded = service_propose_playbill_claim(
+            instance,
+            authoring=authoring,
+            actor_id="owner",
+            proposal_name=name,
+            timestamp=TIMESTAMP,
+        )
+        _activate_direct_claim(
+            instance,
+            owner,
+            seeded,
+            sequence=len(instance.accepted_history()),
+        )
 
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     root = parse_claim(tree[claim_path(STATUS_CLAIM_ID)], path=claim_path(STATUS_CLAIM_ID))
@@ -259,7 +262,7 @@ def _accepted_dependency_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         proposal_name="retirement-chain-root-revision",
         timestamp=TIMESTAMP,
     )
-    _activate_batch(
+    _activate_direct_claim(
         instance,
         owner,
         root_revision,
@@ -380,22 +383,20 @@ def test_invalid_effective_interval_is_typed_for_retirement_and_migration(
     invalid_until = datetime(2026, 8, 16, 16, tzinfo=UTC)
     instance, owner = initialize_local(tmp_path)
     authoring = _status_authoring()
-    seeded = service_propose_playbill_claims(
+    seeded = service_propose_playbill_claim(
         instance,
-        authorings=(
-            authoring.model_copy(
-                update={
-                    "statement": authoring.statement.model_copy(
-                        update={"effective_from": effective_from}
-                    )
-                }
-            ),
+        authoring=authoring.model_copy(
+            update={
+                "statement": authoring.statement.model_copy(
+                    update={"effective_from": effective_from}
+                )
+            }
         ),
         actor_id="owner",
         proposal_name="effective-interval-seed",
         timestamp=TIMESTAMP,
     )
-    _activate_batch(
+    _activate_direct_claim(
         instance,
         owner,
         seeded,
@@ -780,70 +781,4 @@ def test_retire_refuses_a_live_non_claim_dependent(tmp_path: Path) -> None:
             claim_id=claim_id,
             request=_request(instance, mode="preflight"),
             actor=AuthenticatedActor(actor_id="owner"),
-        )
-
-
-def test_direct_retire_warns_for_v1_and_refuses_v3_wire_downgrade(tmp_path: Path) -> None:
-    instance, owner = initialize_local(tmp_path)
-    seeded = service_propose_playbill_claims(
-        instance,
-        authorings=(_status_authoring(),),
-        actor_id="owner",
-        proposal_name="legacy-direct-seed",
-        timestamp=TIMESTAMP,
-    )
-    _activate_batch(instance, owner, seeded)
-    claim_id = STATUS_CLAIM_ID
-    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
-    predecessor = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
-    direct = DirectClaimAuthoringV1(
-        statement=predecessor.statement,
-        rationale="The legacy caller is closing the Claim.",
-        claim_id=claim_id,
-        predecessor_artifact_digest=claim_artifact_digest(predecessor).tagged,
-        retire=True,
-    )
-    proposed = service_propose_playbill_claim(
-        instance,
-        authoring=direct,
-        actor_id="owner",
-        proposal_name="legacy-direct-retire",
-        timestamp=TIMESTAMP,
-    )
-    assert [warning.model_dump(mode="json") for warning in proposed.warnings] == [
-        {
-            "code": "playbill.claim.direct_retire_deprecated",
-            "field_path": "$.retire",
-            "repair_operation": "playbill.claim.retire",
-        }
-    ]
-
-    v3_root = tmp_path / "v3"
-    v3_root.mkdir()
-    v3_instance, v3_claim_id, v3_owner = _accepted_claim_world(v3_root)
-    result = service_retire_claim(
-        v3_instance,
-        claim_id=v3_claim_id,
-        request=_request(v3_instance, mode="submit"),
-        actor=AuthenticatedActor(actor_id="owner"),
-    )
-    assert isinstance(result, ClaimRetireResultV1)
-    _activate(v3_instance, v3_owner, result)
-    accepted_v3 = parse_claim(
-        v3_instance.tree_at(v3_instance.accepted_coordinate().git_oid)[claim_path(v3_claim_id)],
-        path=claim_path(v3_claim_id),
-    )
-    with pytest.raises(ProposalIntegrityError, match="direct_retire_wire_downgrade"):
-        service_propose_playbill_claim(
-            v3_instance,
-            authoring=DirectClaimAuthoringV1(
-                statement=accepted_v3.statement,
-                rationale="A legacy caller must not downgrade v3.",
-                claim_id=v3_claim_id,
-                predecessor_artifact_digest=claim_artifact_digest(accepted_v3).tagged,
-                retire=True,
-            ),
-            actor_id="owner",
-            proposal_name="legacy-direct-v3-retire",
-            timestamp=TIMESTAMP,
         )

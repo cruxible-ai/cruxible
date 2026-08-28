@@ -23,7 +23,6 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import render_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimArtifact,
     ClaimArtifactV2,
     ClaimBackingV2,
     ClaimLawEvidenceV1,
@@ -53,17 +52,18 @@ CAPTURE_DIGEST = "sha256:" + "ab" * 32
 SOURCE_DIGEST = "sha256:" + "cd" * 32
 
 
-def _v1_claim() -> ClaimArtifact:
-    return _claim(
+def _legacy_claim() -> ClaimArtifactV2:
+    claim = _claim(
         claim_id=CLAIM_ID,
         capture_digest=CAPTURE_DIGEST,
         source_digest=SOURCE_DIGEST,
         source_length=12,
     )
+    return claim.model_copy(update={"backing": claim.backing.model_copy(update={"citations": ()})})
 
 
 def _v2_claim(*, role: str = "evidence", origin: str = "independent") -> ClaimArtifactV2:
-    legacy = _v1_claim()
+    legacy = _legacy_claim()
     citation = build_claim_citation(
         legacy.identity,
         capture_digest=CAPTURE_DIGEST,
@@ -133,7 +133,7 @@ def test_claim_v2_round_trips_and_rejects_a_forged_citation_id() -> None:
 
 
 def test_legacy_reference_is_derived_without_fabricating_role_or_origin() -> None:
-    legacy = _v1_claim()
+    legacy = _legacy_claim()
     references = claim_citation_references(legacy)
 
     assert len(references) == 1
@@ -156,8 +156,8 @@ def test_legacy_reference_is_derived_without_fabricating_role_or_origin() -> Non
     }
 
 
-def test_v1_to_v2_wire_succession_keeps_legacy_capture_implicit() -> None:
-    legacy = _v1_claim()
+def test_v2_backing_successor_keeps_uncited_legacy_capture_implicit() -> None:
+    legacy = _legacy_claim()
     successor = ClaimArtifactV2(
         identity=legacy.identity,
         statement=legacy.statement,
@@ -294,7 +294,11 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
                     )
                 )
             ),
-            citations=merge_claim_citations((citation,), (copy_citation,)),
+            citations=merge_claim_citations(
+                legacy.backing.citations,
+                (citation,),
+                (copy_citation,),
+            ),
             source_mappings=legacy.backing.source_mappings,
         ),
         authority=legacy.authority,
@@ -327,6 +331,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
             "backing": v2.backing.model_copy(
                 update={
                     "citations": merge_claim_citations(
+                        legacy.backing.citations,
                         (
                             build_claim_citation(
                                 legacy.identity,
@@ -377,9 +382,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     assert first_evaluation.candidate.law_evidence == second_evaluation.candidate.law_evidence
     initial_evidence = _claim_evidence(initial.candidate)
     successor_evidence = _claim_evidence(first_evaluation.candidate)
-    assert tuple(item.capture_digest for item in successor_evidence.verdict_captures) == (
-        first_capture.capture_digest,
-    )
+    assert successor_evidence.verdict_captures == ()
     assert successor_evidence.evidence_basis == initial_evidence.evidence_basis
     assert successor_evidence.verdict_result is not None
     assert initial_evidence.verdict_result is not None

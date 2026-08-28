@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,21 +19,20 @@ from cruxible_client.contracts.captures import (
     build_direct_claim_capture,
     capture_contract_digest,
     capture_contract_path,
-    parse_capture_envelope,
     render_capture_contract,
-    render_capture_envelope,
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimArtifact,
+    ClaimArtifactV2,
     ClaimArtifactV3,
-    ClaimBacking,
+    ClaimBackingV2,
     ClaimLawEvidenceV1,
     ClaimReferentContext,
     ClaimRetirementAttributionV1,
     ClaimStatement,
     ClaimUnsupportedFormatError,
     LiteralClaimObject,
+    build_claim_citation,
     claim_artifact_digest,
     claim_path,
     claim_statement_address,
@@ -56,7 +54,6 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_path,
 )
-from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from tests.test_playbill._support import initialize_local
@@ -114,11 +111,11 @@ def _claim(
     capture_digest: str,
     source_digest: str,
     source_length: int,
-) -> ClaimArtifact:
+) -> ClaimArtifactV2:
     shell = _subject()
     claim_type = _claim_type()
     path = claim_path(claim_id)
-    return ClaimArtifact(
+    return ClaimArtifactV2(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(
@@ -130,12 +127,20 @@ def _claim(
             object=LiteralClaimObject(value="ready"),
             role="observation",
         ),
-        backing=ClaimBacking(
+        backing=ClaimBackingV2(
             referent_context=ClaimReferentContext(
                 subject_content_digest=subject_digest(shell).tagged,
                 observed_at=OBSERVED_AT,
             ),
             capture_digests=(capture_digest,),
+            citations=(
+                build_claim_citation(
+                    ArtifactIdentity(kind="Claim", name=claim_id),
+                    capture_digest=capture_digest,
+                    role="evidence",
+                    origin="self_source",
+                ),
+            ),
             source_mappings=(
                 SourceMapping(
                     subject=claim_statement_address(path),
@@ -215,7 +220,7 @@ def test_claim_identity_sharding_and_three_digest_layers(tmp_path: Path) -> None
     assert claim_artifact_digest(stronger_backing) != claim_artifact_digest(claim)
 
 
-def test_claim_v3_digest_commits_retirement_attribution_without_moving_v1() -> None:
+def test_claim_v3_digest_commits_retirement_attribution_without_moving_v2() -> None:
     predecessor = _claim(
         claim_id="CLM-0123456789abcdef0123456789abcdef",
         capture_digest="sha256:" + "11" * 32,
@@ -253,51 +258,6 @@ def test_unknown_claim_wire_has_a_typed_format_refusal() -> None:
             b'{"artifact_format":"playbill-claim-v999"}\n',
             path=claim_path(claim_id),
         )
-
-
-def test_direct_capture_contract_envelope_and_claim_match_frozen_golden(
-    tmp_path: Path,
-) -> None:
-    fixture = json.loads(
-        (Path(__file__).parents[1] / "goldens" / "playbill" / "capture-claim-v1.json").read_bytes()
-    )
-    store = ContentAddressedBodyStore(tmp_path)
-    coordinate = AcceptedCoordinate(
-        git_oid="1" * 40,
-        semantic_root="sha256:" + "22" * 32,
-        generation_root="sha256:" + "33" * 32,
-        compiler_digest="sha256:" + "44" * 32,
-    )
-    capture = build_direct_claim_capture(
-        store=store,
-        actor_id="owner",
-        claim_id="CLM-0123456789abcdef0123456789abcdef",
-        value="ready",
-        rationale="The work item is ready for review.",
-        observed_at=OBSERVED_AT,
-        accepted_coordinate=coordinate,
-    )
-    assert (
-        render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).decode()
-        == fixture["capture_contract_wire"]
-    )
-    assert (
-        capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
-        == fixture["capture_contract_digest"]
-    )
-    assert render_capture_envelope(capture.envelope).decode() == fixture["capture_envelope_wire"]
-    assert parse_capture_envelope(fixture["capture_envelope_wire"].encode()) == capture.envelope
-    assert capture.capture_digest == fixture["capture_digest"]
-    assert capture.envelope.commitment.byte_length is not None
-    claim = _claim(
-        claim_id="CLM-0123456789abcdef0123456789abcdef",
-        capture_digest=capture.capture_digest,
-        source_digest=capture.source_body_digest,
-        source_length=capture.envelope.commitment.byte_length,
-    )
-    assert render_claim(claim).decode() == fixture["claim_wire"]
-    assert claim_statement_digest(claim.statement).tagged == fixture["statement_digest"]
-    assert claim_artifact_digest(claim).tagged == fixture["artifact_digest"]
 
 
 def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate(
@@ -357,11 +317,11 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
             if item.path == claim_path(claim_id)
         )
     )
-    assert claim_evidence.initial_verdict == "supported"
-    assert claim_evidence.evidence_basis == ("direct",)
+    assert claim_evidence.initial_verdict == "uncovered"
+    assert claim_evidence.evidence_basis == ("origin_only",)
 
 
-def test_v1_claim_successor_preserves_the_base_accepted_authority_change_shape(
+def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
     tmp_path: Path,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
@@ -372,7 +332,7 @@ def test_v1_claim_successor_preserves_the_base_accepted_authority_change_shape(
         actor_id="owner",
         claim_id=claim_id,
         value="ready",
-        rationale="Seed the v1 succession law.",
+        rationale="Seed the v2 succession law.",
         observed_at=OBSERVED_AT,
         accepted_coordinate=AcceptedCoordinate.from_internal(base),
     )
@@ -398,7 +358,7 @@ def test_v1_claim_successor_preserves_the_base_accepted_authority_change_shape(
         owner,
         tree,
         timestamp=TIMESTAMP,
-        proposal_name="v1-authority-seed",
+        proposal_name="v2-authority-seed",
     )
 
     accepted = instance.accepted_coordinate()
@@ -418,7 +378,7 @@ def test_v1_claim_successor_preserves_the_base_accepted_authority_change_shape(
     evaluated = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(
-            target_ref="refs/proposals/owner/v1-authority-successor",
+            target_ref="refs/proposals/owner/v2-authority-successor",
             proposed_base_oid=accepted.git_oid,
         ),
         candidate_tree=successor_tree,

@@ -57,10 +57,6 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.deprecation import (
-    PLAYBILL_DIRECT_CLAIM_PROPOSE,
-    emit_cli_deprecation,
-)
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
     defaulted_claim_type_input_example,
@@ -1224,55 +1220,6 @@ def get_claim_type(predicate: str, output_json: bool) -> None:
 @playbill_group.group("claim")
 def claim_group() -> None:
     """Propose, read, and explain first-class governed Claims."""
-
-
-@claim_group.command("propose")
-@click.option("--authoring", required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--name", "proposal_name", required=True)
-@json_option
-@handle_errors
-def propose_claim(authoring: str, proposal_name: str, output_json: bool) -> None:
-    """Legacy-wire path; use the sanctioned authoring coordinator instead."""
-
-    emit_cli_deprecation(PLAYBILL_DIRECT_CLAIM_PROPOSE)
-    request = _read_mapping(authoring)
-    result = _server_call(
-        lambda client, instance_id: client.propose_playbill_claim(
-            instance_id,
-            authoring=request,
-            proposal_name=proposal_name,
-        ),
-        command_name="playbill claim propose",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
-@claim_group.command("propose-batch")
-@click.option(
-    "--authoring",
-    "authorings",
-    required=True,
-    multiple=True,
-    type=click.Path(exists=True, dir_okay=False),
-    help="Repeat once per Claim; the whole set settles as one generation.",
-)
-@click.option("--name", "proposal_name", required=True)
-@json_option
-@handle_errors
-def propose_claims(authorings: tuple[str, ...], proposal_name: str, output_json: bool) -> None:
-    """Legacy-wire batch; use the sanctioned authoring coordinator instead."""
-
-    emit_cli_deprecation(PLAYBILL_DIRECT_CLAIM_PROPOSE)
-    requests = [_read_mapping(path) for path in authorings]
-    result = _server_call(
-        lambda client, instance_id: client.propose_playbill_claims(
-            instance_id,
-            authorings=requests,
-            proposal_name=proposal_name,
-        ),
-        command_name="playbill claim propose-batch",
-    )
-    _emit_json(result.model_dump(mode="json"))
 
 
 @claim_group.command("retire")

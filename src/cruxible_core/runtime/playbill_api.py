@@ -136,14 +136,11 @@ from cruxible_core.service.playbill_audit import (
     validate_playbill_audit_request,
 )
 from cruxible_core.service.playbill_claims import (
-    DirectClaimAuthoringV1,
     service_expand_playbill_semantic,
     service_explain_playbill_claim,
     service_get_playbill_claim,
     service_list_playbill_claims,
     service_playbill_claim_history,
-    service_propose_playbill_claim,
-    service_propose_playbill_claims,
 )
 from cruxible_core.service.playbill_coverage import (
     coverage_access_profile,
@@ -828,50 +825,6 @@ def playbill_get_claim_type(
         paths=(result.path,),
     )
     return contracts.PlaybillClaimTypeView.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_propose_claim(
-    instance_id: str,
-    *,
-    authoring: DirectClaimAuthoringV1,
-    proposal_name: str,
-    base: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillClaimProposal:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = _proposal_validation_boundary(
-        "claim",
-        lambda: service_propose_playbill_claim(
-            get_playbill_manager().get(instance_id),
-            authoring=authoring,
-            actor_id=_actor_id(),
-            proposal_name=proposal_name,
-            timestamp=canonical_candidate_timestamp(utc_now()),
-            base=base,
-        ),
-    )
-    return contracts.PlaybillClaimProposal.model_validate(result.model_dump(mode="json"))
-
-
-def playbill_propose_claims(
-    instance_id: str,
-    *,
-    authorings: tuple[DirectClaimAuthoringV1, ...],
-    proposal_name: str,
-    base: AcceptedCoordinate | None = None,
-) -> contracts.PlaybillClaimBatchProposal:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = _proposal_validation_boundary(
-        "claim batch",
-        lambda: service_propose_playbill_claims(
-            get_playbill_manager().get(instance_id),
-            authorings=authorings,
-            actor_id=_actor_id(),
-            proposal_name=proposal_name,
-            timestamp=canonical_candidate_timestamp(utc_now()),
-            base=base,
-        ),
-    )
-    return contracts.PlaybillClaimBatchProposal.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_retire_claim(

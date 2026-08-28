@@ -16,8 +16,9 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimBacking,
+    ClaimBackingV2,
     ClaimLawEvidenceV1,
+    build_claim_citation,
     claim_path,
     render_claim,
 )
@@ -251,9 +252,17 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
                     "subject": subject_address,
                 }
             ),
-            "backing": ClaimBacking(
+            "backing": ClaimBackingV2(
                 referent_context=claim.backing.referent_context,
                 capture_digests=(acquired.capture_digest,),
+                citations=(
+                    build_claim_citation(
+                        claim.identity,
+                        capture_digest=acquired.capture_digest,
+                        role="evidence",
+                        origin="independent",
+                    ),
+                ),
             ),
             "authority": AUTHORITY,
             "pins": tuple(

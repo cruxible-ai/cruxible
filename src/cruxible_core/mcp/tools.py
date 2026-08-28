@@ -323,15 +323,6 @@ def register_tools(
         return handlers.handle_playbill_get_claim_type(instance_id, predicate)
 
     @_tool
-    def cruxible_playbill_propose_claim(
-        instance_id: str,
-        authoring: dict[str, Any],
-        proposal_name: str,
-    ) -> contracts.PlaybillClaimProposal:
-        """Propose one direct Claim with its inert Capture."""
-        return handlers.handle_playbill_propose_claim(instance_id, authoring, proposal_name)
-
-    @_tool
     def cruxible_playbill_claim_retire(
         instance_id: str,
         claim_id: str,
@@ -339,15 +330,6 @@ def register_tools(
     ) -> contracts.PlaybillClaimRetireResponse:
         """Preflight or submit one attributed Claim retirement closure."""
         return handlers.handle_playbill_retire_claim(instance_id, claim_id, request)
-
-    @_tool
-    def cruxible_playbill_propose_claims(
-        instance_id: str,
-        authorings: list[dict[str, Any]],
-        proposal_name: str,
-    ) -> contracts.PlaybillClaimBatchProposal:
-        """Propose several direct Claims as one indivisible change set."""
-        return handlers.handle_playbill_propose_claims(instance_id, authorings, proposal_name)
 
     @_tool
     def cruxible_playbill_authoring_create(

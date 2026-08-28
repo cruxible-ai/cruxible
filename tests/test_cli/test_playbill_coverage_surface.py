@@ -34,16 +34,22 @@ from typing import Any
 
 from click.testing import CliRunner
 
-from cruxible_client.contracts.captures import (
-    DirectByteSpanSelectionV1,
-    DirectForeignSourceSelectionV1,
+from cruxible_client.contracts.authoring.inputs import (
+    ClaimInput,
+    LiteralObjectInput,
+    SelfSourceInput,
+    WorkingSelectionInput,
 )
-from cruxible_client.contracts.claim_types import claim_type_digest
-from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
-from cruxible_client.contracts.semantic import ContentSpan
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    foreign_source_capture_contract,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionRuleV1,
+)
 from cruxible_core.cli.main import cli
 from cruxible_core.playbill.coverage.render import BATCH_SUMMARY_PREFIX
-from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
 from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
     _Cli,
     _proposal_id,
@@ -51,7 +57,6 @@ from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
     served_cli,
 )
 from tests.test_playbill._knowledge_loop_support import (
-    subject_address,
     subject_shell,
 )
 from tests.test_playbill.test_claims import _claim_type
@@ -97,42 +102,43 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
     )
     cruxible.accept(_proposal_id(proposed))
 
-    body_path = tmp_path / "governed.md"
-    body_path.write_bytes(GOVERNED_BYTES)
-    stored = cruxible.json("playbill", "body", "store", str(body_path))
-    assert stored["byte_length"] == len(GOVERNED_BYTES)
-
-    authoring = DirectClaimAuthoringV1(
-        statement=ClaimStatement(
-            subject=subject_address("wi-42"),
-            claim_type=claim_type.identity,
-            claim_type_digest=claim_type_digest(claim_type).tagged,
-            predicate=claim_type.predicate,
-            object=LiteralClaimObject(value="ready"),
-            role="observation",
-        ),
-        rationale="The handbook records the reviewer's acceptance.",
-        subject_shell=subject_shell("wi-42"),
-        source_selection=DirectByteSpanSelectionV1(
-            span=ContentSpan(
-                content_digest=stored["digest"],
-                start_byte=0,
-                end_byte=len(GOVERNED_BYTES),
-            ),
-            media_type="text/markdown",
-        ),
-    )
-    proposal = cruxible.json(
+    proposed_subject = cruxible.json(
         "playbill",
-        "claim",
+        "subject",
         "propose",
-        "--authoring",
-        _write(tmp_path / "claim.json", authoring.model_dump(mode="json")),
+        "--envelope",
+        _write(tmp_path / "subject.json", subject_shell("wi-42").model_dump(mode="json")),
         "--name",
-        "seed-claim",
+        "seed-subject",
     )
-    cruxible.accept(_proposal_id(proposal["proposal"]))
-    return str(proposal["claim_identity"])
+    cruxible.accept(_proposal_id(proposed_subject))
+
+    authoring = ClaimInput(
+        kind="claim",
+        subject="project.work_item/wi-42",
+        predicate=claim_type.predicate,
+        object=LiteralObjectInput(kind="literal", value="ready"),
+        role="observation",
+        rationale="The handbook records the reviewer's acceptance.",
+        source=SelfSourceInput(
+            kind="self_source",
+            body=GOVERNED_BYTES.decode("utf-8"),
+        ),
+    )
+    created = cruxible.json(
+        "playbill",
+        "authoring",
+        "create",
+        _write(tmp_path / "claim.json", authoring.model_dump(mode="json")),
+    )
+    submitted = cruxible.json(
+        "playbill",
+        "authoring",
+        "submit",
+        str(created["intent"]["intent_id"]),
+    )
+    cruxible.accept(str(submitted["status"]["proposal_id"]))
+    return f"Claim:{submitted['intent']['semantic_identity']}"
 
 
 def _govern_a_foreign_span(
@@ -156,7 +162,23 @@ def _govern_a_foreign_span(
     coupling.
     """
 
-    claim_type = _claim_type()
+    contract = foreign_source_capture_contract(identity)
+    claim_type = _claim_type().model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV1(
+                        rule_id="foreign-source",
+                        claim_roles=("observation",),
+                        capture_contract_digests=(capture_contract_digest(contract).tagged,),
+                        evidence_kinds=("self_asserted",),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
     proposed = cruxible.json(
         "playbill",
         "claim-type",
@@ -168,43 +190,52 @@ def _govern_a_foreign_span(
     )
     cruxible.accept(_proposal_id(proposed))
 
+    proposed_subject = cruxible.json(
+        "playbill",
+        "subject",
+        "propose",
+        "--envelope",
+        _write(tmp_path / "foreign-subject.json", subject_shell("wi-77").model_dump(mode="json")),
+        "--name",
+        "seed-foreign-subject",
+    )
+    cruxible.accept(_proposal_id(proposed_subject))
+
     presented = tmp_path / "presented.md"
     presented.write_bytes(FOREIGN_BYTES)
-    stored = cruxible.json("playbill", "body", "store", str(presented))
-
-    start = FOREIGN_BYTES.index(GOVERNED_LINE)
-    authoring = DirectClaimAuthoringV1(
-        statement=ClaimStatement(
-            subject=subject_address("wi-77"),
-            claim_type=claim_type.identity,
-            claim_type_digest=claim_type_digest(claim_type).tagged,
-            predicate=claim_type.predicate,
-            object=LiteralClaimObject(value="done"),
-            role="observation",
-        ),
+    authoring = ClaimInput(
+        kind="claim",
+        subject="project.work_item/wi-77",
+        predicate=claim_type.predicate,
+        object=LiteralObjectInput(kind="literal", value="done"),
+        role="observation",
         rationale="The foreign handbook records the reviewer's acceptance.",
-        subject_shell=subject_shell("wi-77"),
-        source_selection=DirectForeignSourceSelectionV1(
-            logical_source_identity=identity,
-            span=ContentSpan(
-                content_digest=stored["digest"],
-                start_byte=start,
-                end_byte=start + len(GOVERNED_LINE),
-            ),
-            media_type="text/markdown",
+        source=WorkingSelectionInput(
+            kind="working_selection",
+            source_id=identity,
         ),
+        citation_role="evidence",
     )
-    proposal = cruxible.json(
+    stub = _write(tmp_path / "foreign-claim.json", authoring.model_dump(mode="json"))
+    preflight = cruxible.json(
         "playbill",
-        "claim",
-        "propose",
-        "--authoring",
-        _write(tmp_path / "foreign-claim.json", authoring.model_dump(mode="json")),
-        "--name",
-        "seed-foreign-claim",
+        "authoring",
+        "bind",
+        "--file",
+        str(presented),
+        "--anchor",
+        GOVERNED_LINE.decode("utf-8").strip(),
+        "--payload-file",
+        stub,
     )
-    cruxible.accept(_proposal_id(proposal["proposal"]))
-    return str(proposal["claim_identity"])
+    submitted = cruxible.json(
+        "playbill",
+        "authoring",
+        "submit",
+        str(preflight["certificate"]["intent_id"]),
+    )
+    cruxible.accept(str(submitted["status"]["proposal_id"]))
+    return f"Claim:{submitted['intent']['semantic_identity']}"
 
 
 def _resolve_foreign(
@@ -298,7 +329,9 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     assert card["resolves_equivalence"] is False
     assert card["tag"] == "playbill-coverage-card-v2"
     assert len(card["citation_associations"]) == 1
-    assert card["citation_associations"][0]["reference"]["legacy_semantics"] is True
+    reference = card["citation_associations"][0]["reference"]
+    assert "legacy_semantics" not in reference
+    assert reference["origin"] == "self_source"
     # Content-addressed accepted evidence names no logical source, so identical
     # bytes at a working occurrence are labeled, never inherited.
     assert card["match_basis"] == "content_equivalent"

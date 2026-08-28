@@ -35,11 +35,9 @@ from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
-    ExistingStatementHandoffV1,
     _claim_from_view,
     _claim_law_evidence,
     service_list_playbill_claims,
-    service_propose_playbill_claim,
 )
 from cruxible_core.service.playbill_next import (
     NextReason,
@@ -56,6 +54,10 @@ from cruxible_core.service.playbill_next import (
 )
 from cruxible_core.service.playbill_query import build_accepted_query_facts
 from tests.test_playbill._adoption_fixture import _Builder
+from tests.test_playbill._claim_authoring_support import (
+    ExistingStatementHandoffV1,
+    service_propose_playbill_claim,
+)
 from tests.test_playbill._knowledge_loop_support import (
     activate as activate_work_item_claim,
 )

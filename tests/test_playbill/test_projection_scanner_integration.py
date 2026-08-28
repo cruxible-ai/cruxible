@@ -22,7 +22,6 @@ from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
-from cruxible_core.service.playbill_claims import service_propose_playbill_claim
 from cruxible_core.service.playbill_coverage import service_resolve_playbill_coverage
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
@@ -30,6 +29,7 @@ from cruxible_core.service.playbill_next import (
     service_playbill_next,
 )
 from tests.test_client.test_playbill_projection_repin import _workspace
+from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
 from tests.test_playbill._knowledge_loop_support import TIMESTAMP, activate, authoring
 from tests.test_playbill._support import initialize_local
 
@@ -260,7 +260,7 @@ def test_real_client_server_path_preserves_full_proofs_at_gen2_scale(tmp_path: P
     assert len(sources) == 40
     assert client.last_result is not None
     assert sum(len(span.cards) for span in client.last_result.spans) == 680
-    assert all(len(span.commitment_scan_proofs) == 2 for span in client.last_result.spans)
+    assert all(len(span.commitment_scan_proofs) == 1 for span in client.last_result.spans)
     assert len(sources[0]["occurrences"]) == 17
     row = next(item for item in result.items if item.reason == "citation_drifted")
     assert row.detail["drift_state"] == "ambiguous"  # type: ignore[index]
@@ -284,7 +284,7 @@ def test_six_source_default_budget_keeps_every_local_proof(tmp_path: Path) -> No
     assert len(sources) == 6
     assert client.last_result is not None
     assert sum(len(span.cards) for span in client.last_result.spans) == 48
-    assert all(len(span.commitment_scan_proofs) == 2 for span in client.last_result.spans)
+    assert all(len(span.commitment_scan_proofs) == 1 for span in client.last_result.spans)
     assert len(sources[0]["occurrences"]) == 8
 
 

@@ -7,29 +7,17 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    DirectByteSpanSelectionV1,
-    DirectCaptureBuildResult,
-    DirectClaimSelectionV1,
-    DirectForeignSourceSelectionV1,
-    build_direct_claim_capture,
-    build_direct_claim_selection_capture,
-    build_foreign_source_capture,
-    capture_contract_path,
     parse_capture_envelope,
-    render_capture_contract,
 )
 from cruxible_client.contracts.claim_attestations import VerifiedClaimAttestationV1
 from cruxible_client.contracts.claim_type_structure import claim_type_structural_signature
 from cruxible_client.contracts.claim_types import (
-    ClaimType,
     claim_type_digest,
     claim_type_path,
     parse_claim_type,
-    render_claim_type,
 )
 from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResultAny,
@@ -37,29 +25,22 @@ from cruxible_client.contracts.claim_verdicts import (
     ClaimVerdictResultV2,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
     ClaimArtifactV3,
-    ClaimBacking,
     ClaimCitationV1,
     ClaimLawEvidenceAny,
     ClaimLawEvidenceV1,
-    ClaimReferentContext,
-    ClaimStatement,
     ClaimUnsupportedFormatError,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_citation_references,
     claim_path,
-    claim_referent_context_digest,
     claim_statement_address,
     claim_statement_digest,
     evaluate_capture_evidence_admissions,
-    new_claim_id,
     parse_claim,
     parse_claim_law_evidence,
-    render_claim,
 )
 from cruxible_client.contracts.diagnostics import GovernedOperationReference
 from cruxible_client.contracts.discovery import ContextCapsuleV1, ExpandRequestV1
@@ -77,7 +58,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
 )
 from cruxible_client.contracts.query.grammar import byte_sorted
-from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
+from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
     CoverageDescriptorV1,
     ExternalSourceReferenceV1,
@@ -87,11 +68,8 @@ from cruxible_client.contracts.source_references import (
     source_handle_digest,
 )
 from cruxible_client.contracts.subjects import (
-    SubjectShell,
     parse_subject,
-    render_subject,
     subject_digest,
-    subject_path,
     subject_reuse_signature,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
@@ -102,7 +80,6 @@ from cruxible_core.playbill.dereference import (
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_claims import ClaimProjectionView
-from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.query.cards import (
     ClaimTypeUsageRowV1,
     SemanticRelationV1,
@@ -110,157 +87,12 @@ from cruxible_core.playbill.query.cards import (
     build_subject_profile,
 )
 from cruxible_core.playbill.query.semantic_discovery import DiscoveryEntryV1
-from cruxible_core.playbill.service.documents import (
-    PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
-)
-from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
+from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.settlement import ChangeSetRecord
 
 
 class _StrictClaimServiceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-ExistingStatementDisposition = Literal["not_tested", "support", "contradict", "unsure"]
-
-
-class ExistingClaimStatementHandleV1(_StrictClaimServiceModel):
-    tag: Literal["playbill-existing-claim-statement-v1"] = "playbill-existing-claim-statement-v1"
-    claim_identity: str
-    claim_path: str
-    statement_address: SemanticAddress
-    statement_digest: str
-    artifact_digest: str
-
-    @field_validator("statement_digest", "artifact_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-
-class ExistingStatementHandoffV1(_StrictClaimServiceModel):
-    statement_digest: str
-    disposition: ExistingStatementDisposition
-
-    @field_validator("statement_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-
-class DirectClaimAuthoringV1(_StrictClaimServiceModel):
-    """Caller input deliberately has no observed_at or evidence-validity field."""
-
-    tag: Literal["playbill-direct-claim-authoring-v1"] = "playbill-direct-claim-authoring-v1"
-    statement: ClaimStatement
-    rationale: str
-    claim_id: str | None = None
-    predecessor_artifact_digest: str | None = None
-    retire: bool = False
-    materialize_source: bool = True
-    source_selection: DirectClaimSelectionV1 | None = None
-    subject_shell: SubjectShell | None = None
-    claim_type_artifact: ClaimType | None = None
-    dependency_subject_shells: tuple[SubjectShell, ...] = ()
-    dependency_claim_types: tuple[ClaimType, ...] = ()
-    existing_statement_handoffs: tuple[ExistingStatementHandoffV1, ...] = ()
-
-    @field_validator("rationale")
-    @classmethod
-    def _rationale(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("direct Claim rationale must not be empty")
-        return value
-
-    @field_validator("claim_id")
-    @classmethod
-    def _claim_id(cls, value: str | None) -> str | None:
-        if value is not None:
-            claim_path(value)
-        return value
-
-    @field_validator("predecessor_artifact_digest")
-    @classmethod
-    def _predecessor_digest(cls, value: str | None) -> str | None:
-        if value is not None:
-            Sha256Value.from_tagged(value)
-        return value
-
-    @field_validator("existing_statement_handoffs")
-    @classmethod
-    def _handoffs(
-        cls, value: tuple[ExistingStatementHandoffV1, ...]
-    ) -> tuple[ExistingStatementHandoffV1, ...]:
-        ordered = tuple(sorted(value, key=lambda item: item.statement_digest.encode("ascii")))
-        if value != ordered or len({item.statement_digest for item in value}) != len(value):
-            raise ValueError("existing statement handoffs must be sorted and unique")
-        return value
-
-    @field_validator("dependency_subject_shells")
-    @classmethod
-    def _dependency_subjects(cls, value: tuple[SubjectShell, ...]) -> tuple[SubjectShell, ...]:
-        keys = tuple((item.subject_kind, item.subject_id) for item in value)
-        if keys != tuple(sorted(set(keys))):
-            raise ValueError("dependency Subject shells must be sorted and unique")
-        return value
-
-    @field_validator("dependency_claim_types")
-    @classmethod
-    def _dependency_types(cls, value: tuple[ClaimType, ...]) -> tuple[ClaimType, ...]:
-        keys = tuple(item.predicate for item in value)
-        if keys != tuple(sorted(set(keys), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("dependency ClaimTypes must be sorted and unique")
-        return value
-
-
-class DirectClaimWarningV1(_StrictClaimServiceModel):
-    code: Literal["playbill.claim.direct_retire_deprecated"]
-    field_path: Literal["$.retire"] = "$.retire"
-    repair_operation: Literal["playbill.claim.retire"] = "playbill.claim.retire"
-
-
-class AuthoredClaimV1(_StrictClaimServiceModel):
-    """One authored Claim's result, independent of how many shared its proposal."""
-
-    tag: Literal["playbill-authored-claim-v1"] = "playbill-authored-claim-v1"
-    claim_identity: str
-    claim_path: str
-    statement_digest: str
-    artifact_digest: str
-    capture_digest: str
-    capture_digests: tuple[str, ...]
-    observed_at: datetime
-    existing_statements: tuple[ExistingClaimStatementHandleV1, ...]
-    handoffs: tuple[ExistingStatementHandoffV1, ...]
-    warnings: tuple[DirectClaimWarningV1, ...] = ()
-
-
-class DirectClaimProposalV1(_StrictClaimServiceModel):
-    tag: Literal["playbill-direct-claim-proposal-v1"] = "playbill-direct-claim-proposal-v1"
-    proposal: PlaybillProposalInspection
-    claim_identity: str
-    claim_path: str
-    statement_digest: str
-    artifact_digest: str
-    capture_digest: str
-    capture_digests: tuple[str, ...]
-    observed_at: datetime
-    existing_statements: tuple[ExistingClaimStatementHandleV1, ...]
-    handoffs: tuple[ExistingStatementHandoffV1, ...]
-    warnings: tuple[DirectClaimWarningV1, ...] = ()
-
-
-class DirectClaimBatchProposalV1(_StrictClaimServiceModel):
-    """One proposal carrying every authored Claim as ordinary change-set members."""
-
-    tag: Literal["playbill-direct-claim-batch-proposal-v1"] = (
-        "playbill-direct-claim-batch-proposal-v1"
-    )
-    proposal: PlaybillProposalInspection
-    claims: tuple[AuthoredClaimV1, ...]
 
 
 class PlaybillClaimView(_StrictClaimServiceModel):
@@ -502,10 +334,8 @@ def _claim_from_view(view: PlaybillClaimView | PlaybillClaimViewV2) -> ClaimArti
     ):
         raise ProposalIntegrityError("Claim projection lacks its complete canonical artifact")
     artifact_format = view.envelope.get("format_tag")
-    if artifact_format == "playbill-claim-v1":
-        model: type[ClaimArtifact] | type[ClaimArtifactV2] | type[ClaimArtifactV3] = ClaimArtifact
-    elif artifact_format == "playbill-claim-v2":
-        model = ClaimArtifactV2
+    if artifact_format == "playbill-claim-v2":
+        model: type[ClaimArtifactV2] | type[ClaimArtifactV3] = ClaimArtifactV2
     elif artifact_format == "playbill-claim-v3":
         model = ClaimArtifactV3
     else:
@@ -533,31 +363,6 @@ def _claim_from_view(view: PlaybillClaimView | PlaybillClaimViewV2) -> ClaimArti
     )
 
 
-def _existing_statements(
-    tree: dict[str, bytes], statement: ClaimStatement
-) -> tuple[ExistingClaimStatementHandleV1, ...]:
-    handles: list[ExistingClaimStatementHandleV1] = []
-    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("claims/"):
-            continue
-        claim = parse_claim(tree[path], path=path)
-        if (
-            claim.lifecycle.state == "live"
-            and claim.statement.subject == statement.subject
-            and claim.statement.predicate == statement.predicate
-        ):
-            handles.append(
-                ExistingClaimStatementHandleV1(
-                    claim_identity=claim.identity.qualified,
-                    claim_path=path,
-                    statement_address=claim_statement_address(path),
-                    statement_digest=claim_statement_digest(claim.statement).tagged,
-                    artifact_digest=claim_artifact_digest(claim).tagged,
-                )
-            )
-    return tuple(handles)
-
-
 def _observed_at(timestamp: str) -> datetime:
     raw = timestamp[:-1] + "+00:00" if timestamp.endswith("Z") else timestamp
     try:
@@ -567,510 +372,6 @@ def _observed_at(timestamp: str) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ProposalIntegrityError("authenticated request timestamp must be timezone-aware")
     return value
-
-
-def _direct_referent(
-    tree: dict[str, bytes],
-    address: SemanticAddress,
-    *,
-    descriptor: bool,
-) -> tuple[ArtifactIdentity, str]:
-    if address.selector.scheme != "artifact-v1":
-        raise ProposalIntegrityError("direct Claim referent must use whole-artifact identity")
-    content = tree.get(address.artifact_path)
-    if content is None:
-        raise ProposalIntegrityError("direct Claim referent does not resolve in its candidate")
-    if address.artifact_path.startswith("subjects/"):
-        shell = parse_subject(content, path=address.artifact_path)
-        return shell.identity, subject_digest(shell).tagged
-    if descriptor and address.artifact_path.startswith("claim-types/"):
-        referent_type = parse_claim_type(content, path=address.artifact_path)
-        return referent_type.identity, claim_type_digest(referent_type).tagged
-    raise ProposalIntegrityError("direct Claim referent kind is not admitted by this ClaimType")
-
-
-def _write_shared_member(
-    candidate_tree: dict[str, bytes],
-    authored: dict[str, bytes],
-    *,
-    path: str,
-    content: bytes,
-    conflict: str,
-) -> None:
-    """Write one candidate path, refusing only a conflict with a sibling authoring.
-
-    An authoring may always restate an artifact the accepted base already holds:
-    the acceptance laws adjudicate that succession. What it may never do is
-    contradict another authoring inside the same change set, because a change
-    set settles as one indivisible generation and there is no later moment at
-    which the two byte strings could be reconciled.
-    """
-
-    if authored.get(path, content) != content:
-        raise ProposalIntegrityError(conflict)
-    candidate_tree[path] = content
-    authored[path] = content
-
-
-def _write_dependency_member(
-    candidate_tree: dict[str, bytes],
-    authored: dict[str, bytes],
-    *,
-    path: str,
-    content: bytes,
-    conflict: str,
-) -> None:
-    """Write one declared dependency artifact, which may never contradict the candidate.
-
-    A dependency is stated so the change set closes over it, not to change it,
-    so identical bytes deduplicate silently against both the accepted base and
-    every sibling authoring while differing bytes are a typed refusal.
-    """
-
-    if candidate_tree.get(path, content) != content:
-        raise ProposalIntegrityError(conflict)
-    candidate_tree[path] = content
-    authored[path] = content
-
-
-def _author_direct_claim(
-    instance: PlaybillInstance,
-    *,
-    authoring: DirectClaimAuthoringV1,
-    actor_id: str,
-    timestamp: str,
-    proposed_base: AcceptedProjectionCoordinate,
-    base_tree: dict[str, bytes],
-    candidate_tree: dict[str, bytes],
-    authored: dict[str, bytes],
-) -> AuthoredClaimV1:
-    """Write one Capture and one dependency-closed Claim into a shared candidate."""
-
-    if authoring.subject_shell is not None:
-        shell_path = subject_path(
-            authoring.subject_shell.subject_kind,
-            authoring.subject_shell.subject_id,
-        )
-        _write_shared_member(
-            candidate_tree,
-            authored,
-            path=shell_path,
-            content=render_subject(authoring.subject_shell),
-            conflict="Claim authorings in one proposal disagree on their Subject bytes",
-        )
-    for dependency_subject in authoring.dependency_subject_shells:
-        dependency_path = subject_path(
-            dependency_subject.subject_kind,
-            dependency_subject.subject_id,
-        )
-        _write_dependency_member(
-            candidate_tree,
-            authored,
-            path=dependency_path,
-            content=render_subject(dependency_subject),
-            conflict="dependency Subject bytes conflict with the candidate",
-        )
-    if authoring.claim_type_artifact is not None:
-        type_path = claim_type_path(authoring.claim_type_artifact.predicate)
-        _write_shared_member(
-            candidate_tree,
-            authored,
-            path=type_path,
-            content=render_claim_type(authoring.claim_type_artifact),
-            conflict="Claim authorings in one proposal disagree on their ClaimType bytes",
-        )
-    for dependency_type in authoring.dependency_claim_types:
-        dependency_path = claim_type_path(dependency_type.predicate)
-        _write_dependency_member(
-            candidate_tree,
-            authored,
-            path=dependency_path,
-            content=render_claim_type(dependency_type),
-            conflict="dependency ClaimType bytes conflict with the candidate",
-        )
-
-    statement = authoring.statement
-    type_path = claim_type_path(statement.predicate)
-    type_content = candidate_tree.get(type_path)
-    if type_content is None:
-        raise ProposalIntegrityError("direct ClaimType does not resolve in its candidate")
-    claim_type = parse_claim_type(type_content, path=type_path)
-    if (
-        statement.claim_type != claim_type.identity
-        or statement.claim_type_digest != claim_type_digest(claim_type).tagged
-    ):
-        raise ProposalIntegrityError("direct Claim statement does not pin its exact ClaimType")
-
-    descriptor = statement.predicate in {
-        "semantic.alias",
-        "semantic.distinct_from",
-        "semantic.related_to",
-        "semantic.tag",
-    }
-    subject_identity, subject_artifact_digest = _direct_referent(
-        candidate_tree,
-        statement.subject,
-        descriptor=descriptor,
-    )
-
-    object_referent: tuple[ArtifactIdentity, str] | None = None
-    if isinstance(statement.object, SubjectClaimObject):
-        object_referent = _direct_referent(
-            candidate_tree,
-            statement.object.address,
-            descriptor=descriptor,
-        )
-
-    observed_at = _observed_at(timestamp)
-    context = ClaimReferentContext(
-        subject_content_digest=subject_artifact_digest,
-        object_content_digest=(None if object_referent is None else object_referent[1]),
-        observed_at=observed_at,
-    )
-    if claim_type.referent_sensitivity == "shell" and statement.shell_context_digest is None:
-        statement = statement.model_copy(
-            update={"shell_context_digest": claim_referent_context_digest(context).tagged}
-        )
-
-    existing = _existing_statements(base_tree, statement)
-    expected_handoffs = {item.statement_digest for item in existing}
-    supplied_handoffs = {item.statement_digest for item in authoring.existing_statement_handoffs}
-    inferred_handoffs = {
-        item.statement_digest
-        for item in existing
-        if authoring.claim_id is not None
-        and item.claim_identity == f"Claim:{authoring.claim_id}"
-        and authoring.predecessor_artifact_digest == item.artifact_digest
-    }
-    required_handoffs = expected_handoffs - inferred_handoffs
-    if not required_handoffs.issubset(supplied_handoffs) or not supplied_handoffs.issubset(
-        expected_handoffs
-    ):
-        raise ProposalIntegrityError(
-            "authoring must explicitly disposition every existing same-subject/predicate "
-            "statement before proposing an adjacent Claim"
-        )
-
-    claim_id = authoring.claim_id or new_claim_id()
-    path = claim_path(claim_id)
-    predecessor: ClaimArtifactAny | None = None
-    predecessor_content = base_tree.get(path)
-    if predecessor_content is not None:
-        predecessor = parse_claim(predecessor_content, path=path)
-        actual_predecessor_digest = claim_artifact_digest(predecessor).tagged
-        if authoring.predecessor_artifact_digest != actual_predecessor_digest:
-            raise ProposalIntegrityError(
-                "Claim succession requires the exact accepted predecessor artifact digest"
-            )
-    elif authoring.predecessor_artifact_digest is not None:
-        raise ProposalIntegrityError("new Claim cannot name a predecessor artifact digest")
-    if authoring.retire and predecessor is None:
-        raise ProposalIntegrityError("only an accepted Claim lineage can be retired")
-    if authoring.retire and not isinstance(predecessor, ClaimArtifact):
-        raise ProposalIntegrityError(
-            "playbill.claim.direct_retire_wire_downgrade: direct retirement is limited to "
-            "legacy v1 predecessors; use playbill.claim.retire"
-        )
-    capture = build_direct_claim_capture(
-        store=instance.body_store(),
-        actor_id=actor_id,
-        claim_id=claim_id,
-        value=statement.object.model_dump(mode="json"),
-        rationale=authoring.rationale,
-        observed_at=observed_at,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(proposed_base),
-        materialize_source=authoring.materialize_source,
-    )
-    # A foreign-source selection is the one authoring input that binds a Capture
-    # to a *logical* source rather than to content, so it is built under its own
-    # per-source contract instead of the shared direct one.
-    selection = authoring.source_selection
-    foreign_capture: DirectCaptureBuildResult | None = None
-    selection_capture: DirectCaptureBuildResult | None = None
-    if isinstance(selection, DirectForeignSourceSelectionV1):
-        foreign_capture = build_foreign_source_capture(
-            store=instance.body_store(),
-            actor_id=actor_id,
-            claim_id=claim_id,
-            rationale=authoring.rationale,
-            observed_at=observed_at,
-            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(proposed_base),
-            selection=selection,
-        )
-    elif selection is not None:
-        selection_capture = build_direct_claim_selection_capture(
-            store=instance.body_store(),
-            actor_id=actor_id,
-            claim_id=claim_id,
-            rationale=authoring.rationale,
-            observed_at=observed_at,
-            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(proposed_base),
-            selection=selection,
-        )
-    contract_path = capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name)
-    _write_dependency_member(
-        candidate_tree,
-        authored,
-        path=contract_path,
-        content=render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT),
-        conflict="accepted direct CaptureContract seed bytes differ",
-    )
-    if foreign_capture is not None:
-        _write_dependency_member(
-            candidate_tree,
-            authored,
-            path=capture_contract_path(foreign_capture.contract.identity.name),
-            content=render_capture_contract(foreign_capture.contract),
-            conflict="accepted foreign-source CaptureContract seed bytes differ",
-        )
-
-    mapping_members: list[SourceMapping] = []
-    if authoring.materialize_source:
-        length = capture.envelope.commitment.byte_length
-        if length is None:
-            raise ProposalIntegrityError("materialized direct Capture has no byte length")
-        mapping_members.append(
-            SourceMapping(
-                subject=claim_statement_address(path),
-                spans=(
-                    ContentSpan(
-                        content_digest=capture.source_body_digest,
-                        start_byte=0,
-                        end_byte=length,
-                    ),
-                ),
-            )
-        )
-    if isinstance(selection, DirectByteSpanSelectionV1):
-        mapping_members.append(
-            SourceMapping(
-                subject=claim_statement_address(path),
-                spans=(selection.span,),
-            )
-        )
-    if foreign_capture is not None:
-        # The mapping covers the committed *selection*, not the presented
-        # snapshot: the selected bytes are what the Capture commits to and what
-        # a working occurrence is later matched against.
-        selected_length = foreign_capture.envelope.commitment.byte_length
-        if selected_length is None:
-            raise ProposalIntegrityError("foreign-source Capture has no committed byte length")
-        mapping_members.append(
-            SourceMapping(
-                subject=claim_statement_address(path),
-                spans=(
-                    ContentSpan(
-                        content_digest=foreign_capture.source_body_digest,
-                        start_byte=0,
-                        end_byte=selected_length,
-                    ),
-                ),
-            )
-        )
-    mapping_by_wire = {
-        canonical_bytes(item.model_dump(mode="json")): item
-        for item in [
-            *(() if predecessor is None else predecessor.backing.source_mappings),
-            *mapping_members,
-        ]
-    }
-    mappings = tuple(mapping_by_wire[key] for key in sorted(mapping_by_wire))
-    pins = [
-        ArtifactPin(
-            role="capture-contract",
-            target=DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity,
-            artifact_digest=capture.contract_digest,
-        ),
-        ArtifactPin(
-            role="claim-type",
-            target=claim_type.identity,
-            artifact_digest=claim_type_digest(claim_type).tagged,
-        ),
-        ArtifactPin(
-            role="subject",
-            target=subject_identity,
-            artifact_digest=subject_artifact_digest,
-        ),
-    ]
-    if foreign_capture is not None:
-        pins.append(
-            ArtifactPin(
-                role="capture-contract",
-                target=foreign_capture.contract.identity,
-                artifact_digest=foreign_capture.contract_digest,
-            )
-        )
-    if object_referent is not None:
-        pins.append(
-            ArtifactPin(
-                role="object-subject",
-                target=object_referent[0],
-                artifact_digest=object_referent[1],
-            )
-        )
-    claim = ClaimArtifact(
-        identity=ArtifactIdentity(kind="Claim", name=claim_id),
-        statement=statement,
-        backing=ClaimBacking(
-            referent_context=context,
-            capture_digests=tuple(
-                sorted(
-                    {
-                        *(() if predecessor is None else predecessor.backing.capture_digests),
-                        capture.capture_digest,
-                        *(() if selection_capture is None else (selection_capture.capture_digest,)),
-                        *(() if foreign_capture is None else (foreign_capture.capture_digest,)),
-                    },
-                    key=lambda item: item.encode("ascii"),
-                )
-            ),
-            attestation_digests=(
-                () if predecessor is None else predecessor.backing.attestation_digests
-            ),
-            input_claim_digests=(
-                () if predecessor is None else predecessor.backing.input_claim_digests
-            ),
-            reducer_digest=(None if predecessor is None else predecessor.backing.reducer_digest),
-            source_mappings=mappings,
-        ),
-        authority=claim_type.authority,
-        pins=tuple(
-            sorted(
-                pins,
-                key=lambda item: (
-                    item.role.encode("utf-8"),
-                    item.target.qualified.encode("utf-8"),
-                ),
-            )
-        ),
-        lifecycle=ArtifactLifecycle(
-            state="retired" if authoring.retire else "live",
-            predecessor_digest=(
-                None if predecessor is None else claim_artifact_digest(predecessor).tagged
-            ),
-        ),
-    )
-    _write_shared_member(
-        candidate_tree,
-        authored,
-        path=path,
-        content=render_claim(claim),
-        conflict="two Claim authorings in one proposal write the same Claim path",
-    )
-    return AuthoredClaimV1(
-        claim_identity=claim.identity.qualified,
-        claim_path=path,
-        statement_digest=claim_statement_digest(claim.statement).tagged,
-        artifact_digest=claim_artifact_digest(claim).tagged,
-        capture_digest=capture.capture_digest,
-        capture_digests=claim.backing.capture_digests,
-        observed_at=observed_at,
-        existing_statements=existing,
-        handoffs=authoring.existing_statement_handoffs,
-        warnings=(
-            (
-                DirectClaimWarningV1(
-                    code="playbill.claim.direct_retire_deprecated",
-                ),
-            )
-            if authoring.retire
-            else ()
-        ),
-    )
-
-
-def service_propose_playbill_claims(
-    instance: PlaybillInstance,
-    *,
-    authorings: tuple[DirectClaimAuthoringV1, ...],
-    actor_id: str,
-    proposal_name: str,
-    timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
-) -> DirectClaimBatchProposalV1:
-    """Author every supplied Claim into one candidate tree and one proposal.
-
-    The change set this produces is ordinary: nothing about settlement,
-    evaluation, or the wire format distinguishes a proposal carrying five Claims
-    from one carrying a single Claim. What the plural entrypoint adds is the
-    atomicity guarantee callers need when a Claim is only meaningful beside its
-    siblings -- the whole set is admitted as one generation or none of it is.
-    """
-
-    if not authorings:
-        raise ProposalIntegrityError("a Claim proposal must author at least one Claim")
-
-    proposed_base = _resolve_coordinate(instance, base)
-    base_tree = instance.tree_at(proposed_base.git_oid)
-    candidate_tree = instance.tree_at(proposed_base.git_oid)
-    authored: dict[str, bytes] = {}
-    claims = tuple(
-        _author_direct_claim(
-            instance,
-            authoring=authoring,
-            actor_id=actor_id,
-            timestamp=timestamp,
-            proposed_base=proposed_base,
-            base_tree=base_tree,
-            candidate_tree=candidate_tree,
-            authored=authored,
-        )
-        for authoring in authorings
-    )
-    ref_name = canonical_playbill_proposal_name(proposal_name, family="claim")
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id),
-        request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
-            proposed_base_oid=proposed_base.git_oid,
-        ),
-        candidate_tree=candidate_tree,
-        timestamp=timestamp,
-    )
-    return DirectClaimBatchProposalV1(
-        proposal=PlaybillProposalInspection(
-            proposal=result,
-            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-                instance.accepted_coordinate()
-            ),
-        ),
-        claims=claims,
-    )
-
-
-def service_propose_playbill_claim(
-    instance: PlaybillInstance,
-    *,
-    authoring: DirectClaimAuthoringV1,
-    actor_id: str,
-    proposal_name: str,
-    timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
-) -> DirectClaimProposalV1:
-    """Create one inert Capture and dependency-closed Claim proposal in one operation."""
-
-    batch = service_propose_playbill_claims(
-        instance,
-        authorings=(authoring,),
-        actor_id=actor_id,
-        proposal_name=proposal_name,
-        timestamp=timestamp,
-        base=base,
-    )
-    authored = batch.claims[0]
-    return DirectClaimProposalV1(
-        proposal=batch.proposal,
-        claim_identity=authored.claim_identity,
-        claim_path=authored.claim_path,
-        statement_digest=authored.statement_digest,
-        artifact_digest=authored.artifact_digest,
-        capture_digest=authored.capture_digest,
-        capture_digests=authored.capture_digests,
-        observed_at=authored.observed_at,
-        existing_statements=authored.existing_statements,
-        handoffs=authored.handoffs,
-        warnings=authored.warnings,
-    )
 
 
 def service_get_playbill_claim(
@@ -2082,16 +1383,9 @@ def service_open_playbill_source(
 
 
 __all__ = [
-    "AuthoredClaimV1",
     "CaptureAdmissionAccountV1",
     "CaptureEvidenceKindAdmissionV1",
     "ClaimEvidenceFreshnessLineV1",
-    "DirectClaimAuthoringV1",
-    "DirectClaimBatchProposalV1",
-    "DirectClaimProposalV1",
-    "DirectClaimWarningV1",
-    "ExistingClaimStatementHandleV1",
-    "ExistingStatementHandoffV1",
     "PlaybillClaimExplanationV1",
     "PlaybillClaimExplanationV2",
     "PlaybillClaimExplanationV3",
@@ -2108,7 +1402,5 @@ __all__ = [
     "service_list_playbill_claims",
     "service_open_playbill_source",
     "service_playbill_claim_history",
-    "service_propose_playbill_claim",
-    "service_propose_playbill_claims",
     "service_query_playbill_claims",
 ]

@@ -44,8 +44,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillInsertionPrepareRequest,
     PlaybillNextRequest,
     PlaybillProposalReadmitRequest,
-    PlaybillProposeClaimRequest,
-    PlaybillProposeClaimsRequest,
     PlaybillProposeClaimTypeInputRequest,
     PlaybillProposeClaimTypeRequest,
     PlaybillProposeDocumentRequest,
@@ -541,38 +539,6 @@ async def get_claim_type(
         resolve_server_instance_id(instance_id),
         predicate,
         at=_coordinate(git_oid, semantic_root, generation_root, compiler_digest),
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/claims/proposals",
-    response_model=contracts.PlaybillClaimProposal,
-)
-async def propose_claim(
-    instance_id: str,
-    req: PlaybillProposeClaimRequest,
-) -> contracts.PlaybillClaimProposal:
-    return playbill_api.playbill_propose_claim(
-        resolve_server_instance_id(instance_id),
-        authoring=req.authoring,
-        proposal_name=req.proposal_name,
-        base=req.base,
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/claims/proposals/batch",
-    response_model=contracts.PlaybillClaimBatchProposal,
-)
-async def propose_claims(
-    instance_id: str,
-    req: PlaybillProposeClaimsRequest,
-) -> contracts.PlaybillClaimBatchProposal:
-    return playbill_api.playbill_propose_claims(
-        resolve_server_instance_id(instance_id),
-        authorings=req.authorings,
-        proposal_name=req.proposal_name,
-        base=req.base,
     )
 
 

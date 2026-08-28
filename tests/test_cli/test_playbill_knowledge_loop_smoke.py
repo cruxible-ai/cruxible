@@ -23,19 +23,20 @@ from click.testing import CliRunner, Result
 from fastapi.testclient import TestClient
 
 from cruxible_client import CruxibleClient
-from cruxible_client.contracts.claim_types import claim_type_digest
-from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
+from cruxible_client.contracts.authoring.inputs import (
+    ClaimInput,
+    LiteralObjectInput,
+    SelfSourceInput,
+)
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import reset_registry
-from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
 from tests.test_playbill._knowledge_loop_support import (
     PREDICATE,
     QUERY_NAME,
     SUBJECT_KIND,
-    subject_address,
     subject_shell,
     work_item_query,
 )
@@ -101,21 +102,17 @@ def _proposal_id(inspection: dict[str, Any]) -> str:
     return str(inspection["proposal"]["admission"]["proposal_id"])
 
 
-def _claim_authoring(subject_id: str, value: str, *, seed_subject: bool) -> DirectClaimAuthoringV1:
-    """One direct-Claim authoring request against the already-accepted ClaimType."""
+def _claim_authoring(subject_id: str, value: str) -> ClaimInput:
+    """One sanctioned self-source input against accepted Claim dependencies."""
 
-    claim_type = _claim_type()
-    return DirectClaimAuthoringV1(
-        statement=ClaimStatement(
-            subject=subject_address(subject_id),
-            claim_type=claim_type.identity,
-            claim_type_digest=claim_type_digest(claim_type).tagged,
-            predicate=claim_type.predicate,
-            object=LiteralClaimObject(value=value),
-            role="observation",
-        ),
+    return ClaimInput(
+        kind="claim",
+        subject=f"project.work_item/{subject_id}",
+        predicate=_claim_type().predicate,
+        object=LiteralObjectInput(kind="literal", value=value),
+        role="observation",
         rationale=f"The reviewed status of {subject_id} is {value}.",
-        subject_shell=subject_shell(subject_id) if seed_subject else None,
+        source=SelfSourceInput(kind="self_source", body=f"status: {value}\n"),
     )
 
 
@@ -185,25 +182,43 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     )
     cruxible.accept(_proposal_id(proposed))
 
-    # 4. Two Claims: the first against accepted dependencies, the second
-    #    carrying its own Subject so dependency-closed authoring is exercised.
+    # 4. Two Claims through the durable AuthoringIntent coordinator. The second
+    #    Subject is admitted first because tagless Claim input resolves accepted
+    #    dependencies instead of carrying a private direct-writer closure.
     claim_identities: list[str] = []
-    for subject_id, value, seed_subject in (
-        ("wi-42", "ready", False),
-        ("wi-43", "blocked", True),
-    ):
-        authoring = _claim_authoring(subject_id, value, seed_subject=seed_subject)
-        proposal = cruxible.json(
+    for subject_id, value in (("wi-42", "ready"), ("wi-43", "blocked")):
+        if subject_id == "wi-43":
+            proposed = cruxible.json(
+                "playbill",
+                "subject",
+                "propose",
+                "--envelope",
+                _write(
+                    tmp_path / "subject-wi-43.json",
+                    subject_shell("wi-43").model_dump(mode="json"),
+                ),
+                "--name",
+                "seed-subject-wi-43",
+            )
+            cruxible.accept(_proposal_id(proposed))
+        created = cruxible.json(
             "playbill",
-            "claim",
-            "propose",
-            "--authoring",
-            _write(tmp_path / f"claim-{subject_id}.json", authoring.model_dump(mode="json")),
-            "--name",
-            f"seed-claim-{subject_id}",
+            "authoring",
+            "create",
+            _write(
+                tmp_path / f"claim-{subject_id}.json",
+                _claim_authoring(subject_id, value).model_dump(mode="json"),
+            ),
         )
-        claim_identities.append(str(proposal["claim_identity"]))
-        cruxible.accept(_proposal_id(proposal["proposal"]))
+        intent = created["intent"]
+        submitted = cruxible.json(
+            "playbill",
+            "authoring",
+            "submit",
+            str(intent["intent_id"]),
+        )
+        claim_identities.append(f"Claim:{intent['semantic_identity']}")
+        cruxible.accept(str(submitted["status"]["proposal_id"]))
 
     # 5. Publish the named entrypoint that reads them.
     proposed = cruxible.json(
@@ -211,7 +226,18 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         "query",
         "propose",
         "--envelope",
-        _write(tmp_path / "query.json", work_item_query().model_dump(mode="json")),
+        _write(
+            tmp_path / "query.json",
+            work_item_query(claim_type=claim_type)
+            .model_copy(
+                update={
+                    "evaluation_policy": work_item_query(
+                        claim_type=claim_type
+                    ).evaluation_policy.model_copy(update={"visible_verdicts": ("uncovered",)})
+                }
+            )
+            .model_dump(mode="json"),
+        ),
         "--name",
         "seed-query",
     )
@@ -244,7 +270,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     )
     assert cruxible.json("playbill", "claim", "history", claim_identities[0])["entries"]
     explained = cruxible.json("playbill", "claim", "explain", claim_identities[0])
-    assert explained["verdict"]["verdict"] == "supported"
+    assert explained["verdict"]["verdict"] == "uncovered"
     assert explained["law_evidence"]
 
     definitions = cruxible.json("playbill", "query", "list")
@@ -341,60 +367,3 @@ def test_cli_floor_export_refuses_to_overwrite_a_non_empty_directory(
     assert refused.exit_code != 0
     assert "Refusing to write the floor into a non-empty directory" in refused.output
     assert (floor / "occupied.txt").read_text(encoding="utf-8") == "not the floor\n"
-
-
-def test_cli_batch_propose_settles_every_claim_in_one_generation(
-    served_cli: _Cli,
-    tmp_path: Path,
-) -> None:
-    """The plural command drives CLI -> HTTP -> facade -> service in one call.
-
-    The load-bearing observation is the generation count: two Claims arrive
-    through one proposal id, one approval, and one activation, so the accepted
-    ledger gains exactly one generation carrying both.
-    """
-
-    cruxible = served_cli
-    cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
-    cruxible.bootstrap(tmp_path)
-    proposed = cruxible.json(
-        "playbill",
-        "claim-type",
-        "propose",
-        "--envelope",
-        _write(tmp_path / "claim-type.json", _claim_type().model_dump(mode="json")),
-        "--name",
-        "seed-claim-type",
-    )
-    seeded = cruxible.accept(_proposal_id(proposed))
-
-    batch = cruxible.json(
-        "playbill",
-        "claim",
-        "propose-batch",
-        "--authoring",
-        _write(
-            tmp_path / "claim-wi-50.json",
-            _claim_authoring("wi-50", "ready", seed_subject=True).model_dump(mode="json"),
-        ),
-        "--authoring",
-        _write(
-            tmp_path / "claim-wi-51.json",
-            _claim_authoring("wi-51", "blocked", seed_subject=True).model_dump(mode="json"),
-        ),
-        "--name",
-        "seed-both-claims",
-    )
-
-    assert batch["tag"] == "playbill-direct-claim-batch-proposal-v1"
-    assert len(batch["claims"]) == 2
-    accepted = cruxible.accept(_proposal_id(batch["proposal"]))
-    assert accepted["accepted_coordinate"] != seeded["accepted_coordinate"]
-
-    claims = cruxible.json("playbill", "claim", "list", "--predicate", PREDICATE)
-    assert {item["envelope"]["identity"] for item in claims["claims"]} == {
-        str(item["claim_identity"]) for item in batch["claims"]
-    }
-    for authored in batch["claims"]:
-        history = cruxible.json("playbill", "claim", "history", str(authored["claim_identity"]))
-        assert [entry["sequence"] for entry in history["entries"]] == [2]

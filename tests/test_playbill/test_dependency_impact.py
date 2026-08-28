@@ -27,8 +27,8 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
-    ClaimArtifact,
-    ClaimBacking,
+    ClaimArtifactV2,
+    ClaimBackingV2,
     ClaimReferentContext,
     ClaimStatement,
     LiteralClaimObject,
@@ -118,7 +118,7 @@ def _claim(
     digest = claim_type_digest(contract).tagged
     claim_id = f"CLM-{index:032x}"
     subject_row = subject("project.work_item", item)
-    artifact = ClaimArtifact(
+    artifact = ClaimArtifactV2(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(subject_row.path),
@@ -128,7 +128,7 @@ def _claim(
             object=LiteralClaimObject(value=value),
             role="derivation" if input_digests else "normative",
         ),
-        backing=ClaimBacking(
+        backing=ClaimBackingV2(
             referent_context=ClaimReferentContext(
                 subject_content_digest=subject_row.artifact_digest,
                 observed_at=NOW,

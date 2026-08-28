@@ -4,24 +4,30 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import (
+    DirectForeignSourceSelectionV1,
+    foreign_source_capture_contract,
+)
+from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.signing import LocalEd25519ClaimAttestationSigner
 from cruxible_core.service.playbill_claims import (
     service_explain_playbill_claim,
     service_get_playbill_claim,
-    service_propose_playbill_claim,
 )
 from cruxible_core.service.playbill_evidence import (
     service_evaluate_playbill_claim_verdict,
     service_prepare_claim_attestation,
     service_propose_claim_attestation,
 )
-from tests.test_playbill._support import initialize_local
-from tests.test_playbill.test_direct_claim_authoring import (
+from tests.test_playbill._claim_authoring_support import (
     TIMESTAMP,
     _activate_direct_claim,
     _authoring,
+    service_propose_playbill_claim,
 )
+from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
 
 
 def _signer(instance, owner, tmp_path: Path) -> LocalEd25519ClaimAttestationSigner:
@@ -38,14 +44,31 @@ def test_exact_statement_attestations_compound_across_backing_successors(
     tmp_path: Path,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
+    source_id = "fixture.evidence"
+    _seed_claim_surface(instance, owner, contract=foreign_source_capture_contract(source_id))
+    body = instance.body_store().store(b"status: ready")
+    authoring = _authoring().model_copy(
+        update={
+            "subject_shell": None,
+            "claim_type_artifact": None,
+            "source_selection": DirectForeignSourceSelectionV1(
+                logical_source_identity=source_id,
+                span=ContentSpan(
+                    content_digest=body.digest,
+                    start_byte=0,
+                    end_byte=len(b"status: ready"),
+                ),
+            ),
+        }
+    )
     initial = service_propose_playbill_claim(
         instance,
-        authoring=_authoring(),
+        authoring=authoring,
         actor_id="owner",
         proposal_name="evidence-initial",
         timestamp=TIMESTAMP,
     )
-    _activate_direct_claim(instance, owner, initial)
+    _activate_direct_claim(instance, owner, initial, sequence=len(instance.accepted_history()))
     initial_coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     before = service_evaluate_playbill_claim_verdict(
         instance,
@@ -73,7 +96,7 @@ def test_exact_statement_attestations_compound_across_backing_successors(
         timestamp="2026-08-16T20:01:00.000000Z",
     )
     assert contradicted.proposal.proposal.candidate is not None
-    _activate_direct_claim(instance, owner, contradicted, sequence=2)
+    _activate_direct_claim(instance, owner, contradicted, sequence=len(instance.accepted_history()))
 
     current = service_evaluate_playbill_claim_verdict(
         instance,
@@ -110,7 +133,7 @@ def test_exact_statement_attestations_compound_across_backing_successors(
         timestamp="2026-08-16T20:02:00.000000Z",
     )
     assert unsure.proposal.proposal.candidate is not None
-    _activate_direct_claim(instance, owner, unsure, sequence=3)
+    _activate_direct_claim(instance, owner, unsure, sequence=len(instance.accepted_history()))
     compounded = service_evaluate_playbill_claim_verdict(
         instance,
         claim_identity=initial.claim_identity,

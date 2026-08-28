@@ -9,14 +9,14 @@ from cruxible_core.playbill.projection_claims import compile_provisional_claim_p
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
     service_get_playbill_claim,
-    service_propose_playbill_claim,
 )
-from tests.test_playbill._support import initialize_local
-from tests.test_playbill.test_direct_claim_authoring import (
+from tests.test_playbill._claim_authoring_support import (
     TIMESTAMP,
     _activate_direct_claim,
     _authoring,
+    service_propose_playbill_claim,
 )
+from tests.test_playbill._support import initialize_local
 
 
 def test_provisional_and_rebuilt_canonical_claim_facts_match(tmp_path: Path) -> None:

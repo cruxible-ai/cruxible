@@ -181,8 +181,8 @@ def test_an_artifact_no_claim_carries_earns_its_own_proposal() -> None:
 def test_a_bundle_that_cannot_be_legally_grouped_refuses_with_the_conflict_it_is() -> None:
     """Two byte strings, one canonical path, one change set: there is no grouping.
 
-    This is the cross-authoring conflict `service_propose_playbill_claims`
-    refuses before it reaches the proposal service, caught at plan time so it is
+    This is the cross-authoring conflict the retired seed apply path had to
+    refuse before reaching the proposal service. It is caught at plan time so it is
     reported before a single body is stored rather than three groups later.
     """
 

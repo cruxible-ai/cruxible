@@ -105,7 +105,6 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
 )
 from cruxible_client.contracts.claims import (
-    ClaimArtifact,
     ClaimArtifactAny,
     ClaimArtifactV2,
     ClaimArtifactV3,
@@ -272,10 +271,8 @@ def _claim_from_public_view(view: api.PlaybillClaimViewV2) -> ClaimArtifactAny:
         and isinstance(artifact_format, str)
     ):
         raise ValueError("Claim read lacks its complete canonical artifact")
-    if artifact_format == "playbill-claim-v1":
-        model: type[ClaimArtifact] | type[ClaimArtifactV2] | type[ClaimArtifactV3] = ClaimArtifact
-    elif artifact_format == "playbill-claim-v2":
-        model = ClaimArtifactV2
+    if artifact_format == "playbill-claim-v2":
+        model: type[ClaimArtifactV2] | type[ClaimArtifactV3] = ClaimArtifactV2
     elif artifact_format == "playbill-claim-v3":
         model = ClaimArtifactV3
     else:

@@ -35,11 +35,8 @@ from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
 )
 from cruxible_core.service.playbill_claims import (
-    DirectClaimAuthoringV1,
-    ExistingStatementHandoffV1,
     _claim_from_view,
     service_list_playbill_claims,
-    service_propose_playbill_claim,
 )
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
@@ -48,6 +45,11 @@ from cruxible_core.service.playbill_next import (
     service_playbill_next,
 )
 from cruxible_core.service.playbill_query import build_accepted_query_facts
+from tests.test_playbill._claim_authoring_support import (
+    DirectClaimAuthoringV1,
+    ExistingStatementHandoffV1,
+    service_propose_playbill_claim,
+)
 from tests.test_playbill._knowledge_loop_support import (
     QUERY_NAME,
     SUBJECT_KIND,

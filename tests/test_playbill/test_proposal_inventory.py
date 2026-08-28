@@ -4,17 +4,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+)
+from cruxible_core.playbill.service.documents import service_propose_playbill_document
 from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
 )
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.server.auth import ResolvedAuthContext
-from cruxible_core.service.playbill_claims import service_propose_playbill_claim
 from cruxible_core.service.playbill_proposals import (
     service_list_playbill_proposals,
     service_playbill_whoami,
 )
+from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
 from tests.test_playbill._knowledge_loop_support import (
     TIMESTAMP,
     activate,
@@ -41,14 +47,26 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
         timestamp=TIMESTAMP,
     )
     activate(instance, owner, accepted, sequence=3)
-    refused = service_propose_playbill_claim(
+    refused = service_propose_playbill_document(
         instance,
-        authoring=authoring("wi-45", "not-a-declared-status", with_claim_type=False),
+        shell=DocumentShell(
+            identity="document:missing-body",
+            document_kind="design",
+            title="Missing body",
+            media_type="text/markdown",
+            body_digest="sha256:" + "f" * 64,
+            authority=DocumentAuthority(
+                required_tier="graph_write",
+                approval_roles=("owner",),
+            ),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        ),
         actor_id="owner",
         proposal_name="refused",
         timestamp=TIMESTAMP,
     )
-    assert refused.proposal.proposal.evaluation.verdict == "refused"
+    assert refused.proposal.evaluation.verdict == "refused"
     opened = service_propose_playbill_query_definition(
         instance,
         query=work_item_query("open-query"),
@@ -61,7 +79,7 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
     by_id = {item.proposal_id: item for item in result.entries}
     assert by_id[stale.proposal.admission.proposal_id].terminal_reason == "stale"
     assert by_id[accepted.proposal.proposal.admission.proposal_id].terminal_reason == "accepted"
-    assert by_id[refused.proposal.proposal.admission.proposal_id].terminal_reason == "refused"
+    assert by_id[refused.proposal.admission.proposal_id].terminal_reason == "refused"
     assert by_id[opened.proposal.admission.proposal_id].status == "open"
     assert by_id[opened.proposal.admission.proposal_id].terminal_reason is None
     assert result.entries == tuple(

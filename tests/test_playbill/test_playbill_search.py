@@ -12,13 +12,15 @@ from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.search import PlaybillSearchBudgetsV1, PlaybillSearchRequestV1
 from cruxible_core.service.playbill_claims import (
-    ExistingStatementHandoffV1,
     _claim_from_view,
     service_list_playbill_claims,
-    service_propose_playbill_claim,
 )
 from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
 from cruxible_core.service.playbill_search import service_search_playbill
+from tests.test_playbill._claim_authoring_support import (
+    ExistingStatementHandoffV1,
+    service_propose_playbill_claim,
+)
 from tests.test_playbill._knowledge_loop_support import (
     activate as activate_work_item_claim,
 )

@@ -145,7 +145,6 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             in {
                 "playbill-capture-contract-v1",
                 "playbill-capture-envelope-v1",
-                "playbill-claim-v1",
                 "playbill-claim-v2",
                 "playbill-claim-v3",
                 "playbill-accepted-state-run-input-v1",
@@ -168,7 +167,6 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-accepted-state-run-input-v1",
             "playbill-capture-contract-v1",
             "playbill-capture-envelope-v1",
-            "playbill-claim-v1",
             "playbill-claim-v2",
             "playbill-claim-v3",
             "playbill-exhaust-run-input-v1",

@@ -58,11 +58,12 @@ from cruxible_client.contracts.captures import (
 )
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest, render_claim_type
 from cruxible_client.contracts.claims import (
-    ClaimArtifact,
-    ClaimBacking,
+    ClaimArtifactV2,
+    ClaimBackingV2,
     ClaimReferentContext,
     ClaimStatement,
     LiteralClaimObject,
+    build_claim_citation,
     claim_path,
     claim_statement_address,
     render_claim,
@@ -333,9 +334,9 @@ def _claim(
     capture_digest: str,
     source_digest: str,
     source_length: int,
-) -> ClaimArtifact:
+) -> ClaimArtifactV2:
     path = claim_path(claim_id)
-    return ClaimArtifact(
+    return ClaimArtifactV2(
         identity=ArtifactIdentity(kind="Claim", name=claim_id),
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(
@@ -347,12 +348,20 @@ def _claim(
             object=LiteralClaimObject(value=value),
             role="observation",
         ),
-        backing=ClaimBacking(
+        backing=ClaimBackingV2(
             referent_context=ClaimReferentContext(
                 subject_content_digest=subject_digest(subject).tagged,
                 observed_at=observed_at,
             ),
             capture_digests=(capture_digest,),
+            citations=(
+                build_claim_citation(
+                    ArtifactIdentity(kind="Claim", name=claim_id),
+                    capture_digest=capture_digest,
+                    role="evidence",
+                    origin="self_source",
+                ),
+            ),
             source_mappings=(
                 SourceMapping(
                     subject=claim_statement_address(path),

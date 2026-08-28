@@ -128,8 +128,6 @@ TOOL_PERMISSIONS: dict[str, PermissionMode] = {
     "cruxible_playbill_propose_source_bundle": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_propose_subject": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_propose_claim_type": PermissionMode.GOVERNED_WRITE,
-    "cruxible_playbill_propose_claim": PermissionMode.GOVERNED_WRITE,
-    "cruxible_playbill_propose_claims": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_propose_query_definition": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_procedure_bind": PermissionMode.GOVERNED_WRITE,
     "cruxible_playbill_authoring_create": PermissionMode.GOVERNED_WRITE,

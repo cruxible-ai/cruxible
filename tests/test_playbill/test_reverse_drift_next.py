@@ -75,7 +75,12 @@ def _publish_self_published_claim(
 ) -> str:
     coordinator = AuthoringIntentCoordinator.for_instance(instance)
     actor = AuthenticatedActor(actor_id="owner")
-    payload = _working_payload(occurrence_count=1).model_copy(update={"citation_role": "copy"})
+    payload = _working_payload(occurrence_count=1).model_copy(
+        update={
+            "citation_role": "copy",
+            "rationale": f"Self-published fixture {proposal_suffix}.",
+        }
+    )
     intent = coordinator.create(
         actor=actor,
         payload=payload,

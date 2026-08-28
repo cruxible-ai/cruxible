@@ -10,8 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.captures import (
+    DirectForeignSourceSelectionV1,
+    capture_contract_digest,
+    foreign_source_capture_contract,
+)
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.claims import ClaimStatement, LiteralClaimObject
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionRuleV1,
+)
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1, QueryEvaluationPolicyV1
 from cruxible_client.contracts.query.grammar import (
     QueryBudgetsV1,
@@ -21,17 +30,18 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjectionV1,
     QuerySubjectFieldRefV1,
 )
-from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.keys import GeneratedKeyMaterial
 from cruxible_core.playbill.settlement import ChangeActorBinding
-from cruxible_core.service.playbill_claims import (
+from tests.test_playbill._claim_authoring_support import (
     DirectClaimAuthoringV1,
     service_propose_playbill_claim,
 )
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
+from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
 from tests.test_playbill.test_claims import _claim_type
 
 TIMESTAMP = "2026-08-16T20:00:00.000000Z"
@@ -87,6 +97,7 @@ def activate(
 ) -> None:
     """Approve and activate one direct-Claim proposal at the accepted head."""
 
+    del sequence
     base = instance.accepted_coordinate()
     candidate = proposed.proposal.proposal.candidate
     assert candidate is not None
@@ -105,7 +116,7 @@ def activate(
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=sequence,
+        sequence=len(instance.accepted_history()),
     )
     publisher = instance.activation_publisher()
     projection = publisher.prebuild(bundle, base=base)
@@ -117,29 +128,80 @@ def seed_claims(tmp_path: Path) -> tuple[PlaybillInstance, GeneratedKeyMaterial]
     """Return an instance holding two accepted work-item status Claims."""
 
     instance, owner = initialize_local(tmp_path)
+    source_id = "fixture.work-items"
+    _seed_claim_surface(
+        instance,
+        owner,
+        contract=foreign_source_capture_contract(source_id),
+    )
+    first_body = instance.body_store().store(b"status: ready")
     first = service_propose_playbill_claim(
         instance,
-        authoring=authoring("wi-42", "ready", with_claim_type=True),
+        authoring=authoring("wi-42", "ready", with_claim_type=False).model_copy(
+            update={
+                "source_selection": DirectForeignSourceSelectionV1(
+                    logical_source_identity=source_id,
+                    span=ContentSpan(
+                        content_digest=first_body.digest,
+                        start_byte=0,
+                        end_byte=len(b"status: ready"),
+                    ),
+                )
+            }
+        ),
         actor_id="owner",
         proposal_name="seed-first",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, first, sequence=1)
+    activate(instance, owner, first, sequence=len(instance.accepted_history()))
+    second_body = instance.body_store().store(b"status: blocked")
     second = service_propose_playbill_claim(
         instance,
-        authoring=authoring("wi-43", "blocked", with_claim_type=False),
+        authoring=authoring("wi-43", "blocked", with_claim_type=False).model_copy(
+            update={
+                "source_selection": DirectForeignSourceSelectionV1(
+                    logical_source_identity=source_id,
+                    span=ContentSpan(
+                        content_digest=second_body.digest,
+                        start_byte=0,
+                        end_byte=len(b"status: blocked"),
+                    ),
+                )
+            }
+        ),
         actor_id="owner",
         proposal_name="seed-second",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, second, sequence=2)
+    activate(instance, owner, second, sequence=len(instance.accepted_history()))
     return instance, owner
 
 
-def work_item_query(name: str = QUERY_NAME) -> QueryDefinitionV1:
+def work_item_query(
+    name: str = QUERY_NAME,
+    *,
+    claim_type: ClaimType | None = None,
+) -> QueryDefinitionV1:
     """Return one many-cardinality Subject read over every accepted work item."""
 
-    claim_type: ClaimType = _claim_type()
+    if claim_type is None:
+        contract = foreign_source_capture_contract("fixture.work-items")
+        claim_type = _claim_type().model_copy(
+            update={
+                "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                    rules=(
+                        ClaimEvidenceAdmissionRuleV1(
+                            rule_id="coordinator-source",
+                            claim_roles=("normative", "observation"),
+                            capture_contract_digests=(capture_contract_digest(contract).tagged,),
+                            evidence_kinds=("self_asserted",),
+                            admission="direct",
+                            subject_binding="exact_claim_subject",
+                        ),
+                    )
+                )
+            }
+        )
     return QueryDefinitionV1(
         identity=ArtifactIdentity(kind="QueryDefinition", name=name),
         entry=QueryEntryV1(binding="item", subject_kinds=(SUBJECT_KIND,)),
@@ -186,9 +248,10 @@ def accept_proposal(
 ) -> None:
     """Approve and activate one generic (non-Claim) proposal inspection."""
 
+    del sequence
     base = instance.accepted_coordinate()
     candidate = inspection.proposal.candidate
-    assert candidate is not None
+    assert candidate is not None, inspection.proposal.evaluation.diagnostics
     evaluated_oid = inspection.proposal.evaluation.evaluated_tree_oid
     assert evaluated_oid is not None
     bundle = instance.prepare_generation(
@@ -204,7 +267,7 @@ def accept_proposal(
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=sequence,
+        sequence=len(instance.accepted_history()),
     )
     publisher = instance.activation_publisher()
     projection = publisher.prebuild(bundle, base=base)
