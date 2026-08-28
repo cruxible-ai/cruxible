@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
+import pytest
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_digest
@@ -753,3 +755,23 @@ def test_the_parity_matrix_covers_every_budget_refusal_and_result_shape() -> Non
     assert shapes == {"path", "relation_claim", "subject"}
     assert len(times) >= 3
     assert any(cell.expect_conflicts for cell in PARITY_CELLS)
+
+
+@pytest.mark.parametrize("cell", PARITY_CELLS, ids=lambda cell: cell.name)
+def test_the_reference_evaluator_satisfies_each_parity_cell(cell: ParityCell) -> None:
+    result = evaluate(
+        cell.query,
+        cell.facts,
+        backend_factory=DirectClaimFactIndex,
+        evaluation_time=cell.evaluation_time,
+        parameters=cell.parameters,
+        budgets=cell.budgets,
+    )
+
+    if cell.expect_refusal is not None:
+        assert result.refusal is not None
+        assert result.refusal.code == cell.expect_refusal
+    else:
+        assert result.verdict == "completed"
+    assert result.truncation.clipped_budgets == cell.expect_clipped
+    assert bool(result.conflicts) is cell.expect_conflicts
