@@ -827,7 +827,6 @@ tests/goldens/kev/relationship_state_visibility.json
 tests/goldens/playbill/attestation-v1.json
 tests/goldens/playbill/candidate-v1.json
 tests/goldens/playbill/candidate-v2.json
-tests/goldens/playbill/capture-claim-v1.json
 tests/goldens/playbill/changeset-v3.json
 tests/goldens/playbill/claim-type-v1.json
 tests/goldens/playbill/depgraph-v3.json

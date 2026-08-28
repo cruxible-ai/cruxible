@@ -52,10 +52,8 @@
     "playbill_procedure_readiness",
     "playbill_procedure_run",
     "playbill_procedure_run_status",
-    "playbill_propose_claim",
     "playbill_propose_claim_type",
     "playbill_propose_claim_type_input",
-    "playbill_propose_claims",
     "playbill_propose_document",
     "playbill_propose_principal_change",
     "playbill_propose_query_definition",
@@ -74,6 +72,6 @@
     "playbill_submit_approval",
     "playbill_whoami"
   ],
-  "http_delegate_count": 72,
-  "mcp_delegate_count": 69
+  "http_delegate_count": 70,
+  "mcp_delegate_count": 66
 }

@@ -25,7 +25,7 @@
     "POST": "PlaybillInsertionAbandonResult"
   },
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm": {
-    "POST": "PlaybillInsertionConfirmResult | PlaybillInsertionConfirmResultV2"
+    "POST": "PlaybillInsertionConfirmResultV2"
   },
   "/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/prepare": {
     "POST": "PlaybillInsertionPrepareResult"
@@ -62,12 +62,6 @@
   },
   "/api/v1/{instance_id}/playbill/claims": {
     "GET": "PlaybillClaimList"
-  },
-  "/api/v1/{instance_id}/playbill/claims/proposals": {
-    "POST": "PlaybillClaimProposal"
-  },
-  "/api/v1/{instance_id}/playbill/claims/proposals/batch": {
-    "POST": "PlaybillClaimBatchProposal"
   },
   "/api/v1/{instance_id}/playbill/claims/{claim_id}/retire": {
     "POST": "PlaybillClaimRetirePreflight | PlaybillClaimRetireResult"
