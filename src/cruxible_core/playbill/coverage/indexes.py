@@ -44,13 +44,20 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
-from cruxible_client.contracts.captures import CaptureEnvelopeV1
+from cruxible_client.contracts.captures import (
+    CaptureEnvelopeV1,
+    CaptureObjectStoreProtocol,
+    parse_capture_envelope,
+)
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_verdicts import ObservationTrustGrade
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
+    ClaimArtifactAny,
     ClaimCitationReference,
     claim_citation_references,
 )
+from cruxible_client.contracts.errors import PlaybillError
 from cruxible_client.contracts.query.grammar import byte_sorted
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import (
@@ -282,27 +289,66 @@ class _CitationRow:
     dereference_handle_digest: str | None = None
 
 
-def live_claim_paths_by_capture(
-    claims: Iterable[AcceptedClaim],
-) -> dict[str, tuple[str, ...]]:
-    """Map each Capture digest to the live Claim paths that cite it.
+def claim_cited_content_digests(
+    claim: ClaimArtifactAny,
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> dict[str, str]:
+    """Map each Capture this Claim cites to the content digest it commits to.
 
-    The reverse of ``ClaimBacking.capture_digests``. Both citation indexes below
-    build this same relation inline and then discard it; retirement needs it on
-    its own, to say which live Claims would be left citing the Captures of a
-    Claim that is going away. Paths are byte-sorted so callers report a stable
-    order.
+    A Capture digest identifies one envelope; the commitment inside it identifies
+    the bytes that envelope stands for. Two Claims reading the same span mint two
+    envelopes over one commitment, so the commitment is the only key under which
+    they meet.
+
+    Captures that cannot be read or parsed are omitted rather than raised on.
+    Every caller here is advisory, and an advisory that fails closed on one
+    unreadable envelope reports nothing about the Claims it could read.
     """
 
-    citing: dict[str, set[str]] = {}
+    access = BodyAccessContext(principal_id="playbill-citation-index", can_read_body=True)
+    committed: dict[str, str] = {}
+    for reference in claim_citation_references(claim):
+        try:
+            envelope = parse_capture_envelope(store.read(reference.capture_digest, access=access))
+        except (PlaybillError, ValueError):
+            continue
+        committed[reference.capture_digest] = envelope.commitment.digest
+    return committed
+
+
+def live_claim_captures_by_content(
+    claims: Iterable[AcceptedClaim],
+    *,
+    store: CaptureObjectStoreProtocol,
+) -> dict[str, dict[str, tuple[str, ...]]]:
+    """Map each committed content digest to the live Claims citing those bytes.
+
+    ``{content_digest: {claim_path: that Claim's Capture digests over it}}``,
+    both levels byte-sorted so callers report a stable order.
+
+    This is deliberately the join this module's header warns against for
+    coverage: identical bytes can occur in unrelated sources, so a content join
+    is `content_equivalent`, never `exact`. That grade is right here and wrong
+    there. Coverage answers "is this occurrence governed", where a false join
+    would govern bytes nobody cited. These callers answer "who else stands on
+    the evidence this Claim is about to withdraw", where the Claims genuinely
+    stand on one commitment and the Capture digests -- one envelope per citing
+    Claim -- never meet.
+    """
+
+    citing: dict[str, dict[str, set[str]]] = {}
     for accepted in claims:
         if accepted.claim.lifecycle.state != "live":
             continue
-        for reference in claim_citation_references(accepted.claim):
-            citing.setdefault(reference.capture_digest, set()).add(accepted.path)
+        for capture, content in claim_cited_content_digests(accepted.claim, store=store).items():
+            citing.setdefault(content, {}).setdefault(accepted.path, set()).add(capture)
     return {
-        capture: tuple(sorted(paths, key=lambda item: item.encode("utf-8")))
-        for capture, paths in citing.items()
+        content: {
+            path: byte_sorted(tuple(captures))
+            for path, captures in sorted(paths.items(), key=lambda item: item[0].encode("utf-8"))
+        }
+        for content, paths in citing.items()
     }
 
 

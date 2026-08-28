@@ -167,6 +167,7 @@ EXPECTED_OPERATIONS = {
     "claim_dependency_stale": "playbill.authoring.create",
     "claim_attestation_threshold_met": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
+    "claim_cites_retired": "playbill.claim.retire",
 }
 
 
@@ -1131,6 +1132,35 @@ def _claim_attestation_threshold(
     _assert_gone(instance, "claim_attestation_threshold_met", _request(instance))
 
 
+def _claim_cites_retired(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stranded copy is withdrawn, because a revision cannot drop a citation."""
+    from cruxible_client.contracts.claims import ClaimRetireRequestV1
+    from cruxible_core.playbill.claim_retirement import service_retire_claim
+    from tests.test_playbill.test_claim_retirement import _activate as _activate_retirement
+    from tests.test_playbill.test_retirement_citing_advisory import (
+        COPY_CLAIM_ID,
+        copied_from_world,
+    )
+
+    instance, owner, _coordinator, actor = copied_from_world(root)
+    row = _row(instance, "claim_cites_retired", _request(instance))
+    assert row.repair.operation == EXPECTED_OPERATIONS["claim_cites_retired"]
+    assert row.repair.arguments == {"claim_id": COPY_CLAIM_ID}
+
+    retire = service_retire_claim(
+        instance,
+        claim_id=COPY_CLAIM_ID,
+        request=ClaimRetireRequestV1(
+            mode="submit",
+            reason="was-rescinded",
+            expected_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        ),
+        actor=actor,
+    )
+    _activate_retirement(instance, owner, retire)
+    _assert_gone(instance, "claim_cites_retired", _request(instance))
+
+
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_conflicted", None): _claim_conflicted,
     ("claim_uncovered", None): _claim_uncovered,
@@ -1149,6 +1179,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_dependency_stale", None): _claim_dependency_stale,
     ("claim_attestation_threshold_met", None): _claim_attestation_threshold,
     ("document_modified", None): _document_modified,
+    ("claim_cites_retired", None): _claim_cites_retired,
 }
 
 

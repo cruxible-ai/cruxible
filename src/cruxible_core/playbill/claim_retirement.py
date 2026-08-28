@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.captures import CaptureObjectStoreProtocol
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     ClaimArtifactAny,
@@ -20,7 +21,6 @@ from cruxible_client.contracts.claims import (
     ClaimRetireRequestV1,
     ClaimStatement,
     claim_artifact_digest,
-    claim_citation_references,
     claim_path,
     claim_statement_digest,
     parse_claim,
@@ -30,7 +30,10 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.playbill.closure import ReversePinClosureItem, reverse_pin_closure
-from cruxible_core.playbill.coverage.indexes import live_claim_paths_by_capture
+from cruxible_core.playbill.coverage.indexes import (
+    claim_cited_content_digests,
+    live_claim_captures_by_content,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -66,7 +69,12 @@ class ClaimRetirementResultItemV1(_StrictRetirementModel):
 
 
 class ClaimRetireCitingClaimV1(_StrictRetirementModel):
-    """One live Claim that cites a Capture the retiring Claim also cites."""
+    """One live Claim resting on evidence the retiring Claim also rests on.
+
+    `capture_digests` are this Claim's OWN Captures over the shared commitment.
+    Two Claims never share a Capture -- each mints its own envelope -- so the
+    shared thing is the committed content underneath, not the digest listed here.
+    """
 
     artifact_identity: ArtifactIdentity
     claim_path: str
@@ -84,8 +92,8 @@ class ClaimRetirePreflightV1(_StrictRetirementModel):
     required_dependents: tuple[ClaimRetireInventoryItemV1, ...]
     # Advisory, never required. A citation is not a dependency edge the closure
     # can retire, so these Claims are not dispositionable as dependents; they are
-    # named because retiring this Claim leaves each of them citing a Capture
-    # whose Claim is gone, which the retirement used to do silently.
+    # named because retiring this Claim leaves each of them resting on evidence
+    # whose asserting Claim is gone, which the retirement used to do silently.
     citing_claims: tuple[ClaimRetireCitingClaimV1, ...] = ()
     diagnostics: tuple[CompilerDiagnostic, ...]
     submit_ready: bool
@@ -131,17 +139,26 @@ def _citing_claims(
     *,
     root_path: str,
     root: ClaimArtifactAny,
+    store: CaptureObjectStoreProtocol,
     exclude: frozenset[str] = frozenset(),
 ) -> tuple[ClaimRetireCitingClaimV1, ...]:
-    """Name the live Claims left citing this Claim's Captures once it retires.
+    """Name the live Claims left standing on this Claim's evidence once it retires.
 
     Advisory only. `reverse_pin_closure` walks pins and derivation inputs, so a
-    Claim that merely cites the same Capture is invisible to it and cannot be
+    Claim that merely rests on the same evidence is invisible to it and cannot be
     dispositioned as a dependent -- but it is exactly what goes stale, silently,
     when the cited Claim goes away.
+
+    The join is on committed CONTENT, not on Capture digest. Every Capture
+    builder binds `claim_id` into the envelope it mints, so two Claims never
+    share a Capture and a Capture-keyed match could only ever return nothing. A
+    second Claim copying a published span mints its own envelope over the same
+    commitment -- that is the reachable case, and the commitment is where the two
+    meet. `capture_digests` reports the CITING Claim's own Captures over that
+    shared content.
     """
 
-    cited = {reference.capture_digest for reference in claim_citation_references(root)}
+    cited = set(claim_cited_content_digests(root, store=store).values())
     if not cited:
         return ()
     accepted = tuple(
@@ -157,12 +174,12 @@ def _citing_claims(
             if path.startswith("claims/") and path != root_path and path not in exclude
         )
     )
-    by_capture = live_claim_paths_by_capture(accepted)
+    by_content = live_claim_captures_by_content(accepted, store=store)
     identities = {item.path: item.claim.identity for item in accepted}
     captures_by_path: dict[str, set[str]] = {}
-    for capture in sorted(cited, key=lambda item: item.encode("utf-8")):
-        for path in by_capture.get(capture, ()):
-            captures_by_path.setdefault(path, set()).add(capture)
+    for content in sorted(cited, key=lambda item: item.encode("utf-8")):
+        for path, captures in by_content.get(content, {}).items():
+            captures_by_path.setdefault(path, set()).update(captures)
     return tuple(
         ClaimRetireCitingClaimV1(
             artifact_identity=identities[path],
@@ -517,7 +534,13 @@ def service_retire_claim(
     # The closure's own members are already required dependents; naming them
     # again as advisory citers would double-report the same Claims.
     closure_paths = frozenset(item.state.path for item in closure)
-    citing = _citing_claims(tree, root_path=path, root=claim, exclude=closure_paths)
+    citing = _citing_claims(
+        tree,
+        root_path=path,
+        root=claim,
+        store=instance.body_store(),
+        exclude=closure_paths,
+    )
     root_request = ClaimRetireDependentV1(
         artifact_identity=claim.identity,
         predecessor_digest=claim_artifact_digest(claim).tagged,
