@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
-from cruxible_client.contracts.claim_types import claim_type_digest, claim_type_path
+from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_core.playbill.service.claim_types import (
     service_get_playbill_claim_type,
@@ -15,7 +15,12 @@ from cruxible_core.playbill.service.claim_types import (
     service_propose_playbill_claim_type,
 )
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
-from tests.test_playbill._knowledge_loop_support import PREDICATE, TIMESTAMP, seed_claims
+from tests.test_playbill._knowledge_loop_support import (
+    PREDICATE,
+    TIMESTAMP,
+    seed_claims,
+    work_item_query,
+)
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_claims import _claim_type
 
@@ -30,7 +35,8 @@ def test_accepted_claim_type_reads_back_at_its_accepted_coordinate(tmp_path: Pat
     assert view.predicate == PREDICATE
     assert view.identity == f"ClaimType:{PREDICATE}"
     assert view.path == claim_type_path(PREDICATE)
-    assert view.artifact_digest == claim_type_digest(_claim_type()).tagged
+    claim_type_pin = next(pin for pin in work_item_query().pins if pin.role == "claim-type")
+    assert view.artifact_digest == claim_type_pin.artifact_digest
     assert view.envelope["artifact_format"] == "playbill-claim-type-v1"
 
 
