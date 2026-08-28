@@ -12,7 +12,10 @@ from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     SettlementIntegrityError,
 )
-from cruxible_client.contracts.principals import principal_registry_from_tree
+from cruxible_client.contracts.principals import (
+    PrincipalRegistrySnapshot,
+    principal_registry_from_tree,
+)
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.bootstrap import render_principal
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -20,7 +23,7 @@ from cruxible_core.playbill.keys import GeneratedKeyMaterial, generate_client_pr
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.settlement import ChangeActorBinding, prepare_generation
 
-from ._support import FIXED_TIMESTAMP, generate_client
+from ._support import FIXED_TIMESTAMP, generate_client, initialize_local
 from .test_activation import _candidate, _sign
 
 ROOT = "sha256:" + "11" * 32
@@ -69,6 +72,50 @@ def test_registry_refuses_path_substitution_and_noncanonical_bytes() -> None:
             },
             semantic_root=ROOT,
         )
+
+
+def test_registry_refuses_duplicate_principal_ids() -> None:
+    daemon = _static_principal("daemon", ("daemon",))
+    owner = _static_principal("owner", ("owner",))
+    duplicate_owner = owner.model_copy(update={"public_key": "ab" * 32})
+
+    with pytest.raises(ValueError, match="sorted and unique"):
+        PrincipalRegistrySnapshot(
+            semantic_root=ROOT,
+            principals=(daemon, owner, duplicate_owner),
+        )
+
+
+def test_principal_proposal_refuses_a_public_key_duplicated_from_the_registry(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    base = instance.accepted_coordinate()
+    daemon = instance._recovered.head.principals.require_active("daemon")
+    mallory = PrincipalRecord(
+        principal_id="mallory",
+        public_key=daemon.public_key,
+        authority_roles=("reviewer",),
+    )
+    tree = {
+        **instance._ledger.read_tree(base.git_oid),
+        "principals/mallory.yaml": render_principal(mallory),
+    }
+
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/register-mallory",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-12T14:59:00.000000Z",
+    )
+
+    assert result.candidate is None
+    assert tuple(item.code for item in result.evaluation.diagnostics) == (
+        "playbill.principal.registry_invalid",
+    )
 
 
 def _cloud_instance(tmp_path: Path):

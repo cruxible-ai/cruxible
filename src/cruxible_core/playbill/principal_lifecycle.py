@@ -10,6 +10,7 @@ from cruxible_client.contracts.errors import PrincipalIntegrityError
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     parse_principal_record,
+    principal_registry_from_tree,
 )
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
@@ -122,6 +123,13 @@ def evaluate_principal_lifecycle(
             "Principal transition is outside registration, self-rotation, "
             "revocation, or recovery policy.",
         )
+    try:
+        principal_registry_from_tree(
+            candidate_tree,
+            semantic_root=current.semantic_root,
+        )
+    except PrincipalIntegrityError as exc:
+        return _refused("playbill.principal.registry_invalid", str(exc))
     return PrincipalLifecycleEvaluation(action=action)
 
 
