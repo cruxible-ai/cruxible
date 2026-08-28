@@ -1014,6 +1014,7 @@ class Playbill:
                         account.capture_contract_identity.removeprefix("CaptureContract:")
                     ),
                     coordinate=_coordinate(view.coordinate),
+                    citation_role=account.citation_role,
                 )
                 for account in view.admission_accounts
             ),
@@ -1201,6 +1202,11 @@ class Playbill:
         if supported_by is not None:
             if isinstance(supported_by, CaptureRef):
                 self._assert_coordinate(supported_by.coordinate)
+                if supported_by.citation_role != "evidence":
+                    raise ValueError(
+                        "a CaptureRef minted from a copy or legacy citation cannot be "
+                        "promoted to independent evidence; reuse it with copied_from"
+                    )
                 source = ExistingCaptureCitationSourceV1(capture_digest=supported_by.capture_digest)
             else:
                 assert_independent_projection_evidence(

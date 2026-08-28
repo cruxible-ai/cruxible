@@ -927,6 +927,7 @@ def test_capture_ref_builds_v3_authoring_and_owns_the_contract_expectation(
         capture_digest="sha256:" + "7" * 64,
         contract_address="capture-contracts/repo.work-items.yaml",
         coordinate=pb.coordinate,
+        citation_role="evidence",
     )
 
     draft = pb.claim(
@@ -1013,6 +1014,43 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
 
     assert capture.capture_digest == "sha256:" + "7" * 64
     assert capture.contract_address == "capture-contracts/repo.work-items.yaml"
+    assert capture.citation_role == "evidence"
+
+
+def test_capture_ref_from_a_copy_cannot_be_promoted_to_independent_evidence(
+    tmp_path: Path,
+) -> None:
+    _workspace(tmp_path)
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        _Client(),
+        instance_id="inst_test",
+        workspace=tmp_path,
+    )
+    capture = CaptureRef(
+        capture_digest="sha256:" + "7" * 64,
+        contract_address="capture-contracts/repo.work-items.yaml",
+        coordinate=pb.coordinate,
+        citation_role="copy",
+    )
+
+    with pytest.raises(ValueError, match="cannot be promoted to independent evidence"):
+        pb.claim(
+            subject="secops.policy/patch-sla",
+            predicate="secops.policy.patch_sla",
+            value=48,
+            role=ClaimRole.NORMATIVE,
+            rationale="A projection copy is not independent support.",
+            supported_by=capture,
+            copied_from=None,
+            self_source=None,
+            qualifier=None,
+            effective_period=None,
+            revises=None,
+            dispositions={},
+            publish_to=None,
+            subject_definition=None,
+            claim_type_definition=None,
+        )
     assert capture.coordinate == pb.coordinate
 
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import ClassVar, Protocol, runtime_checkable
+from typing import ClassVar, Literal, Protocol, runtime_checkable
 
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_client.contracts.projection import AcceptedCoordinate
@@ -82,11 +82,12 @@ class SourceRef:
 
 @dataclass(frozen=True)
 class CaptureRef:
-    """Opaque accepted Capture plus the exact contract assertion that minted it."""
+    """Opaque accepted Capture plus its contract and citation-role provenance."""
 
     capture_digest: str
     contract_address: str
     coordinate: AcceptedCoordinate
+    citation_role: Literal["evidence", "copy", "legacy"]
 
 
 @dataclass(frozen=True)
