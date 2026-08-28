@@ -1414,7 +1414,6 @@ def _claim_cites_retired_items(
     instance: PlaybillInstance,
     *,
     coordinate: AcceptedProjectionCoordinate,
-    evaluation_time: datetime,
     access_profile: CoverageAccessProfileV1,
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Surface each live Claim left citing a retired Claim's Capture.
@@ -2231,7 +2230,6 @@ def service_playbill_next(
                 *_claim_cites_retired_items(
                     instance,
                     coordinate=coordinate,
-                    evaluation_time=request.evaluation_time,
                     access_profile=request.access_profile,
                 ),
                 *_document_items(

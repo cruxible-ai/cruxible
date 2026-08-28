@@ -341,7 +341,7 @@ def registered_path_kind(path: str) -> RegisteredPathKind:
     return cast(RegisteredPathKind, PLAYBILL_ARTIFACT_KINDS.resolve_path(path))
 
 
-def _projected_revision(
+def projected_revision(
     records: tuple[tuple[str, ChangeSetRecordAnyVersion], ...],
     *,
     path: str,
@@ -716,7 +716,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=subject_shell.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -815,7 +815,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=claim_type.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -915,7 +915,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=provider.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -995,7 +995,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=policy.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -1042,7 +1042,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=mandate.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -1093,7 +1093,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=procedure.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -1304,7 +1304,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=line.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -1388,7 +1388,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=query.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -1494,7 +1494,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=promotion.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -1612,7 +1612,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=capture_contract.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -1685,7 +1685,7 @@ def parse_projection_tree(
                         path=path,
                         artifact_digest=artifact_digest,
                         predecessor_digest=claim.lifecycle.predecessor_digest,
-                        revision=_projected_revision(
+                        revision=projected_revision(
                             accepted_change_sets,
                             path=path,
                             input_digest=input_digest,
@@ -1932,6 +1932,7 @@ def parse_projection_tree(
 
 
 __all__ = [
+    "projected_revision",
     "ArtifactEnvelopeRow",
     "FixtureArtifact",
     "FixturePin",

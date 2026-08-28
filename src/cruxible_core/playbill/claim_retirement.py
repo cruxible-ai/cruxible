@@ -131,6 +131,7 @@ def _citing_claims(
     *,
     root_path: str,
     root: ClaimArtifactAny,
+    exclude: frozenset[str] = frozenset(),
 ) -> tuple[ClaimRetireCitingClaimV1, ...]:
     """Name the live Claims left citing this Claim's Captures once it retires.
 
@@ -153,7 +154,7 @@ def _citing_claims(
         for path, parsed in (
             (path, parse_claim(tree[path], path=path))
             for path in sorted(tree, key=lambda item: item.encode("utf-8"))
-            if path.startswith("claims/") and path != root_path
+            if path.startswith("claims/") and path != root_path and path not in exclude
         )
     )
     by_capture = live_claim_paths_by_capture(accepted)
@@ -513,7 +514,10 @@ def service_retire_claim(
     )
     unsupported = tuple(item for item in closure if item.state.artifact_kind != "claim")
     inventory = _inventory(closure)
-    citing = _citing_claims(tree, root_path=path, root=claim)
+    # The closure's own members are already required dependents; naming them
+    # again as advisory citers would double-report the same Claims.
+    closure_paths = frozenset(item.state.path for item in closure)
+    citing = _citing_claims(tree, root_path=path, root=claim, exclude=closure_paths)
     root_request = ClaimRetireDependentV1(
         artifact_identity=claim.identity,
         predecessor_digest=claim_artifact_digest(claim).tagged,

@@ -1341,7 +1341,14 @@ def _literal_object_traversal(
     """
     for step in query.traversal:
         accepted = claim_types.get(f"ClaimType:{step.predicate}")
-        if accepted is None or accepted.claim_type.object_kind == "subject":
+        if accepted is None:
+            # The pin law resolves every referenced ClaimType before this runs, so
+            # an unresolved one here means the two disagree about what was pinned.
+            raise ProposalIntegrityError(
+                "QueryDefinition traversal names a ClaimType the pin closure did not "
+                f"resolve: {step.predicate}"
+            )
+        if accepted.claim_type.object_kind == "subject":
             continue
         return CompilerDiagnostic(
             code="playbill.query_definition.traversal_object_not_subject",

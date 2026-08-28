@@ -115,6 +115,7 @@ from cruxible_core.playbill.authoring.preflight import ComputedPreflight, comput
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.projection_artifacts import projected_revision
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
@@ -483,9 +484,12 @@ class AuthoringIntentCoordinator:
         re-read the artifact to discover the identity was reused. The lowering
         already knows: a non-null predecessor_digest IS amend-in-place.
 
-        The revision is projection-derived, matching `_projected_revision`: the
-        candidate is not accepted yet at submit time, so it becomes the revision
-        after every accepted change-set member already at this path.
+        The revision number is the projection's, computed by the projection's own
+        function rather than recounted here. Counting members independently drifts
+        the moment the two disagree, and they already would: `_projected_revision`
+        returns the SAME revision when this exact artifact digest is already in the
+        path's history, so a resubmitted identical candidate keeps its number
+        instead of claiming a new one.
         """
 
         lowered = computed.lowered
@@ -501,15 +505,21 @@ class AuthoringIntentCoordinator:
         predecessor = lowered.resolved_authoring.get("predecessor_digest")
         if not isinstance(predecessor, str):
             return False, None
+        artifact_digest = lowered.resolved_authoring.get("artifact_digest")
+        if not isinstance(artifact_digest, str):
+            return False, None
         path = claim_path(preflighted.semantic_identity)
-        accepted_members = sum(
-            1
+        records = tuple(
+            (path, generation.record)
             for generation in self.instance.accepted_history()
             if generation.record is not None
-            for member in generation.record.members
-            if str(member.path) == path
         )
-        return True, accepted_members + 1
+        return True, projected_revision(
+            records,
+            path=path,
+            input_digest=artifact_digest,
+            artifact_digest=artifact_digest,
+        )
 
     def submit(
         self,
