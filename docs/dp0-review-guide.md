@@ -829,6 +829,7 @@ tests/goldens/playbill/candidate-v1.json
 tests/goldens/playbill/candidate-v2.json
 tests/goldens/playbill/changeset-v3.json
 tests/goldens/playbill/claim-type-v1.json
+tests/goldens/playbill/coverage-grammar-v3.json
 tests/goldens/playbill/depgraph-v3.json
 tests/goldens/playbill/journal_corpus/index.json
 tests/goldens/playbill/journal_corpus/negative/export-duplicated-record.json
@@ -888,6 +889,8 @@ break reviewed under a new format tag, never a regeneration event.
 
 `tests/goldens/playbill/claim-type-v1.json` preserves the canonical policy-bearing
 ClaimType v1 wire and digest contract.
+`tests/goldens/playbill/coverage-grammar-v3.json` pins the six surviving
+coverage resolver grammar tables after the legacy result versions were retired.
 
 `tests/goldens/playbill/source-reference-v1.json` preserves locator-free external
 source identity and remote-state refusal behavior.
