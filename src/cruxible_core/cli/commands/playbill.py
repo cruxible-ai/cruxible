@@ -45,7 +45,11 @@ from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillSinceRequestInvalid
+from cruxible_client.contracts.errors import (
+    CanonicalEncodingError,
+    DocumentNotFoundError,
+    PlaybillSinceRequestInvalid,
+)
 from cruxible_client.errors import DataValidationError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
@@ -778,6 +782,38 @@ def whoami(output_json: bool) -> None:
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 
 
+# `playbill explain` resolves a Document identity and explains the Subject that
+# Document is. An identity of another kind used to reach the daemon and come back
+# as a bare `CoreError: <what you typed>`, naming neither the accepted shape nor
+# the command that does answer for that kind. Each entry routes one recognizable
+# identity shape to the verb that actually explains it.
+_EXPLAIN_ROUTES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (re.compile(r"^(?:Claim:)?(?P<rest>CLM-[0-9a-f]+)$"), "Claim", "claim explain {rest}"),
+    (re.compile(r"^ClaimType:(?P<rest>.+)$"), "ClaimType", "claim-type get {rest}"),
+    (
+        re.compile(r"^Subject:(?P<kind>[^/]+)/(?P<id>.+)$"),
+        "Subject",
+        "subject get {kind} {id}",
+    ),
+    (re.compile(r"^Procedure:(?P<rest>.+)$"), "Procedure", "procedure readiness {rest}"),
+    (re.compile(r"^QueryDefinition:(?P<rest>.+)$"), "QueryDefinition", "query get {rest}"),
+)
+
+_EXPLAIN_ACCEPTS = (
+    "playbill explain accepts one accepted Document identity "
+    "(for example document:fleet.policy-note)"
+)
+
+
+def _explain_route(identity: str) -> tuple[str, str] | None:
+    """Name the kind and the exact command that explains it, when the shape says so."""
+    for pattern, kind, template in _EXPLAIN_ROUTES:
+        match = pattern.match(identity)
+        if match is not None:
+            return kind, "cruxible playbill " + template.format(**match.groupdict())
+    return None
+
+
 @playbill_group.command("explain")
 @click.argument("identity")
 @click.option("--detail", type=click.Choice(["summary", "evidence", "proof"]), default="summary")
@@ -785,10 +821,28 @@ def whoami(output_json: bool) -> None:
 @json_option
 @handle_errors
 def explain(identity: str, detail: str, include_body: bool, output_json: bool) -> None:
+    """Explain one accepted Document by identity."""
+
+    route = _explain_route(identity)
+    if route is not None:
+        kind, command = route
+        raise DataValidationError(
+            f"{identity} is a {kind} identity, not a Document identity: "
+            f"{_EXPLAIN_ACCEPTS}. Use `{command}` to explain this {kind}."
+        )
+
     def call(
         client: CruxibleClient, instance_id: str
     ) -> contracts.PlaybillExplainResult | contracts.PlaybillExplainUnsupportedDetail:
-        document = client.get_playbill_document(instance_id, identity)
+        try:
+            document = client.get_playbill_document(instance_id, identity)
+        except DocumentNotFoundError as exc:
+            raise DocumentNotFoundError(
+                f"no accepted Document has identity {identity}: {_EXPLAIN_ACCEPTS}. "
+                "Other kinds have their own explainers: `cruxible playbill claim explain` "
+                "for a Claim, `cruxible playbill subject get` for a Subject, "
+                "`cruxible playbill expand` for any accepted artifact path."
+            ) from exc
         path = str(document.envelope["path"])
         return client.explain_playbill_subject(
             instance_id,
