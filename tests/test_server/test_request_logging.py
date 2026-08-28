@@ -245,9 +245,20 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
         kind="ordinary",
         forbidden_roots=(managed_root,),
     )
+    reviewer = generate_client_principal_key(
+        tmp_path / "request-log-activation-reviewer",
+        principal_id="reviewer",
+        kind="ordinary",
+        forbidden_roots=(managed_root,),
+    )
     initialized = app_client.post(
         f"/api/v1/{instance_id}/playbill/init",
-        json={"principals": [owner.principal.model_dump(mode="json")]},
+        json={
+            "principals": [
+                owner.principal.model_dump(mode="json"),
+                reviewer.principal.model_dump(mode="json"),
+            ]
+        },
         headers=headers,
     )
     assert initialized.status_code == 200, initialized.text

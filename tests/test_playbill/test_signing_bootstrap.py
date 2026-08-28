@@ -36,6 +36,12 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
         principal_id="owner",
         roles=("owner",),
     )
+    reviewer = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
     credentials = tmp_path / "daemon-custody"
     daemon = generate_daemon_key(credentials)
     trust = PlaybillTrustRoot(
@@ -43,7 +49,7 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
         daemon_public_key=daemon.principal.public_key,
         principals=tuple(
             sorted(
-                (daemon.principal, owner.principal),
+                (daemon.principal, owner.principal, reviewer.principal),
                 key=lambda item: item.principal_id,
             )
         ),
