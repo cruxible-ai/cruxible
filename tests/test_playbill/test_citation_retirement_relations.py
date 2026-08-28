@@ -17,6 +17,7 @@ from cruxible_core.playbill.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
     RELATION_USE_SCHEMA,
     build_citation_relation_facts,
+    retired_activation_live_candidates,
 )
 from cruxible_core.playbill.claim_retirement import service_retire_claim
 from cruxible_core.playbill.coverage.adapter import observe_working_source
@@ -96,6 +97,14 @@ def test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_
 ) -> None:
     instance, owner, live_claim_id = claim_cites_retired_world(tmp_path)
 
+    with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
+        conflicts = projection.semantic_facts(RELATION_RETIRED_CONFLICT_SCHEMA)
+    assert len(conflicts) == 1
+    assert conflicts[0].value["relation_kind"] == "capture"  # type: ignore[index]
+    assert conflicts[0].value["live_claim_identity"] == f"Claim:{live_claim_id}"  # type: ignore[index]
+    assert conflicts[0].value["retired_claim_count"] == 1  # type: ignore[index]
+    assert conflicts[0].value["retired_citation_count"] == 1  # type: ignore[index]
+
     rows = tuple(item for item in _next(instance).items if item.reason == "claim_cites_retired")
 
     assert len(rows) == 1
@@ -117,7 +126,7 @@ def test_relation_delta_reopens_only_the_changed_claim_captures(
     tmp_path: Path,
     monkeypatch,
 ) -> None:  # type: ignore[no-untyped-def]
-    instance, owner, _actor, first, _second, *_rest = shared_capture_world(tmp_path)
+    instance, owner, _actor, first, second, *_rest = shared_capture_world(tmp_path)
     before = instance.accepted_coordinate()
     with instance.bind_accepted_projection(before) as projection:
         previous_uses = projection.semantic_facts(RELATION_USE_SCHEMA)
@@ -126,6 +135,46 @@ def test_relation_delta_reopens_only_the_changed_claim_captures(
     _retire_claim(instance, owner, first)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     full = build_citation_relation_facts(tree, bodies=instance.body_store())
+    full_uses = [fact for fact in full if fact.schema_id == RELATION_USE_SCHEMA]
+    assert len(full_uses) == 2
+    assert {
+        (
+            fact.value["claim_identity"],  # type: ignore[index]
+            fact.value["claim_lifecycle"],  # type: ignore[index]
+        )
+        for fact in full_uses
+    } == {
+        (f"Claim:{first}", "retired"),
+        (f"Claim:{second}", "live"),
+    }
+    full_conflicts = [fact for fact in full if fact.schema_id == RELATION_RETIRED_CONFLICT_SCHEMA]
+    assert len(full_conflicts) == 1
+    assert full_conflicts[0].value == {
+        "live_capture_digest": {"$digest": full_uses[0].value["capture_digest"]["$digest"]},  # type: ignore[index]
+        "live_citation_id": next(
+            fact.value["citation_id"]  # type: ignore[index]
+            for fact in full_uses
+            if fact.value["claim_identity"] == f"Claim:{second}"  # type: ignore[index]
+        ),
+        "live_claim_artifact_digest": next(
+            fact.value["claim_artifact_digest"]  # type: ignore[index]
+            for fact in full_uses
+            if fact.value["claim_identity"] == f"Claim:{second}"  # type: ignore[index]
+        ),
+        "live_claim_identity": f"Claim:{second}",
+        "relation_key": "capture:" + full_uses[0].value["capture_digest"]["$digest"],  # type: ignore[index]
+        "relation_kind": "capture",
+        "retired_citation_count": 1,
+        "retired_citation_witnesses": [
+            next(
+                fact.value["citation_id"]  # type: ignore[index]
+                for fact in full_uses
+                if fact.value["claim_identity"] == f"Claim:{first}"  # type: ignore[index]
+            )
+        ],
+        "retired_claim_count": 1,
+        "retired_claim_witnesses": [f"Claim:{first}"],
+    }
 
     from cruxible_core.playbill import citation_relations
 
@@ -151,6 +200,18 @@ def test_relation_delta_reopens_only_the_changed_claim_captures(
 
     assert sorted(incremental, key=key) == sorted(full, key=key)
     assert parse_calls == 1
+
+
+def test_span_sweep_scans_active_live_set_once_per_retired_activation_epoch() -> None:
+    active_live = {f"live-{index:04d}": index for index in range(256)}
+    active_retired: dict[str, object] = {}
+    visits = 0
+
+    for index in range(1024):
+        visits += len(retired_activation_live_candidates(active_retired, active_live))
+        active_retired[f"retired-{index:04d}"] = index
+
+    assert visits == len(active_live)
 
 
 def _accept_document(
@@ -345,4 +406,4 @@ def test_live_copy_association_suppresses_retired_source_staleness(tmp_path: Pat
     rows = _next(instance, _workspace_observation(instance, content=content)).items
 
     assert not [item for item in rows if item.reason == "retired_claim_source_stale"]
-    assert [item for item in rows if item.reason == "claim_cites_retired"]
+    assert len([item for item in rows if item.reason == "claim_cites_retired"]) == 1

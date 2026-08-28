@@ -67,6 +67,7 @@ from cruxible_core.playbill.citation_relations import (
     RELATION_SOURCE_USE_SCHEMA,
     external_source_relation_subject,
     logical_source_relation_subject,
+    retired_activation_live_candidates,
 )
 from cruxible_core.playbill.claim_slots import classify_claim_slot
 from cruxible_core.playbill.coverage.contracts import (
@@ -1556,9 +1557,13 @@ def _citation_relation_items(
                         live_use_by_claim.pop(use.claim_identity, None)
                 continue
             if lifecycle == "retired":
+                live_candidates = retired_activation_live_candidates(
+                    active_retired,
+                    live_use_by_claim,
+                )
                 active_retired[use.citation_id] = use
-                for live_identity in tuple(active_live):
-                    emit_span(live_use_by_claim[live_identity])
+                for live_use in live_candidates:
+                    emit_span(live_use)
             else:
                 active_live[use.claim_identity] += 1
                 live_use_by_claim[use.claim_identity] = use

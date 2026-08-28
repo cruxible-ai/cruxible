@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict
 from collections.abc import Mapping
+from typing import TypeVar
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
@@ -39,6 +40,7 @@ RELATION_RETIRED_CONFLICT_SCHEMA = "playbill.citation_relation.retired_conflict"
 
 _ACCESS = BodyAccessContext(principal_id="playbill-citation-relation", can_read_body=True)
 _WITNESS_LIMIT = 8
+_RelationValue = TypeVar("_RelationValue")
 
 
 def _digest_identity(prefix: str, value: object) -> str:
@@ -81,6 +83,19 @@ def _relation_group_key(relation_kind: str, key: str) -> str:
 
 def _bounded(values: set[str]) -> list[str]:
     return sorted(values, key=lambda value: value.encode("utf-8"))[:_WITNESS_LIMIT]
+
+
+def retired_activation_live_candidates(
+    active_retired: Mapping[str, object],
+    active_live: Mapping[str, _RelationValue],
+) -> tuple[_RelationValue, ...]:
+    """Visit active live spans only on a retired-set empty-to-nonempty edge."""
+
+    if active_retired:
+        return ()
+    return tuple(
+        active_live[key] for key in sorted(active_live, key=lambda value: value.encode("utf-8"))
+    )
 
 
 def _same_version_span_key(use: Mapping[str, object]) -> tuple[str, int, int] | None:
@@ -432,13 +447,34 @@ def build_citation_relation_facts(
                     active_live.pop(citation_id, None)
                 continue
             if lifecycle == "retired":
+                live_candidates = retired_activation_live_candidates(
+                    active_retired,
+                    active_live,
+                )
                 active_retired[citation_id] = event_use
-                for active_live_use in tuple(active_live.values()):
+                for active_live_use in live_candidates:
                     emit(active_live_use)
             else:
                 active_live[citation_id] = event_use
                 emit(event_use)
-    return tuple(facts)
+    capture_precedence_subjects = {
+        str(fact.value["live_claim_identity"])
+        for fact in facts
+        if fact.schema_id == RELATION_RETIRED_CONFLICT_SCHEMA
+        and isinstance(fact.value, dict)
+        and fact.value.get("relation_kind") == "capture"
+        and isinstance(fact.value.get("live_claim_identity"), str)
+    }
+    return tuple(
+        fact
+        for fact in facts
+        if not (
+            fact.schema_id == RELATION_RETIRED_CONFLICT_SCHEMA
+            and isinstance(fact.value, dict)
+            and fact.value.get("relation_kind") != "capture"
+            and fact.value.get("live_claim_identity") in capture_precedence_subjects
+        )
+    )
 
 
 __all__ = [
@@ -452,4 +488,5 @@ __all__ = [
     "capture_relation_subject",
     "external_source_relation_subject",
     "logical_source_relation_subject",
+    "retired_activation_live_candidates",
 ]
