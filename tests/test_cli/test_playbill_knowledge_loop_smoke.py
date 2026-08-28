@@ -26,7 +26,15 @@ from cruxible_client import CruxibleClient
 from cruxible_client.contracts.authoring.inputs import (
     ClaimInput,
     LiteralObjectInput,
-    SelfSourceInput,
+    WorkingSelectionInput,
+)
+from cruxible_client.contracts.captures import (
+    capture_contract_digest,
+    foreign_source_capture_contract,
+)
+from cruxible_client.contracts.policies import (
+    ClaimEvidenceAdmissionPolicyV1,
+    ClaimEvidenceAdmissionRuleV1,
 )
 from cruxible_core.cli.main import cli
 from cruxible_core.runtime.permissions import reset_permissions
@@ -45,6 +53,7 @@ from tests.test_playbill.test_claims import _claim_type
 CREATOR_ID = "operator"
 RECOVERY_ID = "recovery"
 SIGNER_ID = "reviewer"
+CLAIM_SOURCE_ID = "workspace.claim-status"
 
 
 class _Cli:
@@ -112,7 +121,8 @@ def _claim_authoring(subject_id: str, value: str) -> ClaimInput:
         object=LiteralObjectInput(kind="literal", value=value),
         role="observation",
         rationale=f"The reviewed status of {subject_id} is {value}.",
-        source=SelfSourceInput(kind="self_source", body=f"status: {value}\n"),
+        source=WorkingSelectionInput(kind="working_selection", source_id=CLAIM_SOURCE_ID),
+        citation_role="evidence",
     )
 
 
@@ -158,7 +168,23 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     assert cruxible.creator_private_key.is_file()
 
     # 2. Seed the predicate vocabulary.
-    claim_type = _claim_type()
+    source_contract = foreign_source_capture_contract(CLAIM_SOURCE_ID)
+    claim_type = _claim_type().model_copy(
+        update={
+            "evidence_admission_policy": ClaimEvidenceAdmissionPolicyV1(
+                rules=(
+                    ClaimEvidenceAdmissionRuleV1(
+                        rule_id="coordinator-self-source",
+                        claim_roles=("normative", "observation"),
+                        capture_contract_digests=(capture_contract_digest(source_contract).tagged,),
+                        evidence_kinds=("self_asserted",),
+                        admission="direct",
+                        subject_binding="exact_claim_subject",
+                    ),
+                )
+            )
+        }
+    )
     proposed = cruxible.json(
         "playbill",
         "claim-type",
@@ -201,23 +227,30 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
                 "seed-subject-wi-43",
             )
             cruxible.accept(_proposal_id(proposed))
-        created = cruxible.json(
+        payload_file = _write(
+            tmp_path / f"claim-{subject_id}.json",
+            _claim_authoring(subject_id, value).model_dump(mode="json"),
+        )
+        source_file = tmp_path / f"claim-{subject_id}.md"
+        source_file.write_text(f"status: {value}\n", encoding="utf-8")
+        bound = cruxible.json(
             "playbill",
             "authoring",
-            "create",
-            _write(
-                tmp_path / f"claim-{subject_id}.json",
-                _claim_authoring(subject_id, value).model_dump(mode="json"),
-            ),
+            "bind",
+            "--file",
+            str(source_file),
+            "--anchor",
+            f"status: {value}",
+            "--payload-file",
+            payload_file,
         )
-        intent = created["intent"]
         submitted = cruxible.json(
             "playbill",
             "authoring",
             "submit",
-            str(intent["intent_id"]),
+            str(bound["certificate"]["intent_id"]),
         )
-        claim_identities.append(f"Claim:{intent['semantic_identity']}")
+        claim_identities.append(f"Claim:{submitted['intent']['semantic_identity']}")
         cruxible.accept(str(submitted["status"]["proposal_id"]))
 
     # 5. Publish the named entrypoint that reads them.
@@ -228,15 +261,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
         "--envelope",
         _write(
             tmp_path / "query.json",
-            work_item_query(claim_type=claim_type)
-            .model_copy(
-                update={
-                    "evaluation_policy": work_item_query(
-                        claim_type=claim_type
-                    ).evaluation_policy.model_copy(update={"visible_verdicts": ("uncovered",)})
-                }
-            )
-            .model_dump(mode="json"),
+            work_item_query(claim_type=claim_type).model_dump(mode="json"),
         ),
         "--name",
         "seed-query",
@@ -270,7 +295,7 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     )
     assert cruxible.json("playbill", "claim", "history", claim_identities[0])["entries"]
     explained = cruxible.json("playbill", "claim", "explain", claim_identities[0])
-    assert explained["verdict"]["verdict"] == "uncovered"
+    assert explained["verdict"]["verdict"] == "supported", explained
     assert explained["law_evidence"]
 
     definitions = cruxible.json("playbill", "query", "list")
