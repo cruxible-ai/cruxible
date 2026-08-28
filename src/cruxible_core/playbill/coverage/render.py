@@ -5,7 +5,7 @@
 Playbill -- and requires every adapter to reproduce their coverage semantics.
 Rendering therefore lives here rather than in the CLI: an adapter that appends
 cards to a tool result renders the same bytes the CLI prints, from the same
-`CoverageResultV1`, without re-deriving anything.
+`CoverageResultV3`, without re-deriving anything.
 
 Three laws, all structural
 --------------------------
@@ -34,7 +34,7 @@ printed is already in the result.
 One line that renders no result
 -------------------------------
 :func:`render_unavailable_note` is the exception that proves the rule. An
-adapter that fails open has no `CoverageResultV1` to render -- that is what
+adapter that fails open has no `CoverageResultV3` to render -- that is what
 failing open means -- and it still owes the reader one line saying so, because
 silence would let an infrastructure outage read as "nothing here is governed,"
 which is the §11.6.3 false-`none` failure arriving through the back door. It
@@ -50,9 +50,7 @@ from typing import Literal
 from cruxible_core.playbill.coverage.contracts import (
     CoverageCardV1,
     CoverageCardV2,
-    CoverageResultAny,
-    CoverageSpanResultV1,
-    CoverageSpanResultV2,
+    CoverageResultV3,
     CoverageSpanResultV3,
     LogicalSourceIdentityV1,
 )
@@ -138,9 +136,7 @@ def render_card(card: CoverageCardV1 | CoverageCardV2) -> str:
     return "  ".join(parts) + _reasons(card.reason_codes)
 
 
-def render_span(
-    span: CoverageSpanResultV1 | CoverageSpanResultV2 | CoverageSpanResultV3,
-) -> tuple[str, ...]:
+def render_span(span: CoverageSpanResultV3) -> tuple[str, ...]:
     """Render one span: its cards, then whatever qualifies them.
 
     A `none` span inside a complete boundary renders nothing. That silence is
@@ -162,7 +158,7 @@ def render_span(
     return tuple(lines)
 
 
-def render_batch_summary(result: CoverageResultAny) -> tuple[str, ...]:
+def render_batch_summary(result: CoverageResultV3) -> tuple[str, ...]:
     """The one summary an operation emits, in the §11.6.4 shape."""
 
     summary = result.summary
@@ -176,7 +172,7 @@ def render_batch_summary(result: CoverageResultAny) -> tuple[str, ...]:
     )
 
 
-def render_coverage_result(result: CoverageResultAny) -> tuple[str, ...]:
+def render_coverage_result(result: CoverageResultV3) -> tuple[str, ...]:
     """Render one whole coverage operation: annotations, then one summary."""
 
     lines: list[str] = []
@@ -186,7 +182,7 @@ def render_coverage_result(result: CoverageResultAny) -> tuple[str, ...]:
     return tuple(lines)
 
 
-def render_coverage_manifest(result: CoverageResultAny) -> tuple[str, ...]:
+def render_coverage_manifest(result: CoverageResultV3) -> tuple[str, ...]:
     """Render the manifest a coverage answer was resolved against.
 
     Epoch, health, completeness, and scope, plus the digests that make the

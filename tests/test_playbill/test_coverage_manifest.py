@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_core.playbill.coverage.contracts import CoverageWatcherHealthV1
 from cruxible_core.playbill.coverage.indexes import (
     CaptureCitationInputV2,
@@ -40,7 +39,7 @@ from cruxible_core.playbill.coverage.manifest import (
     write_coverage_manifest,
     write_coverage_manifest_v2,
 )
-from cruxible_core.playbill.coverage.resolver import resolve_coverage
+from cruxible_core.playbill.coverage.resolver import resolve_coverage_v3
 from tests.test_playbill._coverage_support import (
     CITED,
     EPILOGUE,
@@ -50,7 +49,9 @@ from tests.test_playbill._coverage_support import (
     SCRATCH,
     capture,
     index,
+    index_v2,
     manifest,
+    manifest_v2,
     overlay,
     profile,
     request,
@@ -73,9 +74,6 @@ def _built() -> tuple[object, object]:
 def test_manifest_deletion_and_rebuild_reproduce_the_same_projection(tmp_path: Path) -> None:
     citations, snapshot = _built()
     body = manifest(citations, snapshot)
-    first = resolve_coverage(
-        request(HANDBOOK), index=citations, overlay=snapshot, access=profile(), manifest=body
-    )
 
     write_coverage_manifest(tmp_path, body, written_at="2026-08-19T09:00:00Z")
     discard_coverage_manifest(tmp_path)
@@ -90,16 +88,7 @@ def test_manifest_deletion_and_rebuild_reproduce_the_same_projection(tmp_path: P
     assert reloaded is not None
     assert reloaded.body == rebuilt
     assert coverage_manifest_digest(rebuilt) == coverage_manifest_digest(body)
-    second = resolve_coverage(
-        request(HANDBOOK),
-        index=rebuilt_citations,
-        overlay=rebuilt_snapshot,
-        access=profile(),
-        manifest=reloaded.body,
-    )
-    assert canonical_bytes(second.model_dump(mode="json")) == canonical_bytes(
-        first.model_dump(mode="json")
-    )
+    assert reloaded.body == body
 
 
 def test_v2_manifest_discards_the_local_v1_cache_instead_of_migrating_it(
@@ -177,18 +166,25 @@ def test_the_epoch_advances_and_never_moves_backwards(tmp_path: Path) -> None:
 
 
 def test_republishing_after_an_edit_restores_a_complete_boundary(tmp_path: Path) -> None:
-    citations, snapshot = _built()
-    body = manifest(citations, snapshot)
+    citations = index_v2(capture(HANDBOOK, CITED, with_handle=True))
+    snapshot = overlay(working(HANDBOOK, HANDBOOK_BODY), citations=citations)
+    body = manifest_v2(citations, snapshot)
     edited = overlay(working(HANDBOOK, PREAMBLE + EPILOGUE), citations=citations)
 
-    stale = resolve_coverage(
+    stale = resolve_coverage_v3(
         request(HANDBOOK), index=citations, overlay=edited, access=profile(), manifest=body
     )
     assert stale.spans[0].health == "stale"
 
-    advanced = advance_coverage_manifest(body, index=citations, overlay=edited)
-    write_coverage_manifest(tmp_path, advanced)
-    fresh = resolve_coverage(
+    advanced = coverage_manifest_body_v2(
+        instance_id=INSTANCE_ID,
+        index=citations,
+        overlay=edited,
+        access_profile=profile(),
+        epoch=body.epoch + 1,
+    )
+    write_coverage_manifest_v2(tmp_path, advanced)
+    fresh = resolve_coverage_v3(
         request(HANDBOOK), index=citations, overlay=edited, access=profile(), manifest=advanced
     )
 

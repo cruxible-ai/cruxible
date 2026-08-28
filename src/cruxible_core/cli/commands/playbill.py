@@ -75,7 +75,7 @@ from cruxible_core.playbill.coverage.claude_code import (
     post_tool_use_response,
     read_post_tool_use_event,
 )
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageResultAny
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageResultV3
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.coverage.middleware import (
     CoverageWorkspaceConfig,
@@ -2816,7 +2816,7 @@ def _resolved_coverage(
     *,
     command_name: str,
     scan_budget: CoverageScanBudgetV1 | None = None,
-) -> CoverageResultAny:
+) -> CoverageResultV3:
     result = _server_call(
         lambda client, instance_id: client.resolve_playbill_coverage(
             instance_id,
@@ -2825,7 +2825,7 @@ def _resolved_coverage(
         ),
         command_name=command_name,
     )
-    return TypeAdapter(CoverageResultAny).validate_python(result.result)
+    return CoverageResultV3.model_validate(result.result)
 
 
 @coverage_group.command("resolve")
@@ -2917,7 +2917,7 @@ def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
     content is a property of the operation, not of the adapter that calls it.
     """
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultAny:
+    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
         return _resolved_coverage(
             tuple(observations),
             command_name="playbill hook post-tool-use",

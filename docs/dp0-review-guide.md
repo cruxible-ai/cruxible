@@ -927,12 +927,7 @@ reproduces the same digest exactly.
 
 No golden pins the *contents* of these files, and none should: a golden is how
 this repository freezes a contract other parties depend on, and these are
-rebuildable local caches whose presence no test may require. One golden,
-`coverage-grammar-v1.json`, does pin the coverage manifest's **field grammar**
-alongside the coverage request/result grammar, because the §11.5 coverage
-addendum froze the manifest's identity and completeness binding fields as part
-of the contract every coverage adapter reads. That is a pin on the shape a
-manifest must have, never on any particular manifest existing.
+rebuildable local caches whose presence no test may require.
 
 ## Exact frozen goldens retained
 
@@ -958,7 +953,6 @@ tests/goldens/playbill/candidate-v2.json
 tests/goldens/playbill/capture-claim-v1.json
 tests/goldens/playbill/changeset-v3.json
 tests/goldens/playbill/claim-type-v1.json
-tests/goldens/playbill/coverage-grammar-v1.json
 tests/goldens/playbill/depgraph-v3.json
 tests/goldens/playbill/journal_corpus/index.json
 tests/goldens/playbill/journal_corpus/negative/export-duplicated-record.json

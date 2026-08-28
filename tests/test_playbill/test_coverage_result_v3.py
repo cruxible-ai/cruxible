@@ -14,7 +14,7 @@ from cruxible_core.playbill.coverage.adapter import observe_working_source
 from cruxible_core.playbill.coverage.contracts import (
     CoverageCardBudgetV1,
     CoverageRequestV1,
-    CoverageResultV1,
+    CoverageResultAny,
     CoverageResultV3,
     CoverageSpanRequestV1,
     LogicalSourceIdentityV1,
@@ -98,8 +98,8 @@ def test_local_proof_stays_complete_and_exact_inside_a_partial_batch() -> None:
     assert result.spans[1].coverage.reason_codes == ("unscanned_selection",)
 
 
-def test_coverage_v3_is_fresh_instead_of_inheriting_the_v1_batch_validator() -> None:
-    assert not issubclass(CoverageResultV3, CoverageResultV1)
+def test_the_served_coverage_result_type_is_v3_only() -> None:
+    assert CoverageResultAny is CoverageResultV3
 
 
 def test_citation_window_observation_refuses_incoherent_addressability() -> None:

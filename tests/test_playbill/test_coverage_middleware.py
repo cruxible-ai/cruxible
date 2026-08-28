@@ -28,7 +28,7 @@ from cruxible_core.playbill.coverage.adapter import (
 from cruxible_core.playbill.coverage.contracts import (
     CoverageError,
     CoverageRequestV1,
-    CoverageResultV1,
+    CoverageResultV3,
 )
 from cruxible_core.playbill.coverage.middleware import (
     CONFIG_RELATIVE_PATH,
@@ -48,12 +48,12 @@ from cruxible_core.playbill.coverage.render import (
     UNAVAILABLE_NOTE_PREFIX,
     render_coverage_result,
 )
-from cruxible_core.playbill.coverage.resolver import resolve_coverage
+from cruxible_core.playbill.coverage.resolver import resolve_coverage_v3
 from tests.test_playbill._coverage_support import (
     INSTANCE_ID,
     coordinate,
-    index,
-    manifest,
+    index_v2,
+    manifest_v2,
     overlay,
     profile,
 )
@@ -67,7 +67,7 @@ class _Recorder:
 
     Deliberately not a stubbed result object. The middleware's job is to hand
     the operation well-formed observations and render what comes back, and a
-    fabricated `CoverageResultV1` would prove neither: this runs the genuine
+    fabricated `CoverageResultV3` would prove neither: this runs the genuine
     resolver over an empty accepted ledger, so the spans really are `none`, the
     summary really is computed, and the parity and integrity assertions below
     run against bytes the reference renderer actually produced.
@@ -79,12 +79,12 @@ class _Recorder:
     def __call__(
         self,
         observations: Sequence[WorkingSourceObservationV1],
-    ) -> CoverageResultV1:
+    ) -> CoverageResultV3:
         ordered = tuple(observations)
         self.calls.append(ordered)
-        citations = index()
+        citations = index_v2()
         snapshot = overlay(*(item.material for item in ordered), citations=citations)
-        return resolve_coverage(
+        return resolve_coverage_v3(
             CoverageRequestV1(
                 instance_id=INSTANCE_ID,
                 at=coordinate(),
@@ -93,7 +93,7 @@ class _Recorder:
             index=citations,
             overlay=snapshot,
             access=profile(),
-            manifest=manifest(citations, snapshot),
+            manifest=manifest_v2(citations, snapshot),
         )
 
     @property
@@ -572,7 +572,7 @@ def test_current_floor_is_silent_and_invalid_floor_is_explicitly_unavailable(
 def test_an_unreachable_resolver_degrades_to_the_original_plus_one_line(
     workspace: Path,
 ) -> None:
-    def explode(_: Sequence[WorkingSourceObservationV1]) -> CoverageResultV1:
+    def explode(_: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
         raise RuntimeError("connection refused")
 
     middleware = coverage_middleware(root=workspace, config=_config(), resolve=explode)
@@ -606,7 +606,7 @@ def test_an_unreadable_working_file_degrades_the_same_way(workspace: Path) -> No
 def test_a_degraded_delivery_carries_no_cards_at_all(workspace: Path) -> None:
     """Fail open on infrastructure, fail closed on semantics."""
 
-    def explode(_: Sequence[WorkingSourceObservationV1]) -> CoverageResultV1:
+    def explode(_: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
         raise RuntimeError("boom")
 
     middleware = coverage_middleware(root=workspace, config=_config(), resolve=explode)

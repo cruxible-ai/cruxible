@@ -53,8 +53,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import TypeAdapter
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 for _candidate in (REPOSITORY_ROOT, REPOSITORY_ROOT / "src"):
     if str(_candidate) not in sys.path:
@@ -71,7 +69,7 @@ from cruxible_core.cli.commands import _common  # noqa: E402
 from cruxible_core.cli.context import load_cli_context  # noqa: E402
 from cruxible_core.cli.main import cli  # noqa: E402
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1  # noqa: E402
-from cruxible_core.playbill.coverage.contracts import CoverageResultAny  # noqa: E402
+from cruxible_core.playbill.coverage.contracts import CoverageResultV3  # noqa: E402
 from cruxible_core.playbill.coverage.middleware import (  # noqa: E402
     CONFIG_RELATIVE_PATH,
     CoverageMiddlewareV1,
@@ -118,12 +116,12 @@ ARM_NUMBERS: tuple[ArmNumber, ...] = (1, 2, 3, 4)
 def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultAny:
+    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
         answered = client.resolve_playbill_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
         )
-        return TypeAdapter(CoverageResultAny).validate_python(answered.result)
+        return CoverageResultV3.model_validate(answered.result)
 
     return resolve
 
@@ -473,7 +471,7 @@ def run_turn(setup: ArmSetupV1) -> tuple[dict[str, Any], ...]:
 
         raw = event.original_output
         cards: tuple[str, ...] = ()
-        result: CoverageResultAny | None = None
+        result: CoverageResultV3 | None = None
         if setup.deliver_coverage:
             assert setup.middleware is not None
             delivery = setup.middleware.after_tool(event)
