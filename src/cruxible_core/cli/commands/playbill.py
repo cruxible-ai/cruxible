@@ -46,6 +46,7 @@ from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import CanonicalEncodingError, PlaybillSinceRequestInvalid
+from cruxible_client.errors import DataValidationError
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.proposal_models import canonical_proposal_ref_name
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -175,6 +176,16 @@ def _server_call(
     return cast(ResultT, result)
 
 
+def _model_field_errors(exc: ValidationError) -> list[str]:
+    """Render one pydantic failure per line as ``field.path: message``."""
+    rendered: list[str] = []
+    for error in exc.errors(include_url=False):
+        location = ".".join(str(part) for part in error.get("loc", ()))
+        message = str(error.get("msg", "invalid"))
+        rendered.append(f"{location}: {message}" if location else message)
+    return rendered
+
+
 def _read_model(path: str, model: type[ResultT]) -> ResultT:
     source = Path(path).expanduser()
     try:
@@ -184,7 +195,20 @@ def _read_model(path: str, model: type[ResultT]) -> ResultT:
     if not isinstance(payload, dict):
         raise click.ClickException(f"{source} must contain one mapping")
     validator = getattr(model, "model_validate")
-    return cast(ResultT, validator(payload))
+    try:
+        return cast(ResultT, validator(payload))
+    except ValidationError as exc:
+        # A malformed request file is the caller's mistake, not a crash: without
+        # this the raw pydantic ValidationError escapes `handle_errors` (which
+        # catches only the client CoreError family) and prints a Python
+        # traceback, unlike every other refusal on this CLI. Carry the field
+        # paths so the caller can repair the file from the message alone.
+        # DataValidationError renders `summary: <errors>` itself, so the summary
+        # must not repeat the field list.
+        raise DataValidationError(
+            f"{source} is not a valid {model.__name__}",
+            errors=_model_field_errors(exc),
+        ) from exc
 
 
 def _read_since_access_profile(path: str) -> dict[str, Any]:
