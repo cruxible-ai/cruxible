@@ -80,8 +80,8 @@ class _Cli:
         assert activated["status"] == "accepted", activated
         return activated
 
-    def bootstrap(self, tmp_path: Path, *, with_reviewer: bool = False) -> dict[str, Any]:
-        """Bootstrap owner/recovery custody and an optional voluntary reviewer."""
+    def bootstrap(self, tmp_path: Path) -> dict[str, Any]:
+        """Bootstrap two ordinary principals plus recovery custody."""
 
         custody = tmp_path / "custody"
         recovery_custody = tmp_path / "recovery-custody"
@@ -92,7 +92,8 @@ class _Cli:
             str(custody),
             "--principal-id",
             CREATOR_ID,
-            *(("--reviewer-key-dir", str(custody)) if with_reviewer else ()),
+            "--reviewer-key-dir",
+            str(custody),
             "--recovery-key-dir",
             str(recovery_custody),
             "--recovery-principal-id",

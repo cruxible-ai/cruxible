@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import capture_contract_digest
 from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.providers import provider_digest
@@ -58,7 +58,6 @@ def _mandate(*, settlement: str = "settle_named_deltas") -> StandingMandate:
         ),
         valid_from=NOW,
         valid_until=NOW + timedelta(days=30),
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=tuple(sorted(pins, key=lambda item: (item.role, item.target.qualified))),
     )
 

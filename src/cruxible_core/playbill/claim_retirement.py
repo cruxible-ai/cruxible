@@ -230,7 +230,6 @@ def _retired_claim(
         identity=claim.identity,
         statement=statement,
         backing=claim.backing,
-        authority=claim.authority,
         pins=pins,
         lifecycle=ArtifactLifecycle(
             state="retired",
@@ -531,6 +530,7 @@ def service_retire_claim(
         rebased=False,
         actor_id=actor.actor_id,
         promotion_verifier=instance.proposal_service().promotion_verifier,
+        query_facts_provider=instance.proposal_service().query_facts_provider,
     )
     if request.mode == "preflight":
         return ClaimRetirePreflightV1(

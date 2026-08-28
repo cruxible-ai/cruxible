@@ -61,7 +61,6 @@ def _shell(
         ),
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner", "reviewer"),
         ),
         governance_scope=("project:playbill",),
         predecessor_digest=predecessor_digest,
@@ -129,8 +128,11 @@ def test_document_model_refuses_malformed_media_links_pins_and_authority(tmp_pat
         DocumentShell.model_validate({**payload, "links": [shell.links[0], shell.links[0]]})
     with pytest.raises(ValidationError, match="target_digest"):
         DocumentPin(role="reference", target_identity="document:x", target_digest="latest")
+    authority = payload["authority"]
+    assert isinstance(authority, dict)
+    authority["approval_roles"] = ["owner"]
     with pytest.raises(ValidationError, match="approval_roles"):
-        DocumentAuthority(required_tier="admin", approval_roles=())
+        DocumentShell.model_validate(payload)
 
 
 def test_document_acceptance_requires_exact_body_and_predecessor(tmp_path: Path) -> None:
@@ -146,7 +148,6 @@ def test_document_acceptance_requires_exact_body_and_predecessor(tmp_path: Path)
     assert accepted.verdict == "accepted"
     assert accepted.envelope_digest == document_digest(initial).tagged
     assert accepted.required_tier == "graph_write"
-    assert accepted.approval_scope == ()
     assert accepted.activation_policy == "snapshot"
 
     missing = initial.model_copy(update={"body_digest": "sha256:" + "ff" * 32})

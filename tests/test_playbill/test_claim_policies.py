@@ -8,13 +8,13 @@ from pydantic import ValidationError
 from cruxible_client.contracts.policies import (
     ClaimAdmissionCandidateContextV1,
     ClaimAdmissionPolicyV1,
+    ClaimCorroborationResultV1,
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
     ClaimResolutionPolicyV1,
+    CorroborationRequirementV1,
     EvidenceAdmissionInputV1,
-    EvidenceRequirementV1,
     FreezeRequirementV1,
-    QueryEvidenceResultV1,
     ResolutionContenderV1,
     evaluate_claim_admission_candidate,
     evaluate_claim_evidence_admission,
@@ -28,8 +28,8 @@ DIGEST_B = "sha256:" + "22" * 32
 
 def _review_policy() -> ClaimAdmissionPolicyV1:
     return ClaimAdmissionPolicyV1(
-        evidence_requirements=(
-            EvidenceRequirementV1(
+        corroboration_requirements=(
+            CorroborationRequirementV1(
                 requirement_id="one-valid-approval",
                 query_definition_digest=DIGEST_A,
                 min_count=1,
@@ -65,19 +65,22 @@ def _context(
             "review.status": (candidate_status,),
             "review.summary": ("summary",),
         },
-        query_results=(
-            QueryEvidenceResultV1(
+        corroboration_results=(
+            ClaimCorroborationResultV1(
                 requirement_id="one-valid-approval",
                 query_definition_digest=DIGEST_A,
+                parameter_digest=DIGEST_A,
                 result_digest=DIGEST_B,
-                matching_count=1,
+                query_verdict="completed",
+                observed_count=1,
                 truncated=truncated,
+                satisfied=True,
             ),
         ),
     )
 
 
-def test_retained_evidence_requirement_is_dormant_without_query_wiring() -> None:
+def test_corroboration_requirement_evaluates_committed_query_result() -> None:
     candidate = evaluate_claim_admission_candidate(_review_policy(), _context())
     truncated = evaluate_claim_admission_candidate(
         _review_policy(),
@@ -85,10 +88,14 @@ def test_retained_evidence_requirement_is_dormant_without_query_wiring() -> None
     )
 
     assert candidate.verdict == "eligible"
-    assert candidate.evidence_results == ()
+    assert candidate.corroboration_results == _context().corroboration_results
     assert truncated.verdict == "eligible"
     assert truncated.refusal_codes == ()
-    assert set(candidate.model_fields_set) == {"verdict", "evidence_results", "refusal_codes"}
+    assert set(candidate.model_fields_set) == {
+        "verdict",
+        "corroboration_results",
+        "refusal_codes",
+    }
 
 
 @pytest.mark.parametrize(
@@ -106,15 +113,15 @@ def test_deleted_admission_policy_fields_refuse(field: str, value: object) -> No
 
 
 @pytest.mark.parametrize("field", ("parameters", "max_rows", "max_traversal_depth"))
-def test_deleted_evidence_requirement_fields_refuse(field: str) -> None:
-    payload = EvidenceRequirementV1(
+def test_deleted_corroboration_requirement_fields_refuse(field: str) -> None:
+    payload = CorroborationRequirementV1(
         requirement_id="one-valid-approval",
         query_definition_digest=DIGEST_A,
         min_count=1,
     ).model_dump(mode="json")
     payload[field] = {} if field == "parameters" else 1
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        EvidenceRequirementV1.model_validate(payload)
+        CorroborationRequirementV1.model_validate(payload)
 
 
 def test_admission_refuses_freeze_bypass_and_unknown_predicate() -> None:
@@ -287,8 +294,8 @@ def test_unknown_policy_requirement_field_refuses_fail_closed() -> None:
 def test_requirement_ids_cannot_alias_across_policy_kinds() -> None:
     with pytest.raises(ValidationError, match="unique across"):
         ClaimAdmissionPolicyV1(
-            evidence_requirements=(
-                EvidenceRequirementV1(
+            corroboration_requirements=(
+                CorroborationRequirementV1(
                     requirement_id="same-id",
                     query_definition_digest=DIGEST_A,
                     min_count=1,

@@ -197,13 +197,13 @@ def test_playbill_write_logs_credential_actor_and_operation(
     owner = generate_client_principal_key(
         tmp_path / "request-log-owner-custody",
         principal_id="admin_credential",
-        authority_roles=("owner",),
+        kind="ordinary",
         forbidden_roots=(managed_root,),
     )
     reviewer = generate_client_principal_key(
         tmp_path / "request-log-reviewer-custody",
         principal_id="reviewer",
-        authority_roles=("reviewer",),
+        kind="ordinary",
         forbidden_roots=(managed_root,),
     )
     _clear_buffer(request_log_buffer)
@@ -242,7 +242,7 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
     owner = generate_client_principal_key(
         tmp_path / "request-log-activation-owner",
         principal_id="admin_credential",
-        authority_roles=("owner",),
+        kind="ordinary",
         forbidden_roots=(managed_root,),
     )
     initialized = app_client.post(
@@ -265,7 +265,6 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
         body_digest=stored.json()["digest"],
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner",),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),

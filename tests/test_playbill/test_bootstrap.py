@@ -133,7 +133,7 @@ def test_client_key_generation_refuses_workspace_or_managed_custody(tmp_path: Pa
             generate_client_principal_key(
                 forbidden,
                 principal_id="owner",
-                authority_roles=("owner",),
+                kind="ordinary",
                 forbidden_roots=(workspace, managed),
             )
         assert not forbidden.exists()
@@ -167,7 +167,7 @@ def test_workspace_edits_cannot_move_ledger_or_verified_coordinates(tmp_path: Pa
     assert after.generation_root == before.generation_root
 
 
-def test_bootstrap_accepts_one_owner_and_optional_recovery(tmp_path: Path) -> None:
+def test_bootstrap_accepts_two_ordinary_principals_and_optional_recovery(tmp_path: Path) -> None:
     managed = tmp_path / "managed-single-client"
     owner = generate_client(
         tmp_path,
@@ -175,11 +175,17 @@ def test_bootstrap_accepts_one_owner_and_optional_recovery(tmp_path: Path) -> No
         principal_id="owner",
         roles=("owner",),
     )
+    reviewer = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
 
     instance = PlaybillInstance.initialize(
         managed,
         instance_id="inst_single_client",
-        client_principals=(owner.principal,),
+        client_principals=(owner.principal, reviewer.principal),
         workspace_roots=(tmp_path / "workspace",),
         timestamp=FIXED_TIMESTAMP,
     )
@@ -194,6 +200,12 @@ def test_bootstrap_accepts_one_owner_and_optional_recovery(tmp_path: Path) -> No
         principal_id="owner",
         roles=("owner",),
     )
+    recovery_reviewer = generate_client(
+        recovery_tmp,
+        managed_root=managed_with_recovery,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
     recovery = generate_client(
         recovery_tmp,
         managed_root=managed_with_recovery,
@@ -203,14 +215,18 @@ def test_bootstrap_accepts_one_owner_and_optional_recovery(tmp_path: Path) -> No
     recovered = PlaybillInstance.initialize(
         managed_with_recovery,
         instance_id="inst_owner_recovery",
-        client_principals=(recovery_owner.principal, recovery.principal),
+        client_principals=(
+            recovery_owner.principal,
+            recovery_reviewer.principal,
+            recovery.principal,
+        ),
         workspace_roots=(recovery_tmp / "workspace-recovery",),
         timestamp=FIXED_TIMESTAMP,
     )
     assert recovered.inspect().recovery_posture == "recovery-configured"
 
 
-def test_cloud_profile_does_not_assign_special_meaning_to_recovery_role(tmp_path: Path) -> None:
+def test_cloud_profile_keeps_the_same_two_ordinary_bootstrap_law(tmp_path: Path) -> None:
     managed = tmp_path / "managed-cloud"
     owner = generate_client(
         tmp_path,
@@ -218,10 +234,16 @@ def test_cloud_profile_does_not_assign_special_meaning_to_recovery_role(tmp_path
         principal_id="owner",
         roles=("owner",),
     )
+    reviewer = generate_client(
+        tmp_path,
+        managed_root=managed,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
     instance = PlaybillInstance.initialize(
         managed,
         instance_id="inst_cloud",
-        client_principals=(owner.principal,),
+        client_principals=(owner.principal, reviewer.principal),
         workspace_roots=(tmp_path / "workspace",),
         operating_profile="cloud",
         timestamp=FIXED_TIMESTAMP,
@@ -229,19 +251,19 @@ def test_cloud_profile_does_not_assign_special_meaning_to_recovery_role(tmp_path
     assert instance.inspect().recovery_posture == "narrowed-no-recovery"
 
 
-def test_bootstrap_without_an_owner_refuses_typed(tmp_path: Path) -> None:
-    managed = tmp_path / "managed-no-owner"
+def test_bootstrap_with_fewer_than_two_ordinary_principals_refuses_typed(tmp_path: Path) -> None:
+    managed = tmp_path / "managed-insufficient-ordinary"
     reviewer_a = generate_client(
         tmp_path, managed_root=managed, principal_id="reviewer-a", roles=("reviewer",)
     )
-    reviewer_b = generate_client(
-        tmp_path, managed_root=managed, principal_id="reviewer-b", roles=("reviewer",)
+    recovery = generate_client(
+        tmp_path, managed_root=managed, principal_id="recovery", roles=("recovery",)
     )
-    with pytest.raises(PlaybillBootstrapError, match="at least one owner"):
+    with pytest.raises(PlaybillBootstrapError, match="at least two ordinary"):
         PlaybillInstance.initialize(
             managed,
-            instance_id="inst_no_owner",
-            client_principals=(reviewer_a.principal, reviewer_b.principal),
+            instance_id="inst_insufficient_ordinary",
+            client_principals=(reviewer_a.principal, recovery.principal),
             workspace_roots=(tmp_path / "workspace",),
             timestamp=FIXED_TIMESTAMP,
         )

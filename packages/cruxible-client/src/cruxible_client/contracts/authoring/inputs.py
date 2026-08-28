@@ -10,7 +10,7 @@ from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
     AuthoringArtifactReferenceV1,
     AuthoringClaimStatementV1,
@@ -129,7 +129,6 @@ class ClaimInput(_StrictInputModel):
 class ProcedureInput(_StrictInputModel):
     kind: Literal["procedure"]
     definition: dict[str, object]
-    authority: ArtifactAuthority
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     retire: bool = False
     contracts: tuple[CarriedContractInput, ...] = ()
@@ -393,14 +392,12 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
     if contracts:
         return ProcedureAuthoringPayloadV2(
             definition=definition,
-            authority=value.authority,
             activation_policy=value.activation_policy,
             owned_contracts=contracts,
             retire=value.retire,
         )
     return ProcedureAuthoringPayloadV1(
         definition=definition,
-        authority=value.authority,
         activation_policy=value.activation_policy,
         retire=value.retire,
     )

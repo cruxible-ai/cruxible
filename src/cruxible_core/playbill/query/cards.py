@@ -378,7 +378,7 @@ def _policy_summaries(claim_type: ClaimType) -> tuple[InterfacePolicySummaryV1, 
             policy="admission",
             policy_digest=_policy_digest("admission", admission.model_dump(mode="json")),
             summary=(
-                f"evidence={len(admission.evidence_requirements)} "
+                f"corroboration={len(admission.corroboration_requirements)} "
                 f"freeze={len(admission.freeze_requirements)}"
             ),
         ),

@@ -138,7 +138,6 @@ def test_v2_index_keeps_two_claim_roles_on_one_capture_as_distinct_associations(
                 ),
                 source_mappings=legacy.backing.source_mappings,
             ),
-            authority=legacy.authority,
             pins=legacy.pins,
         )
         accepted.append(

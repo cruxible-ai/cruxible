@@ -10,7 +10,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -91,7 +90,6 @@ class ProviderV1(_StrictProviderModel):
     upstream_provenance: tuple[ArtifactIdentity, ...] = ()
     signing_keys: tuple[ProviderSigningKeyV1, ...]
     capture_contract_digests: tuple[str, ...]
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -223,7 +221,6 @@ def evaluate_provider_law(
     provider: ProviderV1,
     *,
     path: str,
-    actor_roles: tuple[str, ...],
     predecessor: AcceptedProviderV1 | None,
 ) -> ProviderLawResultV1:
     if path != provider_path(provider.identity.name):

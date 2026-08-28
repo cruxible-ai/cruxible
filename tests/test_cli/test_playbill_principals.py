@@ -62,8 +62,8 @@ def test_cli_principal_add_keeps_private_key_client_side_and_proposes_public_rec
             "principal",
             "add",
             "reviewer",
-            "--role",
-            "reviewer",
+            "--kind",
+            "ordinary",
             "--key-dir",
             str(custody),
             "--name",
@@ -74,7 +74,7 @@ def test_cli_principal_add_keeps_private_key_client_side_and_proposes_public_rec
 
     assert result.exit_code == 0, result.output
     assert submitted[0]["principal_id"] == "reviewer"
-    assert submitted[0]["authority_roles"] == ["reviewer"]
+    assert submitted[0]["kind"] == "ordinary"
     assert "private" not in json.dumps(submitted[0])
     assert "PRIVATE KEY" not in result.output
     private_key = custody / "reviewer.ed25519"
@@ -114,8 +114,8 @@ def test_cli_principal_add_rejects_existing_identity_before_generating_keys(
             "principal",
             "add",
             "reviewer",
-            "--role",
-            "reviewer",
+            "--kind",
+            "ordinary",
             "--key-dir",
             str(custody),
             "--name",
@@ -128,7 +128,7 @@ def test_cli_principal_add_rejects_existing_identity_before_generating_keys(
     assert not custody.exists()
 
 
-def test_cli_principal_add_refuses_daemon_authority() -> None:
+def test_cli_principal_add_refuses_daemon_kind() -> None:
     result = CliRunner().invoke(
         cli,
         [
@@ -136,7 +136,7 @@ def test_cli_principal_add_refuses_daemon_authority() -> None:
             "principal",
             "add",
             "bad",
-            "--role",
+            "--kind",
             "daemon",
             "--key-dir",
             "/outside/workspace",
@@ -146,4 +146,4 @@ def test_cli_principal_add_refuses_daemon_authority() -> None:
     )
 
     assert result.exit_code != 0
-    assert "'daemon' is not one of 'owner', 'reviewer', 'recovery'" in result.output
+    assert "'daemon' is not one of 'ordinary', 'recovery'" in result.output

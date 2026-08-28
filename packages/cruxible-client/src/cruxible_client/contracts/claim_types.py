@@ -18,7 +18,6 @@ from pydantic import (
 )
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -33,7 +32,6 @@ from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimResolutionPolicyV1,
 )
-from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 
 _PREDICATE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})+$")
 
@@ -119,7 +117,6 @@ class ClaimType(_StrictClaimTypeModel):
     evidence_admission_policy: ClaimEvidenceAdmissionPolicyV1
     admission_policy: ClaimAdmissionPolicyV1
     resolution_policy: ClaimResolutionPolicyV1
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
     # Existing v3 envelopes committed these null placeholders. They remain
@@ -360,25 +357,14 @@ def _diagnostic(code: str, message: str, *, path: str) -> CompilerDiagnostic:
     )
 
 
-def _actor_roles(principals: PrincipalRegistrySnapshot, actor_id: str | None) -> tuple[str, ...]:
-    if actor_id is None:
-        return ()
-    try:
-        return principals.require_active(actor_id).authority_roles
-    except Exception:
-        return ()
-
-
 def evaluate_claim_type_law(
     claim_type: ClaimType,
     *,
     path: str,
-    principals: PrincipalRegistrySnapshot,
-    actor_id: str | None,
     predecessor: AcceptedClaimType | None,
     accepted_artifacts: Mapping[str, tuple[ArtifactIdentity, str]] | None = None,
 ) -> ClaimTypeLawResult:
-    """Evaluate exact path, lifecycle, authority, and digest-pinned dependencies."""
+    """Evaluate exact path, lifecycle, and digest-pinned dependencies."""
 
     try:
         validate_claim_type_path(claim_type, path)

@@ -6,7 +6,6 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
@@ -130,10 +129,6 @@ def _artifact(definition: ProcedureDefinitionV3) -> ProcedureArtifactV1:
         identity=ArtifactIdentity(kind="Procedure", name="triage"),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        authority=ArtifactAuthority(
-            propose_roles=("procedure-author",),
-            approve_roles=("procedure-reviewer",),
-        ),
         pins=pins,
         activation_policy="drain",
     )
@@ -166,7 +161,6 @@ def test_open_slot_procedure_is_acceptable_but_not_directly_runnable() -> None:
     result = evaluate_procedure_law(
         procedure,
         path=procedure_path("triage"),
-        actor_roles=("procedure-author",),
         predecessor=None,
     )
     assert result.verdict == "accepted"
@@ -216,10 +210,6 @@ def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None
         identity=ArtifactIdentity(kind="Procedure", name="triage"),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        authority=ArtifactAuthority(
-            propose_roles=("procedure-author",),
-            approve_roles=("procedure-reviewer",),
-        ),
         pins=(contract_in, contract_out),
         owned_contracts=tuple(
             sorted(
@@ -236,7 +226,6 @@ def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None
         evaluate_procedure_law(
             procedure,
             path=procedure_path("triage"),
-            actor_roles=("procedure-author",),
             predecessor=None,
         ).verdict
         == "accepted"
@@ -277,10 +266,6 @@ def test_procedure_rejects_exact_node_pin_missing_from_envelope() -> None:
             identity=ArtifactIdentity(kind="Procedure", name="triage"),
             definition=definition,
             definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-            authority=ArtifactAuthority(
-                propose_roles=("procedure-author",),
-                approve_roles=("procedure-reviewer",),
-            ),
             pins=(),
             activation_policy="drain",
         )

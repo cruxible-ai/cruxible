@@ -40,7 +40,6 @@ class PlaybillReviewedDocument(_StrictReviewModel):
     candidate_body_digest: str
     links: tuple[dict[str, object], ...]
     pins: tuple[dict[str, object], ...]
-    authority: dict[str, object]
     governance_scope: tuple[str, ...]
     base_source_mapping: SourceMapping | None
     candidate_source_mapping: SourceMapping | None
@@ -177,7 +176,6 @@ def _review_document(
         candidate_body_digest=candidate.body_digest,
         links=tuple(item.model_dump(mode="json") for item in candidate.links),
         pins=tuple(item.model_dump(mode="json") for item in candidate.pins),
-        authority=candidate.authority.model_dump(mode="json"),
         governance_scope=candidate.governance_scope,
         base_source_mapping=base_mapping,
         candidate_source_mapping=candidate_mapping,
@@ -338,7 +336,7 @@ def service_prepare_playbill_approval(
     review = service_review_playbill_proposal(instance, proposal_id=proposal_id, access=access)
     generation = instance.generation_for_semantic_root(review.parent_semantic_root)
     principal = generation.principals.require_active(signer_id)
-    if principal.authority_roles == ("daemon",):
+    if principal.kind == "daemon":
         raise ApprovalIntegrityError("daemon identity cannot provide client approval")
     principal_lifecycle = all(
         member.artifact_kind == "principal-lifecycle" for member in review.complete_members
@@ -349,7 +347,7 @@ def service_prepare_playbill_approval(
             "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve; "
             "after an eligible signer approves, run playbill proposal activate"
         )
-    if not principal_lifecycle and principal.authority_roles == ("recovery",):
+    if not principal_lifecycle and principal.kind == "recovery":
         raise ApprovalIntegrityError("recovery principal cannot approve ordinary Documents")
     return PlaybillApprovalChallenge(
         proposal_id=proposal_id,

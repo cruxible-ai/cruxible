@@ -33,13 +33,13 @@ def playbill_http(
     owner = generate_client_principal_key(
         tmp_path / "owner-custody",
         principal_id="operator",
-        authority_roles=("owner",),
+        kind="ordinary",
         forbidden_roots=(managed,),
     )
     reviewer = generate_client_principal_key(
         tmp_path / "reviewer-custody",
         principal_id="reviewer",
-        authority_roles=("reviewer",),
+        kind="ordinary",
         forbidden_roots=(managed,),
     )
     with TestClient(create_app()) as client:

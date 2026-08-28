@@ -18,7 +18,7 @@ from pydantic import (
     model_validator,
 )
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import validate_candidate_timestamp
 from cruxible_client.contracts.canonical import (
     Sha256Value,
@@ -722,7 +722,6 @@ class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
         "playbill-procedure-authoring-payload-v1"
     )
     definition: dict[str, object]
-    authority: ArtifactAuthority
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     retire: bool = False
 
@@ -742,7 +741,6 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
         "playbill-procedure-authoring-payload-v2"
     )
     definition: dict[str, object]
-    authority: ArtifactAuthority
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     owned_contracts: tuple[ProcedureOwnedContractV1, ...]
     retire: bool = False

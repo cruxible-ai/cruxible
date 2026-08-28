@@ -371,7 +371,7 @@ def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path
         title="Runbook",
         media_type="text/markdown",
         body_digest=body.digest,
-        authority=DocumentAuthority(required_tier="governed_write", approval_roles=("owner",)),
+        authority=DocumentAuthority(required_tier="governed_write"),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),
     )

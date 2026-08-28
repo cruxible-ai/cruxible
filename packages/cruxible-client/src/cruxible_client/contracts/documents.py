@@ -11,7 +11,6 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -33,7 +32,6 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.semantic import SemanticAddress
 
-DocumentApprovalRole = Literal["owner", "reviewer"]
 DocumentActivationPolicy = Literal["snapshot"]
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -97,18 +95,6 @@ class DocumentPin(_StrictDocumentModel):
 
 class DocumentAuthority(_StrictDocumentModel):
     required_tier: PermissionTier = "governed_write"
-    approval_roles: tuple[DocumentApprovalRole, ...] = ("owner",)
-
-    @field_validator("approval_roles")
-    @classmethod
-    def _approval_roles(
-        cls, value: tuple[DocumentApprovalRole, ...]
-    ) -> tuple[DocumentApprovalRole, ...]:
-        if tuple(sorted(set(value))) != value:
-            raise ValueError("document approval_roles must be sorted and unique")
-        if not value:
-            raise ValueError("document authority requires at least one approval role")
-        return value
 
 
 class DocumentLifecycle(_StrictDocumentModel):
@@ -235,11 +221,6 @@ class DocumentArtifactAdapter:
         return parse_artifact_identity(self.shell.identity)
 
     @property
-    def authority(self) -> ArtifactAuthority:
-        roles = tuple(str(role) for role in self.shell.authority.approval_roles)
-        return ArtifactAuthority(propose_roles=roles, approve_roles=roles)
-
-    @property
     def pins(self) -> tuple[ArtifactPin, ...]:
         return tuple(
             ArtifactPin(
@@ -339,7 +320,6 @@ class DocumentLawResult(_StrictDocumentModel):
     verdict: Literal["accepted", "refused"]
     envelope_digest: str | None = None
     required_tier: PermissionTier | None = None
-    approval_scope: tuple[DocumentApprovalRole, ...] = ()
     activation_policy: DocumentActivationPolicy | None = None
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
 
@@ -465,7 +445,6 @@ def evaluate_document_law(
         verdict="accepted",
         envelope_digest=digest,
         required_tier=shell.authority.required_tier,
-        approval_scope=(),
         activation_policy=shell.lifecycle.activation_policy,
     )
 
@@ -475,7 +454,6 @@ __all__ = [
     "BodyVerifierProtocol",
     "DOCUMENT_DIGEST_FUNCTIONS",
     "DocumentActivationPolicy",
-    "DocumentApprovalRole",
     "DocumentAuthority",
     "DocumentArtifactAdapter",
     "DocumentLawResult",

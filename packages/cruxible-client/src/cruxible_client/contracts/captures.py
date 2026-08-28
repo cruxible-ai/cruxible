@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Annotated, Literal, Protocol, runtime_checkabl
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -172,7 +171,6 @@ class CaptureContractV1(_StrictCaptureModel):
     provenance_rule_digest: str
     evidence_kinds: tuple[str, ...]
     source_subject_mapping_digest: str
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -348,10 +346,6 @@ DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT = CaptureContractV1(
         "playbill-source-subject-mapping-v1",
         {"mapping": "direct-claim-statement"},
     ).tagged,
-    authority=ArtifactAuthority(
-        propose_roles=("owner",),
-        approve_roles=("owner",),
-    ),
 )
 
 
@@ -397,10 +391,6 @@ COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT = CaptureContractV1(
     provenance_rule_digest=_COORDINATOR_PROVENANCE_PIN.artifact_digest,
     evidence_kinds=("self_asserted",),
     source_subject_mapping_digest=_COORDINATOR_MAPPING_PIN.artifact_digest,
-    authority=ArtifactAuthority(
-        propose_roles=("owner",),
-        approve_roles=("owner",),
-    ),
     pins=tuple(
         sorted(
             (
@@ -483,10 +473,6 @@ def foreign_source_capture_contract(logical_source_identity: str) -> CaptureCont
         provenance_rule_digest=provenance_pin.artifact_digest,
         evidence_kinds=("self_asserted",),
         source_subject_mapping_digest=mapping_pin.artifact_digest,
-        authority=ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
-        ),
         pins=tuple(sorted((replay_pin, provenance_pin, mapping_pin), key=_pin_key)),
     )
 
@@ -607,7 +593,6 @@ def evaluate_capture_contract_law(
     contract: CaptureContractV1,
     *,
     path: str,
-    actor_roles: tuple[str, ...],
     predecessor: AcceptedCaptureContract | None,
 ) -> CaptureContractLawResult:
     """Evaluate the complete v1 contract without granting source or Claim authority."""

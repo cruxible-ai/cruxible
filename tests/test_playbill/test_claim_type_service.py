@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_core.playbill.service.claim_types import (
@@ -65,10 +65,6 @@ def test_new_claim_type_preserves_but_does_not_enforce_authority_bytes(tmp_path:
         update={
             "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.owner_note"),
             "predicate": "project.work_item.owner_note",
-            "authority": ArtifactAuthority(
-                propose_roles=("reviewer",),
-                approve_roles=("reviewer",),
-            ),
         }
     )
 

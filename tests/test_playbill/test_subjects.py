@@ -9,7 +9,6 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
 )
@@ -54,10 +53,6 @@ def _shell(
         identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-123"),
         subject_kind="project.work_item",
         subject_id="wi-123",
-        authority=ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
-        ),
         lifecycle=lifecycle,
     )
 

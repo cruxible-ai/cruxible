@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import GenerationRoot, SemanticRoot
 from cruxible_client.contracts.claim_types import ClaimType, claim_type_digest
 from cruxible_client.contracts.claim_verdicts import (
@@ -56,7 +56,6 @@ from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.query.backends import ClaimFactRowV1, ClaimQueryFactsV1
 from cruxible_core.playbill.query.engine import ClaimQueryResultV1
 
-PARITY_AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
 AUTHORITY_BASIS = ("authority:owner",)
 OBSERVED_AT = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
 EVALUATION_TIME = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
@@ -75,7 +74,6 @@ def subject(kind: str, identifier: str) -> AcceptedSubject:
         identity=ArtifactIdentity(kind="Subject", name=f"{kind}/{identifier}"),
         subject_kind=kind,
         subject_id=identifier,
-        authority=PARITY_AUTHORITY,
     )
     return AcceptedSubject(
         path=subject_path(kind, identifier),
@@ -116,7 +114,6 @@ def claim_type(
             eligible_verdicts=("supported",),
             selector="all" if relation else "only_contender",
         ),
-        authority=PARITY_AUTHORITY,
     )
 
 
@@ -192,7 +189,6 @@ def claim_fact(
                 observed_at=OBSERVED_AT,
             ),
         ),
-        authority=PARITY_AUTHORITY,
         pins=(ArtifactPin(role="claim-type", target=contract.identity, artifact_digest=digest),),
     )
     return ClaimFactRowV1(

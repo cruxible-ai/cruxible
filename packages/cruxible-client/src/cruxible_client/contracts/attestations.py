@@ -25,7 +25,6 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.errors import ApprovalIntegrityError, PrincipalIntegrityError
 from cruxible_client.contracts.governance import governance_identifier
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
-from cruxible_client.contracts.types import PrincipalRole
 
 _SIGNATURE_RE = re.compile(r"^[0-9a-f]{128}$")
 ApprovalPurpose = Literal["ordinary-artifact", "principal-lifecycle"]
@@ -126,7 +125,6 @@ def approval_digest(attestation: ApprovalAttestation) -> ApprovalDigest:
 class VerifiedApproval:
     submission: ApprovalSubmission
     digest: ApprovalDigest
-    signer_roles: tuple[PrincipalRole, ...]
     signer_key_digest: str
     signer_key_history_ref: str
 
@@ -162,9 +160,9 @@ def verify_approval(
         principal = principals.require_active(attestation.signer_id)
     except PrincipalIntegrityError as exc:
         raise ApprovalIntegrityError(str(exc)) from exc
-    if principal.authority_roles == ("daemon",):
+    if principal.kind == "daemon":
         raise ApprovalIntegrityError("the daemon principal cannot provide client approval")
-    if purpose == "ordinary-artifact" and principal.authority_roles == ("recovery",):
+    if purpose == "ordinary-artifact" and principal.kind == "recovery":
         raise ApprovalIntegrityError("recovery principals cannot approve ordinary artifacts")
     try:
         public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(principal.public_key))
@@ -177,7 +175,6 @@ def verify_approval(
     return VerifiedApproval(
         submission=submission,
         digest=approval_digest(attestation),
-        signer_roles=principal.authority_roles,
         signer_key_digest=principal.public_key_digest,
         signer_key_history_ref=principals.key_history_reference(principal.principal_id),
     )

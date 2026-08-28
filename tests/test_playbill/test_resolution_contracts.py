@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     GenerationRoot,
@@ -232,10 +232,6 @@ def _accepted() -> AcceptedProcedureV1:
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        authority=ArtifactAuthority(
-            propose_roles=("author",),
-            approve_roles=("reviewer",),
-        ),
         pins=pins,
         activation_policy="snapshot",
     )
@@ -525,14 +521,7 @@ def _accept_tree(instance, owner, tree, *, timestamp: str, proposal_name: str) -
 def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) -> None:
     instance, owner = initialize_local(tmp_path)
     accepted = _accepted()
-    procedure = accepted.procedure.model_copy(
-        update={
-            "authority": ArtifactAuthority(
-                propose_roles=("owner",),
-                approve_roles=("owner",),
-            )
-        }
-    )
+    procedure = accepted.procedure.model_copy(update={})
     procedure_path_value = procedure_path(procedure.identity.name)
     first_tree = {
         **instance.tree_at(instance.accepted_coordinate().git_oid),
@@ -554,7 +543,7 @@ def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) 
         title="Unrelated",
         media_type="text/plain",
         body_digest=body.digest,
-        authority=DocumentAuthority(required_tier="governed_write", approval_roles=("owner",)),
+        authority=DocumentAuthority(required_tier="governed_write"),
         governance_scope=("project:test",),
         lifecycle=DocumentLifecycle(revision=1),
     )

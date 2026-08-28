@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_client.contracts.types import GitObjectFormat, PrincipalRole
+from cruxible_client.contracts.types import GitObjectFormat
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.keys import GeneratedKeyMaterial, generate_client_principal_key
 
@@ -16,14 +16,14 @@ def generate_client(
     *,
     managed_root: Path,
     principal_id: str,
-    roles: tuple[PrincipalRole, ...],
+    roles: tuple[str, ...],
 ) -> GeneratedKeyMaterial:
     workspace = tmp_path / "workspace"
     workspace.mkdir(exist_ok=True)
     return generate_client_principal_key(
         tmp_path / f"client-custody-{principal_id}",
         principal_id=principal_id,
-        authority_roles=roles,
+        kind="recovery" if roles == ("recovery",) else "ordinary",
         forbidden_roots=(workspace, managed_root),
     )
 

@@ -14,7 +14,7 @@ from cruxible_client.contracts.acquisition_policies import (
     evaluate_acquisition_policy_law,
     select_sources,
 )
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.capture_journal import (
     InMemoryCaptureLandingJournal,
     capture_landing_idempotency_key,
@@ -65,7 +65,6 @@ def _policy(*rules: InputAcquisitionRuleV1, bounded_seconds: int | None = None):
         identity=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="order-release"),
         inputs=tuple(sorted(rules, key=lambda item: item.input_name)),
         coherence=coherence,
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
     )
 
 
@@ -192,13 +191,11 @@ def test_declared_snapshot_requires_registered_components_and_exact_group(tmp_pa
             coordinate_grammar_digest=grammar.artifact_digest,
             proof_adapter_digest=proof.artifact_digest,
         ),
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=tuple(sorted((grammar, proof), key=lambda item: (item.role, item.target.qualified))),
     )
     accepted = evaluate_acquisition_policy_law(
         policy,
         path=acquisition_policy_path(policy.identity.name),
-        actor_roles=("owner",),
         predecessor=None,
     )
     assert accepted.verdict == "accepted"
@@ -223,7 +220,6 @@ def test_declared_snapshot_requires_registered_components_and_exact_group(tmp_pa
     refused = evaluate_acquisition_policy_law(
         unregistered,
         path=acquisition_policy_path(unregistered.identity.name),
-        actor_roles=("owner",),
         predecessor=None,
     )
     assert refused.diagnostics[0].code == (

@@ -83,20 +83,6 @@ class ArtifactPin(_StrictArtifactModel):
         return value
 
 
-class ArtifactAuthority(_StrictArtifactModel):
-    propose_roles: tuple[str, ...]
-    approve_roles: tuple[str, ...]
-
-    @field_validator("propose_roles", "approve_roles")
-    @classmethod
-    def _roles(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if not value or tuple(sorted(set(value), key=lambda role: role.encode("utf-8"))) != value:
-            raise ValueError("artifact authority roles must be nonempty, sorted, and unique")
-        if any(not _ROLE_RE.fullmatch(role) for role in value):
-            raise ValueError("artifact authority roles must be canonical identifiers")
-        return value
-
-
 class ArtifactLifecycle(_StrictArtifactModel):
     state: Literal["live", "retired"] = "live"
     predecessor_digest: str | None = None
@@ -125,9 +111,6 @@ class GovernedArtifactProtocol(Protocol):
 
     @property
     def identity(self) -> ArtifactIdentity: ...
-
-    @property
-    def authority(self) -> ArtifactAuthority: ...
 
     @property
     def pins(self) -> tuple[ArtifactPin, ...]: ...
@@ -271,7 +254,6 @@ class ArtifactKindRegistry:
 
 
 __all__ = [
-    "ArtifactAuthority",
     "ArtifactFormatRegistry",
     "ArtifactFormatTag",
     "ArtifactIdentity",

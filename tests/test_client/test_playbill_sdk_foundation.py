@@ -26,7 +26,6 @@ entries:
     media_type: text/markdown
     compiler_profile: document-v1
     required_tier: governed_write
-    approval_roles: [owner]
     governance_scope: [Document:runbook]
 """,
         encoding="utf-8",

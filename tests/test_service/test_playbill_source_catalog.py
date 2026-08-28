@@ -37,7 +37,6 @@ def _entry(*, locator: str = "specs/design.md", root_alias: str | None = None):
         title="Playbill design",
         media_type="text/markdown",
         required_tier="graph_write",
-        approval_roles=("owner",),
         governance_scope=("project:playbill",),
     )
 

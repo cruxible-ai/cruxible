@@ -13,7 +13,7 @@ from cruxible_client.contracts.canonical import Sha256Value
 
 GitObjectFormat = Literal["sha1", "sha256"]
 AuthorityMode = Literal["legacy", "ledger", "inactive"]
-PrincipalRole = Literal["daemon", "owner", "reviewer", "recovery"]
+PrincipalKind = Literal["ordinary", "recovery", "daemon"]
 OperatingProfile = Literal["local", "cloud"]
 RecoveryPosture = Literal["narrowed-no-recovery", "recovery-configured"]
 
@@ -33,7 +33,7 @@ class PrincipalRecord(StrictModel):
     principal_id: str
     algorithm: Literal["ed25519-v1"] = "ed25519-v1"
     public_key: str
-    authority_roles: tuple[PrincipalRole, ...]
+    kind: PrincipalKind
     status: Literal["active", "revoked"] = "active"
 
     @field_validator("principal_id")
@@ -48,19 +48,6 @@ class PrincipalRecord(StrictModel):
     def _public_key(cls, value: str) -> str:
         if not _LOWER_HEX_32_RE.fullmatch(value):
             raise ValueError("public_key must contain 32 bytes of lowercase Ed25519 hex")
-        return value
-
-    @field_validator("authority_roles")
-    @classmethod
-    def _roles(cls, value: tuple[PrincipalRole, ...]) -> tuple[PrincipalRole, ...]:
-        if not value:
-            raise ValueError("authority_roles must not be empty")
-        if tuple(sorted(set(value))) != value:
-            raise ValueError("authority_roles must be sorted and unique")
-        if "daemon" in value and value != ("daemon",):
-            raise ValueError("daemon authority cannot be combined with client roles")
-        if "recovery" in value and value != ("recovery",):
-            raise ValueError("recovery authority is key-management-only")
         return value
 
     @property
@@ -102,10 +89,19 @@ class PlaybillTrustRoot(StrictModel):
             raise ValueError("trust root must contain exactly one daemon principal")
         if daemon[0].public_key != self.daemon_public_key:
             raise ValueError("daemon principal differs from daemon_public_key")
-        if daemon[0].authority_roles != ("daemon",):
-            raise ValueError("daemon principal must carry only daemon authority")
-        if not any("owner" in record.authority_roles for record in self.principals):
-            raise ValueError("trust root requires at least one owner principal")
+        if daemon[0].kind != "daemon":
+            raise ValueError("daemon principal must have daemon kind")
+        ordinary = [
+            record
+            for record in self.principals
+            if record.kind == "ordinary" and record.status == "active"
+        ]
+        if len(ordinary) < 2:
+            raise ValueError("trust root requires at least two active ordinary principals")
+        if any(
+            record.kind == "daemon" for record in self.principals if record.principal_id != "daemon"
+        ):
+            raise ValueError("only the daemon principal may have daemon kind")
         return self
 
 
@@ -276,7 +272,7 @@ class PlaybillDescriptor(StrictModel):
 class PrincipalInspection(StrictModel):
     principal_id: str
     algorithm: str
-    authority_roles: tuple[PrincipalRole, ...]
+    kind: PrincipalKind
     status: str
     public_key_digest: str
 
@@ -315,7 +311,7 @@ __all__ = [
     "PlaybillTrustRoot",
     "PrincipalInspection",
     "PrincipalRecord",
-    "PrincipalRole",
+    "PrincipalKind",
     "RecoveryPosture",
     "StorageLayout",
     "initial_authority_matrix",

@@ -312,14 +312,14 @@ def playbill_init(
     actor_id = _actor_id()
     if not principals:
         raise PlaybillBootstrapError("bootstrap requires at least one client principal")
-    owners = {
+    ordinary = {
         item.principal_id
         for item in principals
-        if item.status == "active" and "owner" in item.authority_roles
+        if item.status == "active" and item.kind == "ordinary"
     }
-    if actor_id not in owners:
+    if actor_id not in ordinary:
         raise AuthenticationError(
-            "Playbill bootstrap requires an owner principal matching authenticated identity"
+            "Playbill bootstrap requires an ordinary principal matching authenticated identity"
         )
     instance = get_playbill_manager().initialize(
         instance_id,

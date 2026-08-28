@@ -13,7 +13,6 @@ from typing import Annotated, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -461,7 +460,6 @@ class ClaimArtifactV2(_StrictClaimModel):
     identity: ArtifactIdentity
     statement: ClaimStatement
     backing: ClaimBackingV2
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -565,7 +563,6 @@ class ClaimArtifactV3(_StrictClaimModel):
     identity: ArtifactIdentity
     statement: ClaimStatement
     backing: ClaimBackingAny
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...]
     lifecycle: ArtifactLifecycle
     retirement: ClaimRetirementAttributionV1
@@ -673,7 +670,6 @@ def claim_artifact_digest(claim: ClaimArtifactAny) -> ArtifactDigest:
         "identity": claim.identity.model_dump(mode="json"),
         "statement_digest": claim_statement_digest(claim.statement).tagged,
         "backing": claim.backing.model_dump(mode="json"),
-        "authority": claim.authority.model_dump(mode="json"),
         "pins": [item.model_dump(mode="json") for item in claim.pins],
         "lifecycle": claim.lifecycle.model_dump(mode="json"),
     }
@@ -964,7 +960,6 @@ class _ResolvedReferent:
     identity: ArtifactIdentity
     artifact_digest: str
     semantic_kind: str
-    authority: ArtifactAuthority
 
 
 def _resolved_referent(
@@ -982,7 +977,6 @@ def _resolved_referent(
             identity=subject.shell.identity,
             artifact_digest=subject.artifact_digest,
             semantic_kind=("semantic.subject" if descriptor else subject.shell.subject_kind),
-            authority=subject.shell.authority,
         )
     claim_type = next(
         (item for item in claim_types.values() if item.path == address.artifact_path),
@@ -993,7 +987,6 @@ def _resolved_referent(
             identity=claim_type.claim_type.identity,
             artifact_digest=claim_type.artifact_digest,
             semantic_kind="semantic.claim_type",
-            authority=claim_type.claim_type.authority,
         )
     return None
 
@@ -1170,7 +1163,6 @@ def _is_claim_type_rederivation(
     predecessor: ClaimArtifactAny,
     claim_type_digest: str,
     claim_type_identity: ArtifactIdentity,
-    claim_type_authority: ArtifactAuthority,
 ) -> bool:
     """Recognize the exact machine-generated delta for ClaimType succession."""
 
@@ -1188,7 +1180,6 @@ def _is_claim_type_rederivation(
     )
     return (
         claim.artifact_format == predecessor.artifact_format
-        and claim.authority == claim_type_authority
         and claim.statement == expected_statement
         and claim.backing == predecessor.backing
         and claim.pins == expected_pins
@@ -1222,7 +1213,6 @@ def _is_attributed_retirement(
         and claim.statement == expected_statement
         and effective_until_preserved_or_replaced
         and claim.backing == predecessor.backing
-        and claim.authority == predecessor.authority
         and pins_preserve_shape
         and claim.lifecycle.state == "retired"
     )
@@ -1234,7 +1224,6 @@ def _is_claim_type_attributed_retirement(
     predecessor: ClaimArtifactAny,
     claim_type_digest: str,
     claim_type_identity: ArtifactIdentity,
-    claim_type_authority: ArtifactAuthority,
 ) -> bool:
     if not isinstance(claim, ClaimArtifactV3) or predecessor.lifecycle.state != "live":
         return False
@@ -1264,7 +1253,6 @@ def _is_claim_type_attributed_retirement(
             and claim.statement.effective_until is None
         )
         and claim.backing == predecessor.backing
-        and claim.authority == claim_type_authority
         and pins_preserve_shape
         and claim.lifecycle.state == "retired"
     )
@@ -1294,7 +1282,6 @@ def evaluate_claim_law(
     *,
     path: str,
     principals: PrincipalRegistrySnapshot,
-    actor_id: str | None,
     predecessor: AcceptedClaim | None,
     subjects: Mapping[str, AcceptedSubject],
     claim_types: Mapping[str, AcceptedClaimType],
@@ -1558,7 +1545,6 @@ def evaluate_claim_law(
             predecessor=predecessor.claim,
             claim_type_digest=claim_type.artifact_digest,
             claim_type_identity=contract.identity,
-            claim_type_authority=contract.authority,
         )
         attributed_retirement = _is_attributed_retirement(
             claim,
@@ -1569,7 +1555,6 @@ def evaluate_claim_law(
             predecessor=predecessor.claim,
             claim_type_digest=claim_type.artifact_digest,
             claim_type_identity=contract.identity,
-            claim_type_authority=contract.authority,
         )
         if isinstance(claim, ClaimArtifactV3) and not (
             attributed_retirement or claim_type_rederivation or claim_type_attributed_retirement
@@ -1584,16 +1569,6 @@ def evaluate_claim_law(
             return _diagnostic(
                 "playbill.claim.lifecycle_invalid",
                 "A retired Claim lineage cannot be revived.",
-                path=path,
-            )
-        if (
-            isinstance(claim, ClaimArtifactV3)
-            and claim.authority != predecessor.claim.authority
-            and not (claim_type_rederivation or claim_type_attributed_retirement)
-        ):
-            return _diagnostic(
-                "playbill.claim.authority_change_unsupported",
-                "Claim succession cannot weaken or rewrite accepted authority in v1.",
                 path=path,
             )
         old = predecessor.claim.backing

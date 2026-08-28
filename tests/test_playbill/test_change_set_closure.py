@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -51,10 +50,6 @@ def subject(*, lifecycle: ArtifactLifecycle = ArtifactLifecycle()) -> SubjectShe
         identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-closure"),
         subject_kind="project.work_item",
         subject_id="wi-closure",
-        authority=ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
-        ),
         lifecycle=lifecycle,
     )
 
@@ -78,10 +73,6 @@ def claim_type(
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
-        ),
-        authority=ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
         ),
         pins=pins,
     )

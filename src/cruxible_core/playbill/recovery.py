@@ -64,6 +64,7 @@ from cruxible_core.playbill.proposals import (
     EvaluatedTreeState,
     ExhaustPromotionVerifierProtocol,
     build_tree_state,
+    claim_admission_accounts_from_candidate,
     claim_type_expansions_from_candidate,
     evaluate_proposal_tree,
 )
@@ -183,7 +184,7 @@ def _refuse_removed_prerelease_content(
             ledger.read_blob(principal_entry.oid),
             path=principal_entry.path,
         )
-        if daemon.status != "active" or daemon.authority_roles != ("daemon",):
+        if daemon.status != "active" or daemon.kind != "daemon":
             raise SettlementIntegrityError("generation daemon principal is not active")
         previous_oid = oid
 
@@ -409,6 +410,7 @@ def _verify_successor(
         rebased=False,
         actor_id=record.actor_binding.actor_id,
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
+        replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         promotion_verifier=promotion_verifier,
         parent_state=window.state,
         wire_version=candidate.tag,

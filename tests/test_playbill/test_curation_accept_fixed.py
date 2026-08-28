@@ -63,7 +63,6 @@ def _document_shell(body_digest: str) -> DocumentShell:
         body_digest=body_digest,
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner",),
         ),
         governance_scope=("project:test",),
         lifecycle=DocumentLifecycle(revision=1),

@@ -1022,7 +1022,7 @@ def _document_modified(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         title="Runbook",
         media_type="text/markdown",
         body_digest=accepted_body.digest,
-        authority=DocumentAuthority(required_tier="governed_write", approval_roles=("owner",)),
+        authority=DocumentAuthority(required_tier="governed_write"),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),
     )

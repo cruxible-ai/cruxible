@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
 )
 from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
@@ -24,10 +23,6 @@ def test_provisional_subject_projection_is_coordinate_labeled(tmp_path: Path) ->
         identity=ArtifactIdentity(kind="Subject", name="project.work_item/wi-1"),
         subject_kind="project.work_item",
         subject_id="wi-1",
-        authority=ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
-        ),
     )
     tree = {"subjects/project.work_item/wi-1.yaml": render_subject(shell)}
     repository = MemoryLedger(tmp_path / "repository", {})

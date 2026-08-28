@@ -10,7 +10,6 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -161,7 +160,6 @@ class SourceAcquisitionPolicyV1(_StrictAcquisitionModel):
     identity: ArtifactIdentity
     inputs: tuple[InputAcquisitionRuleV1, ...]
     coherence: SourceCoherenceV1
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...] = ()
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -268,7 +266,6 @@ def evaluate_acquisition_policy_law(
     policy: SourceAcquisitionPolicyV1,
     *,
     path: str,
-    actor_roles: tuple[str, ...],
     predecessor: AcceptedSourceAcquisitionPolicyV1 | None,
 ) -> SourceAcquisitionPolicyLawResultV1:
     if path != acquisition_policy_path(policy.identity.name):

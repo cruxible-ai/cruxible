@@ -220,18 +220,14 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
         evaluate_capture_contract_law(
             contract,
             path="capture-contracts/playbill.coordinator-self-source-v1.yaml",
-            actor_roles=("owner",),
             predecessor=None,
         ).verdict
         == "accepted"
     )
-    rewritten = contract.model_copy(
-        update={"authority": contract.authority.model_copy(update={"approve_roles": ("security",)})}
-    )
+    rewritten = contract.model_copy(update={"allowed_source_kinds": ("file",)})
     refused = evaluate_capture_contract_law(
         rewritten,
         path="capture-contracts/playbill.coordinator-self-source-v1.yaml",
-        actor_roles=("owner",),
         predecessor=None,
     )
     assert refused.verdict == "refused"

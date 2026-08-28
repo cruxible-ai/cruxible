@@ -304,17 +304,13 @@ def test_http_migration_route_delegates_the_typed_request(
                 "permitted_roles": ["observation"],
                 "evidence_admission_policy": {"rules": []},
                 "admission_policy": {
-                    "evidence_requirements": [],
+                    "corroboration_requirements": [],
                     "freeze_requirements": [],
                 },
                 "resolution_policy": {
                     "cardinality": "one",
                     "eligible_verdicts": ["supported"],
                     "selector": "only_contender",
-                },
-                "authority": {
-                    "propose_roles": ["owner"],
-                    "approve_roles": ["owner"],
                 },
             },
             "dependents": [],

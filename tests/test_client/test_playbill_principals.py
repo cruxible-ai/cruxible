@@ -38,7 +38,7 @@ def test_client_proposes_principal_public_record_on_existing_route() -> None:
         "principal_id": "reviewer",
         "algorithm": "ed25519-v1",
         "public_key": "a" * 64,
-        "authority_roles": ["reviewer"],
+        "kind": "ordinary",
         "status": "active",
     }
 

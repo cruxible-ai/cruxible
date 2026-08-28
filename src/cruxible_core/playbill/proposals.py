@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Final, Literal, Protocol
+from typing import Callable, Final, Literal, Protocol, cast
 
 from pydantic import (
     BaseModel,
@@ -142,7 +142,10 @@ from cruxible_client.contracts.merkle import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionCandidateContextV1,
+    ClaimAdmissionCandidateResultV1,
+    ClaimAdmissionEvaluationAccountV1,
     ClaimAdmissionPolicyV1,
+    ClaimCorroborationResultV1,
     evaluate_claim_admission_candidate,
 )
 from cruxible_client.contracts.principals import (
@@ -229,6 +232,11 @@ from cruxible_core.playbill.exhaust.promotions import (
 )
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
+from cruxible_core.playbill.query.engine import (
+    evaluate_claim_query,
+    query_execution_receipt,
+)
 
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _PRINCIPAL_PATH_RE = re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$")
@@ -379,6 +387,7 @@ class CandidateEvaluation:
     diagnostics: tuple[CompilerDiagnostic, ...]
     rebased: bool
     state: "EvaluatedTreeState | None" = None
+    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = ()
 
 
 def claim_type_expansions_from_candidate(
@@ -404,6 +413,50 @@ def claim_type_expansions_from_candidate(
             expansions,
             key=lambda item: canonical_bytes(item.model_dump(mode="json")),
         )
+    )
+
+
+def claim_admission_accounts_from_candidate(
+    candidate: CandidateRecordAnyVersion,
+) -> tuple[ClaimAdmissionEvaluationAccountV1, ...]:
+    """Recover the daemon-produced admission accounts committed by member evidence."""
+
+    if isinstance(candidate, CandidateRecord):
+        return ()
+    accounts: dict[tuple[str, str, str], ClaimAdmissionEvaluationAccountV1] = {}
+    committed_query_digests: set[str] = set()
+    for evidence in candidate.law_evidence:
+        committed_query_digests.update(evidence.query_receipt_digests)
+        raw_entries = evidence.result.get("claim_admission", ())
+        if not isinstance(raw_entries, list):
+            continue
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, dict):
+                raise ProposalIntegrityError("candidate Claim admission entry is malformed")
+            raw_account = raw_entry.get("admission_account")
+            if raw_account is None:
+                continue
+            try:
+                account = ClaimAdmissionEvaluationAccountV1.model_validate(raw_account)
+            except ValidationError as exc:
+                raise ProposalIntegrityError(
+                    "candidate contains invalid Claim admission account"
+                ) from exc
+            key = (account.claim_path, account.claim_type_identity, account.policy_digest)
+            if key in accounts and accounts[key] != account:
+                raise ProposalIntegrityError("candidate Claim admission account is ambiguous")
+            accounts[key] = account
+    recovered_query_digests = {
+        result.result_digest
+        for account in accounts.values()
+        for result in account.corroboration_results
+    }
+    if recovered_query_digests != committed_query_digests:
+        raise ProposalIntegrityError(
+            "candidate Claim admission accounts differ from query receipt commitments"
+        )
+    return tuple(
+        sorted(accounts.values(), key=lambda item: canonical_bytes(item.model_dump(mode="json")))
     )
 
 
@@ -765,10 +818,151 @@ def _effective_claim_values(
 
 
 def _policy_has_requirements(policy: ClaimAdmissionPolicyV1) -> bool:
-    # Evidence requirements remain retained-but-dormant until their governed
-    # QueryDefinition result plane is wired. A deletion batch must not promote
-    # their mere presence into unconditional admission enforcement.
-    return bool(policy.freeze_requirements)
+    return bool(policy.corroboration_requirements or policy.freeze_requirements)
+
+
+ClaimQueryFactsProvider = Callable[[AcceptedProjectionCoordinate], ClaimQueryFactsV1]
+
+_CORROBORATION_BINDING_TYPES = {
+    "claim_predicate": "string",
+    "claim_subject_id": "string",
+    "claim_subject_identity": "subject_reference",
+    "claim_subject_kind": "string",
+}
+
+
+def _accepted_queries_by_digest(
+    tree: Mapping[str, bytes],
+) -> dict[str, AcceptedQueryDefinitionV1]:
+    accepted: dict[str, AcceptedQueryDefinitionV1] = {}
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not path.startswith("query-definitions/") or not path.endswith(".yaml"):
+            continue
+        query = parse_query_definition(tree[path], path=path)
+        if query.lifecycle.state != "live":
+            continue
+        digest = query_definition_digest(query).tagged
+        if digest in accepted:
+            raise ProposalIntegrityError("accepted QueryDefinition digest is not unique")
+        accepted[digest] = AcceptedQueryDefinitionV1(
+            path=path,
+            query=query,
+            artifact_digest=digest,
+        )
+    return accepted
+
+
+def _corroboration_parameters(
+    definition: AcceptedQueryDefinitionV1,
+    *,
+    subject: AcceptedSubject,
+    predicate: str,
+) -> tuple[dict[str, object] | None, tuple[str, str, str] | None]:
+    values: dict[str, object] = {
+        "claim_predicate": predicate,
+        "claim_subject_id": subject.shell.subject_id,
+        "claim_subject_identity": subject.shell.identity.qualified,
+        "claim_subject_kind": subject.shell.subject_kind,
+    }
+    parameters: dict[str, object] = {}
+    for declaration in definition.query.parameters:
+        expected = _CORROBORATION_BINDING_TYPES.get(declaration.name)
+        if expected is None:
+            continue
+        if declaration.value_type != expected:
+            return None, (declaration.name, expected, declaration.value_type)
+        parameters[declaration.name] = values[declaration.name]
+    return parameters, None
+
+
+def _run_corroboration_requirements(
+    *,
+    policy: ClaimAdmissionPolicyV1,
+    accepted_type: AcceptedClaimType,
+    subject: AcceptedSubject,
+    definitions: Mapping[str, AcceptedQueryDefinitionV1],
+    facts: ClaimQueryFactsV1,
+    current: AcceptedProjectionCoordinate,
+    timestamp: str,
+) -> tuple[
+    tuple[ClaimCorroborationResultV1, ...],
+    tuple[tuple[str, str], ...],
+]:
+    evaluated_at = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+        tzinfo=timezone.utc
+    )
+    results: list[ClaimCorroborationResultV1] = []
+    issues: list[tuple[str, str]] = []
+    for requirement in policy.corroboration_requirements:
+        definition = definitions.get(requirement.query_definition_digest)
+        if definition is None:
+            issues.append(
+                (
+                    "playbill.claim.corroboration_query_unresolved",
+                    "Claim corroboration requirement "
+                    f"{requirement.requirement_id!r} pins unresolved accepted "
+                    f"QueryDefinition {requirement.query_definition_digest}.",
+                )
+            )
+            continue
+        parameters, invalid = _corroboration_parameters(
+            definition,
+            subject=subject,
+            predicate=accepted_type.claim_type.predicate,
+        )
+        if invalid is not None:
+            name, expected, declared = invalid
+            issues.append(
+                (
+                    "playbill.claim.corroboration_parameter_contract_invalid",
+                    "Claim corroboration requirement "
+                    f"{requirement.requirement_id!r} declares reserved parameter {name!r} "
+                    f"as {declared!r}; the daemon binding requires {expected!r}.",
+                )
+            )
+            continue
+        result = evaluate_claim_query(
+            definition,
+            facts=facts,
+            coordinate=current,
+            evaluation_time=evaluated_at,
+            parameters=parameters,
+        )
+        receipt = query_execution_receipt(result)
+        observed_count = len(result.rows)
+        satisfied = result.verdict == "completed" and observed_count >= requirement.min_count
+        requirement_result = ClaimCorroborationResultV1(
+            requirement_id=requirement.requirement_id,
+            query_definition_digest=requirement.query_definition_digest,
+            parameter_digest=receipt.parameter_digest,
+            result_digest=receipt.result_digest,
+            query_verdict=result.verdict,
+            query_refusal_code=receipt.refusal_code,
+            observed_count=observed_count,
+            truncated=result.truncation.truncated,
+            satisfied=satisfied,
+        )
+        results.append(requirement_result)
+        if result.verdict == "refused":
+            issues.append(
+                (
+                    "playbill.claim.corroboration_query_refused",
+                    "Claim corroboration requirement "
+                    f"{requirement.requirement_id!r} ({requirement.query_definition_digest}) "
+                    f"was refused by query code {receipt.refusal_code!r}.",
+                )
+            )
+        elif not satisfied:
+            issues.append(
+                (
+                    "playbill.claim.corroboration_insufficient",
+                    "Claim corroboration requirement "
+                    f"{requirement.requirement_id!r} requires {requirement.min_count} rows "
+                    f"but observed {observed_count} from "
+                    f"{requirement.query_definition_digest}.",
+                )
+            )
+    return tuple(results), tuple(issues)
 
 
 def _claim_admission_evaluations(
@@ -779,9 +973,14 @@ def _claim_admission_evaluations(
     timestamp: str,
     subjects: Mapping[str, AcceptedSubject],
     claim_types: Mapping[str, AcceptedClaimType],
+    current: AcceptedProjectionCoordinate,
+    query_facts_provider: ClaimQueryFactsProvider | None,
+    replay_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...],
 ) -> tuple[
     dict[str, tuple[dict[str, object], ...]],
     dict[str, tuple[str, ...]],
+    dict[str, tuple[str, ...]],
+    tuple[ClaimAdmissionEvaluationAccountV1, ...],
     tuple[CompilerDiagnostic, ...],
 ]:
     """Evaluate every policy governing each Subject changed by Claim members."""
@@ -793,13 +992,21 @@ def _claim_admission_evaluations(
         claim = parse_claim(candidate_tree[path], path=path)
         changed_by_subject.setdefault(claim.statement.subject.artifact_path, []).append(path)
     if not changed_by_subject:
-        return {}, {}, ()
+        return {}, {}, {}, (), ()
 
     parent_values = _effective_claim_values(current_tree, evaluation_time=timestamp)
     candidate_values = _effective_claim_values(candidate_tree, evaluation_time=timestamp)
     entries_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     digests_by_path: dict[str, tuple[str, ...]] = {}
+    query_digests_by_path: dict[str, tuple[str, ...]] = {}
+    accounts: list[ClaimAdmissionEvaluationAccountV1] = []
     diagnostics: list[CompilerDiagnostic] = []
+    replay_by_key = {
+        (item.claim_path, item.claim_type_identity, item.policy_digest): item
+        for item in replay_accounts
+    }
+    definitions = _accepted_queries_by_digest(current_tree)
+    facts: ClaimQueryFactsV1 | None = None
     for subject_path, changed_paths in sorted(
         changed_by_subject.items(),
         key=lambda item: item[0].encode("utf-8"),
@@ -830,35 +1037,137 @@ def _claim_admission_evaluations(
                 key=lambda item: item.encode("utf-8"),
             )
         )
-        context = ClaimAdmissionCandidateContextV1(
-            evaluation_time=timestamp,
-            declared_predicates=declared_predicates,
-            parent_values=parent_values.get(subject_path, {}),
-            candidate_values=candidate_values.get(subject_path, {}),
-            # Query-backed evidence remains dormant until its governed result
-            # plane is wired; caller-authored query output is never trusted.
-            query_results=(),
-        )
-        entries: list[dict[str, object]] = []
-        policy_digests: set[str] = set()
+        evaluations: list[
+            tuple[
+                AcceptedClaimType,
+                str,
+                object,
+                tuple[ClaimCorroborationResultV1, ...],
+                tuple[tuple[str, str], ...],
+            ]
+        ] = []
         for accepted_type in applicable:
             policy = accepted_type.claim_type.admission_policy
             policy_digest = _canonical_model_digest(
                 "playbill-claim-admission-policy-v1",
                 policy,
             )
-            evaluated = evaluate_claim_admission_candidate(policy, context)
-            entries.append(
-                {
-                    "claim_type_digest": accepted_type.artifact_digest,
-                    "claim_type_identity": accepted_type.claim_type.identity.qualified,
-                    "policy_digest": policy_digest,
-                    "candidate_result": evaluated.model_dump(mode="json"),
-                }
+            results: tuple[ClaimCorroborationResultV1, ...] = ()
+            issues: tuple[tuple[str, str], ...] = ()
+            if policy.corroboration_requirements:
+                if replay_accounts:
+                    replayed = tuple(
+                        replay_by_key.get(
+                            (
+                                changed_path,
+                                accepted_type.claim_type.identity.qualified,
+                                policy_digest,
+                            )
+                        )
+                        for changed_path in changed_paths
+                    )
+                    if any(item is None for item in replayed):
+                        raise ProposalIntegrityError(
+                            "candidate Claim corroboration account is incomplete"
+                        )
+                    typed_replayed = tuple(item for item in replayed if item is not None)
+                    first = typed_replayed[0]
+                    if any(
+                        item.corroboration_results != first.corroboration_results
+                        or item.claim_type_digest != accepted_type.artifact_digest
+                        for item in typed_replayed
+                    ):
+                        raise ProposalIntegrityError(
+                            "candidate Claim corroboration accounts disagree"
+                        )
+                    results = first.corroboration_results
+                    issues = tuple(
+                        (
+                            (
+                                "playbill.claim.corroboration_query_refused",
+                                "Claim corroboration requirement "
+                                f"{item.requirement_id!r} ({item.query_definition_digest}) "
+                                f"was refused by query code {item.query_refusal_code!r}.",
+                            )
+                            if item.query_verdict == "refused"
+                            else (
+                                "playbill.claim.corroboration_insufficient",
+                                "Claim corroboration requirement "
+                                f"{item.requirement_id!r} was not satisfied by "
+                                f"{item.observed_count} observed rows.",
+                            )
+                        )
+                        for item in results
+                        if not item.satisfied
+                    )
+                else:
+                    if query_facts_provider is None:
+                        raise ProposalIntegrityError(
+                            "Claim corroboration requires accepted query facts"
+                        )
+                    if facts is None:
+                        facts = query_facts_provider(current)
+                        if facts.coordinate != current:
+                            raise ProposalIntegrityError(
+                                "accepted query facts coordinate differs from proposal coordinate"
+                            )
+                    results, issues = _run_corroboration_requirements(
+                        policy=policy,
+                        accepted_type=accepted_type,
+                        subject=subject,
+                        definitions=definitions,
+                        facts=facts,
+                        current=current,
+                        timestamp=timestamp,
+                    )
+            context = ClaimAdmissionCandidateContextV1(
+                evaluation_time=timestamp,
+                declared_predicates=declared_predicates,
+                parent_values=parent_values.get(subject_path, {}),
+                candidate_values=candidate_values.get(subject_path, {}),
+                corroboration_results=results,
             )
-            policy_digests.add(policy_digest)
-            for code in evaluated.refusal_codes:
-                for changed_path in changed_paths:
+            evaluated = evaluate_claim_admission_candidate(policy, context)
+            evaluations.append((accepted_type, policy_digest, evaluated, results, issues))
+        for changed_path in changed_paths:
+            entries: list[dict[str, object]] = []
+            policy_digests: set[str] = set()
+            query_digests: set[str] = set()
+            for accepted_type, policy_digest, evaluated_raw, results, issues in evaluations:
+                evaluated = cast(ClaimAdmissionCandidateResultV1, evaluated_raw)
+                account: ClaimAdmissionEvaluationAccountV1 | None = None
+                if accepted_type.claim_type.admission_policy.corroboration_requirements:
+                    complete = len(results) == len(
+                        accepted_type.claim_type.admission_policy.corroboration_requirements
+                    )
+                    account = ClaimAdmissionEvaluationAccountV1(
+                        claim_path=changed_path,
+                        claim_type_identity=accepted_type.claim_type.identity.qualified,
+                        claim_type_digest=accepted_type.artifact_digest,
+                        policy_digest=policy_digest,
+                        corroboration_results=results,
+                        satisfied=complete and all(item.satisfied for item in results),
+                    )
+                    accounts.append(account)
+                    query_digests.update(item.result_digest for item in results)
+                entries.append(
+                    {
+                        "admission_account": (
+                            None if account is None else account.model_dump(mode="json")
+                        ),
+                        "claim_type_digest": accepted_type.artifact_digest,
+                        "claim_type_identity": accepted_type.claim_type.identity.qualified,
+                        "policy_digest": policy_digest,
+                        "candidate_result": evaluated.model_dump(mode="json"),
+                    }
+                )
+                policy_digests.add(policy_digest)
+                for code, message in issues:
+                    diagnostics.append(_diagnostic(code, message, changed_path))
+                issue_codes = {item[0] for item in issues}
+                for code in evaluated.refusal_codes:
+                    if code in issue_codes:
+                        continue
                     diagnostics.append(
                         _diagnostic(
                             code,
@@ -867,18 +1176,27 @@ def _claim_admission_evaluations(
                             changed_path,
                         )
                     )
-        ordered_entries = tuple(sorted(entries, key=lambda item: canonical_bytes(item)))
-        ordered_digests = tuple(sorted(policy_digests))
-        for changed_path in changed_paths:
-            entries_by_path[changed_path] = ordered_entries
-            digests_by_path[changed_path] = ordered_digests
+            entries_by_path[changed_path] = tuple(
+                sorted(entries, key=lambda item: canonical_bytes(item))
+            )
+            digests_by_path[changed_path] = tuple(sorted(policy_digests))
+            query_digests_by_path[changed_path] = tuple(sorted(query_digests))
     ordered_diagnostics = tuple(
         sorted(
             diagnostics,
             key=lambda item: canonical_bytes(item.model_dump(mode="json")),
         )
     )
-    return entries_by_path, digests_by_path, ordered_diagnostics
+    ordered_accounts = tuple(
+        sorted(accounts, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
+    )
+    return (
+        entries_by_path,
+        digests_by_path,
+        query_digests_by_path,
+        ordered_accounts,
+        ordered_diagnostics,
+    )
 
 
 @dataclass(frozen=True)
@@ -1002,6 +1320,7 @@ class _AcceptedMember:
     law_digest: str
     result: dict[str, object]
     policy_digests: tuple[str, ...] = ()
+    query_receipt_digests: tuple[str, ...] = ()
     retired: bool = False
 
 
@@ -1035,7 +1354,6 @@ class _MemberContext:
     scope: tuple[str, ...]
     timestamp: str
     actor_id: str | None
-    actor_roles: tuple[str, ...]
     principals: PrincipalRegistrySnapshot
     bodies: BodyVerifierProtocol
     promotion_verifier: ExhaustPromotionVerifierProtocol | None
@@ -1046,6 +1364,7 @@ class _MemberContext:
     resolved: _ResolvedArtifacts
     claim_admission_by_path: Mapping[str, tuple[dict[str, object], ...]]
     claim_admission_digests_by_path: Mapping[str, tuple[str, ...]]
+    claim_admission_query_digests_by_path: Mapping[str, tuple[str, ...]]
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...]
     used_expansions: set[str]
 
@@ -1089,6 +1408,7 @@ def _accepted(
     activation_policy: ActivationPolicy,
     result: dict[str, object],
     policy_digests: tuple[str, ...] = (),
+    query_receipt_digests: tuple[str, ...] = (),
     retired: bool = False,
 ) -> _MemberVerdict:
     return _MemberVerdict(
@@ -1104,6 +1424,7 @@ def _accepted(
             law_digest=installed.coordinate.digest,
             result=result,
             policy_digests=policy_digests,
+            query_receipt_digests=query_receipt_digests,
             retired=retired,
         )
     )
@@ -1122,7 +1443,6 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_procedure_law(
         procedure,
         path=context.path,
-        actor_roles=context.actor_roles,
         predecessor=predecessor,
     )
     if law.verdict == "refused":
@@ -1136,7 +1456,7 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
-        approval_scope=law.approval_scope,
+        approval_scope=(),
         activation_policy=procedure.activation_policy,
         result={
             "artifact_digest": law.artifact_digest,
@@ -1177,7 +1497,6 @@ def _exhaust_promotion_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_exhaust_promotion_acceptance(
         promotion,
         path=context.path,
-        actor_roles=context.actor_roles,
         predecessor=predecessor,
         operational_result=context.promotion_verifier.verify_promotion(promotion),
     )
@@ -1236,7 +1555,6 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_line_spec_law(
         line,
         path=context.path,
-        actor_roles=context.actor_roles,
         procedure=accepted_procedure,
         interface_digests=interface_digests,
         predecessor=predecessor,
@@ -1315,7 +1633,6 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_query_definition_law(
         query,
         path=context.path,
-        actor_roles=context.actor_roles,
         predecessor=predecessor,
         accepted_artifacts=context.candidate_identities,
     )
@@ -1356,7 +1673,6 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_provider_law(
         provider,
         path=context.path,
-        actor_roles=context.actor_roles,
         predecessor=predecessor,
     )
     if law.verdict == "refused":
@@ -1389,7 +1705,6 @@ def _acquisition_policy_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_acquisition_policy_law(
         policy,
         path=context.path,
-        actor_roles=context.actor_roles,
         predecessor=predecessor,
     )
     if law.verdict == "refused":
@@ -1422,7 +1737,6 @@ def _standing_mandate_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_standing_mandate_law(
         mandate,
         path=context.path,
-        actor_roles=context.actor_roles,
         predecessor=predecessor,
     )
     if law.verdict == "refused":
@@ -1455,7 +1769,6 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_capture_contract_law(
         contract,
         path=context.path,
-        actor_roles=context.actor_roles,
         predecessor=predecessor,
     )
     if law.verdict == "refused":
@@ -1501,7 +1814,6 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         claim,
         path=context.path,
         principals=context.principals,
-        actor_id=context.actor_id,
         predecessor=predecessor,
         subjects=context.resolved.subjects,
         claim_types=context.resolved.claim_types,
@@ -1552,6 +1864,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             "verdict": "accepted",
         },
         policy_digests=tuple(sorted(governing_policy_digests)),
+        query_receipt_digests=context.claim_admission_query_digests_by_path.get(context.path, ()),
         retired=claim.lifecycle.state == "retired",
     )
 
@@ -1571,8 +1884,6 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_claim_type_law(
         claim_type,
         path=context.path,
-        principals=context.principals,
-        actor_id=context.actor_id,
         predecessor=predecessor,
         accepted_artifacts=context.candidate_identities,
     )
@@ -1680,8 +1991,6 @@ def _subject_member(context: _MemberContext) -> _MemberVerdict:
     law = evaluate_subject_law(
         shell,
         path=context.path,
-        principals=context.principals,
-        actor_id=context.actor_id,
         predecessor=predecessor,
     )
     if law.verdict == "refused":
@@ -1732,7 +2041,7 @@ def _document_member(context: _MemberContext) -> _MemberVerdict:
         predecessor_artifact_digest=None if predecessor is None else predecessor.envelope_digest,
         candidate_artifact_digest=law.envelope_digest,
         required_tier=law.required_tier,
-        approval_scope=law.approval_scope,
+        approval_scope=(),
         activation_policy=law.activation_policy,
         result={"artifact_digest": law.envelope_digest, "verdict": "accepted"},
     )
@@ -2000,19 +2309,6 @@ def _resolved_artifacts(
     return resolved
 
 
-def _actor_roles(principals: PrincipalRegistrySnapshot, actor_id: str | None) -> tuple[str, ...]:
-    if actor_id is None:
-        return ()
-    try:
-        return tuple(
-            str(role)
-            for role in principals.require_active(actor_id).authority_roles
-            if role != "daemon"
-        )
-    except Exception:
-        return ()
-
-
 def _evaluate_scoped_members(
     *,
     current_tree: Mapping[str, bytes],
@@ -2027,6 +2323,8 @@ def _evaluate_scoped_members(
     wire_version: CandidateWireVersion,
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...],
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
+    query_facts_provider: ClaimQueryFactsProvider | None,
+    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...],
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -2128,11 +2426,12 @@ def _evaluate_scoped_members(
                 ),
                 rebased,
             )
-    actor_roles = _actor_roles(principals, actor_id)
     candidate_states = candidate_dependencies.states
     resolved = _resolved_artifacts(candidate_tree, candidate_states)
     claim_admission_by_path: dict[str, tuple[dict[str, object], ...]] = {}
     claim_admission_digests_by_path: dict[str, tuple[str, ...]] = {}
+    claim_admission_query_digests_by_path: dict[str, tuple[str, ...]] = {}
+    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = ()
     diagnostics: list[CompilerDiagnostic] = []
     scope_set = set(scope)
     for path in scope:
@@ -2180,6 +2479,8 @@ def _evaluate_scoped_members(
         (
             claim_admission_by_path,
             claim_admission_digests_by_path,
+            claim_admission_query_digests_by_path,
+            claim_admission_accounts,
             claim_admission_diagnostics,
         ) = _claim_admission_evaluations(
             current_tree=current_tree,
@@ -2188,6 +2489,9 @@ def _evaluate_scoped_members(
             timestamp=timestamp,
             subjects=resolved.subjects,
             claim_types=resolved.claim_types,
+            current=current,
+            query_facts_provider=query_facts_provider,
+            replay_accounts=replay_claim_admission_accounts,
         )
         diagnostics.extend(claim_admission_diagnostics)
 
@@ -2218,7 +2522,6 @@ def _evaluate_scoped_members(
                 scope=scope,
                 timestamp=timestamp,
                 actor_id=actor_id,
-                actor_roles=actor_roles,
                 principals=principals,
                 bodies=bodies,
                 promotion_verifier=promotion_verifier,
@@ -2235,6 +2538,7 @@ def _evaluate_scoped_members(
                 resolved=resolved,
                 claim_admission_by_path=claim_admission_by_path,
                 claim_admission_digests_by_path=claim_admission_digests_by_path,
+                claim_admission_query_digests_by_path=(claim_admission_query_digests_by_path),
                 claim_type_expansions=claim_type_expansions,
                 used_expansions=used_expansions,
             )
@@ -2251,7 +2555,13 @@ def _evaluate_scoped_members(
             )
         )
     if diagnostics:
-        return CandidateEvaluation(candidate_tree, None, tuple(diagnostics), rebased)
+        return CandidateEvaluation(
+            candidate_tree,
+            None,
+            tuple(diagnostics),
+            rebased,
+            claim_admission_accounts=claim_admission_accounts,
+        )
     if tuple(item.path for item in accepted) != scope:
         raise ProposalIntegrityError("evaluator did not cover every scoped member")
     if wire_version == "playbill-validated-candidate-v1":
@@ -2286,7 +2596,14 @@ def _evaluate_scoped_members(
             manifest_root_value=candidate_state.merkle.root.tagged,
             timestamp=timestamp,
         )
-    return CandidateEvaluation(candidate_tree, record, (), rebased, candidate_state)
+    return CandidateEvaluation(
+        candidate_tree,
+        record,
+        (),
+        rebased,
+        candidate_state,
+        claim_admission_accounts,
+    )
 
 
 def _multi_member_evidence(
@@ -2320,6 +2637,7 @@ def _multi_member_evidence(
             ),
             dependency_proof_refs=proofs,
             policy_digests=item.policy_digests,
+            query_receipt_digests=item.query_receipt_digests,
             result=item.result,
         )
         law_evidence.append(evidence)
@@ -2535,6 +2853,8 @@ def evaluate_proposal_tree(
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
     parent_state: EvaluatedTreeState | None = None,
     wire_version: CandidateWireVersion = PRODUCED_CANDIDATE_VERSION,
+    query_facts_provider: ClaimQueryFactsProvider | None = None,
+    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = (),
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -2628,6 +2948,8 @@ def evaluate_proposal_tree(
         wire_version=wire_version,
         claim_type_expansions=claim_type_expansions,
         promotion_verifier=promotion_verifier,
+        query_facts_provider=query_facts_provider,
+        replay_claim_admission_accounts=replay_claim_admission_accounts,
     )
 
 
@@ -2673,6 +2995,7 @@ class ProposalService:
         receive_limits: ProposalReceiveLimits = ProposalReceiveLimits(),
         current_coordinate: Callable[[], AcceptedProjectionCoordinate] | None = None,
         promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+        query_facts_provider: ClaimQueryFactsProvider | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -2681,6 +3004,7 @@ class ProposalService:
         self.receive_limits = receive_limits
         self._current_coordinate = current_coordinate or (lambda: accepted)
         self.promotion_verifier = promotion_verifier
+        self.query_facts_provider = query_facts_provider
 
     def submit(
         self,
@@ -2773,6 +3097,7 @@ class ProposalService:
             actor_id=actor.actor_id,
             claim_type_expansions=request.claim_type_expansions,
             promotion_verifier=self.promotion_verifier,
+            query_facts_provider=self.query_facts_provider,
         )
 
         evaluated_tree_oid: str | None = tree_oid
@@ -2794,6 +3119,7 @@ class ProposalService:
             rebased=is_rebase,
             candidate_digest=candidate_value,
             diagnostics=outcome.diagnostics,
+            claim_admission_accounts=outcome.claim_admission_accounts,
             evaluated_at=timestamp,
         )
         self.evidence.write_evaluation(evaluation)

@@ -10,14 +10,12 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
 )
 from cruxible_client.contracts.authoring_profiles import (
     CLAIM_TYPE_AUTHORING_PROFILES,
     AuthoringProfileError,
-    AuthorityProfileParametersV1,
     ClaimTypeProfileInputV1,
     expand_claim_type_profile,
     verify_claim_type_expansion_evidence,
@@ -69,10 +67,6 @@ def literal_claim_type() -> ClaimType:
             cardinality="one",
             eligible_verdicts=("supported",),
             selector="only_contender",
-        ),
-        authority=ArtifactAuthority(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
         ),
     )
 
@@ -147,8 +141,7 @@ def test_claim_type_successor_requires_exact_predecessor_digest_shape() -> None:
     assert successor.lifecycle.predecessor_digest == claim_type_digest(claim_type).tagged
 
 
-def test_claim_type_authority_bytes_are_dormant_during_succession(tmp_path: Path) -> None:
-    instance, _owner = initialize_local(tmp_path)
+def test_claim_type_succession_has_no_artifact_role_plane() -> None:
     original = literal_claim_type()
     predecessor = AcceptedClaimType(
         path=claim_type_path(original.predicate),
@@ -157,10 +150,6 @@ def test_claim_type_authority_bytes_are_dormant_during_succession(tmp_path: Path
     )
     widened = original.model_copy(
         update={
-            "authority": ArtifactAuthority(
-                propose_roles=("owner",),
-                approve_roles=("owner", "reviewer"),
-            ),
             "lifecycle": ArtifactLifecycle(predecessor_digest=claim_type_digest(original).tagged),
         }
     )
@@ -168,8 +157,6 @@ def test_claim_type_authority_bytes_are_dormant_during_succession(tmp_path: Path
     accepted = evaluate_claim_type_law(
         widened,
         path=predecessor.path,
-        principals=instance.accepted_history()[-1].principals,
-        actor_id="owner",
         predecessor=predecessor,
     )
     assert accepted.verdict == "accepted"
@@ -183,8 +170,6 @@ def test_claim_type_authority_bytes_are_dormant_during_succession(tmp_path: Path
     narrowed_result = evaluate_claim_type_law(
         narrowed,
         path=predecessor.path,
-        principals=instance.accepted_history()[-1].principals,
-        actor_id="owner",
         predecessor=AcceptedClaimType(
             path=predecessor.path,
             claim_type=widened,
@@ -192,6 +177,11 @@ def test_claim_type_authority_bytes_are_dormant_during_succession(tmp_path: Path
         ),
     )
     assert narrowed_result.verdict == "accepted"
+
+    payload = original.model_dump(mode="json")
+    payload["authority"] = {"propose_roles": ["owner"], "approve_roles": ["owner"]}
+    with pytest.raises(ValidationError, match="authority"):
+        ClaimType.model_validate(payload)
     assert narrowed_result.approval_scope == ()
 
 
@@ -217,7 +207,7 @@ def test_claim_type_v3_adds_only_a_positive_freshness_horizon() -> None:
     assert render_claim_type(original) == render_claim_type(literal_claim_type())
 
 
-def test_claim_type_v1_and_v3_preserve_the_exact_precut_wire_and_digest() -> None:
+def test_claim_type_v1_and_v3_pin_the_exact_c1_wire_and_digest() -> None:
     original = literal_claim_type()
     successor = ClaimType.model_validate(
         {
@@ -230,16 +220,16 @@ def test_claim_type_v1_and_v3_preserve_the_exact_precut_wire_and_digest() -> Non
     )
 
     assert hashlib.sha256(render_claim_type(original)).hexdigest() == (
-        "b2ab6796ff1ace872643b763f01b9942c25cb624baa33247f5e710407cf60c39"
+        "05e4836a8bd4e0725d73f5e3d45d8db230a005bc8a64d262ebbbbc58f6b7c968"
     )
     assert claim_type_digest(original).tagged == (
-        "sha256:bb336cc0f65017597703b86e62a250a853209f10a5a1cbf2348f82bf8c397afe"
+        "sha256:da68b96ac81805e16b6cefbc94d76060812d36b6eb3a7e8f9b5041006b0434bc"
     )
     assert hashlib.sha256(render_claim_type(successor)).hexdigest() == (
-        "7c7a2160d4a1c04f753d2d8bd539025af63fb7b2a4aa7ba0bc31ddeb1ed602e8"
+        "b456fdb55d847f377a0e29eddcab96927534883974741bd31b5343e182d57a38"
     )
     assert claim_type_digest(successor).tagged == (
-        "sha256:3ebef3b4d70d3abdd98c000201a231427fe322a92c108b0c22b6113723945237"
+        "sha256:0e74460ec5e594c5831f3954ec3ec35b7325b7fd1afc6a808640d1efceffb60f"
     )
     assert b'"subject_scope":null' in render_claim_type(successor)
     assert b'"slot_policy":null' in render_claim_type(successor)
@@ -388,10 +378,6 @@ def test_compact_ordinary_profile_and_expert_input_expand_to_identical_bytes() -
             authoring_source_digest="sha256:" + "61" * 32,
             compiler_digest="sha256:" + "62" * 32,
             structure=direct.structure,
-            authority_parameters=AuthorityProfileParametersV1(
-                propose_roles=("owner",),
-                approve_roles=("owner",),
-            ),
         )
     )
 
@@ -402,7 +388,7 @@ def test_compact_ordinary_profile_and_expert_input_expand_to_identical_bytes() -
     assert expanded.evidence.compiler_digest == "sha256:" + "62" * 32
 
 
-def test_profile_expansion_refuses_unknown_missing_authority_and_open_overrides() -> None:
+def test_profile_expansion_refuses_unknown_retired_authority_and_open_overrides() -> None:
     direct = literal_claim_type()
     profile = next(
         item
@@ -415,19 +401,13 @@ def test_profile_expansion_refuses_unknown_missing_authority_and_open_overrides(
         "authoring_source_digest": "sha256:" + "63" * 32,
         "compiler_digest": "sha256:" + "64" * 32,
         "structure": direct.structure,
-        "authority_parameters": AuthorityProfileParametersV1(
-            propose_roles=("owner",),
-            approve_roles=("owner",),
-        ),
     }
     with pytest.raises(AuthoringProfileError, match="unknown"):
         expand_claim_type_profile(
             ClaimTypeProfileInputV1(**{**values, "profile_id": "invented-profile-v1"})
         )
-    with pytest.raises(AuthoringProfileError, match="authority"):
-        expand_claim_type_profile(
-            ClaimTypeProfileInputV1(**{**values, "authority_parameters": None})
-        )
+    with pytest.raises(ValidationError, match="authority_parameters"):
+        ClaimTypeProfileInputV1(**{**values, "authority_parameters": None})
     with pytest.raises(AuthoringProfileError, match="override"):
         expand_claim_type_profile(
             ClaimTypeProfileInputV1(
@@ -451,10 +431,6 @@ def test_profile_evidence_refuses_forged_expansion_or_override_digest() -> None:
             authoring_source_digest="sha256:" + "65" * 32,
             compiler_digest="sha256:" + "66" * 32,
             structure=direct.structure,
-            authority_parameters=AuthorityProfileParametersV1(
-                propose_roles=("owner",),
-                approve_roles=("owner",),
-            ),
         )
     )
     forged_output = expansion.evidence.model_copy(
@@ -503,10 +479,6 @@ def test_profile_evidence_and_complete_expansion_are_visible_in_atomic_review(
             authoring_source_digest="sha256:" + "71" * 32,
             compiler_digest=current_compiler_coordinate().rule_digest,
             structure=direct.structure,
-            authority_parameters=AuthorityProfileParametersV1(
-                propose_roles=("owner",),
-                approve_roles=("owner",),
-            ),
         )
     )
     base = instance.accepted_coordinate()

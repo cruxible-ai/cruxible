@@ -39,9 +39,6 @@ from tests.test_playbill._knowledge_loop_support import (
 )
 from tests.test_playbill._support import client_material
 from tests.test_playbill.test_activation import _sign
-from tests.test_playbill.test_authoring_procedures import (
-    AUTHORITY as PROCEDURE_AUTHORITY,
-)
 from tests.test_playbill.test_authoring_procedures import _slot_definition
 
 CARD_PATH = "claim-types/project.work_item/status.card.json"
@@ -74,7 +71,6 @@ def _instance_with_procedure(tmp_path: Path):
         actor=actor,
         payload=ProcedureAuthoringPayloadV1(
             definition=_slot_definition().model_dump(mode="json", by_alias=True),
-            authority=PROCEDURE_AUTHORITY,
             activation_policy="drain",
         ),
         canonical_timestamp="2026-08-21T12:00:00.000000Z",
@@ -303,7 +299,7 @@ def test_procedure_floor_card_keeps_runnability_governance_and_track_record_sepa
     assert card.binding_state == "binding_required"
     assert card.capabilities.node_kinds == ("project", "state_tap")
     assert card.capabilities.terminal_capability == 1
-    assert card.governance.authority == PROCEDURE_AUTHORITY
+    assert card.governance.lifecycle.state == "live"
     assert card.governance.lifecycle.state == "live"
     assert card.track_record == ()
     assert card.accepted_coordinate == PlaybillAcceptedCoordinate.from_internal(

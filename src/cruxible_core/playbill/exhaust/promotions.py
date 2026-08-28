@@ -10,7 +10,6 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -180,7 +179,6 @@ class ExhaustPromotionV1(_StrictPromotionModel):
     reducer_digest: str
     output_digest: str
     bound_generation_digests: tuple[str, ...]
-    authority: ArtifactAuthority
     pins: tuple[ArtifactPin, ...]
     lifecycle: ArtifactLifecycle = ArtifactLifecycle()
 
@@ -451,11 +449,10 @@ def evaluate_exhaust_promotion_acceptance(
     promotion: ExhaustPromotionV1,
     *,
     path: str,
-    actor_roles: tuple[str, ...],
     predecessor: AcceptedExhaustPromotionV1 | None,
     operational_result: ExhaustPromotionLawResultV1,
 ) -> ExhaustPromotionLawResultV1:
-    """Apply ordinary artifact lineage/authority around exact-range verification."""
+    """Apply ordinary artifact lineage around exact-range verification."""
 
     if path != exhaust_promotion_path(promotion.identity.name):
         return _refused("promotion.path_mismatch", "Promotion identity/path disagreement.")

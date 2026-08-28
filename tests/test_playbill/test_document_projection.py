@@ -62,7 +62,6 @@ def _shell(body_digest: str) -> DocumentShell:
         ),
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner", "reviewer"),
         ),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),

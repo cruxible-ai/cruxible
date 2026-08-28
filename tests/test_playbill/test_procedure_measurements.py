@@ -6,7 +6,6 @@ import pytest
 from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
@@ -190,7 +189,6 @@ def _artifact(definition: ProcedureDefinitionV3, *, include_all_pins: bool) -> P
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        authority=ArtifactAuthority(propose_roles=("author",), approve_roles=("reviewer",)),
         pins=tuple(
             sorted(
                 pins,

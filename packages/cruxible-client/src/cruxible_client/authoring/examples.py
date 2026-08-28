@@ -13,7 +13,6 @@ from cruxible_client.authoring.inputs import (
     SelfSourceInput,
     WorkingSelectionInput,
 )
-from cruxible_client.contracts.artifacts import ArtifactAuthority
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 
 AuthoringExampleName = Literal[
@@ -128,7 +127,6 @@ def procedure_example() -> ProcedureInput:
             },
             "terminal_capability": 1,
         },
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         activation_policy="snapshot",
         contracts=(
             CarriedContractInput(name="empty-input", fields={}),

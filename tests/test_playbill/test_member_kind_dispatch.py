@@ -48,7 +48,6 @@ def _document(instance: object) -> bytes:
             body_digest=body.digest,
             authority=DocumentAuthority(
                 required_tier="graph_write",
-                approval_roles=("owner",),
             ),
             governance_scope=("project:playbill",),
             lifecycle=DocumentLifecycle(revision=1),

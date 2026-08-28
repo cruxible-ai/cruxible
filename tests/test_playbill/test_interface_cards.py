@@ -83,7 +83,6 @@ from tests.test_playbill.test_claim_query_engine import (
     subject,
 )
 from tests.test_playbill.test_query_definitions import (
-    OWNER_AUTHORITY,
     REVIEWER_PREDICATE,
     STATUS_PREDICATE,
     accepted_query,
@@ -136,7 +135,6 @@ def _addressed_claim(
                 observed_at=NOW,
             ),
         ),
-        authority=OWNER_AUTHORITY,
         pins=(ArtifactPin(role="claim-type", target=contract.identity, artifact_digest=digest),),
     )
     return ClaimFactRowV1(
@@ -691,7 +689,6 @@ def _row_by_row_expansion(rows: tuple[ClaimFactRowV1, ...]) -> int:
             [
                 {
                     "artifact_digest": row.accepted.artifact_digest,
-                    "authority": row.accepted.claim.authority.model_dump(mode="json"),
                     "backing": row.accepted.claim.backing.model_dump(mode="json"),
                     "identity": row.accepted.claim.identity.qualified,
                     "lifecycle": row.accepted.claim.lifecycle.model_dump(mode="json"),

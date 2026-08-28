@@ -35,7 +35,6 @@ if TYPE_CHECKING:
         observe_playbill_next_workspace,
     )
     from cruxible_client.contracts.artifacts import (
-        ArtifactAuthority,
         ArtifactIdentity,
         ArtifactLifecycle,
         ArtifactPin,
@@ -66,7 +65,6 @@ __all__ = [
     "AccessProfile",
     "ActivationPolicy",
     "Audience",
-    "ArtifactAuthority",
     "ArtifactIdentity",
     "ArtifactLifecycle",
     "ArtifactPin",
@@ -148,7 +146,7 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring import sdk_types
 
         return getattr(sdk_types, name)
-    if name in {"ArtifactAuthority", "ArtifactIdentity", "ArtifactLifecycle", "ArtifactPin"}:
+    if name in {"ArtifactIdentity", "ArtifactLifecycle", "ArtifactPin"}:
         from cruxible_client.contracts import artifacts as artifact_models
 
         return getattr(artifact_models, name)

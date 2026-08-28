@@ -35,7 +35,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
@@ -121,7 +120,6 @@ from cruxible_core.playbill.settlement import (
 )
 from tests.test_playbill._support import client_material
 
-OWNER_AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
 SUBJECT_KIND = "project.work_item"
 EPOCH = datetime(2026, 1, 1, tzinfo=timezone.utc)
 BOOTSTRAP_TIMESTAMP = "2026-01-01T00:00:00+00:00"
@@ -230,7 +228,6 @@ def _subject(index: int) -> SubjectShell:
         identity=ArtifactIdentity(kind="Subject", name=f"{SUBJECT_KIND}/{subject_id}"),
         subject_kind=SUBJECT_KIND,
         subject_id=subject_id,
-        authority=OWNER_AUTHORITY,
     )
 
 
@@ -263,7 +260,6 @@ def _claim_type(index: int) -> ClaimType:
             eligible_verdicts=("supported",),
             selector="only_contender",
         ),
-        authority=OWNER_AUTHORITY,
     )
 
 
@@ -300,7 +296,6 @@ def _query_definition(index: int, claim_type: ClaimType) -> QueryDefinitionV1:
         ),
         default_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
         maximum_budgets=QueryBudgetsV1(max_results=1, max_traversal_depth=0),
-        authority=OWNER_AUTHORITY,
         pins=(
             ArtifactPin(
                 role="claim-type",
@@ -318,7 +313,7 @@ def _document(index: int, body_digest: str) -> DocumentShell:
         title=f"Adoption note {index:05d}",
         media_type="text/markdown",
         body_digest=body_digest,
-        authority=DocumentAuthority(required_tier="graph_write", approval_roles=("owner",)),
+        authority=DocumentAuthority(required_tier="graph_write"),
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),
     )
@@ -375,7 +370,6 @@ def _claim(
                 ),
             ),
         ),
-        authority=OWNER_AUTHORITY,
         pins=tuple(
             sorted(
                 (
@@ -599,13 +593,13 @@ def build_fixture(
         owner = generate_client_principal_key(
             root / "owner-custody",
             principal_id="owner",
-            authority_roles=("owner",),
+            kind="ordinary",
             forbidden_roots=(workspace, managed_root),
         )
         reviewer = generate_client_principal_key(
             root / "reviewer-custody",
             principal_id="reviewer",
-            authority_roles=("reviewer",),
+            kind="ordinary",
             forbidden_roots=(workspace, managed_root),
         )
         instance = PlaybillInstance.initialize(

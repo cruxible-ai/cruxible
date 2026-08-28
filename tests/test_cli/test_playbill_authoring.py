@@ -557,13 +557,13 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
     owner = generate_client_principal_key(
         tmp_path / "owner-custody",
         principal_id="operator",
-        authority_roles=("owner",),
+        kind="ordinary",
         forbidden_roots=(managed,),
     )
     reviewer = generate_client_principal_key(
         tmp_path / "reviewer-custody",
         principal_id="reviewer",
-        authority_roles=("reviewer",),
+        kind="ordinary",
         forbidden_roots=(managed,),
     )
     payload = tmp_path / "claim-flow-a.json"

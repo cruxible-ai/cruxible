@@ -55,15 +55,12 @@ def _classify(
     actor: PrincipalRecord,
 ) -> PrincipalLifecycleAction | None:
     if previous is None:
-        if proposed.status != "active" or "daemon" in proposed.authority_roles:
+        if proposed.status != "active" or proposed.kind == "daemon":
             return None
         return "register"
     if previous.principal_id == "daemon" or proposed.principal_id == "daemon":
         return None
-    # Authority roles are dormant for admission in this pre-release lineage,
-    # but their accepted bytes remain immutable across lifecycle transitions.
-    # Changing them requires a future governed policy/ontology succession.
-    if previous.authority_roles != proposed.authority_roles:
+    if previous.kind != proposed.kind:
         return None
     if previous.status == "active" and proposed.status == "active":
         if previous.public_key == proposed.public_key:
@@ -111,12 +108,14 @@ def evaluate_principal_lifecycle(
     except PrincipalIntegrityError as exc:
         return _refused("playbill.principal.format_invalid", str(exc))
     actor = _actor(principals, actor_id)
-    if actor is None or "daemon" in actor.authority_roles:
+    if actor is None or actor.kind == "daemon":
         return _refused(
             "playbill.principal.actor_unauthorized",
             "Principal lifecycle actor is absent, revoked, or daemon-only at the parent root.",
         )
     action = _classify(previous, proposed, actor=actor)
+    if actor.kind == "recovery" and action != "recover":
+        action = None
     if action is None:
         return _refused(
             "playbill.principal.transition_unauthorized",

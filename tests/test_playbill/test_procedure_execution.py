@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 import pytest
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactPin,
 )
@@ -129,10 +128,6 @@ def _accepted(
         identity=ArtifactIdentity(kind="Procedure", name=definition.name),
         definition=definition,
         definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-        authority=ArtifactAuthority(
-            propose_roles=("author",),
-            approve_roles=("reviewer",),
-        ),
         pins=tuple(
             sorted(
                 pins,

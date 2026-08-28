@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedures.artifacts import (
@@ -185,7 +185,6 @@ def test_expanded_procedure_enters_only_the_ordinary_proposal_receive_path(
         identity=ArtifactIdentity(kind="Procedure", name="release-guard"),
         definition=expansion.definition,
         definition_digest=compute_procedure_definition_digest_v3(expansion.definition).tagged,
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=expansion.envelope_pins,
         activation_policy="snapshot",
     )

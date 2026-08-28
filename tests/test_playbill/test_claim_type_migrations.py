@@ -13,7 +13,6 @@ from cruxible_client.authoring.inputs import (
     SelfSourceInput,
 )
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -169,7 +168,7 @@ def test_migration_updates_type_and_dependent_in_one_idempotent_candidate(
 
 @pytest.mark.parametrize("request_version", ["v1", "v2"])
 @pytest.mark.parametrize("successor_state", ["live", "retired"])
-def test_migration_claim_successor_bytes_use_successor_claim_type_authority(
+def test_migration_claim_successor_bytes_use_successor_claim_type_digest(
     tmp_path: Path,
     request_version: str,
     successor_state: str,
@@ -194,16 +193,7 @@ def test_migration_claim_successor_bytes_use_successor_claim_type_authority(
     )
     assert current_claim.lifecycle.state == successor_state
     base_successor = _successor(instance)
-    successor = base_successor.model_copy(
-        update={
-            "authority": ArtifactAuthority(
-                propose_roles=base_successor.authority.propose_roles,
-                approve_roles=tuple(
-                    sorted(set((*base_successor.authority.approve_roles, "reviewer")))
-                ),
-            )
-        }
-    )
+    successor = base_successor.model_copy(update={})
     actor = AuthenticatedActor(actor_id="owner")
     if request_version == "v1":
         result = service_migrate_claim_type(
@@ -257,7 +247,6 @@ def test_migration_claim_successor_bytes_use_successor_claim_type_authority(
             "statement": current_claim.statement.model_copy(
                 update={"claim_type_digest": successor_digest}
             ),
-            "authority": successor_type.authority,
             "pins": expected_pins,
             "lifecycle": ArtifactLifecycle(
                 state=successor_state,  # type: ignore[arg-type]
@@ -266,7 +255,6 @@ def test_migration_claim_successor_bytes_use_successor_claim_type_authority(
         }
     )
 
-    assert successor_type.authority != current_claim.authority
     assert candidate_tree[claim_path(claim_id)] == render_claim(expected)
 
 
@@ -891,7 +879,6 @@ def test_retired_dependent_is_rederived_byte_exactly_and_next_remains_live(
             "statement": before.statement.model_copy(
                 update={"claim_type_digest": successor_digest}
             ),
-            "authority": successor_type.authority,
             "pins": expected_pins,
             "lifecycle": ArtifactLifecycle(
                 state="retired",
@@ -989,22 +976,12 @@ def test_already_broken_retired_claim_accepts_policy_plus_approval_widen(
         _decision_only_successor(instance, enum=["blocked", "ready"]),
         (dependent,),
     )
-    current = parse_claim_type(
-        instance.tree_at(instance.accepted_coordinate().git_oid)[
-            claim_type_path(_claim_type().predicate)
-        ],
-        path=claim_type_path(_claim_type().predicate),
-    )
     _accept_claim_type_only(
         instance,
         owner,
         _decision_only_successor(instance, enum=["blocked", "ready"]).model_copy(
             update={
                 "attestation_consequence_policy": _policy(2),
-                "authority": ArtifactAuthority(
-                    propose_roles=current.authority.propose_roles,
-                    approve_roles=tuple(sorted((*current.authority.approve_roles, "reviewer"))),
-                ),
             }
         ),
         proposal_name="policy-plus-approval-widen",

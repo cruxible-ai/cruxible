@@ -74,7 +74,6 @@ def _instance_with_document(tmp_path: Path):  # type: ignore[no-untyped-def]
             body_digest=body.digest,
             authority=DocumentAuthority(
                 required_tier="graph_write",
-                approval_roles=("owner",),
             ),
             governance_scope=("project:test",),
             lifecycle=DocumentLifecycle(revision=1),

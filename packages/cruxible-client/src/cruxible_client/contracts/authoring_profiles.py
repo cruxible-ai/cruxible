@@ -7,7 +7,6 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -136,17 +135,6 @@ CLAIM_TYPE_AUTHORING_PROFILES: tuple[ClaimTypeProfileDefinitionV1, ...] = (
 )
 
 
-class AuthorityProfileParametersV1(_StrictProfileModel):
-    propose_roles: tuple[str, ...]
-    approve_roles: tuple[str, ...]
-
-    def authority(self) -> ArtifactAuthority:
-        return ArtifactAuthority(
-            propose_roles=self.propose_roles,
-            approve_roles=self.approve_roles,
-        )
-
-
 class ClaimTypeProfileInputV1(_StrictProfileModel):
     tag: Literal["playbill-claim-type-profile-input-v1"] = "playbill-claim-type-profile-input-v1"
     profile_id: str
@@ -154,7 +142,6 @@ class ClaimTypeProfileInputV1(_StrictProfileModel):
     authoring_source_digest: str
     compiler_digest: str
     structure: ClaimTypeStructure
-    authority_parameters: AuthorityProfileParametersV1 | None
     pins: tuple[ArtifactPin, ...] = ()
     parameters: dict[str, object] = Field(default_factory=dict)
     overrides: dict[str, object] = Field(default_factory=dict)
@@ -318,8 +305,6 @@ def expand_claim_type_profile(request: ClaimTypeProfileInputV1) -> ClaimTypeExpa
         raise AuthoringProfileError(f"unknown ClaimType authoring profile: {request.profile_id}")
     if request.profile_digest != definition.profile_digest:
         raise AuthoringProfileError("authoring profile digest is stale or forged")
-    if request.authority_parameters is None:
-        raise AuthoringProfileError("authoring profile requires explicit authority parameters")
     supplied = set(request.parameters)
     required = set(definition.required_parameters)
     allowed = required | set(definition.optional_parameters)
@@ -349,7 +334,6 @@ def expand_claim_type_profile(request: ClaimTypeProfileInputV1) -> ClaimTypeExpa
         evidence_admission_policy=evidence,
         admission_policy=admission,
         resolution_policy=resolution,
-        authority=request.authority_parameters.authority(),
         pins=request.pins,
         lifecycle=ArtifactLifecycle(),
     )
@@ -403,7 +387,6 @@ def verify_claim_type_expansion_evidence(
 
 
 __all__ = [
-    "AuthorityProfileParametersV1",
     "AuthoringProfileError",
     "CLAIM_TYPE_AUTHORING_PROFILES",
     "ClaimTypeProfileId",

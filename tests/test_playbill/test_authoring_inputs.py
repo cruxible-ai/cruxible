@@ -39,7 +39,7 @@ from tests.test_playbill.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
 )
-from tests.test_playbill.test_authoring_procedures import AUTHORITY, _slot_definition
+from tests.test_playbill.test_authoring_procedures import _slot_definition
 from tests.test_playbill.test_claim_retirement import _activate, _request
 from tests.test_playbill.test_claim_type_migrations import _accepted_claim_world
 
@@ -162,7 +162,6 @@ def test_tagless_procedure_input_injects_slot_tags_and_compiles(tmp_path: Path) 
         input=ProcedureInput(
             kind="procedure",
             definition=tagless,
-            authority=AUTHORITY,
             activation_policy="drain",
         ),
         canonical_timestamp=TIMESTAMP,
@@ -209,7 +208,6 @@ def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: P
         input=ProcedureInput(
             kind="procedure",
             definition=tagless,
-            authority=AUTHORITY,
             activation_policy="drain",
             contracts=(
                 CarriedContractInput(name="empty-input", fields={}),

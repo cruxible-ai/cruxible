@@ -29,7 +29,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -176,9 +175,8 @@ class PlaybillProcedureCapabilitiesV1(_StrictFloorModel):
 
 
 class PlaybillProcedureGovernanceV1(_StrictFloorModel):
-    """Authority and lifecycle, kept independent from operational evidence."""
+    """Lifecycle and activation policy, kept independent from operational evidence."""
 
-    authority: ArtifactAuthority
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
     lifecycle: ArtifactLifecycle
 
@@ -465,7 +463,6 @@ def _procedure_cards(
             budget=definition.budget,
             hard_caps=definition.hard_caps,
             governance=PlaybillProcedureGovernanceV1(
-                authority=procedure.authority,
                 activation_policy=procedure.activation_policy,
                 lifecycle=procedure.lifecycle,
             ),

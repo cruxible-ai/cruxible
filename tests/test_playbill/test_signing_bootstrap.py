@@ -122,7 +122,7 @@ def test_reopen_refuses_out_of_band_instance_id_or_principal_substitution(
     substituted_owner = PrincipalRecord(
         principal_id="owner",
         public_key=substitute.principal.public_key,
-        authority_roles=("owner",),
+        kind="ordinary",
     )
     changed_principals = tuple(
         substituted_owner if record.principal_id == "owner" else record

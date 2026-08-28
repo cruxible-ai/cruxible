@@ -6,7 +6,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
@@ -152,10 +152,6 @@ def _fixture(tmp_path):
         reducer_digest=reducer.reducer_digest,
         output_digest=stored_output.digest,
         bound_generation_digests=(_coordinate().generation_root,),
-        authority=ArtifactAuthority(
-            propose_roles=("author",),
-            approve_roles=("reviewer",),
-        ),
         pins=pins,
     )
     return accepted, bodies, records, reducer, promotion
@@ -227,14 +223,7 @@ def test_only_accepted_promotion_produces_canonical_track_record_fact(tmp_path) 
 
 def test_promotion_passes_proposal_replay_and_projects_canonical_output(tmp_path) -> None:
     instance, owner = initialize_local(tmp_path)
-    base_procedure = _accepted().procedure.model_copy(
-        update={
-            "authority": ArtifactAuthority(
-                propose_roles=("owner",),
-                approve_roles=("owner",),
-            )
-        }
-    )
+    base_procedure = _accepted().procedure.model_copy(update={})
     accepted_procedure = AcceptedProcedureV1(
         path="procedures/measured-procedure.yaml",
         procedure=base_procedure,
@@ -331,7 +320,6 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(tmp_path
         reducer_digest=reducer.reducer_digest,
         output_digest=output_digest,
         bound_generation_digests=(coordinate.generation_root,),
-        authority=ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",)),
         pins=pins,
     )
     verifier = LocalExhaustPromotionVerifier(

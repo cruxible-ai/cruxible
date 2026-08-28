@@ -270,7 +270,6 @@ def _accept_document_revision(instance, owner, reviewer, *, revision: int, prede
         body_digest=body.digest,
         authority=DocumentAuthority(
             required_tier="graph_write",
-            approval_roles=("owner", "reviewer"),
         ),
         governance_scope=("project:playbill",),
         predecessor_digest=predecessor,

@@ -111,10 +111,7 @@ def test_orient_has_no_arbitrary_rows_and_names_demand_as_not_installed(
     assert result.rows == ()
     assert result.orientation is not None
     assert "unhealthy_brief_count" not in result.orientation.model_dump(mode="json")
-    authority = result.orientation.approval_authorities[0]
-    assert authority.artifact_identity == "ClaimType:project.work_item.status"
-    assert authority.artifact_kind == "claim_type"
-    assert authority.approvable_by_roles == ("owner",)
+    assert "approval_authorities" not in result.orientation.model_dump(mode="json")
     availability = {item.kind: item.availability for item in result.orientation.kind_availability}
     assert availability == {
         "claim": "installed",

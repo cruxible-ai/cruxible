@@ -68,6 +68,7 @@ from cruxible_core.playbill.projection import (
 )
 from cruxible_core.playbill.proposals import (
     ExhaustPromotionVerifierProtocol,
+    claim_admission_accounts_from_candidate,
     claim_type_expansions_from_candidate,
     evaluate_proposal_tree,
 )
@@ -722,6 +723,7 @@ def prepare_generation(
         actor_id=actor_binding.actor_id,
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
         promotion_verifier=promotion_verifier,
+        replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         wire_version=candidate.tag,
     )
     if reevaluated.candidate is None or reevaluated.diagnostics or reevaluated.state is None:

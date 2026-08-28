@@ -23,6 +23,7 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
+from cruxible_client.contracts.policies import ClaimAdmissionEvaluationAccountV1
 from cruxible_client.contracts.types import GitObjectFormat
 
 _ACTOR_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -216,6 +217,7 @@ class ProposalEvaluationRecord(_StrictProposalModel):
     rebased: bool
     candidate_digest: str | None = None
     diagnostics: tuple[CompilerDiagnostic, ...] = ()
+    claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = ()
     evaluated_at: str
 
     @field_validator("proposal_id")
@@ -242,6 +244,18 @@ class ProposalEvaluationRecord(_StrictProposalModel):
     @classmethod
     def _evaluated_at(cls, value: str) -> str:
         return validate_candidate_timestamp(value)
+
+    @field_validator("claim_admission_accounts")
+    @classmethod
+    def _claim_admission_accounts(
+        cls, value: tuple[ClaimAdmissionEvaluationAccountV1, ...]
+    ) -> tuple[ClaimAdmissionEvaluationAccountV1, ...]:
+        keys = tuple(
+            (item.claim_path, item.claim_type_identity, item.policy_digest) for item in value
+        )
+        if keys != tuple(sorted(set(keys), key=lambda item: canonical_bytes(item))):
+            raise ValueError("claim admission accounts must be canonically sorted and unique")
+        return value
 
     @model_validator(mode="after")
     def _verdict_shape(self) -> "ProposalEvaluationRecord":

@@ -25,7 +25,6 @@ from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_client.contracts.artifacts import (
-    ArtifactAuthority,
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
@@ -63,8 +62,6 @@ from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.playbill.claim_type_inputs import defaulted_claim_type_input_example
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
-
-AUTHORITY = ArtifactAuthority(propose_roles=("owner",), approve_roles=("owner",))
 
 
 def _digest(label: str) -> str:
@@ -241,7 +238,6 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
     pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
     subject = pb.subject(
         subject="secops.policy/patch-sla",
-        authority=AUTHORITY,
         pins=(),
         lifecycle=ArtifactLifecycle(),
     )
@@ -261,7 +257,6 @@ def test_sdk_cold_claim_delivers_source_lint_without_refusing_preflight(
             eligible_verdicts=("supported",),
             selector="only_contender",
         ),
-        authority=AUTHORITY,
         pins=(),
         evidence_freshness=None,
     )
@@ -308,7 +303,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
     pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
     subject = pb.subject(
         subject="secops.policy/patch-sla",
-        authority=AUTHORITY,
         pins=(),
         lifecycle=ArtifactLifecycle(),
     )
@@ -328,7 +322,6 @@ def test_sdk_revises_an_existing_claim_using_refs_without_dependency_drafts(
             eligible_verdicts=("supported",),
             selector="only_contender",
         ),
-        authority=AUTHORITY,
         pins=(),
         evidence_freshness=None,
     )
@@ -564,7 +557,6 @@ def test_sdk_retirement_replay_survives_a_fresh_http_client_process_boundary(
     author = fresh_playbill()
     subject = author.subject(
         subject="secops.policy/patch-sla",
-        authority=AUTHORITY,
         pins=(),
         lifecycle=ArtifactLifecycle(),
     )
@@ -584,7 +576,6 @@ def test_sdk_retirement_replay_survives_a_fresh_http_client_process_boundary(
             eligible_verdicts=("supported",),
             selector="only_contender",
         ),
-        authority=AUTHORITY,
         pins=(),
         evidence_freshness=None,
     )
@@ -641,7 +632,6 @@ def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
         identity=ArtifactIdentity(kind="Subject", name="project.work_item/replace-me"),
         subject_kind="project.work_item",
         subject_id="replace-me",
-        authority=AUTHORITY,
     )
     subject_proposal = transport.propose_playbill_subject(
         instance_id,
@@ -711,7 +701,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
 
     policy_subject = pb.subject(
         subject="secops.policy/patch-sla",
-        authority=AUTHORITY,
         pins=(),
         lifecycle=ArtifactLifecycle(),
     )
@@ -735,7 +724,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
             eligible_verdicts=("supported",),
             selector="all",
         ),
-        authority=AUTHORITY,
         pins=(),
         evidence_freshness=Duration.days(count=90),
     )
@@ -832,7 +820,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     for subject_name, role, value, source_path, anchor in remaining_facts:
         subject = pb.subject(
             subject=subject_name,
-            authority=AUTHORITY,
             pins=(),
             lifecycle=ArtifactLifecycle(),
         )
@@ -864,7 +851,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
     assert len([row for row in claim_rows if row.get("predicate") == triage_type.predicate]) == 6
     guidance_subject = pb.subject(
         subject="secops.policy/response-guidance",
-        authority=AUTHORITY,
         pins=(),
         lifecycle=ArtifactLifecycle(),
     )
@@ -916,7 +902,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         ),
         default_budgets=QueryBudgetsV1(max_results=10, max_traversal_depth=0),
         maximum_budgets=QueryBudgetsV1(max_results=50, max_traversal_depth=0),
-        authority=AUTHORITY,
         pins=(
             ArtifactPin(
                 role="claim-type",
@@ -949,7 +934,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
 
     publication_subject = pb.subject(
         subject="secops.policy/published-guidance",
-        authority=AUTHORITY,
         pins=(),
         lifecycle=ArtifactLifecycle(),
     )
@@ -988,7 +972,6 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
 
     procedure = pb.procedure(
         definition=_abstract_assess_procedure(),
-        authority=AUTHORITY,
         activation_policy=ActivationPolicy.DRAIN,
         retire=False,
     ).prepare()

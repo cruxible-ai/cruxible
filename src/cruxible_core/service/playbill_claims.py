@@ -352,7 +352,6 @@ def _claim_from_view(view: PlaybillClaimView | PlaybillClaimViewV2) -> ClaimArti
             },
             "statement": statement,
             "backing": backing,
-            "authority": lifecycle.get("authority"),
             "pins": lifecycle.get("pins"),
             "lifecycle": lifecycle.get("lifecycle"),
             **(
@@ -1061,7 +1060,6 @@ def service_expand_playbill_semantic(
         }
         governance = {
             "approval_coverage": "containing_change_set",
-            "authority": claim.authority.model_dump(mode="json"),
             "lifecycle": claim.lifecycle.model_dump(mode="json"),
         }
         provenance = {
@@ -1108,7 +1106,6 @@ def service_expand_playbill_semantic(
             "subject_kind": subject.subject_kind,
         }
         governance = {
-            "authority": subject.authority.model_dump(mode="json"),
             "lifecycle": subject.lifecycle.model_dump(mode="json"),
         }
         provenance = {"pins": [item.model_dump(mode="json") for item in subject.pins]}
@@ -1160,7 +1157,6 @@ def service_expand_playbill_semantic(
             "structure": claim_type.structure.model_dump(mode="json"),
         }
         governance = {
-            "authority": claim_type.authority.model_dump(mode="json"),
             "lifecycle": claim_type.lifecycle.model_dump(mode="json"),
         }
         provenance = {"pins": [item.model_dump(mode="json") for item in claim_type.pins]}
@@ -1225,7 +1221,6 @@ def service_expand_playbill_semantic(
             "subject_kinds": list(definition.subject_kinds),
         }
         governance = {
-            "authority": definition.authority.model_dump(mode="json"),
             "lifecycle": definition.lifecycle.model_dump(mode="json"),
         }
         provenance = {"pins": [item.model_dump(mode="json") for item in definition.pins]}
