@@ -166,81 +166,6 @@ class PlaybillNextDriftObservationV1(_StrictNextModel):
         return value
 
 
-class PlaybillNextSourceObservationV1(_StrictNextModel):
-    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
-    observed_source_digest: str
-
-    @field_validator("observed_source_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-
-class PlaybillNextSourceObservationV2(_StrictNextModel):
-    tag: Literal["playbill-next-source-observation-v2"]
-    source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
-    observed_source_digest: str
-    byte_length: int = Field(ge=0, le=MAX_PROJECTION_SOURCE_BYTES)
-    marker_summaries: tuple[ProjectionMarkerSummaryV1, ...] = Field(
-        max_length=MAX_PROJECTION_BLOCKS_PER_SOURCE
-    )
-    occurrences: tuple[WorkingOccurrenceV1, ...] = Field(max_length=MAX_PROJECTION_CARDS_PER_SOURCE)
-    scanned_commitment_digests: tuple[str, ...]
-    scan_complete: bool
-    scan_notes: tuple[str, ...]
-    marker_notes: tuple[str, ...]
-
-    @field_validator("observed_source_digest")
-    @classmethod
-    def _digest(cls, value: str) -> str:
-        Sha256Value.from_tagged(value)
-        return value
-
-    @field_validator("scanned_commitment_digests")
-    @classmethod
-    def _commitments(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for digest in value:
-            Sha256Value.from_tagged(digest)
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
-            raise ValueError("next scanned commitment digests must be sorted and unique")
-        return value
-
-    @field_validator("scan_notes", "marker_notes")
-    @classmethod
-    def _notes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("next observation notes must be sorted and unique")
-        return value
-
-    @model_validator(mode="after")
-    def _source_shape(self) -> "PlaybillNextSourceObservationV2":
-        ids = tuple(marker.stamp.block_id for marker in self.marker_summaries)
-        if ids != tuple(sorted(set(ids), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("next marker summaries must be sorted and unique by block ID")
-        previous_end = -1
-        for marker in sorted(self.marker_summaries, key=lambda item: item.start_byte):
-            if marker.stamp.source_id != self.source_id:
-                raise ValueError("next marker summary names a different logical source")
-            if marker.start_byte < previous_end or marker.end_byte > self.byte_length:
-                raise ValueError("next marker summary windows overlap or escape the source")
-            previous_end = marker.end_byte
-        keys = tuple(occurrence.sort_key for occurrence in self.occurrences)
-        if keys != tuple(sorted(set(keys))):
-            raise ValueError("next source occurrences must be sorted and unique")
-        for occurrence in self.occurrences:
-            if (
-                occurrence.source.plane != "external"
-                or occurrence.source.identity != self.source_id
-            ):
-                raise ValueError("next occurrence names a different logical source")
-            if occurrence.line_overlay.end_byte > self.byte_length:
-                raise ValueError("next occurrence presentation window escapes the source")
-        if not self.scan_complete and (self.occurrences or self.scanned_commitment_digests):
-            raise ValueError("an incomplete next scan cannot assert occurrences or scanned digests")
-        return self
-
-
 class PlaybillNextSourceObservationV3(_StrictNextModel):
     tag: Literal["playbill-next-source-observation-v3"]
     source_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
@@ -397,10 +322,7 @@ class PlaybillNextSourceObservationV4(_StrictNextModel):
 
 
 PlaybillNextSourceObservationAny: TypeAlias = (
-    PlaybillNextSourceObservationV1
-    | PlaybillNextSourceObservationV2
-    | PlaybillNextSourceObservationV3
-    | PlaybillNextSourceObservationV4
+    PlaybillNextSourceObservationV3 | PlaybillNextSourceObservationV4
 )
 
 
@@ -1211,7 +1133,6 @@ def _self_published_source_items(
         if isinstance(
             item,
             (
-                PlaybillNextSourceObservationV2,
                 PlaybillNextSourceObservationV3,
                 PlaybillNextSourceObservationV4,
             ),
@@ -1520,10 +1441,9 @@ def _source_citation_item(
         )
 
     unobserved = (
-        isinstance(observed, (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3))
-        and not observed.scan_complete
+        isinstance(observed, PlaybillNextSourceObservationV3) and not observed.scan_complete
     )
-    if isinstance(observed, (PlaybillNextSourceObservationV2, PlaybillNextSourceObservationV3)):
+    if isinstance(observed, PlaybillNextSourceObservationV3):
         if observed.scan_complete:
             matched = any(
                 item.observed_commitment_digest == commitment.commitment_digest
@@ -1537,8 +1457,6 @@ def _source_citation_item(
                 return None
             if commitment.commitment_digest not in observed.scanned_commitment_digests:
                 unobserved = True
-    elif observed.observed_source_digest == captured_source_digest:
-        return None
     if unobserved:
         return _citation_unobserved_item(commitment)
     return _citation_drift_item(
@@ -1831,7 +1749,6 @@ def _projection_items(
         if isinstance(
             source,
             (
-                PlaybillNextSourceObservationV2,
                 PlaybillNextSourceObservationV3,
                 PlaybillNextSourceObservationV4,
             ),
@@ -2115,8 +2032,6 @@ __all__ = [
     "PlaybillNextItemV1",
     "PlaybillNextRequestV1",
     "PlaybillNextResultV1",
-    "PlaybillNextSourceObservationV1",
-    "PlaybillNextSourceObservationV2",
     "PlaybillNextSourceObservationV3",
     "PlaybillNextSourceObservationV4",
     "PlaybillNextWorkspaceObservationInvalid",

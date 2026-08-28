@@ -12,8 +12,7 @@ from cruxible_core.playbill.coverage.contracts import (
 from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_next import (
-    PlaybillNextSourceObservationV1,
-    PlaybillNextSourceObservationV2,
+    PlaybillNextSourceObservationV3,
     PlaybillNextSourceObservationV4,
     _CitationCommitment,
     _source_citation_item,
@@ -70,9 +69,9 @@ def _observed(
     scanned: tuple[str, ...] = (),
     complete: bool = True,
     digest: str = CHANGED_SOURCE,
-) -> PlaybillNextSourceObservationV2:
-    return PlaybillNextSourceObservationV2(
-        tag="playbill-next-source-observation-v2",
+) -> PlaybillNextSourceObservationV3:
+    return PlaybillNextSourceObservationV3(
+        tag="playbill-next-source-observation-v3",
         source_id=SOURCE_ID,
         observed_source_digest=digest,
         byte_length=100,
@@ -86,7 +85,7 @@ def _observed(
 
 
 def _repair(
-    observed: PlaybillNextSourceObservationV1 | PlaybillNextSourceObservationV2 | None,
+    observed: PlaybillNextSourceObservationV3 | None,
     *,
     whole_source: bool = False,
 ):  # type: ignore[no-untyped-def]
@@ -175,26 +174,6 @@ def test_whole_source_citation_drifts_on_any_byte_change_even_if_span_is_found()
     assert result is not None
     assert result.reason == "citation_drifted"
     assert _repair(_observed(digest=ORIGINAL_SOURCE), whole_source=True) is None
-
-
-def test_v1_source_observation_keeps_its_original_whole_source_semantics() -> None:
-    assert (
-        _repair(
-            PlaybillNextSourceObservationV1(
-                source_id=SOURCE_ID,
-                observed_source_digest=ORIGINAL_SOURCE,
-            )
-        )
-        is None
-    )
-    result = _repair(
-        PlaybillNextSourceObservationV1(
-            source_id=SOURCE_ID,
-            observed_source_digest=CHANGED_SOURCE,
-        )
-    )
-    assert result is not None
-    assert result.reason == "citation_drifted"
 
 
 def test_occurrence_presentation_offsets_never_change_the_queue_item_identity() -> None:

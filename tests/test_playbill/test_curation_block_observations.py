@@ -30,7 +30,6 @@ from cruxible_core.service.playbill_curation import (
     service_list_playbill_curation,
 )
 from cruxible_core.service.playbill_next import (
-    PlaybillNextSourceObservationV2,
     PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationV1,
 )
@@ -156,34 +155,16 @@ def test_valid_stamped_v3_observation_persists_once_and_remains_client_observed(
     assert block.document_identity.qualified == "document:runbook"
 
 
-def test_incomplete_legacy_and_unresolved_document_sources_are_coverage_omissions(
+def test_incomplete_and_unresolved_document_sources_are_coverage_omissions(
     tmp_path: Path,
 ) -> None:
     instance = _instance_with_document(tmp_path)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    marker = _marker(coordinate)
-    legacy = PlaybillNextSourceObservationV2(
-        tag="playbill-next-source-observation-v2",
-        source_id="docs.legacy",
-        observed_source_digest="sha256:" + "f" * 64,
-        byte_length=200,
-        marker_summaries=(
-            marker.model_copy(
-                update={"stamp": marker.stamp.model_copy(update={"source_id": "docs.legacy"})}
-            ),
-        ),
-        occurrences=(),
-        scanned_commitment_digests=(),
-        scan_complete=True,
-        scan_notes=(),
-        marker_notes=(),
-    )
     request = PlaybillCurationListRequestV1(
         evaluation_time=NOW,
         access_profile=ACCESS,
         workspace_observation=PlaybillNextWorkspaceObservationV1(
             source_observations=(
-                legacy,
                 _v3(coordinate, complete=False),
                 _v3(coordinate, document_id="missing").model_copy(
                     update={"source_id": "docs.unresolved", "marker_summaries": ()}
@@ -197,7 +178,6 @@ def test_incomplete_legacy_and_unresolved_document_sources_are_coverage_omission
     assert result.observation_coverage.observed_block_count == 0
     assert {item.reason: item.count for item in result.observation_coverage.omissions} == {
         "block_subject_unresolved": 1,
-        "source_observation_not_v3": 1,
         "source_scan_incomplete": 1,
     }
     assert instance.review_operational_store().events(family="block_observation") == ()

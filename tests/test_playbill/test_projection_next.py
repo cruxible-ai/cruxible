@@ -43,7 +43,7 @@ from cruxible_core.service.playbill_claims import (
 )
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV2,
+    PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
@@ -148,8 +148,8 @@ def _request(
         ),
         workspace_observation=PlaybillNextWorkspaceObservationV1(
             source_observations=(
-                PlaybillNextSourceObservationV2(
-                    tag="playbill-next-source-observation-v2",
+                PlaybillNextSourceObservationV3(
+                    tag="playbill-next-source-observation-v3",
                     source_id="corpus.runbook",
                     observed_source_digest="sha256:" + "a" * 64,
                     byte_length=1000,
@@ -205,7 +205,7 @@ def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone
     assert advanced.workspace_observation is not None
     assert advanced.workspace_observation.source_observations is not None
     source = advanced.workspace_observation.source_observations[0]
-    assert isinstance(source, PlaybillNextSourceObservationV2)
+    assert isinstance(source, PlaybillNextSourceObservationV3)
     assert source.marker_summaries[0].stamp.declared_coordinate.git_oid == (
         original_coordinate.git_oid
     )

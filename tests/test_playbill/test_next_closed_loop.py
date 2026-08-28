@@ -89,7 +89,6 @@ from cruxible_core.service.playbill_next import (
     NextReason,
     PlaybillNextDriftObservationV1,
     PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV1,
     PlaybillNextSourceObservationV3,
     PlaybillNextSourceObservationV4,
     PlaybillNextWorkspaceObservationV1,
@@ -851,7 +850,7 @@ def _citation_drifted_ambiguous(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
 
 
 def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    instance, _owner, _successor, source_id, source_digest = _foreign_world(root, bind=True)
+    instance, _owner, _successor, source_id, _source_digest = _foreign_world(root, bind=True)
     before = _request(
         instance,
         workspace=PlaybillNextWorkspaceObservationV1(source_observations=()),
@@ -859,11 +858,15 @@ def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     row = _row(instance, "citation_source_unobserved", before)
     assert row.repair.operation == EXPECTED_OPERATIONS["citation_source_unobserved"]
 
+    _current, citation, envelope = _foreign_citation(instance)
     observed = PlaybillNextWorkspaceObservationV1(
         source_observations=(
-            PlaybillNextSourceObservationV1(
+            _v4_citation_observation(
+                instance=instance,
                 source_id=source_id,
-                observed_source_digest=source_digest,
+                citation_id=citation.citation_id,
+                envelope=envelope,
+                state="current",
             ),
         )
     )

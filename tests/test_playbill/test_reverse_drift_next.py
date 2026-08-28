@@ -32,7 +32,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV2,
+    PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationV1,
     _self_published_source_items,
     _SourceAssociation,
@@ -134,8 +134,8 @@ def _request(instance, *, archival: bool = False) -> PlaybillNextRequestV1:  # t
         ),
         workspace_observation=PlaybillNextWorkspaceObservationV1(
             source_observations=(
-                PlaybillNextSourceObservationV2(
-                    tag="playbill-next-source-observation-v2",
+                PlaybillNextSourceObservationV3(
+                    tag="playbill-next-source-observation-v3",
                     source_id="repo.work-items",
                     observed_source_digest=_digest(b"status: ready"),
                     byte_length=13,
@@ -344,7 +344,7 @@ def test_ambiguous_duplicate_occurrence_suppresses_reverse_drift(
     request = _request(instance)
     assert request.workspace_observation is not None
     (source,) = request.workspace_observation.source_observations or ()
-    assert isinstance(source, PlaybillNextSourceObservationV2)
+    assert isinstance(source, PlaybillNextSourceObservationV3)
     first = source.occurrences[0]
     duplicate = first.model_copy(
         update={
@@ -379,7 +379,7 @@ def test_declared_block_overlap_suppresses_reverse_drift(
     request = _request(instance)
     assert request.workspace_observation is not None
     (source,) = request.workspace_observation.source_observations or ()
-    assert isinstance(source, PlaybillNextSourceObservationV2)
+    assert isinstance(source, PlaybillNextSourceObservationV3)
     marker = SimpleNamespace(start_byte=7, end_byte=10)
     observation = request.workspace_observation.model_copy(
         update={"source_observations": (source.model_copy(update={"marker_summaries": (marker,)}),)}
