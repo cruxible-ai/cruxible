@@ -189,9 +189,14 @@ def _exact_object(
     )
 
 
-def _same_statement_claims(
+def _same_predicate_claims(
     tree: dict[str, bytes], statement: ClaimStatement
 ) -> tuple[ClaimArtifactAny, ...]:
+    """Return every live Claim on this statement's (subject, predicate).
+
+    Wider than the contended slot: these are the Claims an author may
+    disposition voluntarily, not the ones the law demands.
+    """
     claims: list[ClaimArtifactAny] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("claims/"):
@@ -201,6 +206,31 @@ def _same_statement_claims(
             claim.lifecycle.state == "live"
             and claim.statement.subject == statement.subject
             and claim.statement.predicate == statement.predicate
+        ):
+            claims.append(claim)
+    return tuple(claims)
+
+
+def _same_slot_claims(
+    tree: dict[str, bytes], statement: ClaimStatement
+) -> tuple[ClaimArtifactAny, ...]:
+    """Return the live Claims contending for this statement's own slot.
+
+    The slot is ``(subject, predicate, qualifier)`` — the same partition the
+    resolution policy and the curation detectors already use. Matching on
+    subject+predicate alone made every distinct qualifier and every
+    cardinality=many sibling demand a disposition it does not contend with.
+    """
+    claims: list[ClaimArtifactAny] = []
+    for path in sorted(tree, key=lambda item: item.encode("utf-8")):
+        if not path.startswith("claims/"):
+            continue
+        claim = parse_claim(tree[path], path=path)
+        if (
+            claim.lifecycle.state == "live"
+            and claim.statement.subject == statement.subject
+            and claim.statement.predicate == statement.predicate
+            and claim.statement.qualifier == statement.qualifier
         ):
             claims.append(claim)
     return tuple(claims)
@@ -392,17 +422,23 @@ def _lower_claim(
             else None
         ),
     )
-    existing = _same_statement_claims(candidate_base_tree, statement)
-    expected = {item.identity.name for item in existing}
+    # Demanded: the claims contending for this exact slot. Accepted-if-offered:
+    # every live claim on the same (subject, predicate), so an author may still
+    # take a position on a sibling in another qualifier's slot voluntarily.
+    slot_claims = _same_slot_claims(candidate_base_tree, statement)
+    existing = _same_predicate_claims(candidate_base_tree, statement)
+    expected = {item.identity.name for item in slot_claims}
+    dispositionable = {item.identity.name for item in existing}
     supplied = {item.claim_id for item in payload.existing_claim_dispositions}
     inferred = {payload.claim_ref} if payload.claim_ref in expected else set()
     required_ids = expected - inferred
-    if not required_ids.issubset(supplied) or not supplied.issubset(expected):
-        required = tuple(sorted(existing, key=lambda item: item.identity.name.encode("ascii")))
+    if not required_ids.issubset(supplied) or not supplied.issubset(dispositionable):
+        required = tuple(sorted(slot_claims, key=lambda item: item.identity.name.encode("ascii")))
         _refuse(
             "playbill.authoring.existing_claim_dispositions_incomplete",
             "existing_claim_dispositions",
-            "Every live same-subject/predicate Claim must receive an explicit disposition.",
+            "Every live Claim in this statement's (subject, predicate, qualifier) "
+            "slot must receive an explicit disposition.",
             repair_kind="replace_dispositions",
             repair_description="Disposition exactly the listed existing Claim IDs.",
             replacement={
@@ -416,7 +452,7 @@ def _lower_claim(
                     if claim.identity.name in required_ids and claim.identity.name not in supplied
                 ],
                 "unexpected_claim_ids": sorted(
-                    supplied - expected,
+                    supplied - dispositionable,
                     key=lambda identity: identity.encode("ascii"),
                 ),
             },
