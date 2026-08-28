@@ -23,10 +23,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError, PrincipalIntegrityError
-from cruxible_client.contracts.governance import (
-    PLAYBILL_INDEPENDENT_APPROVAL_ROLE,
-    governance_identifier,
-)
+from cruxible_client.contracts.governance import governance_identifier
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.types import PrincipalRole
 
@@ -231,86 +228,7 @@ def verify_candidate_approvals(
             "after an eligible signer approves, run playbill proposal activate"
         )
 
-    counts = candidate_approval_requirement_counts(
-        candidate,
-        verified,
-        creator_principal_id=creator_principal_id,
-    )
-    if any(
-        count < requirement.minimum_distinct_signers
-        for requirement, count in zip(candidate.approval_requirements, counts, strict=True)
-    ):
-        raise ApprovalIntegrityError(
-            "verified approvals do not satisfy every independent candidate requirement"
-        )
     return verified
-
-
-def candidate_approval_requirement_counts(
-    candidate: CandidateRecordAnyVersion,
-    verified: tuple[VerifiedApproval, ...],
-    *,
-    creator_principal_id: str,
-) -> tuple[int, ...]:
-    """Match non-creator signers to committed requirement slots exactly once."""
-
-    slots = tuple(
-        (requirement_index, requirement.role)
-        for requirement_index, requirement in enumerate(candidate.approval_requirements)
-        for _ in range(requirement.minimum_distinct_signers)
-    )
-    eligible = {
-        role: tuple(
-            index
-            for index, approval in enumerate(verified)
-            if approval.signer_id != creator_principal_id
-            and (role == PLAYBILL_INDEPENDENT_APPROVAL_ROLE or role in approval.signer_roles)
-        )
-        for role in dict.fromkeys(role for _requirement_index, role in slots)
-    }
-    slot_to_signer: list[int | None] = [None] * len(slots)
-    signer_to_slot: list[int | None] = [None] * len(verified)
-
-    def augment(root_slot: int) -> bool:
-        queued_slots = [root_slot]
-        seen_slots = {root_slot}
-        seen_signers: set[int] = set()
-        signer_predecessor: dict[int, int] = {}
-        cursor = 0
-
-        while cursor < len(queued_slots):
-            slot = queued_slots[cursor]
-            cursor += 1
-            for signer in eligible.get(slots[slot][1], ()):
-                if signer in seen_signers:
-                    continue
-                seen_signers.add(signer)
-                signer_predecessor[signer] = slot
-                matched_slot = signer_to_slot[signer]
-                if matched_slot is None:
-                    current_signer = signer
-                    while True:
-                        current_slot = signer_predecessor[current_signer]
-                        displaced_signer = slot_to_signer[current_slot]
-                        slot_to_signer[current_slot] = current_signer
-                        signer_to_slot[current_signer] = current_slot
-                        if displaced_signer is None:
-                            return True
-                        current_signer = displaced_signer
-                if matched_slot not in seen_slots:
-                    seen_slots.add(matched_slot)
-                    queued_slots.append(matched_slot)
-        return False
-
-    for slot in range(len(slots)):
-        augment(slot)
-    return tuple(
-        sum(
-            slots[slot][0] == requirement_index and signer is not None
-            for slot, signer in enumerate(slot_to_signer)
-        )
-        for requirement_index in range(len(candidate.approval_requirements))
-    )
 
 
 __all__ = [
@@ -321,7 +239,6 @@ __all__ = [
     "VerifiedApproval",
     "approval_digest",
     "approval_statement_bytes",
-    "candidate_approval_requirement_counts",
     "verify_approval",
     "verify_candidate_approvals",
 ]

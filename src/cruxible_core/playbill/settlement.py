@@ -165,6 +165,15 @@ class ChangeSetRecord(_StrictSettlementModel):
         CandidateDigest.from_tagged(value)
         return value
 
+    @field_validator("approval_requirements")
+    @classmethod
+    def _approval_requirements(
+        cls, value: tuple[ApprovalRequirement, ...]
+    ) -> tuple[ApprovalRequirement, ...]:
+        if value:
+            raise ValueError("approval requirements are retired and must be empty")
+        return value
+
     @field_validator("compiler_digest", "mandate_digest")
     @classmethod
     def _generic_digest(cls, value: str | None) -> str | None:

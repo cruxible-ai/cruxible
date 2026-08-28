@@ -384,7 +384,7 @@ def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
         "candidate": candidate,
         "candidate_digest": candidate_digest(candidate).tagged,
         "required_tier": "governed_write",
-        "approval_requirements": ({"role": "owner"},),
+        "approval_requirements": (),
         "activation_policy": "snapshot",
         "closure_paths": (DOCUMENT_PATH,),
         "members": (
@@ -419,7 +419,7 @@ def test_candidate_record_refuses_law_mapping_or_member_substitution() -> None:
         "candidate": candidate,
         "candidate_digest": candidate_digest(candidate).tagged,
         "required_tier": "governed_write",
-        "approval_requirements": ({"role": "owner"},),
+        "approval_requirements": (),
         "activation_policy": "snapshot",
         "closure_paths": (DOCUMENT_PATH,),
         "members": (

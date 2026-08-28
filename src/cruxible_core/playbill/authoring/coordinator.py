@@ -10,7 +10,6 @@ from typing import Callable, Literal
 from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.attestations import (
     VerifiedApproval,
-    candidate_approval_requirement_counts,
     verify_approval,
 )
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1, lower_authoring_input
@@ -2108,32 +2107,6 @@ class AuthoringIntentCoordinator:
                 verified_approvals.append(verified)
         conditions: list[AcceptanceConditionV1] = []
         approvals_complete = True
-        requirement_counts = candidate_approval_requirement_counts(
-            candidate,
-            tuple(verified_approvals),
-            creator_principal_id=admission.actor_id,
-        )
-        for requirement, count in zip(
-            candidate.approval_requirements,
-            requirement_counts,
-            strict=True,
-        ):
-            satisfied = count >= requirement.minimum_distinct_signers
-            approvals_complete = approvals_complete and satisfied
-            conditions.append(
-                AcceptanceConditionV1(
-                    condition=(
-                        f"approval:{requirement.role}:{requirement.minimum_distinct_signers}"
-                    ),
-                    owner="approver",
-                    action=(
-                        "Wait for independently submitted approval attestations "
-                        f"from {requirement.minimum_distinct_signers} distinct "
-                        f"{requirement.role} signer(s)."
-                    ),
-                    satisfied=satisfied,
-                )
-            )
         if principal_lifecycle:
             actor_binding_satisfied = any(
                 approval.signer_id == admission.actor_id for approval in verified_approvals
