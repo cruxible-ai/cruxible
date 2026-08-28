@@ -196,7 +196,7 @@ def _accept_claim_successor(instance, owner, *, value: str, sequence: int):  # t
         proposal_name=f"next-successor-{sequence}",
         timestamp=f"2026-08-24T17:00:{sequence:02d}.000000Z",
     )
-    activate_work_item_claim(instance, owner, proposed, sequence=sequence)
+    activate_work_item_claim(instance, owner, proposed)
     return current
 
 
@@ -523,7 +523,7 @@ def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: P
         proposal_name="conflicting-work-item",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate_work_item_claim(instance, owner, second, sequence=3)
+    activate_work_item_claim(instance, owner, second)
 
     result = service_playbill_next(
         instance,

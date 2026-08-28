@@ -166,7 +166,7 @@ def test_orient_list_and_next_share_the_same_structural_claim_slot_classifier(
         proposal_name="same-work-item-slot",
         timestamp="2026-08-21T12:00:03.000000Z",
     )
-    activate_work_item_claim(instance, owner, second, sequence=3)
+    activate_work_item_claim(instance, owner, second)
 
     listed = service_search_playbill(
         instance,
