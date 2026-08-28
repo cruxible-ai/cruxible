@@ -67,6 +67,7 @@ from cruxible_core.playbill.projection import (
     CandidateGenerationProjectionCoordinate,
 )
 from cruxible_core.playbill.proposals import (
+    ClaimQueryFactsProvider,
     ExhaustPromotionVerifierProtocol,
     claim_admission_accounts_from_candidate,
     claim_type_expansions_from_candidate,
@@ -700,6 +701,7 @@ def prepare_generation(
     mandate_digest: str | None = None,
     crash_hook: SettlementCrashHook | None = None,
     promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
+    query_facts_provider: ClaimQueryFactsProvider | None = None,
 ) -> VerifiedGenerationBundle:
     """Build and verify a generation bundle without mutating main or serving state."""
 
@@ -723,6 +725,7 @@ def prepare_generation(
         actor_id=actor_binding.actor_id,
         claim_type_expansions=claim_type_expansions_from_candidate(candidate),
         promotion_verifier=promotion_verifier,
+        query_facts_provider=query_facts_provider,
         replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         wire_version=candidate.tag,
     )

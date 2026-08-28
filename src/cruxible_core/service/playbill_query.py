@@ -51,6 +51,7 @@ from cruxible_core.playbill.service.query_definitions import accepted_query_defi
 from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
 from cruxible_core.service.playbill_evidence import (
     ClaimReadHistoryIndex,
+    ClaimReadSourceProtocol,
     _claim_read_history_index,
     _current_replay_available,
     _referent_digests,
@@ -109,7 +110,7 @@ def _accepted_subjects(tree: Mapping[str, bytes]) -> tuple[AcceptedSubject, ...]
 
 
 def _fact_row(
-    instance: PlaybillInstance,
+    instance: ClaimReadSourceProtocol,
     *,
     path: str,
     tree: Mapping[str, bytes],
@@ -184,7 +185,7 @@ def _fact_row(
 
 
 def build_accepted_query_facts(
-    instance: PlaybillInstance,
+    instance: ClaimReadSourceProtocol,
     *,
     coordinate: AcceptedProjectionCoordinate,
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,

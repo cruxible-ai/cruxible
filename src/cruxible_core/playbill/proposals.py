@@ -119,6 +119,7 @@ from cruxible_client.contracts.documents import (
 )
 from cruxible_client.contracts.errors import (
     DocumentFormatError,
+    PlaybillError,
     PrincipalIntegrityError,
     ProposalAdmissionError,
     ProposalIntegrityError,
@@ -175,6 +176,7 @@ from cruxible_client.contracts.proposal_models import (
     ProposalResult,
     ProposalTransportProtocol,
     _StrictProposalModel,
+    claim_admission_account_order_key,
 )
 from cruxible_client.contracts.providers import (
     AcceptedProviderV1,
@@ -404,7 +406,7 @@ def claim_type_expansions_from_candidate(
             continue
         try:
             expansions.append(ClaimTypeExpansionEvidenceV1.model_validate(raw))
-        except ValidationError as exc:
+        except (PlaybillError, ValidationError) as exc:
             raise ProposalIntegrityError(
                 "candidate contains invalid ClaimType authoring expansion evidence"
             ) from exc
@@ -455,9 +457,7 @@ def claim_admission_accounts_from_candidate(
         raise ProposalIntegrityError(
             "candidate Claim admission accounts differ from query receipt commitments"
         )
-    return tuple(
-        sorted(accounts.values(), key=lambda item: canonical_bytes(item.model_dump(mode="json")))
-    )
+    return tuple(sorted(accounts.values(), key=claim_admission_account_order_key))
 
 
 def _diagnostic(code: str, message: str, path: str | None = None) -> CompilerDiagnostic:
@@ -975,7 +975,7 @@ def _claim_admission_evaluations(
     claim_types: Mapping[str, AcceptedClaimType],
     current: AcceptedProjectionCoordinate,
     query_facts_provider: ClaimQueryFactsProvider | None,
-    replay_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...],
+    replay_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None,
 ) -> tuple[
     dict[str, tuple[dict[str, object], ...]],
     dict[str, tuple[str, ...]],
@@ -1001,10 +1001,6 @@ def _claim_admission_evaluations(
     query_digests_by_path: dict[str, tuple[str, ...]] = {}
     accounts: list[ClaimAdmissionEvaluationAccountV1] = []
     diagnostics: list[CompilerDiagnostic] = []
-    replay_by_key = {
-        (item.claim_path, item.claim_type_identity, item.policy_digest): item
-        for item in replay_accounts
-    }
     definitions = _accepted_queries_by_digest(current_tree)
     facts: ClaimQueryFactsV1 | None = None
     for subject_path, changed_paths in sorted(
@@ -1055,71 +1051,25 @@ def _claim_admission_evaluations(
             results: tuple[ClaimCorroborationResultV1, ...] = ()
             issues: tuple[tuple[str, str], ...] = ()
             if policy.corroboration_requirements:
-                if replay_accounts:
-                    replayed = tuple(
-                        replay_by_key.get(
-                            (
-                                changed_path,
-                                accepted_type.claim_type.identity.qualified,
-                                policy_digest,
-                            )
-                        )
-                        for changed_path in changed_paths
+                if query_facts_provider is None:
+                    raise ProposalIntegrityError(
+                        "Claim corroboration requires accepted query facts"
                     )
-                    if any(item is None for item in replayed):
+                if facts is None:
+                    facts = query_facts_provider(current)
+                    if facts.coordinate != current:
                         raise ProposalIntegrityError(
-                            "candidate Claim corroboration account is incomplete"
+                            "accepted query facts coordinate differs from proposal coordinate"
                         )
-                    typed_replayed = tuple(item for item in replayed if item is not None)
-                    first = typed_replayed[0]
-                    if any(
-                        item.corroboration_results != first.corroboration_results
-                        or item.claim_type_digest != accepted_type.artifact_digest
-                        for item in typed_replayed
-                    ):
-                        raise ProposalIntegrityError(
-                            "candidate Claim corroboration accounts disagree"
-                        )
-                    results = first.corroboration_results
-                    issues = tuple(
-                        (
-                            (
-                                "playbill.claim.corroboration_query_refused",
-                                "Claim corroboration requirement "
-                                f"{item.requirement_id!r} ({item.query_definition_digest}) "
-                                f"was refused by query code {item.query_refusal_code!r}.",
-                            )
-                            if item.query_verdict == "refused"
-                            else (
-                                "playbill.claim.corroboration_insufficient",
-                                "Claim corroboration requirement "
-                                f"{item.requirement_id!r} was not satisfied by "
-                                f"{item.observed_count} observed rows.",
-                            )
-                        )
-                        for item in results
-                        if not item.satisfied
-                    )
-                else:
-                    if query_facts_provider is None:
-                        raise ProposalIntegrityError(
-                            "Claim corroboration requires accepted query facts"
-                        )
-                    if facts is None:
-                        facts = query_facts_provider(current)
-                        if facts.coordinate != current:
-                            raise ProposalIntegrityError(
-                                "accepted query facts coordinate differs from proposal coordinate"
-                            )
-                    results, issues = _run_corroboration_requirements(
-                        policy=policy,
-                        accepted_type=accepted_type,
-                        subject=subject,
-                        definitions=definitions,
-                        facts=facts,
-                        current=current,
-                        timestamp=timestamp,
-                    )
+                results, issues = _run_corroboration_requirements(
+                    policy=policy,
+                    accepted_type=accepted_type,
+                    subject=subject,
+                    definitions=definitions,
+                    facts=facts,
+                    current=current,
+                    timestamp=timestamp,
+                )
             context = ClaimAdmissionCandidateContextV1(
                 evaluation_time=timestamp,
                 declared_predicates=declared_predicates,
@@ -1187,9 +1137,13 @@ def _claim_admission_evaluations(
             key=lambda item: canonical_bytes(item.model_dump(mode="json")),
         )
     )
-    ordered_accounts = tuple(
-        sorted(accounts, key=lambda item: canonical_bytes(item.model_dump(mode="json")))
-    )
+    ordered_accounts = tuple(sorted(accounts, key=claim_admission_account_order_key))
+    if replay_accounts is not None:
+        committed_accounts = tuple(sorted(replay_accounts, key=claim_admission_account_order_key))
+        if ordered_accounts != committed_accounts:
+            raise ProposalIntegrityError(
+                "Claim corroboration replay account differs from accepted query re-derivation"
+            )
     return (
         entries_by_path,
         digests_by_path,
@@ -2324,7 +2278,7 @@ def _evaluate_scoped_members(
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...],
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
     query_facts_provider: ClaimQueryFactsProvider | None,
-    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...],
+    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None,
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -2854,7 +2808,7 @@ def evaluate_proposal_tree(
     parent_state: EvaluatedTreeState | None = None,
     wire_version: CandidateWireVersion = PRODUCED_CANDIDATE_VERSION,
     query_facts_provider: ClaimQueryFactsProvider | None = None,
-    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = (),
+    replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -3111,17 +3065,22 @@ class ProposalService:
                 expected_ref_oid=commit_oid,
             )
         candidate_value = outcome.candidate.candidate_digest if outcome.candidate else None
-        evaluation = ProposalEvaluationRecord(
-            proposal_id=proposal_id,
-            verdict="candidate" if outcome.candidate is not None else "refused",
-            evaluated_base_oid=current.git_oid,
-            evaluated_tree_oid=evaluated_tree_oid if outcome.candidate is not None else None,
-            rebased=is_rebase,
-            candidate_digest=candidate_value,
-            diagnostics=outcome.diagnostics,
-            claim_admission_accounts=outcome.claim_admission_accounts,
-            evaluated_at=timestamp,
-        )
+        try:
+            evaluation = ProposalEvaluationRecord(
+                proposal_id=proposal_id,
+                verdict="candidate" if outcome.candidate is not None else "refused",
+                evaluated_base_oid=current.git_oid,
+                evaluated_tree_oid=evaluated_tree_oid if outcome.candidate is not None else None,
+                rebased=is_rebase,
+                candidate_digest=candidate_value,
+                diagnostics=outcome.diagnostics,
+                claim_admission_accounts=outcome.claim_admission_accounts,
+                evaluated_at=timestamp,
+            )
+        except ValidationError as exc:
+            raise ProposalIntegrityError(
+                "proposal evaluation record failed deterministic validation"
+            ) from exc
         self.evidence.write_evaluation(evaluation)
         if outcome.candidate is not None:
             self.evidence.write_candidate(outcome.candidate)

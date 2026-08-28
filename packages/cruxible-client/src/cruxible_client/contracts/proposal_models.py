@@ -31,6 +31,20 @@ _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-
 _OID_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 
 
+def claim_admission_account_order_key(
+    account: ClaimAdmissionEvaluationAccountV1,
+) -> bytes:
+    """Return the one canonical ordering key for persisted admission accounts."""
+
+    return canonical_bytes(
+        [
+            account.claim_path,
+            account.claim_type_identity,
+            account.policy_digest,
+        ]
+    )
+
+
 def canonical_proposal_ref_name(display_name: str) -> str:
     """Lower a human display label into the closed proposal-ref grammar."""
 
@@ -250,10 +264,8 @@ class ProposalEvaluationRecord(_StrictProposalModel):
     def _claim_admission_accounts(
         cls, value: tuple[ClaimAdmissionEvaluationAccountV1, ...]
     ) -> tuple[ClaimAdmissionEvaluationAccountV1, ...]:
-        keys = tuple(
-            (item.claim_path, item.claim_type_identity, item.policy_digest) for item in value
-        )
-        if keys != tuple(sorted(set(keys), key=lambda item: canonical_bytes(item))):
+        keys = tuple(claim_admission_account_order_key(item) for item in value)
+        if keys != tuple(sorted(set(keys))):
             raise ValueError("claim admission accounts must be canonically sorted and unique")
         return value
 
@@ -308,5 +320,6 @@ __all__ = [
     "ProposalReceiveLimits",
     "ProposalResult",
     "ProposalTransportProtocol",
+    "claim_admission_account_order_key",
     "canonical_proposal_ref_name",
 ]

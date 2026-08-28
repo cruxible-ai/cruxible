@@ -9,6 +9,7 @@ import shutil
 import stat
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
@@ -80,6 +81,9 @@ from cruxible_core.playbill.settlement import (
 )
 from cruxible_core.playbill.witness import WitnessSink
 from cruxible_core.storage.playbill_projection import ProjectionHandle, bind_projection
+
+if TYPE_CHECKING:
+    from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 
 DESCRIPTOR_FILE = "instance.json"
 
@@ -157,6 +161,21 @@ class PlaybillInstance:
         self._verified_genesis = verified_genesis
         self._recovered = recovered
         self._promotion_verifier = promotion_verifier
+
+    @staticmethod
+    def _accepted_query_facts(
+        source: object,
+        coordinate: AcceptedProjectionCoordinate,
+    ) -> "ClaimQueryFactsV1":
+        """Build the one accepted-Claim facts projection for live and replay paths."""
+
+        from cruxible_core.service.playbill_evidence import ClaimReadSourceProtocol
+        from cruxible_core.service.playbill_query import build_accepted_query_facts
+
+        return build_accepted_query_facts(
+            cast(ClaimReadSourceProtocol, source),
+            coordinate=coordinate,
+        )
 
     @classmethod
     def initialize(
@@ -373,6 +392,7 @@ class PlaybillInstance:
             bodies=ContentAddressedBodyStore(paths["cas"]),
             witness=witness,
             promotion_verifier=promotion_verifier,
+            query_facts_builder=cls._accepted_query_facts,
             checkpoint_directory=cls._checkpoint_directory(managed_root),
         )
         return cls(
@@ -495,10 +515,6 @@ class PlaybillInstance:
     def proposal_service(self) -> ProposalService:
         """Bind PB-C proposal evaluation to authenticated main and inert storage."""
 
-        # Imported lazily to keep instance construction independent of served
-        # surfaces while reusing the one accepted-Claim query projection.
-        from cruxible_core.service.playbill_query import build_accepted_query_facts
-
         paths = self._validated_paths(self.root, self.descriptor.storage)
         return ProposalService(
             self._ledger,
@@ -507,10 +523,7 @@ class PlaybillInstance:
             evidence=ProposalEvidenceStore(paths["exhaust"]),
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
-            query_facts_provider=lambda coordinate: build_accepted_query_facts(
-                self,
-                coordinate=coordinate,
-            ),
+            query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
         )
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
@@ -643,6 +656,7 @@ class PlaybillInstance:
             bodies=ContentAddressedBodyStore(paths["cas"]),
             witness=witness,
             promotion_verifier=self._promotion_verifier,
+            query_facts_builder=self._accepted_query_facts,
             checkpoint_directory=self._checkpoint_directory(self.root),
         )
         return self.accepted_coordinate()
@@ -690,6 +704,7 @@ class PlaybillInstance:
             proposal_actor_id=proposal_actor_id,
             sequence=sequence,
             promotion_verifier=self._promotion_verifier,
+            query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
         )
 
     def assemble_projection(

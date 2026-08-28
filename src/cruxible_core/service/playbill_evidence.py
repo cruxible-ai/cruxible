@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -17,6 +17,7 @@ from cruxible_client.contracts.captures import (
     parse_capture_contract,
     parse_capture_envelope,
 )
+from cruxible_client.contracts.cas_contracts import BodyProjectionProtocol
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
     ClaimAttestationStatement,
@@ -77,12 +78,32 @@ from cruxible_core.playbill.service.documents import (
     PlaybillProposalInspection,
 )
 from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
-from cruxible_core.playbill.settlement import ChangeSetRecord
+from cruxible_core.playbill.settlement import ChangeSetRecord, ChangeSetRecordAnyVersion
 from cruxible_core.playbill.source_readers import ExternalSourceReaderProtocol
 
 
 class _StrictEvidenceServiceModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class AcceptedHistoryGenerationProtocol(Protocol):
+    """The accepted-history fields required by deterministic Claim fact replay."""
+
+    @property
+    def oid(self) -> str: ...
+
+    @property
+    def record(self) -> ChangeSetRecordAnyVersion | None: ...
+
+
+class ClaimReadSourceProtocol(Protocol):
+    """Accepted-state read seam shared by live instances and recovery replay."""
+
+    def accepted_history(self) -> tuple[AcceptedHistoryGenerationProtocol, ...]: ...
+
+    def tree_at(self, oid: str) -> dict[str, bytes]: ...
+
+    def body_store(self) -> BodyProjectionProtocol: ...
 
 
 class PreparedClaimAttestationV1(_StrictEvidenceServiceModel):
@@ -454,7 +475,7 @@ def service_propose_claim_attestation(
 
 
 def _current_replay_available(
-    instance: PlaybillInstance,
+    instance: ClaimReadSourceProtocol,
     capture_digest_value: str,
     *,
     readers: Mapping[str, ExternalSourceReaderProtocol],
@@ -486,7 +507,7 @@ def _current_replay_available(
 
 @dataclass
 class ClaimReadHistoryIndex:
-    instance: PlaybillInstance
+    instance: ClaimReadSourceProtocol
     generation_oids: tuple[str, ...]
     law_evidence: dict[str, ClaimLawEvidenceAny]
     _claim_types: dict[tuple[str, str], ClaimType] | None = None
@@ -509,7 +530,7 @@ class ClaimReadHistoryIndex:
 
 
 def _claim_read_history_index(
-    instance: PlaybillInstance,
+    instance: ClaimReadSourceProtocol,
     *,
     coordinate: AcceptedProjectionCoordinate,
 ) -> ClaimReadHistoryIndex:
