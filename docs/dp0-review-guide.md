@@ -47,8 +47,6 @@ playbill claim explain
 playbill claim get
 playbill claim history
 playbill claim list
-playbill claim propose
-playbill claim propose-batch
 playbill claim retire
 playbill claim-type get
 playbill claim-type list
@@ -96,7 +94,6 @@ playbill query list
 playbill query propose
 playbill query run
 playbill search
-playbill seed apply
 playbill since
 playbill sources check
 playbill sources compile
@@ -173,8 +170,6 @@ POST /api/v1/{instance_id}/playbill/claim-types/proposals
 POST /api/v1/{instance_id}/playbill/claim-types/migrations
 GET  /api/v1/{instance_id}/playbill/claim-types
 GET  /api/v1/{instance_id}/playbill/claim-types/{predicate}
-POST /api/v1/{instance_id}/playbill/claims/proposals
-POST /api/v1/{instance_id}/playbill/claims/proposals/batch
 GET  /api/v1/{instance_id}/playbill/claims
 GET  /api/v1/{instance_id}/playbill/claims/{identity}
 GET  /api/v1/{instance_id}/playbill/claims/{identity}/history
@@ -250,8 +245,6 @@ cruxible_playbill_subject_history
 cruxible_playbill_propose_claim_type
 cruxible_playbill_list_claim_types
 cruxible_playbill_get_claim_type
-cruxible_playbill_propose_claim
-cruxible_playbill_propose_claims
 cruxible_playbill_claim_retire
 cruxible_playbill_list_claims
 cruxible_playbill_get_claim
@@ -278,7 +271,6 @@ cruxible_playbill_workspace_source_compile
 cruxible_playbill_proposal_list
 cruxible_playbill_proposal_readmit
 cruxible_playbill_claim_type_migrate
-cruxible_playbill_seed_apply
 cruxible_playbill_seed_plan
 cruxible_playbill_search
 cruxible_playbill_since
@@ -306,7 +298,7 @@ The 19 added operations are the knowledge loop an instance is driven through:
 |---|---|
 | Subjects | `playbill_propose_subject`, `playbill_list_subjects`, `playbill_get_subject`, `playbill_subject_history` |
 | ClaimTypes | `playbill_propose_claim_type`, `playbill_list_claim_types`, `playbill_get_claim_type` |
-| Claims | `playbill_propose_claim`, `playbill_list_claims`, `playbill_get_claim`, `playbill_claim_history`, `playbill_explain_claim` |
+| Claims | `playbill_list_claims`, `playbill_get_claim`, `playbill_claim_history`, `playbill_explain_claim` (writes use the AuthoringIntent coordinator) |
 | Queries | `playbill_propose_query_definition`, `playbill_list_query_definitions`, `playbill_get_query_definition`, `playbill_run_query` |
 | Semantic reads | `playbill_discover`, `playbill_expand` |
 | Floor | `playbill_export_floor` |
@@ -448,17 +440,13 @@ surface delta is one added variant on an existing request model, so the facade
 operation inventory, the route inventory, the MCP tool inventory, and every
 golden in this repository are byte-identical across the slice.
 
-**One added authoring input.** `DirectClaimAuthoringV1.source_selection` is a
-tag-discriminated union, and `playbill-direct-foreign-source-selection-v1` joins
-it beside the CAS-span and typed-external forms. A proposer stores the foreign
-file's bytes through the ordinary body-store operation, then names the logical
-source and the byte window inside those bytes; `claim propose` and `claim
-propose-batch` carry it with no flag and no new command, which is what the
-authoring-JSON harnesses need. Three things are bound and they are deliberately
-different things: the **coordinate** names the whole snapshot the proposer
-presented, by content digest and length; the **selector** names the window
-inside that snapshot; and the **commitment** is over the selected bytes alone,
-because that is the unit a working occurrence is later matched against.
+**The authoring coordinator carries the source selection.** Flow-A binding
+stores the foreign file's bytes through the ordinary body-store operation, then
+names the logical source and the byte window inside those bytes. Three things
+are bound and deliberately differ: the **coordinate** names the whole snapshot,
+the **selector** names its byte window, and the **commitment** covers the
+selected bytes alone, because that is the unit a working occurrence later
+matches.
 
 **One contract per logical source, and it earns its acceptance.**
 `logical_source_identities` is an enumerated tuple, so a shared contract would
@@ -554,56 +542,15 @@ golden moves; the only added surface is the `playbill hook post-tool-use` CLI
 command, and the coverage package's no-authority import allowlist still holds
 over both new modules.
 
-## PC-G-H3: the seed bundle and arm recipe
+PC-DEL3 marks that vendor-specific hook deprecated and parked. It remains
+registered for compatibility, but new harness integrations use the client
+coverage middleware; no new hook behavior is added here.
 
-The last slice of the TauBench critical path. It adds one CLI group, one flag on
-an existing command, a pure planning module, and a committed benchmark
-directory. **Zero served operations, zero routes, zero MCP tools, zero client
-methods, and zero golden diffs**; every propose call the seed command makes
-existed before this slice, and `playbill/seed.py` writes the table of them out
-by name so that is readable rather than asserted.
+## PC-G-H3: the arm recipe
 
-### The seed bundle is CLI orchestration, and could not have been one proposal
-
-`playbill seed apply BUNDLE_DIR --name NAME` applies a directory of authoring
-JSONs — `claim-types/`, `subjects/`, `documents/`, `claims/`,
-`query-definitions/`, plus a `bodies/` subtree stored in CAS first — as the
-fewest governed proposals it can legally become. The layout is the manifest:
-there is no bundle manifest file, and a file outside those directories refuses
-rather than being skipped, because silently applying part of a bundle makes
-"this bundle was applied" untrue in a way nobody can see.
-
-**Where the minimum comes from.** `DirectClaimAuthoringV1` already carries
-dependency closures. A ClaimType or Subject that some bundle Claim declares in
-`claim_type_artifact`, `subject_shell`, `dependency_claim_types`, or
-`dependency_subject_shells` costs **no proposal at all**, because the batch
-operation admits it in the same generation; the plan names each such entry and
-the Claim that carries it. The planner never adds a closure an authoring did not
-declare — deciding that a Claim should carry a Subject is an authoring decision
-the admission laws adjudicate, not one a seeding convenience takes. The example
-bundle's three Claims, one ClaimType, and three Subjects are therefore one
-proposal, with the QueryDefinition a second because the served surface has a
-singular propose operation for it and no plural one.
-
-**Why applying is one group per invocation.** This was measured, not assumed:
-opening two proposals against one accepted head and activating both fails with
-`settlement base is not the current main ref`. A plan is therefore a *sequence*,
-and the caller must activate each group before submitting the next. Approval is
-an optional governed attestation and activation is the state-changing act; this
-command performs neither. `--plan` prints the whole grouping offline and reaches
-no daemon. The committed TauBench harness deliberately records a voluntary
-approval while it loops plan → apply → approve → activate over the printed group
-ids; a creator-suffices harness may loop plan → apply → activate instead.
-
-**Refusals defer to the laws.** The one thing checked at plan time is the case
-the propose operation would refuse anyway and that is cheaper to say early: two
-entries putting different bytes at one canonical path in one change set — a
-top-level ClaimType diverging from the one a Claim carries, or two Claims
-carrying different copies. Everything else about admissibility is left to the
-propose operation's own diagnostics, which are the authoritative answer. The
-planner accordingly validates only the models it reads fields out of, and every
-one of them lives inside the `playbill` package: `seed.py` imports no service
-module and there is no import cycle to break.
+The deterministic seed planner and its historical plan bytes remain available
+to the benchmark harness. PC-DEL3 retired the state-changing seed-apply adapter;
+governed writes now travel through the AuthoringIntent coordinator.
 
 ### The arm recipe is executable and committed
 
@@ -652,76 +599,6 @@ deliberately *not* in it and are recorded here rather than left implied:
 | Procedure expand | `playbill expand` returns a context capsule for Subjects, Claims, and interfaces; Procedures are not a facet | a Procedure facet on the capsule, once dogfood shows which fields a reader actually wants |
 | Journal ownership | `run["journal_record_digest"] is None`: the daemon opens no query-receipt journal, and the knowledge-loop smoke pins that | a daemon-owned journal and the decision about who owns retention — the same open seam PC-F2-S2 recorded |
 | Lineage read | an earlier proposal can be *named* and the naming is checked against the shared target ref; no read enumerates a lineage | one served read operation over admissions, which is a contract change and was out of scope for both PC-F3 and this batch |
-## PC-F3-S1b: the multi-Claim proposal operation
-
-A change set already settles as one indivisible generation, and the evaluator,
-the candidate record, and the closure proof have always been multi-member. What
-the served surface lacked was a way for an *author* to reach that atomicity:
-`playbill_propose_claim` wrote exactly one `claims/...` path per proposal, so a
-Claim that is only meaningful beside its siblings -- a relation and the
-vocabulary it discriminates, a reading and the metric it is a reading of -- had
-to be split across generations that could each be accepted without the other.
-This slice adds the plural operation. The facade operation inventory moves from
-39 to 40.
-
-**The change set it produces is ordinary.** Nothing about settlement,
-evaluation, admission, or the wire format distinguishes a proposal carrying five
-Claims from one carrying a single Claim, and no evaluator or law changed here.
-The plural entrypoint loops the existing per-Claim authoring body over one
-shared candidate tree and submits it once. `service_propose_claim_attestation`
-has written a successor plus N competing Claims through the same ordinary path
-since PC-B; this slice generalizes the authoring side to match.
-
-**The singular operation is now a delegation, and that is asserted rather than
-assumed.** `service_propose_playbill_claim` calls the plural service with a
-one-element tuple and re-wraps the result in its unchanged contract. Its
-per-authoring capture, pin, predecessor, and handoff handling is the same code
-that ran before, so a single authoring produces the same candidate digest,
-proposal id, and Claim artifact digest it produced at the previous head; a test
-pins that identity by digest across the two entrypoints rather than by
-inspection.
-
-**Cross-authoring conflicts refuse before submit, and only cross-authoring
-ones.** An authoring may always restate an artifact the accepted base already
-holds -- the acceptance laws adjudicate that succession, and narrowing it would
-change single-Claim behavior. What an authoring may never do is contradict a
-*sibling* in the same change set, because there is no later moment at which two
-byte strings at one path could be reconciled. So identical dependency artifacts
-deduplicate silently across authorings, differing ones raise a typed
-`ProposalIntegrityError` before the proposal service is reached, and two
-authorings naming the same Claim path are refused outright. An empty authoring
-set is likewise a typed refusal rather than an empty proposal.
-
-**Deliberately unchanged: existing-statement disposition still reads the
-accepted base.** The handoff law makes an author disposition every *accepted*
-same-subject/predicate statement before stating an adjacent one. Sibling Claims
-inside the same proposal are not accepted state, so they are not handoff
-subjects -- competing Claims in one change set are exactly what the attestation
-path already writes, and the resolution policy, not the author, adjudicates
-them.
-
-**The CLI adds a command rather than a flag.** `playbill claim propose` keeps
-its single `--authoring` and its single-Claim result shape unchanged; the plural
-form is `playbill claim propose-batch --authoring A --authoring B --name NAME`,
-whose repeated flag names the set and whose distinct result shape does not
-depend on how many files the caller passed. The route is a sub-resource of the
-collection the Claims settle into, `POST .../playbill/claims/proposals/batch`,
-rather than a sibling collection.
-
-### The authorized golden re-pin
-
-The same three served-surface pins move, additively, for the one added
-operation:
-
-| Golden | What changed |
-|---|---|
-| `tests/goldens/playbill/served-surface-dp0b-v1.json` | `facade_operations` 39 → 40 (`playbill_propose_claims`); `http_delegate_count` and `mcp_delegate_count` 39 → 40 |
-| `tests/goldens/http_surface/http_surface_snapshot.json` | one added path, `POST /api/v1/{instance_id}/playbill/claims/proposals/batch`; zero existing paths removed or changed |
-| `tests/goldens/cruxible_client/contracts_snapshot.json` | two added models, `PlaybillAuthoredClaim` and `PlaybillClaimBatchProposal`; zero existing models removed or changed |
-
-Each was produced through its own regeneration path, and every other golden in
-this repository is byte-identical across the slice.
-
 ## Deleted directory and service inventory
 
 DP-0 removed these legacy product packages in full:
@@ -1012,10 +889,6 @@ break reviewed under a new format tag, never a regeneration event.
 
 `tests/goldens/playbill/claim-type-v1.json` preserves the canonical policy-bearing
 ClaimType v1 wire and digest contract.
-
-`tests/goldens/playbill/capture-claim-v1.json` preserves the bounded direct
-CaptureContract/CaptureEnvelope wire and all three first-class Claim digest
-layers.
 
 `tests/goldens/playbill/source-reference-v1.json` preserves locator-free external
 source identity and remote-state refusal behavior.

@@ -47,13 +47,11 @@ from recipe import bootstrap, seed, export_arm_surface, build_arm, run_turn, run
    `operator` creator and an independent `reviewer` in client custody. The server
    URL is required, never inferred, so two arms cannot silently seed against
    different worlds.
-2. **`seed`** — `playbill seed apply --plan`, then for each planned group:
-   `apply --group`, `proposal approve`, `proposal activate`. The loop is the
-   harness's, because approval and activation are separate governed acts and the
-   seed command performs neither. The independent `reviewer` signs every seed
-   proposal; the `operator` creator never self-approves. One proposal per
-   invocation, because a proposal settles against the base it was admitted at
-   and two proposals opened against one head cannot both activate.
+2. **`seed`** — reads the pure bundle plan, then drives ClaimTypes, Subjects and
+   the QueryDefinition through their ordinary proposal surfaces and Claims and
+   the Procedure through AuthoringIntent. The independent `reviewer` signs every
+   proposal before the harness activates it. One write settles at a time because
+   two proposals opened against one head cannot both activate.
 3. **`export_arm_surface`** — `playbill floor export`, producing the pointer-model
    floor-v2 artifacts and §11.6.3 coverage boundary in one greppable tree. The
    unshipped native markdown projection is deliberately not part of either arm.
@@ -83,29 +81,21 @@ path through the named non-lossy `playbill-coverage-path-identity-v1`
 normalizer. Nothing on either side infers it; the two declarations agree because
 they were written to.
 
-The bundle plans as **three** proposals:
+The current ClaimInput bundle plans and settles as **nine** proposals:
 
 ```text
-1. claims  [playbill_propose_claims]  3 Claim(s) and every dependency they carry
-     settle as one generation through the batch operation
-2. query_definition:project.work_items  [playbill_propose_query_definition]
-3. procedure:project.work_item.digest  [playbill_authoring_submit]
-carried  claim-types/project.work_item.status.json  admitted by claims/wi-101-status.json
-carried  subjects/wi-101.json  admitted by claims/wi-101-status.json
-carried  subjects/wi-102.json  admitted by claims/wi-102-status.json
-carried  subjects/wi-103.json  admitted by claims/wi-103-status.json
+1. claim_type:project.work_item.status  [playbill_propose_claim_type]
+2-4. subject:project.work_item/wi-10{1,2,3}  [playbill_propose_subject]
+5-7. claim_input:project.work_item/wi-10{1,2,3}#project.work_item.status
+     [playbill_authoring_submit]
+8. query_definition:project.work_items  [playbill_propose_query_definition]
+9. procedure:project.work_item.digest  [playbill_authoring_submit]
 ```
 
-The ClaimType and all three Subjects cost no proposal at all, because the Claim
-authorings declare them as dependency closures and the batch admits them in the
-same generation. The Procedure uses one existing coordinator intent; the
-QueryDefinition uses its singular propose operation. Run
-`cruxible playbill seed apply seed-example --name NAME --plan` to see it; the
-plan is offline and reaches no daemon. `NAME` is a human run label. Applying a
-direct-propose group uses a machine-owned `seed-<digest>` proposal ref derived
-from the plan digest and group id. Coordinator groups reuse the same durable
-intent by its content-addressed create fingerprint. In both cases a lost-response
-retry converges on the same open proposal instead of opening a duplicate.
+The old direct Claim batch and seed-apply adapter are retired. The recipe calls
+the pure `plan_seed_directory` function to pin and render the offline plan, then
+uses only the sanctioned writers. Coordinator writes retain their durable,
+content-addressed retry behavior.
 
 ## What the two arms actually see
 

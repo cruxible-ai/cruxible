@@ -260,10 +260,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use to inspect the deterministic proposal sequence for a workspace seed bundle; this "
         "does not contact or mutate an instance."
     ),
-    "cruxible_playbill_seed_apply": (
-        "Use after reviewing a seed plan to submit exactly one selected group. Approval and "
-        "activation remain separate governed acts."
-    ),
 }
 
 

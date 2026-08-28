@@ -1,149 +1,16 @@
 {
-  "claim_id": null,
-  "claim_type_artifact": {
-    "admission_policy": {
-      "evidence_requirements": [],
-      "freeze_requirements": [],
-      "tag": "playbill-claim-admission-policy-v1"
-    },
-    "allowed_object_subject_kinds": [],
-    "allowed_subject_kinds": [
-      "project.work_item"
-    ],
-    "artifact_format": "playbill-claim-type-v1",
-    "authority": {
-      "approve_roles": [
-        "owner"
-      ],
-      "propose_roles": [
-        "owner"
-      ]
-    },
-    "cardinality": "one",
-    "evidence_admission_policy": {
-      "rules": [
-        {
-          "admission": "direct",
-          "allowed_reducer_digests": [],
-          "attestation_requirement": "none",
-          "capture_contract_digests": [
-            "sha256:84b7e6eca1a9c18084e4805df07c07eeb8f6465b6234d8205c382102fce1165e"
-          ],
-          "claim_roles": [
-            "normative",
-            "observation"
-          ],
-          "evidence_kinds": [
-            "self_asserted"
-          ],
-          "rule_id": "direct-self-asserted",
-          "subject_binding": "exact_claim_subject",
-          "tag": "playbill-claim-evidence-admission-rule-v1"
-        }
-      ],
-      "tag": "playbill-claim-evidence-admission-policy-v1"
-    },
-    "identity": {
-      "kind": "ClaimType",
-      "name": "project.work_item.status"
-    },
-    "lifecycle": {
-      "predecessor_digest": null,
-      "state": "live"
-    },
-    "literal_schema": {
-      "enum": [
-        "blocked",
-        "done",
-        "ready"
-      ],
-      "type": "string"
-    },
-    "object_kind": "literal",
-    "permitted_roles": [
-      "normative",
-      "observation"
-    ],
-    "pins": [],
-    "predicate": "project.work_item.status",
-    "referent_sensitivity": "identity",
-    "resolution_policy": {
-      "cardinality": "one",
-      "conflict_result": "unresolved",
-      "eligible_verdicts": [
-        "supported"
-      ],
-      "require_current": true,
-      "required_basis_kinds": [],
-      "selector": "only_contender",
-      "tag": "playbill-claim-resolution-policy-v1"
-    }
+  "citation_role": "evidence",
+  "kind": "claim",
+  "object": {
+    "kind": "literal",
+    "value": "done"
   },
-  "dependency_claim_types": [],
-  "dependency_subject_shells": [],
-  "existing_statement_handoffs": [],
-  "materialize_source": true,
-  "predecessor_artifact_digest": null,
+  "predicate": "project.work_item.status",
   "rationale": "The migration handbook records the reviewer's acceptance.",
-  "retire": false,
-  "source_selection": {
-    "logical_source_identity": "corpus.handbook.md",
-    "media_type": "text/markdown",
-    "span": {
-      "content_digest": "sha256:fcd21e7c84e2973a568568b9de2a25e1d69367a08eac35e0b339aa5852b16d7d",
-      "end_byte": 97,
-      "start_byte": 33,
-      "tag": "playbill-content-span-v1"
-    },
-    "tag": "playbill-direct-foreign-source-selection-v1"
+  "role": "observation",
+  "source": {
+    "kind": "working_selection",
+    "source_id": "corpus.handbook.md"
   },
-  "statement": {
-    "claim_type": {
-      "kind": "ClaimType",
-      "name": "project.work_item.status"
-    },
-    "claim_type_digest": "sha256:f63af79570a050b3def5e5e7464aa408c40d496f9a625e41b52e1227f968478e",
-    "effective_from": null,
-    "effective_until": null,
-    "object": {
-      "kind": "literal",
-      "value": "done"
-    },
-    "predicate": "project.work_item.status",
-    "qualifier": null,
-    "role": "observation",
-    "shell_context_digest": null,
-    "subject": {
-      "artifact_path": "subjects/project.work_item/wi-101.yaml",
-      "selector": {
-        "scheme": "artifact-v1",
-        "value": ""
-      },
-      "tag": "playbill-semantic-address-v1"
-    },
-    "tag": "playbill-claim-statement-v1"
-  },
-  "subject_shell": {
-    "artifact_format": "playbill-subject-v1",
-    "authority": {
-      "approve_roles": [
-        "owner"
-      ],
-      "propose_roles": [
-        "owner"
-      ]
-    },
-    "identity": {
-      "kind": "Subject",
-      "name": "project.work_item/wi-101"
-    },
-    "lifecycle": {
-      "predecessor_digest": null,
-      "state": "live"
-    },
-    "pins": [],
-    "subject_id": "wi-101",
-    "subject_kind": "project.work_item"
-  },
-  "tag": "playbill-direct-claim-authoring-v1"
+  "subject": "project.work_item/wi-101"
 }

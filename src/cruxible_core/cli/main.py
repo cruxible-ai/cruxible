@@ -39,8 +39,6 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "subject", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
-    ("playbill", "claim", "propose"): "active",
-    ("playbill", "claim", "propose-batch"): "active",
     ("playbill", "claim", "retire"): "active",
     ("playbill", "authoring", "create"): "manual",
     ("playbill", "authoring", "bind"): "active",
@@ -48,9 +46,6 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "authoring", "preflight"): "active",
     ("playbill", "authoring", "rebase"): "active",
     ("playbill", "authoring", "submit"): "active",
-    # Seeding is the same shape: --plan is an offline reading of a directory
-    # that reaches no instance, so the notice belongs before the submit.
-    ("playbill", "seed", "apply"): "manual",
     ("playbill", "query", "propose"): "active",
     ("playbill", "procedure", "bind"): "active",
     ("playbill", "proposal", "approve"): "active",
@@ -448,16 +443,8 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="claim_type_group",
             ),
             "claim": _group(
-                "Propose, read, and explain first-class Claims.",
+                "Read, explain, and retire first-class Claims.",
                 {
-                    "propose": _command(
-                        "playbill", "propose_claim", "Propose a direct Claim and its Capture."
-                    ),
-                    "propose-batch": _command(
-                        "playbill",
-                        "propose_claims",
-                        "Propose several Claims as one change set.",
-                    ),
                     "retire": _command(
                         "playbill",
                         "retire_claim",
@@ -609,16 +596,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             ),
             "expand": _command(
                 "playbill", "expand", "Expand one address into a bounded context capsule."
-            ),
-            "seed": _group(
-                "Apply a bundle of authoring JSONs as governed proposals.",
-                {
-                    "apply": _command(
-                        "playbill", "apply_seed", "Propose one group of a seed bundle."
-                    )
-                },
-                module="playbill",
-                attr="seed_group",
             ),
             "floor": _group(
                 "Materialize the deterministic greppable floor.",

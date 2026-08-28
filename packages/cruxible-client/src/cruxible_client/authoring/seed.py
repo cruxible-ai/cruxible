@@ -16,12 +16,11 @@ A change set settles as one indivisible generation, so the temptation is to want
 one proposal for the whole bundle. Two facts make that impossible and both are
 load-bearing:
 
-*Only expert Claims have a plural authoring operation.* `playbill_propose_claims`
-takes N authorings and settles them as one generation; ClaimTypes, Subjects,
-Documents, and QueryDefinitions each have a singular propose operation, while
-friendly Claim and Procedure inputs each use one existing coordinator intent.
-Adding a plural form for any of them would be a contract change, which this
-module is explicitly not.
+*The frozen v1 plan grammar grouped expert Claims under one plural operation.*
+That authoring operation has since retired, but its name remains in the pure
+plan bytes so historical plan digests do not change. Seed application is no
+longer a sanctioned write surface; this module only renders the deterministic
+historical grouping.
 
 *A proposal settles against the base it was admitted at.* Two proposals opened
 against one accepted head cannot both activate -- the second refuses with
@@ -33,11 +32,9 @@ and a seeding convenience may not perform them.
 
 Where the minimization actually comes from
 ------------------------------------------
-`DirectClaimAuthoringV1` already carries dependency closures: `subject_shell`,
-`claim_type_artifact`, `dependency_subject_shells`, `dependency_claim_types`. A
-ClaimType or Subject that some bundle Claim already carries needs no proposal of
-its own, because the Claim batch admits it in the same generation. So the plan
-is:
+Legacy Claim payloads declared dependency closures. A ClaimType or Subject that
+one of those payloads carries needs no separate group in the frozen plan. So
+the plan is:
 
 * every Claim in the bundle -> **one** batch proposal;
 * every ClaimType and Subject *carried* by one of those Claims -> **no**
@@ -56,9 +53,8 @@ A bundle that declares a ClaimType at top level *and* carries a different
 ClaimType for the same predicate inside a Claim is asking for two byte strings
 at one canonical path in one generation. There is no later moment at which those
 could be reconciled, which is precisely the cross-authoring conflict
-`service_propose_playbill_claims` refuses before it reaches the proposal
-service. This module refuses it at plan time with the same reason, so a bundle
-that cannot be legally grouped says so before a single body is stored.
+the former apply surface refused before reaching the proposal service. This
+module still refuses it at plan time so the pure plan remains deterministic.
 
 Nothing here touches a filesystem, a clock, or a network. The CLI reads the
 directory and drives the operations; this module maps bytes to a plan, exactly
@@ -70,6 +66,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -243,6 +240,13 @@ class SeedPlanV1(_StrictSeedModel):
         ids = self.group_ids
         index = ids.index(after)
         return ids[index + 1] if index + 1 < len(ids) else None
+
+
+class SeedPlanResultV1(_StrictSeedModel):
+    tag: Literal["playbill-seed-plan-result-v1"] = "playbill-seed-plan-result-v1"
+    plan: SeedPlanV1
+    plan_digest: str
+    rendered: tuple[str, ...]
 
 
 _UNDIGESTED_PLAN_FIELDS: Final = frozenset({"tag", "proposal_name"})
@@ -561,6 +565,38 @@ def render_seed_plan(plan: SeedPlanV1) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def read_seed_bundle_files(root: Path) -> dict[str, bytes]:
+    """Read one bundle without following symlinks or escaping its root."""
+
+    try:
+        bundle_root = root.expanduser().resolve(strict=True)
+    except OSError as exc:
+        raise SeedBundleError(f"Seed bundle directory is unavailable: {root}") from exc
+    if not bundle_root.is_dir():
+        raise SeedBundleError(f"Not a seed bundle directory: {root}")
+    files: dict[str, bytes] = {}
+    for path in sorted(bundle_root.rglob("*")):
+        if path.is_symlink():
+            raise SeedBundleError(f"Seed bundles may not contain symlinks: {path}")
+        if path.is_file():
+            files[path.relative_to(bundle_root).as_posix()] = path.read_bytes()
+    if not files:
+        raise SeedBundleError(f"The seed bundle at {root} is empty")
+    return files
+
+
+def plan_seed_directory(root: Path, *, proposal_name: str) -> SeedPlanResultV1:
+    files = read_seed_bundle_files(root)
+    plan = plan_seed_bundle(files, proposal_name=proposal_name)
+    if not plan.groups:
+        raise SeedBundleError(f"The seed bundle at {root} declares nothing to propose")
+    return SeedPlanResultV1(
+        plan=plan,
+        plan_digest=seed_plan_digest(plan).tagged,
+        rendered=render_seed_plan(plan),
+    )
+
+
 __all__ = [
     "SEED_BODY_DIRECTORY",
     "SEED_BUNDLE_DIGEST_DOMAIN",
@@ -572,10 +608,13 @@ __all__ = [
     "SeedCarriedEntryV1",
     "SeedEntryKind",
     "SeedPlanV1",
+    "SeedPlanResultV1",
     "SeedProposalGroupV1",
     "plan_seed_bundle",
+    "plan_seed_directory",
     "proposal_slug",
     "read_seed_bundle",
+    "read_seed_bundle_files",
     "render_seed_plan",
     "seed_group_operation_digest",
     "seed_group_proposal_name",

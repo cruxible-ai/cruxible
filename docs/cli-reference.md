@@ -129,8 +129,6 @@ dependent the request names; it never authors retirement decisions from diagnost
 ## playbill claim
 
 ~~~text
-cruxible playbill claim propose --authoring FILE --name NAME
-cruxible playbill claim propose-batch --authoring FILE [--authoring FILE ...] --name NAME
 cruxible playbill claim retire IDENTITY REQUEST_FILE
 cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
 cruxible playbill claim get IDENTITY
@@ -138,10 +136,8 @@ cruxible playbill claim history IDENTITY
 cruxible playbill claim explain IDENTITY [--evaluation-time TS]
 ~~~
 
-propose creates one inert Capture and one dependency-closed Claim in a single
-governed proposal. propose-batch does the same for several Claims at once, and
-the whole set is admitted as one generation or none of it is -- use it when a
-Claim is only meaningful beside its siblings. `retire` preflights or submits one
+Claims are authored through `playbill authoring create`/`compile`; the retired
+direct v1 proposal commands are not a second writer. `retire` preflights or submits one
 attributed retirement over the complete dependent Claim closure; the request
 must name every dependent reason and never receives a daemon-synthesized end
 time. explain returns the verdict together with the law evidence and source
@@ -328,26 +324,6 @@ cruxible playbill expand ARTIFACT_PATH [--facet NAME]... [--evaluation-time TS]
 Returns one bounded context capsule for an accepted address. Repeat --facet to
 narrow what the capsule carries.
 
-## playbill seed
-
-~~~text
-cruxible playbill seed apply BUNDLE_DIR --name NAME [--plan] [--group GROUP_ID]
-~~~
-
-Applies a bundle directory of authoring JSONs — `claim-types/`, `subjects/`,
-`documents/`, `claims/`, `query-definitions/`, plus a `bodies/` subtree stored in
-CAS first — as the fewest governed proposals it can legally become. Every Claim
-settles as one batch proposal carrying the dependencies the Claims themselves
-declare; each remaining artifact uses the singular propose operation the served
-surface already has for it. No operation is added.
-
-`--plan` prints the grouping and submits nothing; it reaches no daemon. Without
-it, one group is submitted per invocation — `--group` names which, defaulting to
-the first — because a proposal settles against the base it was admitted at and
-two proposals opened against one head cannot both activate. Approving and
-activating stay separate acts, so a harness loops plan → apply → approve →
-activate over the printed group ids.
-
 ## playbill floor
 
 ~~~text
@@ -410,6 +386,9 @@ Reads one Claude Code PostToolUse payload on stdin and writes the hook response
 on stdout, binding working paths through `.playbill/coverage.json` at the
 workspace root. Wire it with the settings fragment in
 `integrations/claude-code/`.
+
+This vendor-specific hook is deprecated and parked: it remains compatible, but
+new harnesses should use the client coverage middleware rather than extend it.
 
 Grep content-mode results are annotated in place: the cards are appended to the
 result's own text and every other field is passed through unchanged. Read, Edit,

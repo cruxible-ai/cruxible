@@ -11,7 +11,7 @@ from pydantic import Field
 
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_client.authoring.seed_client import SeedApplicationResultV1, SeedPlanResultV1
+from cruxible_client.authoring.seed import SeedPlanResultV1
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_core import __version__
 from cruxible_core.mcp import handlers
@@ -876,21 +876,6 @@ def register_tools(
         return handlers.handle_playbill_seed_plan(
             bundle_path=bundle_path,
             proposal_name=proposal_name,
-        )
-
-    @_tool
-    def cruxible_playbill_seed_apply(
-        instance_id: str,
-        bundle_path: str,
-        proposal_name: str,
-        group_id: str | None = None,
-    ) -> SeedApplicationResultV1:
-        """Submit exactly one deterministic seed group; never approve or activate it."""
-        return handlers.handle_playbill_seed_apply(
-            instance_id,
-            bundle_path=bundle_path,
-            proposal_name=proposal_name,
-            group_id=group_id,
         )
 
     @_tool

@@ -28,10 +28,6 @@ from cruxible_client.authoring.examples import (
     authoring_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_client.authoring.seed_client import (
-    apply_seed_directory_group,
-    plan_seed_directory,
-)
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
     load_source_catalog,
@@ -2549,104 +2545,6 @@ def expand(
     _emit_json(result.model_dump(mode="json"))
 
 
-@playbill_group.group("seed")
-def seed_group() -> None:
-    """Apply a bundle of authoring JSONs as governed proposals."""
-
-
-@seed_group.command("apply")
-@click.argument("bundle_dir", type=click.Path(exists=True, file_okay=False))
-@click.option(
-    "--name",
-    "proposal_name",
-    required=True,
-    help="Human application label; the proposal ref is machine-owned.",
-)
-@click.option(
-    "--plan",
-    "plan_only",
-    is_flag=True,
-    help="Print the proposal grouping and submit nothing. Needs no daemon.",
-)
-@click.option(
-    "--group",
-    "group_id",
-    default=None,
-    help="Which planned group to submit. Defaults to the first one.",
-)
-@json_option
-@handle_errors
-@click.pass_context
-def apply_seed(
-    ctx: click.Context,
-    bundle_dir: str,
-    proposal_name: str,
-    plan_only: bool,
-    group_id: str | None,
-    output_json: bool,
-) -> None:
-    """Apply one seed bundle as the fewest governed proposals it can legally become.
-
-    Orchestration over operations that already exist, and nothing else. The
-    grouping rule is in `playbill/seed.py`: every Claim in the bundle settles as
-    one batch proposal carrying every dependency the Claims themselves declare,
-    and each remaining artifact gets the singular propose operation that is the
-    only one the served surface has for it.
-
-    **One group per invocation.** A proposal settles against the base it was
-    admitted at, so two proposals opened against one head cannot both activate.
-    Approving and activating are separate governed acts and this command performs
-    neither; a harness runs `--plan`, then loops apply/approve/activate over the
-    group ids in the order the plan printed them.
-
-    The human --name labels output only. Each group's proposal ref is derived
-    from the plan digest and group id, so a lost response retries the same
-    operation and names the still-open proposal instead of creating a duplicate.
-
-    A bundle that cannot be legally grouped refuses -- here when two of its own
-    entries would put different bytes at one canonical path, and otherwise
-    through the propose operation's own diagnostics, which are the authoritative
-    answer about admissibility and are not second-guessed here.
-    """
-
-    root = Path(bundle_dir).expanduser()
-    planning = plan_seed_directory(root, proposal_name=proposal_name)
-    plan = planning.plan
-
-    if plan_only:
-        if output_json:
-            _emit_json(
-                {
-                    **plan.model_dump(mode="json"),
-                    "plan_digest": planning.plan_digest,
-                }
-            )
-            return
-        for line in planning.rendered:
-            click.echo(line)
-        return
-
-    _echo_write_target("active", ctx.params)
-    result = _server_call(
-        lambda client, instance_id: apply_seed_directory_group(
-            client,
-            instance_id,
-            root=root,
-            proposal_name=proposal_name,
-            group_id=group_id,
-        ),
-        command_name="playbill seed apply",
-    )
-    payload = result.model_dump(mode="json")
-    if output_json:
-        _emit_json(payload)
-        return
-    click.echo(f"Proposed {payload['group_id']} as {payload['proposal_id']}")
-    click.echo(f"Entries: {', '.join(payload['entry_paths'])}")
-    click.echo("Approve and activate it, then apply the next group.")
-    click.echo(f"Next group: {payload['next_group_id'] or 'none; the bundle is applied'}")
-
-
 @playbill_group.group("floor")
 def floor_group() -> None:
     """Materialize the deterministic greppable floor of accepted state."""
@@ -2853,7 +2751,11 @@ def coverage_status(
 
 @playbill_group.group("hook")
 def hook_group() -> None:
-    """Deliver coverage into a harness's own tool results."""
+    """Deprecated/parked harness adapter retained for compatibility."""
+
+    # PC-DEL3 parks this shipped Claude Code adapter. It remains registered and
+    # behavior-compatible, but new integrations should consume coverage through
+    # the client middleware rather than extending this vendor-specific surface.
 
 
 def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
