@@ -39,8 +39,6 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "subject", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
-    ("playbill", "claim", "propose"): "active",
-    ("playbill", "claim", "propose-batch"): "active",
     ("playbill", "claim", "retire"): "active",
     ("playbill", "authoring", "create"): "manual",
     ("playbill", "authoring", "bind"): "active",
@@ -48,13 +46,6 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "authoring", "preflight"): "active",
     ("playbill", "authoring", "rebase"): "active",
     ("playbill", "authoring", "submit"): "active",
-    # Compile is two acts behind one command: --preview writes nothing at all,
-    # so the notice belongs immediately before the submit rather than before
-    # the command that might only be previewing.
-    ("playbill", "native", "compile"): "manual",
-    # Seeding is the same shape: --plan is an offline reading of a directory
-    # that reaches no instance, so the notice belongs before the submit.
-    ("playbill", "seed", "apply"): "manual",
     ("playbill", "query", "propose"): "active",
     ("playbill", "procedure", "bind"): "active",
     ("playbill", "proposal", "approve"): "active",
@@ -452,16 +443,8 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 attr="claim_type_group",
             ),
             "claim": _group(
-                "Propose, read, and explain first-class Claims.",
+                "Read, explain, and retire first-class Claims.",
                 {
-                    "propose": _command(
-                        "playbill", "propose_claim", "Propose a direct Claim and its Capture."
-                    ),
-                    "propose-batch": _command(
-                        "playbill",
-                        "propose_claims",
-                        "Propose several Claims as one change set.",
-                    ),
                     "retire": _command(
                         "playbill",
                         "retire_claim",
@@ -614,16 +597,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "expand": _command(
                 "playbill", "expand", "Expand one address into a bounded context capsule."
             ),
-            "seed": _group(
-                "Apply a bundle of authoring JSONs as governed proposals.",
-                {
-                    "apply": _command(
-                        "playbill", "apply_seed", "Propose one group of a seed bundle."
-                    )
-                },
-                module="playbill",
-                attr="seed_group",
-            ),
             "floor": _group(
                 "Materialize the deterministic greppable floor.",
                 {
@@ -677,49 +650,6 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 },
                 module="playbill",
                 attr="sources_group",
-            ),
-            "native": _group(
-                "Check out accepted knowledge as an editable in-repo working tree.",
-                {
-                    "render": _command(
-                        "playbill", "render_native", "Render accepted knowledge as Markdown."
-                    ),
-                    "status": _command(
-                        "playbill",
-                        "native_status_cmd",
-                        "Report clean, edited, and tampered fields.",
-                    ),
-                    "compile": _command(
-                        "playbill",
-                        "compile_native",
-                        "Compile local edits into one governed proposal.",
-                    ),
-                    "review-current": _command(
-                        "playbill",
-                        "native_review_current",
-                        "Check that review evidence binds the current candidate.",
-                    ),
-                    "stash": _group(
-                        "Keep and restore local edits a re-render would overwrite.",
-                        {
-                            "list": _command(
-                                "playbill", "native_stash_list", "List stashed local edits."
-                            ),
-                            "show": _command(
-                                "playbill", "native_stash_show", "Show one stashed local edit."
-                            ),
-                            "restore": _command(
-                                "playbill",
-                                "native_stash_restore",
-                                "Re-apply stashed edits by region identity.",
-                            ),
-                        },
-                        module="playbill",
-                        attr="native_stash_group",
-                    ),
-                },
-                module="playbill",
-                attr="native_group",
             ),
             "principal": _group(
                 "Govern owner, reviewer, and recovery public keys.",

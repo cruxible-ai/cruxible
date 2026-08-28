@@ -20,8 +20,6 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "subject", "propose"): "active",
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
-    ("playbill", "claim", "propose"): "active",
-    ("playbill", "claim", "propose-batch"): "active",
     ("playbill", "claim", "retire"): "active",
     ("playbill", "authoring", "create"): "manual",
     ("playbill", "authoring", "bind"): "active",
@@ -29,8 +27,6 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "authoring", "preflight"): "active",
     ("playbill", "authoring", "rebase"): "active",
     ("playbill", "authoring", "submit"): "active",
-    ("playbill", "native", "compile"): "manual",
-    ("playbill", "seed", "apply"): "manual",
     ("playbill", "query", "propose"): "active",
     ("playbill", "procedure", "bind"): "active",
     ("playbill", "proposal", "approve"): "active",
@@ -223,7 +219,7 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
             return contracts.PlaybillCoverageResult(
                 coordinate=coordinate,
                 result={
-                    "tag": "playbill-coverage-result-v2",
+                    "tag": "playbill-coverage-result-v3",
                     "at": coordinate.model_dump(mode="json"),
                     "instance_id": instance_id,
                     "index_digest": "sha256:" + "cc" * 32,
@@ -240,7 +236,7 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
                     "scope": [],
                     "spans": [],
                     "summary": {
-                        "tag": "playbill-coverage-batch-summary-v2",
+                        "tag": "playbill-coverage-batch-summary-v3",
                         "exact": 0,
                         "drifted": 0,
                         "candidate": 0,
@@ -249,6 +245,8 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
                         "omitted_card_count": 0,
                     },
                     "health": "complete",
+                    "global_scan_complete": True,
+                    "truncation_reason_codes": [],
                     "coverage": {
                         "tag": "playbill-coverage-descriptor-v1",
                         "requested_facets": ["coverage"],

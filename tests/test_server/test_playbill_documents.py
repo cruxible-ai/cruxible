@@ -187,8 +187,6 @@ def test_principal_display_name_is_sanitized_and_invalid_ref_is_a_typed_400(
         playbill_api.playbill_propose_subject,
         playbill_api.playbill_propose_claim_type,
         playbill_api.playbill_propose_claim_type_input,
-        playbill_api.playbill_propose_claim,
-        playbill_api.playbill_propose_claims,
         playbill_api.playbill_propose_query_definition,
     ),
 )

@@ -66,20 +66,10 @@ always populated and nothing observes whether a caller read it. The registry
 entry and the schedule row are the whole mechanism here -- the transport
 emitters exist for INPUT deprecations, where a caller's use is visible.
 """
-PLAYBILL_DIRECT_CLAIM_PROPOSE = DeprecationNotice(
-    surface="playbill.claim.propose.legacy_wire_deprecated",
-    replacement=(
-        "playbill authoring create/compile; direct propose mints legacy-wire Claims "
-        "that are invisible to the citation model"
-    ),
-    removal_version="0.5.0",
-)
-
 DEPRECATION_REGISTRY: tuple[DeprecationNotice, ...] = (
     LEGACY_OUTCOME_RECORD,
     LEGACY_OUTCOME_PROFILE,
     PROCEDURE_STRING_WARNINGS,
-    PLAYBILL_DIRECT_CLAIM_PROPOSE,
 )
 """Every warning-emitting deprecation registered by cruxible-core."""
 

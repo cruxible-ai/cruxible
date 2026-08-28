@@ -6,7 +6,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from cruxible_client.contracts.artifacts import ArtifactLifecycle
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import (
+    CanonicalDurationV1,
+    DirectForeignSourceSelectionV1,
+    foreign_source_capture_contract,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
@@ -17,7 +21,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claim_verdicts import ClaimVerdictResultV2
 from cruxible_client.contracts.claims import ClaimLawEvidenceV2
-from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV1,
     ClaimTypeMigrationRequestV1,
@@ -33,7 +37,6 @@ from cruxible_core.service.playbill_claims import (
     PlaybillClaimExplanationV3,
     PlaybillClaimQueryResultV2,
     service_explain_playbill_claim,
-    service_propose_playbill_claim,
     service_query_playbill_claims,
 )
 from cruxible_core.service.playbill_evidence import (
@@ -41,14 +44,16 @@ from cruxible_core.service.playbill_evidence import (
     service_evaluate_playbill_claim_verdict,
 )
 from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
-from tests.test_playbill._support import client_material, initialize_local
-from tests.test_playbill.test_activation import _sign
-from tests.test_playbill.test_claims import _claim_type
-from tests.test_playbill.test_direct_claim_authoring import (
+from tests.test_playbill._claim_authoring_support import (
     TIMESTAMP,
     _activate_direct_claim,
     _authoring,
+    service_propose_playbill_claim,
 )
+from tests.test_playbill._support import client_material, initialize_local
+from tests.test_playbill.test_activation import _sign
+from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
+from tests.test_playbill.test_claims import _claim_type
 
 
 def _activate(instance, owner, proposal_id: str, candidate_digest: str) -> None:  # type: ignore[no-untyped-def]
@@ -71,9 +76,25 @@ def _activate(instance, owner, proposal_id: str, candidate_digest: str) -> None:
 def _fresh_world(tmp_path: Path):  # type: ignore[no-untyped-def]
     instance, owner = initialize_local(tmp_path)
     actor = AuthenticatedActor(actor_id="owner")
+    source_id = "fixture.freshness"
+    _seed_claim_surface(instance, owner, contract=foreign_source_capture_contract(source_id))
+    body = instance.body_store().store(b"status: ready")
     proposed = service_propose_playbill_claim(
         instance,
-        authoring=_authoring(),
+        authoring=_authoring().model_copy(
+            update={
+                "subject_shell": None,
+                "claim_type_artifact": None,
+                "source_selection": DirectForeignSourceSelectionV1(
+                    logical_source_identity=source_id,
+                    span=ContentSpan(
+                        content_digest=body.digest,
+                        start_byte=0,
+                        end_byte=len(b"status: ready"),
+                    ),
+                ),
+            }
+        ),
         actor_id="owner",
         proposal_name="freshness-initial",
         timestamp=TIMESTAMP,

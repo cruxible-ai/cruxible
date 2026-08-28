@@ -44,8 +44,6 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillInsertionPrepareRequest,
     PlaybillNextRequest,
     PlaybillProposalReadmitRequest,
-    PlaybillProposeClaimRequest,
-    PlaybillProposeClaimsRequest,
     PlaybillProposeClaimTypeInputRequest,
     PlaybillProposeClaimTypeRequest,
     PlaybillProposeDocumentRequest,
@@ -545,38 +543,6 @@ async def get_claim_type(
 
 
 @router.post(
-    "/{instance_id}/playbill/claims/proposals",
-    response_model=contracts.PlaybillClaimProposal,
-)
-async def propose_claim(
-    instance_id: str,
-    req: PlaybillProposeClaimRequest,
-) -> contracts.PlaybillClaimProposal:
-    return playbill_api.playbill_propose_claim(
-        resolve_server_instance_id(instance_id),
-        authoring=req.authoring,
-        proposal_name=req.proposal_name,
-        base=req.base,
-    )
-
-
-@router.post(
-    "/{instance_id}/playbill/claims/proposals/batch",
-    response_model=contracts.PlaybillClaimBatchProposal,
-)
-async def propose_claims(
-    instance_id: str,
-    req: PlaybillProposeClaimsRequest,
-) -> contracts.PlaybillClaimBatchProposal:
-    return playbill_api.playbill_propose_claims(
-        resolve_server_instance_id(instance_id),
-        authorings=req.authorings,
-        proposal_name=req.proposal_name,
-        base=req.base,
-    )
-
-
-@router.post(
     "/{instance_id}/playbill/claims/{claim_id}/retire",
     response_model=contracts.PlaybillClaimRetireResponse,
 )
@@ -776,15 +742,13 @@ async def prepare_authoring_publication(
 
 @router.post(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/insertion/confirm",
-    response_model=(
-        contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2
-    ),
+    response_model=contracts.PlaybillInsertionConfirmResultV2,
 )
 async def confirm_authoring_insertion(
     instance_id: str,
     intent_id: str,
     req: PlaybillInsertionConfirmRequest,
-) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
+) -> contracts.PlaybillInsertionConfirmResultV2:
     return playbill_api.playbill_authoring_confirm_insertion(
         resolve_server_instance_id(instance_id),
         intent_id,

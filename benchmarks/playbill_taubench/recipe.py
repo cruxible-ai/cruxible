@@ -53,8 +53,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import TypeAdapter
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 for _candidate in (REPOSITORY_ROOT, REPOSITORY_ROOT / "src"):
     if str(_candidate) not in sys.path:
@@ -65,13 +63,14 @@ from click.testing import CliRunner  # noqa: E402
 from cruxible_client.authoring.seed import (  # noqa: E402
     SEED_BODY_DIRECTORY,
     plan_seed_bundle,
+    plan_seed_directory,
     seed_plan_digest,
 )
 from cruxible_core.cli.commands import _common  # noqa: E402
 from cruxible_core.cli.context import load_cli_context  # noqa: E402
 from cruxible_core.cli.main import cli  # noqa: E402
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1  # noqa: E402
-from cruxible_core.playbill.coverage.contracts import CoverageResultAny  # noqa: E402
+from cruxible_core.playbill.coverage.contracts import CoverageResultV3  # noqa: E402
 from cruxible_core.playbill.coverage.middleware import (  # noqa: E402
     CONFIG_RELATIVE_PATH,
     CoverageMiddlewareV1,
@@ -118,12 +117,12 @@ ARM_NUMBERS: tuple[ArmNumber, ...] = (1, 2, 3, 4)
 def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultAny:
+    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
         answered = client.resolve_playbill_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
         )
-        return TypeAdapter(CoverageResultAny).validate_python(answered.result)
+        return CoverageResultV3.model_validate(answered.result)
 
     return resolve
 
@@ -233,39 +232,144 @@ def approve_and_activate(proposal_id: str, *, key_dir: Path) -> dict[str, Any]:
 
 
 def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str, Any]:
-    """Apply every planned group, approving and activating between them.
+    """Build the benchmark world through the surviving sanctioned writers.
 
-    The loop is the whole point of the seed command's shape. `--plan` is offline
-    and names the groups in dependency order; each `apply` opens exactly one
-    proposal, because a proposal settles against the base it was admitted at and
-    two proposals opened against one head cannot both activate. Approval and
-    activation are separate governed acts and the harness -- this function --
-    performs them, never the seeding convenience.
+    The pure seed planner remains useful for pinning the bundle bytes, but the
+    retired seed-apply and direct-Claim adapters no longer orchestrate writes.
+    This recipe therefore drives each declared dependency through its ordinary
+    proposal surface and each Claim/Procedure through AuthoringIntent.
     """
 
-    plan = run_cli_json("playbill", "seed", "apply", str(bundle_dir), "--name", name, "--plan")
+    planning = plan_seed_directory(bundle_dir, proposal_name=name)
     applied: list[dict[str, Any]] = []
-    for group in plan["groups"]:
-        submitted = run_cli_json(
-            "playbill",
-            "seed",
-            "apply",
-            str(bundle_dir),
-            "--name",
-            name,
-            "--group",
-            group["group_id"],
-        )
-        activated = approve_and_activate(submitted["proposal_id"], key_dir=key_dir)
+
+    def record(group_id: str, operation: str, proposal_id: str) -> None:
+        activated = approve_and_activate(proposal_id, key_dir=key_dir)
         applied.append(
             {
-                "group_id": group["group_id"],
-                "operation": group["operation"],
-                "proposal_id": submitted["proposal_id"],
+                "group_id": group_id,
+                "operation": operation,
+                "proposal_id": proposal_id,
                 "accepted_coordinate": activated["accepted_coordinate"],
             }
         )
-    return {"plan_digest": plan["plan_digest"], "groups": applied}
+
+    def proposal_id(answer: Mapping[str, Any]) -> str:
+        proposal = answer.get("proposal")
+        if isinstance(proposal, Mapping):
+            nested = proposal.get("proposal")
+            if isinstance(nested, Mapping):
+                proposal = nested
+            admission = proposal.get("admission")
+            if isinstance(admission, Mapping) and isinstance(admission.get("proposal_id"), str):
+                return str(admission["proposal_id"])
+        raise RuntimeError(f"proposal response omitted its identity: {answer}")
+
+    for path in sorted((bundle_dir / "claim-types").glob("*.json")):
+        answer = run_cli_json(
+            "playbill",
+            "claim-type",
+            "propose",
+            "--envelope",
+            str(path),
+            "--name",
+            f"{name}-{path.stem}",
+        )
+        record(f"claim_type:{path.stem}", "playbill_propose_claim_type", proposal_id(answer))
+
+    for path in sorted((bundle_dir / "subjects").glob("*.json")):
+        answer = run_cli_json(
+            "playbill",
+            "subject",
+            "propose",
+            "--envelope",
+            str(path),
+            "--name",
+            f"{name}-{path.stem}",
+        )
+        record(
+            f"subject:project.work_item/{path.stem}",
+            "playbill_propose_subject",
+            proposal_id(answer),
+        )
+
+    working_sources = {
+        "wi-101-status": (
+            "corpus.handbook.md",
+            bundle_dir / "bodies/corpus/handbook.md",
+            "The reviewer accepted the migration plan on the second reading.",
+        ),
+        "wi-102-status": (
+            "corpus.runbook.md",
+            bundle_dir / "bodies/corpus/runbook.md",
+            "The cutover rehearsal is blocked on the read-replica lag budget.",
+        ),
+        "wi-103-status": (
+            "notes.scratch.md",
+            bundle_dir / "bodies/notes/scratch.md",
+            "Working notes nobody governs.",
+        ),
+    }
+    for path in sorted((bundle_dir / "claims").glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        source = payload["source"]
+        if source["kind"] == "working_selection":
+            source_id, file_path, anchor = working_sources[path.stem]
+            if source["source_id"] != source_id:
+                raise RuntimeError(f"seed source mapping disagrees for {path}")
+            prepared = run_cli_json(
+                "playbill",
+                "authoring",
+                "bind",
+                "--file",
+                str(file_path),
+                "--anchor",
+                anchor,
+                "--payload-file",
+                str(path),
+            )
+            intent_id = prepared["certificate"]["intent_id"]
+        else:
+            created = run_cli_json("playbill", "authoring", "create", str(path))
+            intent_id = created["intent"]["intent_id"]
+        submitted = run_cli_json("playbill", "authoring", "submit", str(intent_id))
+        record(
+            f"claim_input:{payload['subject']}#{payload['predicate']}",
+            "playbill_authoring_submit",
+            str(submitted["status"]["proposal_id"]),
+        )
+
+    for path in sorted((bundle_dir / "query-definitions").glob("*.json")):
+        answer = run_cli_json(
+            "playbill",
+            "query",
+            "propose",
+            "--envelope",
+            str(path),
+            "--name",
+            f"{name}-{path.stem}",
+        )
+        record(
+            f"query_definition:{path.stem}",
+            "playbill_propose_query_definition",
+            proposal_id(answer),
+        )
+
+    for path in sorted((bundle_dir / "procedures").glob("*.json")):
+        created = run_cli_json("playbill", "authoring", "create", str(path))
+        submitted = run_cli_json(
+            "playbill",
+            "authoring",
+            "submit",
+            str(created["intent"]["intent_id"]),
+        )
+        record(
+            f"procedure:{path.stem}",
+            "playbill_authoring_submit",
+            str(submitted["status"]["proposal_id"]),
+        )
+
+    return {"plan_digest": planning.plan_digest, "groups": applied}
 
 
 # -- step 3: export the arm file surface ------------------------------------
@@ -473,7 +577,7 @@ def run_turn(setup: ArmSetupV1) -> tuple[dict[str, Any], ...]:
 
         raw = event.original_output
         cards: tuple[str, ...] = ()
-        result: CoverageResultAny | None = None
+        result: CoverageResultV3 | None = None
         if setup.deliver_coverage:
             assert setup.middleware is not None
             delivery = setup.middleware.after_tool(event)

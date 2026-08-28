@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import base64
 import json
-import os
 import re
-import secrets
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -31,10 +28,6 @@ from cruxible_client.authoring.examples import (
     authoring_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_client.authoring.seed_client import (
-    apply_seed_directory_group,
-    plan_seed_directory,
-)
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
     load_source_catalog,
@@ -68,11 +61,6 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.deprecation import (
-    PLAYBILL_DIRECT_CLAIM_PROPOSE,
-    emit_cli_deprecation,
-)
-from cruxible_core.playbill import native
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
     defaulted_claim_type_input_example,
@@ -87,7 +75,7 @@ from cruxible_core.playbill.coverage.claude_code import (
     post_tool_use_response,
     read_post_tool_use_event,
 )
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageResultAny
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageResultV3
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.coverage.middleware import (
     CoverageWorkspaceConfig,
@@ -111,8 +99,6 @@ from cruxible_core.playbill.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
 from cruxible_core.playbill.keys import generate_client_principal_key
-from cruxible_core.playbill.native.grammar import NativeRenderError
-from cruxible_core.playbill.native.manifest import parse_native_manifest
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.review import (
     PlaybillProposalReview,
@@ -1328,55 +1314,6 @@ def get_claim_type(predicate: str, output_json: bool) -> None:
 @playbill_group.group("claim")
 def claim_group() -> None:
     """Propose, read, and explain first-class governed Claims."""
-
-
-@claim_group.command("propose")
-@click.option("--authoring", required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--name", "proposal_name", required=True)
-@json_option
-@handle_errors
-def propose_claim(authoring: str, proposal_name: str, output_json: bool) -> None:
-    """Legacy-wire path; use the sanctioned authoring coordinator instead."""
-
-    emit_cli_deprecation(PLAYBILL_DIRECT_CLAIM_PROPOSE)
-    request = _read_mapping(authoring)
-    result = _server_call(
-        lambda client, instance_id: client.propose_playbill_claim(
-            instance_id,
-            authoring=request,
-            proposal_name=proposal_name,
-        ),
-        command_name="playbill claim propose",
-    )
-    _emit_json(result.model_dump(mode="json"))
-
-
-@claim_group.command("propose-batch")
-@click.option(
-    "--authoring",
-    "authorings",
-    required=True,
-    multiple=True,
-    type=click.Path(exists=True, dir_okay=False),
-    help="Repeat once per Claim; the whole set settles as one generation.",
-)
-@click.option("--name", "proposal_name", required=True)
-@json_option
-@handle_errors
-def propose_claims(authorings: tuple[str, ...], proposal_name: str, output_json: bool) -> None:
-    """Legacy-wire batch; use the sanctioned authoring coordinator instead."""
-
-    emit_cli_deprecation(PLAYBILL_DIRECT_CLAIM_PROPOSE)
-    requests = [_read_mapping(path) for path in authorings]
-    result = _server_call(
-        lambda client, instance_id: client.propose_playbill_claims(
-            instance_id,
-            authorings=requests,
-            proposal_name=proposal_name,
-        ),
-        command_name="playbill claim propose-batch",
-    )
-    _emit_json(result.model_dump(mode="json"))
 
 
 @claim_group.command("retire")
@@ -2862,104 +2799,6 @@ def expand(
     _emit_json(result.model_dump(mode="json"))
 
 
-@playbill_group.group("seed")
-def seed_group() -> None:
-    """Apply a bundle of authoring JSONs as governed proposals."""
-
-
-@seed_group.command("apply")
-@click.argument("bundle_dir", type=click.Path(exists=True, file_okay=False))
-@click.option(
-    "--name",
-    "proposal_name",
-    required=True,
-    help="Human application label; the proposal ref is machine-owned.",
-)
-@click.option(
-    "--plan",
-    "plan_only",
-    is_flag=True,
-    help="Print the proposal grouping and submit nothing. Needs no daemon.",
-)
-@click.option(
-    "--group",
-    "group_id",
-    default=None,
-    help="Which planned group to submit. Defaults to the first one.",
-)
-@json_option
-@handle_errors
-@click.pass_context
-def apply_seed(
-    ctx: click.Context,
-    bundle_dir: str,
-    proposal_name: str,
-    plan_only: bool,
-    group_id: str | None,
-    output_json: bool,
-) -> None:
-    """Apply one seed bundle as the fewest governed proposals it can legally become.
-
-    Orchestration over operations that already exist, and nothing else. The
-    grouping rule is in `playbill/seed.py`: every Claim in the bundle settles as
-    one batch proposal carrying every dependency the Claims themselves declare,
-    and each remaining artifact gets the singular propose operation that is the
-    only one the served surface has for it.
-
-    **One group per invocation.** A proposal settles against the base it was
-    admitted at, so two proposals opened against one head cannot both activate.
-    Approving and activating are separate governed acts and this command performs
-    neither; a harness runs `--plan`, then loops apply/approve/activate over the
-    group ids in the order the plan printed them.
-
-    The human --name labels output only. Each group's proposal ref is derived
-    from the plan digest and group id, so a lost response retries the same
-    operation and names the still-open proposal instead of creating a duplicate.
-
-    A bundle that cannot be legally grouped refuses -- here when two of its own
-    entries would put different bytes at one canonical path, and otherwise
-    through the propose operation's own diagnostics, which are the authoritative
-    answer about admissibility and are not second-guessed here.
-    """
-
-    root = Path(bundle_dir).expanduser()
-    planning = plan_seed_directory(root, proposal_name=proposal_name)
-    plan = planning.plan
-
-    if plan_only:
-        if output_json:
-            _emit_json(
-                {
-                    **plan.model_dump(mode="json"),
-                    "plan_digest": planning.plan_digest,
-                }
-            )
-            return
-        for line in planning.rendered:
-            click.echo(line)
-        return
-
-    _echo_write_target("active", ctx.params)
-    result = _server_call(
-        lambda client, instance_id: apply_seed_directory_group(
-            client,
-            instance_id,
-            root=root,
-            proposal_name=proposal_name,
-            group_id=group_id,
-        ),
-        command_name="playbill seed apply",
-    )
-    payload = result.model_dump(mode="json")
-    if output_json:
-        _emit_json(payload)
-        return
-    click.echo(f"Proposed {payload['group_id']} as {payload['proposal_id']}")
-    click.echo(f"Entries: {', '.join(payload['entry_paths'])}")
-    click.echo("Approve and activate it, then apply the next group.")
-    click.echo(f"Next group: {payload['next_group_id'] or 'none; the bundle is applied'}")
-
-
 @playbill_group.group("floor")
 def floor_group() -> None:
     """Materialize the deterministic greppable floor of accepted state."""
@@ -2968,845 +2807,27 @@ def floor_group() -> None:
 @floor_group.command("export")
 @click.option("--output", required=True, type=click.Path(file_okay=False))
 @click.option("--force", is_flag=True, help="Overwrite a non-empty output directory.")
-@click.option(
-    "--with-native",
-    "with_native",
-    is_flag=True,
-    help="Also write the §11.9 native knowledge renders into the same directory.",
-)
-@click.option(
-    "--evaluation-time",
-    default=None,
-    help="Explicit ISO-8601 read time for the native render. Only used with --with-native.",
-)
 @json_option
 @handle_errors
 def export_floor(
     output: str,
     force: bool,
-    with_native: bool,
-    evaluation_time: str | None,
     output_json: bool,
 ) -> None:
-    """Write the accepted floor, optionally with the native renders beside it.
+    """Write the accepted floor to a deterministic local tree."""
 
-    `--with-native` is the §11.8 native-surface amendment: "the file floor in
-    arms 3 and 4 includes the committed native knowledge renders of §11.9". It is
-    a **CLI** composition and deliberately not a service one -- the floor service
-    keeps returning bytes and touching no filesystem, and the render lens keeps
-    being a pure function of accepted state, because the daemon having a path by
-    which it could write into a repository is exactly what §11.9.5's
-    explicit-sync law forbids.
-
-    The two exports share one directory without a manifest change of any kind.
-    They cannot collide: every floor artifact is `.json` under its own prefix and
-    every rendered page is `.md`, and the two manifests keep their own names --
-    `manifest.json` for the floor, `render-manifest.json` for the render, with
-    `coverage-manifest.json` naming the §11.6.3 boundary both were taken at. What
-    a grep sees afterwards is one greppable tree: floor artifacts, native
-    renders, and the coverage boundary.
-    """
-
-    if evaluation_time is not None and not with_native:
-        raise click.BadParameter("--evaluation-time only applies to --with-native")
     result = _server_call(
         lambda client, instance_id: client.export_playbill_floor(instance_id),
         command_name="playbill floor export",
     )
     destination = Path(output).expanduser()
     _write_floor(destination, result, force=force)
-    render = None
-    if with_native:
-        render, _plan, _stash = _write_native_render(
-            destination, read_at=_read_time(evaluation_time)
-        )
     if output_json:
-        _emit_json(
-            result.manifest
-            if render is None
-            else {
-                **result.manifest,
-                "native_render_manifest": render.manifest.model_dump(mode="json"),
-            }
-        )
+        _emit_json(result.manifest)
         return
     click.echo(f"Wrote {len(result.files)} floor file(s) to {destination}")
     click.echo(f"Floor digest: {result.manifest['floor_digest']}")
-    if render is not None:
-        click.echo(f"Wrote {len(render.files)} native render file(s) beside them")
-        click.echo(f"Render digest: {render.manifest.render_digest}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
-
-
-@playbill_group.group("native")
-def native_group() -> None:
-    """Check out accepted knowledge as an editable in-repo working tree."""
-
-
-def _native_state(
-    client: CruxibleClient,
-    instance_id: str,
-    *,
-    at: dict[str, Any] | None = None,
-    boundary: native.NativeCoverageBoundaryV1 | None = None,
-) -> native.NativeAcceptedStateV1:
-    """Assemble the render input from the served reads that already exist.
-
-    No operation is added for this. The lens is a pure function of accepted
-    state, and every part of that state is already reachable: the artifact reads
-    return the envelopes and facts, and the floor export publishes the §11.6.3
-    coverage boundary the render manifest inherits. Rendering here rather than
-    on the daemon also keeps the §11.9.5 explicit-sync law structural -- the
-    daemon has no path by which it could write into a user's repository, because
-    it never produced the bytes.
-
-    A Claim's verdict comes from its accepted ``current_verdict`` projection,
-    which the list read already carries, so this costs one call per artifact kind
-    rather than one call per Claim.
-
-    ``at`` and ``boundary`` are what a compile needs and a render does not: to
-    reconstruct the *baseline*, this reads an older generation and is handed the
-    boundary that generation's render already committed to, because exporting a
-    fresh floor would answer about the head.
-    """
-
-    if boundary is None:
-        floor = client.export_playbill_floor(instance_id, at=at)
-        boundary_file = next(
-            (item for item in floor.files if item.path == "coverage-manifest.json"), None
-        )
-        if boundary_file is None:
-            raise click.ClickException("The floor export carries no coverage boundary to inherit.")
-        boundary = native.native_boundary_from_floor(
-            json.loads(base64.b64decode(boundary_file.content_base64, validate=True))
-        )
-        coordinate = AcceptedCoordinate.model_validate(floor.coordinate.model_dump(mode="json"))
-    else:
-        if at is None:  # pragma: no cover - callers pass both or neither
-            raise click.ClickException("A declared coverage boundary needs its own coordinate.")
-        coordinate = AcceptedCoordinate.model_validate(at)
-    return native.build_native_state(
-        instance_id=instance_id,
-        at=coordinate,
-        boundary=boundary,
-        subjects=[
-            native.artifact_record_from_projection("Subject", view.envelope)
-            for view in client.list_playbill_subjects(instance_id, at=at).subjects
-        ],
-        claim_types=[
-            native.artifact_record_from_projection(
-                "ClaimType",
-                view.envelope,
-                path=view.path,
-                identity=view.identity,
-                artifact_digest=view.artifact_digest,
-            )
-            for view in client.list_playbill_claim_types(instance_id, at=at).claim_types
-        ],
-        query_definitions=[
-            native.artifact_record_from_projection(
-                "QueryDefinition",
-                view.envelope,
-                path=view.path,
-                identity=view.identity,
-                artifact_digest=view.artifact_digest,
-            )
-            for view in client.list_playbill_query_definitions(instance_id, at=at).query_definitions
-        ],
-        documents=[
-            native.artifact_record_from_projection("Document", view.envelope)
-            for view in client.list_playbill_documents(instance_id, at=at).documents
-        ],
-        claims=[
-            native.claim_record_from_projection(view.envelope, view.facts)
-            for view in client.list_playbill_claims(instance_id, at=at).claims
-        ],
-    )
-
-
-def _read_native_tree(root: Path) -> dict[str, bytes]:
-    """Read the rendered working tree as it currently is, manifest included."""
-
-    if not root.is_dir():
-        raise click.ClickException(f"Not a rendered knowledge directory: {root}")
-    files: dict[str, bytes] = {}
-    for path in sorted(root.rglob("*")):
-        if not path.is_file():
-            continue
-        relative = path.relative_to(root).as_posix()
-        if relative.endswith(".md") or relative == native.NATIVE_RENDER_MANIFEST_PATH:
-            files[relative] = path.read_bytes()
-    return files
-
-
-def _native_manifest(root: Path) -> native.NativeRenderManifestV1:
-    target = root / native.NATIVE_RENDER_MANIFEST_PATH
-    try:
-        content = target.read_bytes()
-    except OSError as exc:
-        raise click.ClickException(
-            f"No render manifest at {target}. Run `cruxible playbill native render` first."
-        ) from exc
-    try:
-        return parse_native_manifest(content)
-    except NativeRenderError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-
-def _write_atomically(target: Path, content: bytes) -> None:
-    """Publish one local file whole, or not at all.
-
-    A reader of a stash directory either sees a complete entry or does not see
-    it; there is no window in which half an entry could be read back as the
-    edits somebody asked to keep.
-    """
-
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.parent / f".{target.name}.{secrets.token_hex(12)}.tmp"
-    try:
-        temporary.write_bytes(content)
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
-
-
-def _stash_entries(root: Path) -> list[native.NativeStashFileV1]:
-    """Read every stash entry under a render root, deleting any that do not verify.
-
-    A stash is a disposable local cache, so an entry whose digest no longer
-    reproduces is removed rather than reported: it cannot be restored, and
-    keeping it would only offer bytes nobody can vouch for.
-    """
-
-    directory = root / native.NATIVE_STASH_DIRECTORY
-    if not directory.is_dir():
-        return []
-    entries: list[native.NativeStashFileV1] = []
-    for path in sorted(directory.glob(f"{native.NATIVE_STASH_FILE_PREFIX}*.json")):
-        try:
-            entries.append(native.parse_native_stash(path.read_bytes()))
-        except (OSError, native.NativeStashError):
-            path.unlink(missing_ok=True)
-    return entries
-
-
-def _write_stash(root: Path, body: native.NativeStashBodyV1, *, written_at: str) -> str:
-    """Capture one stash entry under the render root and return its identity."""
-
-    stash_id = native.native_stash_digest(body).tagged
-    _write_atomically(
-        root / native.native_stash_entry_path(stash_id),
-        native.render_native_stash(body, written_at=written_at),
-    )
-    return stash_id
-
-
-def _resolve_stash(root: Path, stash_id: str) -> native.NativeStashFileV1:
-    try:
-        return native.resolve_native_stash(_stash_entries(root), stash_id)
-    except native.NativeStashError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-
-def _write_native_render(
-    destination: Path,
-    *,
-    read_at: datetime,
-    stash: bool = False,
-    discard: bool = False,
-) -> tuple[native.NativeRenderV1, native.NativeRenderPlanV1, str | None]:
-    """Render accepted knowledge and write it into ``destination``.
-
-    The whole of `playbill native render`'s write, factored out because
-    `playbill floor export --with-native` needs *exactly* it -- including the
-    §11.9.5 refusal. A second write path that skipped the dirty-region check
-    would be a second way to lose an author's edits, so there is only this one:
-    the floor export inherits the refusal by construction rather than by
-    remembering to re-implement it.
-    """
-
-    state = _server_call(_native_state, command_name="playbill native render")
-    ctx = native.whole_scope_context(
-        instance_id=state.instance_id,
-        at=state.at,
-        evaluation_time=read_at,
-        access_profile=CoverageAccessProfileV1(profile_id=state.boundary.access_profile_id),
-    )
-    render = native.build_native_render(state, ctx)
-
-    existing = _read_native_tree(destination) if destination.is_dir() else {}
-    stash_id: str | None = None
-    if native.NATIVE_RENDER_MANIFEST_PATH in existing:
-        existing_manifest = _native_manifest(destination)
-        plan = native.plan_native_render(
-            existing,
-            manifest=existing_manifest,
-            render=render,
-            discard=discard,
-            stash=stash,
-        )
-        if plan.stashed_region_ids:
-            # Captured before a byte of the re-render lands: a stash that ran
-            # after the overwrite would be a stash of the overwrite.
-            body = native.native_stash_body(existing, manifest=existing_manifest)
-            if body is not None:
-                stash_id = _write_stash(destination, body, written_at=read_at.isoformat())
-    else:
-        plan = native.NativeRenderPlanV1(
-            write_paths=tuple(sorted(render.files, key=lambda item: item.encode("utf-8")))
-        )
-
-    root = destination.resolve()
-    destination.mkdir(parents=True, exist_ok=True)
-    for relative in plan.write_paths:
-        target = (destination / relative).resolve()
-        if not target.is_relative_to(root):
-            raise click.ClickException(f"Refusing to write outside the render root: {relative}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(render.files[relative])
-    for relative in plan.delete_paths:
-        (destination / relative).unlink(missing_ok=True)
-    return render, plan, stash_id
-
-
-def _read_time(evaluation_time: str | None) -> datetime:
-    read_at = (
-        datetime.now(UTC) if evaluation_time is None else datetime.fromisoformat(evaluation_time)
-    )
-    if read_at.tzinfo is None:
-        raise click.BadParameter("an evaluation time must carry an explicit offset")
-    return read_at
-
-
-@native_group.command("render")
-@click.option("--output", required=True, type=click.Path(file_okay=False))
-@click.option(
-    "--evaluation-time",
-    default=None,
-    help="Explicit ISO-8601 read time. Defaults to now; the renderer never reads a clock.",
-)
-@click.option(
-    "--stash",
-    "stash",
-    is_flag=True,
-    help="Keep local edits in editable regions in the stash, then re-render over them.",
-)
-@click.option(
-    "--discard",
-    is_flag=True,
-    help="Discard local edits in editable regions instead of refusing to overwrite them.",
-)
-@json_option
-@handle_errors
-def render_native(
-    output: str,
-    evaluation_time: str | None,
-    stash: bool,
-    discard: bool,
-    output_json: bool,
-) -> None:
-    """Check out accepted knowledge as a browsable, editable Markdown tree.
-
-    Rendering and writing are separate acts. The lens returns bytes; this command
-    writes them, and it refuses to overwrite an editable region you have edited
-    unless you say what should happen to the edit: compile it into a proposal,
-    --stash it, or --discard it.
-    """
-
-    read_at = _read_time(evaluation_time)
-    destination = Path(output).expanduser()
-    render, plan, stash_id = _write_native_render(
-        destination, read_at=read_at, stash=stash, discard=discard
-    )
-
-    if output_json:
-        _emit_json(
-            {
-                "manifest": render.manifest.model_dump(mode="json"),
-                "plan": plan.model_dump(mode="json"),
-                "stash_id": stash_id,
-            }
-        )
-        return
-    click.echo(f"Rendered {len(render.files)} file(s) into {destination}")
-    click.echo(f"Wrote {len(plan.write_paths)}, unchanged {len(plan.unchanged_paths)}")
-    if stash_id is not None:
-        click.echo(
-            f"Stashed {len(plan.stashed_region_ids)} dirty region(s) as {stash_id}; "
-            "restore them with `playbill native stash restore`."
-        )
-    click.echo(f"Generation: {render.manifest.coordinate.generation_root}")
-    click.echo(f"Lens: {render.manifest.lens.lens_id} v{render.manifest.lens.lens_version}")
-    click.echo(f"Render digest: {render.manifest.render_digest}")
-
-
-@native_group.command("status")
-@click.argument("directory", type=click.Path(file_okay=False))
-@json_option
-@handle_errors
-def native_status_cmd(directory: str, output_json: bool) -> None:
-    """Report which rendered fields are clean, edited, or tampered with.
-
-    A working-tree question, answered against the render baseline in the
-    directory, so it needs no daemon and grants nothing. The derived display
-    beside a dirty field is invalidated through the coverage resolver rather
-    than by this command's own reckoning: the rendered file is a working source,
-    and the resolver is the one place a working occurrence is compared with what
-    accepted state says about it.
-    """
-
-    root = Path(directory).expanduser()
-    files = _read_native_tree(root)
-    manifest = _native_manifest(root)
-    parsed = native.parse_native_tree(files, manifest=manifest)
-    status = native.native_status(files, manifest=manifest, parsed=parsed)
-    invalidation = native.resolve_native_invalidation(
-        files,
-        manifest=manifest,
-        ctx=native.render_context_from_manifest(manifest),
-        parsed=parsed,
-    )
-    if output_json:
-        _emit_json(
-            {
-                "status": status.model_dump(mode="json"),
-                "invalidation": invalidation.model_dump(mode="json"),
-            }
-        )
-        return
-    click.echo(
-        f"Playbill native render: generation {status.baseline_generation_root}, "
-        f"lens {status.lens_id} v{status.lens_version}"
-    )
-    click.echo(f"rendered at {status.evaluation_time}, render digest {status.render_digest}")
-    for item in status.files:
-        click.echo(
-            f"{item.state:>11}  {item.path}  "
-            f"{item.region_count} region(s): {item.clean_regions} clean, "
-            f"{item.dirty_regions} dirty, {item.tampered_regions} tampered, "
-            f"{item.ambiguous_regions} ambiguous, {item.unbaselined_regions} unbaselined"
-        )
-    for path in status.missing_paths:
-        click.echo(f"    missing  {path}  (removal is never inferred as retirement)")
-    for path in status.untracked_paths:
-        click.echo(f"  untracked  {path}  (no render baseline; not compilable)")
-    for diagnostic in status.diagnostics:
-        if diagnostic.severity == "refusal":
-            click.echo(f"    refusal  {diagnostic.code}  {diagnostic.message}")
-    for line in render_coverage_result(invalidation.coverage):
-        click.echo(line)
-    if invalidation.invalidated_region_ids:
-        click.echo(
-            f"invalidated derived fields: {len(invalidation.invalidated_region_ids)} "
-            f"beside {len(invalidation.drifted_addresses)} edited statement(s); "
-            "no governance fact reaches the edited material"
-        )
-
-
-@native_group.group("stash")
-def native_stash_group() -> None:
-    """Keep and restore the local edits a re-render would otherwise overwrite."""
-
-
-@native_stash_group.command("list")
-@click.argument("directory", type=click.Path(file_okay=False))
-@json_option
-@handle_errors
-def native_stash_list(directory: str, output_json: bool) -> None:
-    """List the stashed edits held beside a rendered knowledge directory.
-
-    A working-tree question with no daemon in it: the stash is local material
-    under the render root, and nothing accepted refers to it.
-    """
-
-    root = Path(directory).expanduser()
-    if not root.is_dir():
-        raise click.ClickException(f"Not a rendered knowledge directory: {root}")
-    entries = _stash_entries(root)
-    if output_json:
-        _emit_json({"stashes": [item.model_dump(mode="json") for item in entries]})
-        return
-    if not entries:
-        click.echo(f"No stashed edits under {root / native.NATIVE_STASH_DIRECTORY}")
-        return
-    for entry in entries:
-        click.echo(
-            f"{entry.stash_id}  {len(entry.body.regions)} region(s)  "
-            f"generation {entry.body.at.generation_root}  written {entry.written_at or '(unset)'}"
-        )
-        for region in entry.body.regions:
-            click.echo(f"    {region.region_kind:>19}  {region.path}  {region.byte_length} byte(s)")
-
-
-@native_stash_group.command("show")
-@click.argument("directory", type=click.Path(file_okay=False))
-@click.argument("stash_id")
-@json_option
-@handle_errors
-def native_stash_show(directory: str, stash_id: str, output_json: bool) -> None:
-    """Show one stashed edit, including the exact bytes it kept."""
-
-    entry = _resolve_stash(Path(directory).expanduser(), stash_id)
-    if output_json:
-        _emit_json(entry.model_dump(mode="json"))
-        return
-    click.echo(f"stash: {entry.stash_id}")
-    click.echo(f"generation: {entry.body.at.generation_root}")
-    click.echo(f"lens: {entry.body.lens.lens_id} v{entry.body.lens.lens_version}")
-    click.echo(f"render digest: {entry.body.render_digest}")
-    for region in entry.body.regions:
-        click.echo(f"--- {region.region_kind}  {region.path}  ({region.region_id})")
-        click.echo(region.body.decode("utf-8", errors="replace").rstrip("\n"))
-
-
-@native_stash_group.command("restore")
-@click.argument("directory", type=click.Path(file_okay=False))
-@click.argument("stash_id")
-@click.option(
-    "--drop",
-    is_flag=True,
-    help="Delete the stash entry once every region in it was restored.",
-)
-@json_option
-@handle_errors
-def native_stash_restore(directory: str, stash_id: str, drop: bool, output_json: bool) -> None:
-    """Re-apply stashed edits to the current render, by region identity.
-
-    Region identity carries no path, so a stashed edit lands correctly even
-    after the field moved to another file. A stashed field the current render no
-    longer has -- or one that no longer binds unambiguously -- is reported and
-    left in the stash rather than placed somewhere it might not belong.
-    """
-
-    root = Path(directory).expanduser()
-    files = _read_native_tree(root)
-    manifest = _native_manifest(root)
-    entry = _resolve_stash(root, stash_id)
-    restored = native.restore_native_stash(files, manifest=manifest, stash=entry)
-
-    for relative in restored.write_paths:
-        (root / relative).write_bytes(restored.files[relative])
-    dropped = bool(drop and not restored.unresolved_region_ids)
-    if dropped:
-        (root / native.native_stash_entry_path(entry.stash_digest)).unlink(missing_ok=True)
-
-    if output_json:
-        _emit_json(
-            {
-                "restore": restored.model_dump(mode="json", exclude={"files"}),
-                "dropped": dropped,
-            }
-        )
-    else:
-        click.echo(f"Restored {len(restored.restored_region_ids)} region(s) from {entry.stash_id}")
-        for relative in restored.write_paths:
-            click.echo(f"    wrote  {relative}")
-        for diagnostic in restored.diagnostics:
-            click.echo(f"  {diagnostic.severity:>9}  {diagnostic.code}  {diagnostic.message}")
-        if dropped:
-            click.echo("Dropped the stash entry: every region in it was restored.")
-    if restored.unresolved_region_ids:
-        raise SystemExit(1)
-
-
-def _read_dispositions(path: str | None) -> tuple[native.NativeDraftDispositionV1, ...]:
-    """Read draft dispositions supplied beside the tree rather than inside it."""
-
-    if path is None:
-        return ()
-    source = Path(path).expanduser()
-    try:
-        payload = yaml.safe_load(source.read_text())
-    except (OSError, yaml.YAMLError) as exc:
-        raise click.ClickException(f"Could not read {source}: {exc}") from exc
-    if not isinstance(payload, list):
-        raise click.ClickException(f"{source} must contain a list of draft dispositions")
-    try:
-        return tuple(native.NativeDraftDispositionV1.model_validate(item) for item in payload)
-    except ValueError as exc:
-        raise click.ClickException(f"{source} is not a valid disposition list: {exc}") from exc
-
-
-def _render_compile_result(result: native.NativeCompileResultV1) -> list[str]:
-    """One rendering of the compile result; preview and submit both use it."""
-
-    lines = [
-        f"Compile: baseline generation {result.baseline.generation_root}",
-        f"         accepted head      {result.head.generation_root}",
-        f"         lens {result.lens_id} v{result.lens_version}, read at {result.evaluation_time}",
-    ]
-    for item in result.three_way:
-        lines.append(
-            f"  three-way  {item.outcome:>18}  {item.claim_path}  "
-            f"{len(item.region_ids)} edited region(s)"
-        )
-    for draft in result.drafts:
-        stated = "none" if draft.disposition is None else draft.disposition.kind
-        lines.append(
-            f"      draft  {draft.draft_id}  {draft.path}  disposition: {stated}  "
-            f"{len(draft.candidates)} candidate(s)"
-        )
-        for candidate in draft.candidates:
-            mark = "blocking" if candidate.blocking else "advisory"
-            lines.append(f"             {mark}  {candidate.identity}  ({candidate.kind})")
-        for generated in draft.generated_distinct_from:
-            lines.append(f"             lowers to semantic.distinct_from {generated.artifact_path}")
-    for member in result.members:
-        lines.append(f"     member  {member.kind}  {member.predicate}  {member.subject_path}")
-    for notice in result.notices:
-        lines.append(f"     notice  {notice.code}  {notice.message}")
-    for refusal in result.refusals:
-        lines.append(f"    refusal  {refusal.code}  {refusal.message}")
-        lines.append(f"             action: {refusal.required_action}")
-        for named in refusal.candidates:
-            lines.append(f"             candidate: {named}")
-    if result.baseline != result.head:
-        lines.append(
-            "The accepted head moved under this baseline; submitting binds the baseline and "
-            "the proposal receive path performs the deterministic rebase."
-        )
-    if result.rebase_expected:
-        lines.append(
-            "At least one edited Claim also changed at the head, so that rebase has real "
-            "work to do and may report a typed member conflict instead of a candidate."
-        )
-    return lines
-
-
-@native_group.command("compile")
-@click.argument("directory", type=click.Path(file_okay=False))
-@click.option(
-    "--submit/--preview",
-    "submit",
-    default=False,
-    show_default=True,
-    help="Preview the change set, or submit it as one governed proposal.",
-)
-@click.option(
-    "--name", "proposal_name", default=None, help="Proposal ref name, required to submit."
-)
-@click.option(
-    "--dispositions",
-    "dispositions_path",
-    default=None,
-    type=click.Path(exists=True, dir_okay=False),
-    help="A list of draft dispositions, for drafts not dispositioned in the file itself.",
-)
-@json_option
-@handle_errors
-def compile_native(
-    directory: str,
-    submit: bool,
-    proposal_name: str | None,
-    dispositions_path: str | None,
-    output_json: bool,
-) -> None:
-    """Compile local edits into one governed proposal, or preview the one it would make.
-
-    Editing proposed nothing and this command accepts nothing: compile is the
-    middle of three gates. It binds the baseline the tree was rendered from, so
-    when the accepted head has moved the proposal receive path performs the
-    deterministic three-way rebase -- no merge here decides what is admissible.
-    """
-
-    root = Path(directory).expanduser()
-    files = _read_native_tree(root)
-    manifest = _native_manifest(root)
-    baseline_at = manifest.coordinate.model_dump(mode="json")
-    dispositions = _read_dispositions(dispositions_path)
-
-    def _compile(client: CruxibleClient, instance_id: str) -> native.NativeCompileResultV1:
-        return native.compile_native_tree(
-            files,
-            manifest=manifest,
-            baseline_state=_native_state(
-                client,
-                instance_id,
-                at=baseline_at,
-                boundary=native.native_boundary_from_manifest(manifest),
-            ),
-            accepted_state_at_head=_native_state(client, instance_id),
-            ctx=native.render_context_from_manifest(manifest),
-            dispositions=dispositions,
-        )
-
-    try:
-        result = _server_call(_compile, command_name="playbill native compile")
-    except NativeRenderError as exc:
-        raise click.ClickException(str(exc)) from exc
-
-    proposal: dict[str, Any] | None = None
-    if submit and result.compilable:
-        if proposal_name is None:
-            raise click.BadParameter("submitting a compile requires --name")
-        _echo_write_target("active", {})
-        batch = _server_call(
-            lambda client, instance_id: client.propose_playbill_claims(
-                instance_id,
-                authorings=result.authorings,
-                proposal_name=proposal_name,
-                base=baseline_at,
-            ),
-            command_name="playbill native compile",
-        )
-        proposal = batch.proposal.proposal
-
-    # A submitted compile can still be refused by the ledger -- a rebase member
-    # conflict is exactly that, and it is the outcome compile deliberately does
-    # not predict. Reporting it as success would make the one thing this loop
-    # promises to be headlessly checkable unreadable from an exit code.
-    refused_by_evaluation = (
-        proposal is not None and proposal["evaluation"]["verdict"] != "candidate"
-    )
-
-    if output_json:
-        _emit_json(
-            {
-                "compile": result.model_dump(mode="json"),
-                "proposal": proposal,
-            }
-        )
-    else:
-        for line in _render_compile_result(result):
-            click.echo(line)
-        if not result.members and not result.refusals:
-            click.echo("Nothing to compile: every rendered field matches accepted state.")
-        if proposal is not None:
-            evaluation = proposal["evaluation"]
-            click.echo(f"Proposal: {proposal['admission']['proposal_id']}")
-            click.echo(f"Verdict: {evaluation['verdict']}, rebased {evaluation['rebased']}")
-            click.echo(f"Candidate: {evaluation['candidate_digest']}")
-            for diagnostic in evaluation["diagnostics"]:
-                click.echo(f"    refusal  {diagnostic['code']}  {diagnostic['message']}")
-            if refused_by_evaluation:
-                click.echo(
-                    "Refused: the proposal was admitted and evaluated, and no candidate was "
-                    "produced. Nothing is pending approval."
-                )
-        elif submit and result.refusals:
-            click.echo("Refused: nothing was submitted.")
-    if result.refusals or refused_by_evaluation:
-        raise SystemExit(1)
-
-
-def _signer_ids(review: contracts.PlaybillProposalReview) -> tuple[str, ...]:
-    attestations = review.attestation_coverage.get("attestations") or ()
-    return tuple(str(item["signer_id"]) for item in attestations)
-
-
-def _proposal_target_ref(proposal_id: str) -> str:
-    """Read the proposal ref one proposal was admitted against.
-
-    Admissions in one lineage share a target ref, so this is what makes "an
-    earlier proposal for the same work" a checked statement rather than a claim
-    the caller makes. It is read through the ordinary proposal inspection; no
-    operation was added for it.
-    """
-
-    inspection = _server_call(
-        lambda client, instance_id: client.inspect_playbill_proposal(instance_id, proposal_id),
-        command_name="playbill native review-current",
-    )
-    admission = inspection.proposal.get("admission") or {}
-    return str(admission.get("target_ref", ""))
-
-
-@native_group.command("review-current")
-@click.argument("proposal_id")
-@click.option(
-    "--bound",
-    "bound_candidate_digest",
-    default=None,
-    help="The candidate digest the collected review evidence was signed against.",
-)
-@click.option(
-    "--superseded-proposal",
-    "superseded_proposal_id",
-    default=None,
-    help="An earlier proposal in this lineage; its candidate digest and signers are read.",
-)
-@json_option
-@handle_errors
-def native_review_current(
-    proposal_id: str,
-    bound_candidate_digest: str | None,
-    superseded_proposal_id: str | None,
-    output_json: bool,
-) -> None:
-    """Check headlessly that review evidence binds the candidate that would settle.
-
-    Approvals are stored under the exact candidate digest they signed, so a
-    rebase does not weaken prior evidence -- it moves the candidate out from
-    under it. Naming the earlier act is how it re-enters the answer, which is
-    then reported as superseded_by_rebase.
-
-    There are two ways to name it. `--bound` states the digest directly, which
-    needs nothing but the digest. `--superseded-proposal` names the earlier
-    proposal instead, and this command reads its candidate digest *and* its
-    signers through the ordinary review operation, refusing a proposal admitted
-    against a different target ref -- a proposal from another lineage is not
-    evidence about this one.
-
-    Neither can enumerate the lineage. Admissions for one target ref are not
-    listable through any served read, so an earlier proposal has to be named;
-    closing that gap wants one read operation over admissions, which is a served
-    surface this batch does not add.
-    """
-
-    if bound_candidate_digest is not None and superseded_proposal_id is not None:
-        raise click.BadParameter("name the superseded evidence once: --bound or its proposal")
-
-    superseded_signer_ids: tuple[str, ...] = ()
-    if superseded_proposal_id is not None:
-        if superseded_proposal_id == proposal_id:
-            raise click.BadParameter("a proposal does not supersede itself")
-        lineage = _proposal_target_ref(proposal_id)
-        earlier_ref = _proposal_target_ref(superseded_proposal_id)
-        if not lineage or lineage != earlier_ref:
-            raise click.ClickException(
-                f"Proposal {superseded_proposal_id} was admitted against {earlier_ref or '(none)'} "
-                f"and {proposal_id} against {lineage or '(none)'}; a proposal from another "
-                "lineage is not superseded review evidence for this one."
-            )
-        earlier = _server_call(
-            lambda client, instance_id: client.review_playbill_proposal(
-                instance_id, str(superseded_proposal_id)
-            ),
-            command_name="playbill native review-current",
-        )
-        bound_candidate_digest = earlier.candidate_digest
-        superseded_signer_ids = _signer_ids(earlier)
-
-    review = _server_call(
-        lambda client, instance_id: client.review_playbill_proposal(instance_id, proposal_id),
-        command_name="playbill native review-current",
-    )
-    binding = _signer_ids(review)
-    currency = native.native_review_currency(
-        proposal_id=proposal_id,
-        candidate_digest=review.candidate_digest,
-        parent_semantic_root=review.parent_semantic_root,
-        attestation_signer_ids=binding,
-        bound_candidate_digest=bound_candidate_digest,
-        superseded_signer_ids=(
-            superseded_signer_ids if bound_candidate_digest != review.candidate_digest else ()
-        ),
-    )
-    if output_json:
-        _emit_json(currency.model_dump(mode="json"))
-    else:
-        click.echo(f"review-current: {currency.status}")
-        click.echo(f"candidate: {currency.candidate_digest}")
-        click.echo(f"parent semantic root: {currency.parent_semantic_root}")
-        if currency.binding_signer_ids:
-            click.echo(f"binding approvals: {', '.join(currency.binding_signer_ids)}")
-        if currency.bound_candidate_digest is not None:
-            click.echo(f"evidence bound: {currency.bound_candidate_digest}")
-        if currency.superseded_signer_ids:
-            click.echo(f"superseded approvals: {', '.join(currency.superseded_signer_ids)}")
-        click.echo(f"action: {currency.required_action}")
-    if currency.status != "current":
-        raise SystemExit(1)
 
 
 @playbill_group.group("coverage")
@@ -3894,7 +2915,7 @@ def _resolved_coverage(
     *,
     command_name: str,
     scan_budget: CoverageScanBudgetV1 | None = None,
-) -> CoverageResultAny:
+) -> CoverageResultV3:
     result = _server_call(
         lambda client, instance_id: client.resolve_playbill_coverage(
             instance_id,
@@ -3903,7 +2924,7 @@ def _resolved_coverage(
         ),
         command_name=command_name,
     )
-    return TypeAdapter(CoverageResultAny).validate_python(result.result)
+    return CoverageResultV3.model_validate(result.result)
 
 
 @coverage_group.command("resolve")
@@ -3996,7 +3017,11 @@ def coverage_status(
 
 @playbill_group.group("hook")
 def hook_group() -> None:
-    """Deliver coverage into a harness's own tool results."""
+    """Deprecated/parked harness adapter retained for compatibility."""
+
+    # PC-DEL3 parks this shipped Claude Code adapter. It remains registered and
+    # behavior-compatible, but new integrations should consume coverage through
+    # the client middleware rather than extending this vendor-specific surface.
 
 
 def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
@@ -4007,7 +3032,7 @@ def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
     content is a property of the operation, not of the adapter that calls it.
     """
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultAny:
+    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
         return _resolved_coverage(
             tuple(observations),
             command_name="playbill hook post-tool-use",

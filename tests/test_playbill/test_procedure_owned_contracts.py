@@ -180,7 +180,7 @@ def test_query_only_procedure_runs_through_daemon_query_without_provider(
         proposal_name="procedure-query",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, inspection, sequence=3)
+    accept_proposal(instance, owner, inspection)
     accepted = _accepted_query_procedure(query_definition_digest(query).tagged)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
 
@@ -267,7 +267,7 @@ def _activate_procedure(instance, owner, procedure, *, sequence: int, timestamp:
         ),
         actor_binding=ChangeActorBinding(actor_id="owner"),
         proposal_actor_id="owner",
-        sequence=sequence,
+        sequence=len(instance.accepted_history()),
     )
     publisher = instance.activation_publisher()
     projection = publisher.prebuild(bundle, base=base)

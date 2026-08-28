@@ -18,14 +18,14 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.source_references import CoverageDescriptorV1
 from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
-    CoverageBatchSummaryV1,
+    CoverageBatchSummaryV3,
     CoverageCardBudgetV1,
     CoverageCardV2,
     CoverageClaimCitationV2,
     CoverageRequestV1,
-    CoverageResultV1,
+    CoverageResultV3,
     CoverageSpanRequestV1,
-    CoverageSpanResultV1,
+    CoverageSpanResultV3,
     LogicalSourceIdentityV1,
     occurrence_identity_digest,
 )
@@ -36,7 +36,7 @@ from cruxible_core.playbill.coverage.render import (
     render_coverage_manifest,
     render_coverage_result,
 )
-from cruxible_core.playbill.coverage.resolver import resolve_coverage
+from cruxible_core.playbill.coverage.resolver import resolve_coverage_v3
 from tests.test_playbill._coverage_support import (
     CITED,
     EPILOGUE,
@@ -46,8 +46,8 @@ from tests.test_playbill._coverage_support import (
     SCRATCH,
     capture,
     coordinate,
-    index,
-    manifest,
+    index_v2,
+    manifest_v2,
     overlay,
     profile,
     request,
@@ -59,28 +59,28 @@ HANDBOOK_BODY = PREAMBLE + CITED + EPILOGUE
 EDITED_BODY = PREAMBLE + b"The reviewer rejected the migration plan.\n" + EPILOGUE
 
 
-def _drifted_result() -> CoverageResultV1:
+def _drifted_result() -> CoverageResultV3:
     """One governed source whose cited content was edited, plus one that was not."""
 
-    citations = index(capture(HANDBOOK, CITED, with_handle=True))
+    citations = index_v2(capture(HANDBOOK, CITED, with_handle=True))
     snapshot = overlay(
         working(HANDBOOK, EDITED_BODY),
         working(SCRATCH, b"Nothing governed here.\n"),
         citations=citations,
     )
-    return resolve_coverage(
+    return resolve_coverage_v3(
         request(HANDBOOK, SCRATCH),
         index=citations,
         overlay=snapshot,
         access=profile(),
-        manifest=manifest(citations, snapshot),
+        manifest=manifest_v2(citations, snapshot),
     )
 
 
-def _ungoverned_result(count: int) -> CoverageResultV1:
+def _ungoverned_result(count: int) -> CoverageResultV3:
     """One exact span beside `count` factual absences inside a complete boundary."""
 
-    citations = index(capture(HANDBOOK, CITED))
+    citations = index_v2(capture(HANDBOOK, CITED))
     sources = [
         LogicalSourceIdentityV1(plane="external", identity=f"workspace.note{number:03d}")
         for number in range(count)
@@ -90,7 +90,7 @@ def _ungoverned_result(count: int) -> CoverageResultV1:
         *(working(item, f"ordinary note {item.identity}\n".encode()) for item in sources),
         citations=citations,
     )
-    return resolve_coverage(
+    return resolve_coverage_v3(
         CoverageRequestV1(
             instance_id=INSTANCE_ID,
             at=coordinate(),
@@ -102,14 +102,14 @@ def _ungoverned_result(count: int) -> CoverageResultV1:
         index=citations,
         overlay=snapshot,
         access=profile(),
-        manifest=manifest(citations, snapshot),
+        manifest=manifest_v2(citations, snapshot),
     )
 
 
-def _degraded_span(health: str, reason: str) -> CoverageResultV1:
+def _degraded_span(health: str, reason: str) -> CoverageResultV3:
     """A result whose only span carries an unhealthy boundary and no cards."""
 
-    span = CoverageSpanResultV1(
+    span = CoverageSpanResultV3(
         request=CoverageSpanRequestV1(source=SCRATCH),
         match_state="none",
         health=health,  # type: ignore[arg-type]
@@ -119,7 +119,7 @@ def _degraded_span(health: str, reason: str) -> CoverageResultV1:
             reason_codes=(reason,),
         ),
     )
-    return CoverageResultV1(
+    return CoverageResultV3(
         at=coordinate(),
         instance_id=INSTANCE_ID,
         index_digest=sha256(b"index"),
@@ -128,8 +128,9 @@ def _degraded_span(health: str, reason: str) -> CoverageResultV1:
         watcher_health="absent",
         access_profile=CoverageAccessProfileV1(profile_id="coverage.test"),
         spans=(span,),
-        summary=CoverageBatchSummaryV1(exact=0, drifted=0, candidate=0, none=1, returned_spans=1),
+        summary=CoverageBatchSummaryV3(exact=0, drifted=0, candidate=0, none=1, returned_spans=1),
         health=health,  # type: ignore[arg-type]
+        global_scan_complete=True,
         coverage=CoverageDescriptorV1(requested_facets=("coverage",), reason_codes=(reason,)),
     )
 
@@ -178,14 +179,14 @@ def test_ungoverned_spans_are_counted_once_and_never_annotated_per_line() -> Non
 
 
 def test_a_wholly_ungoverned_operation_renders_only_its_summary() -> None:
-    citations = index(capture(HANDBOOK, CITED))
+    citations = index_v2(capture(HANDBOOK, CITED))
     snapshot = overlay(working(SCRATCH, b"Nothing governed here.\n"), citations=citations)
-    result = resolve_coverage(
+    result = resolve_coverage_v3(
         request(SCRATCH),
         index=citations,
         overlay=snapshot,
         access=profile(),
-        manifest=manifest(citations, snapshot),
+        manifest=manifest_v2(citations, snapshot),
     )
 
     assert render_coverage_result(result) == render_batch_summary(result)
@@ -290,12 +291,12 @@ def test_v2_drift_variant_keeps_association_and_names_both_commitments() -> None
 
 
 def test_clipped_candidate_cards_are_reported_rather_than_silently_dropped() -> None:
-    citations = index(
+    citations = index_v2(
         capture(HANDBOOK, CITED, name="first"),
         capture(None, CITED, name="second"),
     )
     snapshot = overlay(working(SCRATCH, CITED), citations=citations)
-    result = resolve_coverage(
+    result = resolve_coverage_v3(
         CoverageRequestV1(
             instance_id=INSTANCE_ID,
             at=coordinate(),
@@ -305,7 +306,7 @@ def test_clipped_candidate_cards_are_reported_rather_than_silently_dropped() -> 
         index=citations,
         overlay=snapshot,
         access=profile(),
-        manifest=manifest(citations, snapshot),
+        manifest=manifest_v2(citations, snapshot),
     )
 
     assert result.summary.omitted_card_count == 1
@@ -316,14 +317,14 @@ def test_clipped_candidate_cards_are_reported_rather_than_silently_dropped() -> 
 
 
 def test_indistinguishable_occurrences_are_rendered_as_an_explicit_ambiguity() -> None:
-    citations = index(capture(HANDBOOK, CITED))
+    citations = index_v2(capture(HANDBOOK, CITED))
     snapshot = overlay(working(HANDBOOK, PREAMBLE + CITED + CITED + EPILOGUE), citations=citations)
-    result = resolve_coverage(
+    result = resolve_coverage_v3(
         request(HANDBOOK),
         index=citations,
         overlay=snapshot,
         access=profile(),
-        manifest=manifest(citations, snapshot),
+        manifest=manifest_v2(citations, snapshot),
     )
 
     lines = render_coverage_result(result)
@@ -350,14 +351,14 @@ def test_denied_and_unavailable_render_as_their_health_and_never_as_a_none() -> 
 
 
 def test_restricted_coverage_renders_denied_rather_than_a_factual_absence() -> None:
-    citations = index(capture(HANDBOOK, CITED, access_class="restricted"))
+    citations = index_v2(capture(HANDBOOK, CITED, access_class="restricted"))
     snapshot = overlay(working(HANDBOOK, HANDBOOK_BODY), citations=citations)
-    result = resolve_coverage(
+    result = resolve_coverage_v3(
         request(HANDBOOK),
         index=citations,
         overlay=snapshot,
         access=profile(permitted=("instance", "public")),
-        manifest=manifest(citations, snapshot),
+        manifest=manifest_v2(citations, snapshot),
     )
 
     lines = render_coverage_result(result)

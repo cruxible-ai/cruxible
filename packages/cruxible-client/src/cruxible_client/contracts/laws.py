@@ -12,7 +12,6 @@ DOCUMENT_LAW_IDENTIFIER = "playbill.document.v1"
 CLAIM_TYPE_LAW_IDENTIFIER = "playbill.claim-type.v1"
 CLAIM_TYPE_LAW_V3_IDENTIFIER = "playbill.claim-type.v3"
 CLAIM_TYPE_LAW_V4_IDENTIFIER = "playbill.claim-type.v4"
-CLAIM_LAW_IDENTIFIER = "playbill.claim.v1"
 CLAIM_LAW_V2_IDENTIFIER = "playbill.claim.v2"
 CLAIM_LAW_V3_IDENTIFIER = "playbill.claim.v3"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
@@ -125,24 +124,6 @@ def _capture_contract_law_coordinate() -> AcceptanceLawCoordinate:
 
 
 CAPTURE_CONTRACT_LAW = _capture_contract_law_coordinate()
-
-
-def _claim_law_coordinate() -> AcceptanceLawCoordinate:
-    return AcceptanceLawCoordinate(
-        identifier=CLAIM_LAW_IDENTIFIER,
-        digest=typed_digest(
-            AcceptanceLawDigest,
-            "playbill-law-v1",
-            {
-                "identifier": CLAIM_LAW_IDENTIFIER,
-                "artifact_tag": "playbill-claim-v1",
-                "semantic_revision": 3,
-            },
-        ).tagged,
-    )
-
-
-CLAIM_LAW = _claim_law_coordinate()
 
 
 def _artifact_law_coordinate(
@@ -308,11 +289,6 @@ CAPTURE_CONTRACT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="capture-contract",
     artifact_tag="playbill-capture-contract-v1",
 )
-CLAIM_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW,
-    artifact_kind="claim",
-    artifact_tag="playbill-claim-v1",
-)
 CLAIM_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=CLAIM_LAW_V2,
     artifact_kind="claim",
@@ -366,7 +342,6 @@ EXHAUST_PROMOTION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
-        CLAIM_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
@@ -401,9 +376,6 @@ __all__ = [
     "CAPTURE_CONTRACT_ACCEPTANCE_LAW",
     "CAPTURE_CONTRACT_LAW",
     "CAPTURE_CONTRACT_LAW_IDENTIFIER",
-    "CLAIM_ACCEPTANCE_LAW",
-    "CLAIM_LAW",
-    "CLAIM_LAW_IDENTIFIER",
     "CLAIM_LAW_V2",
     "CLAIM_LAW_V2_IDENTIFIER",
     "CLAIM_LAW_V3",

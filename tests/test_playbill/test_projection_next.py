@@ -35,19 +35,21 @@ from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
 )
 from cruxible_core.service.playbill_claims import (
-    DirectClaimAuthoringV1,
-    ExistingStatementHandoffV1,
     _claim_from_view,
     service_list_playbill_claims,
-    service_propose_playbill_claim,
 )
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV2,
+    PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
 from cruxible_core.service.playbill_query import build_accepted_query_facts
+from tests.test_playbill._claim_authoring_support import (
+    DirectClaimAuthoringV1,
+    ExistingStatementHandoffV1,
+    service_propose_playbill_claim,
+)
 from tests.test_playbill._knowledge_loop_support import (
     QUERY_NAME,
     SUBJECT_KIND,
@@ -148,8 +150,8 @@ def _request(
         ),
         workspace_observation=PlaybillNextWorkspaceObservationV1(
             source_observations=(
-                PlaybillNextSourceObservationV2(
-                    tag="playbill-next-source-observation-v2",
+                PlaybillNextSourceObservationV3(
+                    tag="playbill-next-source-observation-v3",
                     source_id="corpus.runbook",
                     observed_source_digest="sha256:" + "a" * 64,
                     byte_length=1000,
@@ -191,7 +193,7 @@ def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone
         proposal_name="unrelated-projection-generation",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, unrelated, sequence=4)
+    accept_proposal(instance, owner, unrelated)
     advanced_coordinate = instance.accepted_coordinate()
     assert advanced_coordinate.git_oid != original_coordinate.git_oid
     assert advanced_coordinate.generation_root != original_coordinate.generation_root
@@ -205,7 +207,7 @@ def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone
     assert advanced.workspace_observation is not None
     assert advanced.workspace_observation.source_observations is not None
     source = advanced.workspace_observation.source_observations[0]
-    assert isinstance(source, PlaybillNextSourceObservationV2)
+    assert isinstance(source, PlaybillNextSourceObservationV3)
     assert source.marker_summaries[0].stamp.declared_coordinate.git_oid == (
         original_coordinate.git_oid
     )
@@ -373,7 +375,7 @@ def test_overturned_claim_backing_requires_depublication(tmp_path: Path) -> None
         proposal_name="projection-overturned-claim",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, proposed, sequence=1)
+    activate(instance, owner, proposed)
     overturned = _claim_from_view(service_list_playbill_claims(instance).claims[0])
     backing = ProjectionClaimBackingV1(
         identity=overturned.identity,
@@ -418,7 +420,7 @@ def test_query_backing_replays_actual_resolved_parameter_values(tmp_path: Path) 
         proposal_name="parameterized-projection-query",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, proposal, sequence=3)
+    accept_proposal(instance, owner, proposal)
     parameters = (
         ProjectionResolvedParameterBindingV1(name="subject", value_type="string", value="wi-42"),
     )
@@ -456,7 +458,7 @@ def test_query_backing_reacts_to_real_time_dependent_visibility(tmp_path: Path) 
         proposal_name="future-projection-claim",
         timestamp=TIMESTAMP,
     )
-    activate(instance, owner, proposal, sequence=4)
+    activate(instance, owner, proposal)
     backing = _query_backing(instance, at=NOW)
 
     assert _projection_rows(instance, _request(instance, backing=(backing,))) == ()
@@ -498,7 +500,7 @@ def test_claim_backing_statement_digest_ignores_artifact_only_revision(
     )
     assert successor.statement_digest == backing.statement_digest
     assert successor.artifact_digest != original_artifact_digest
-    activate(instance, owner, successor, sequence=4)
+    activate(instance, owner, successor)
 
     accepted_successor = next(
         item

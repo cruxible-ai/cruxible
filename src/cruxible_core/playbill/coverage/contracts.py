@@ -572,51 +572,6 @@ class CoverageCardV2(CoverageCardV1):
         )
 
 
-class CoverageSpanResultV1(_StrictCoverageModel):
-    """One span's relationship and the trustworthiness of that answer."""
-
-    tag: Literal["playbill-coverage-span-result-v1"] = "playbill-coverage-span-result-v1"
-    request: CoverageSpanRequestV1
-    match_state: CoverageMatchStateV1
-    health: CoverageHealthV1
-    absence_is_factual: bool
-    cards: tuple[CoverageCardV1, ...] = ()
-    ambiguous_occurrence_count: int = Field(default=0, ge=0)
-    omitted_card_count: int = Field(default=0, ge=0)
-    coverage: CoverageDescriptorV1
-
-    @model_validator(mode="after")
-    def _span_law(self) -> "CoverageSpanResultV1":
-        expected_absence = (
-            self.match_state == "none" and COVERAGE_HEALTH_ABSENCE_IS_FACTUAL[self.health]
-        )
-        if self.absence_is_factual != expected_absence:
-            raise ValueError("a coverage absence is factual exactly when the boundary is complete")
-        if self.match_state == "exact" and not COVERAGE_HEALTH_PROVES_FRESHNESS[self.health]:
-            raise ValueError("an exact match requires health that proves freshness and access")
-        if self.match_state == "none":
-            if self.cards:
-                raise ValueError("a `none` span cannot carry coverage cards")
-        else:
-            if not self.cards:
-                raise ValueError("a non-`none` span requires at least one card")
-            strongest = min(MATCH_STATE_PRECEDENCE[card.match_state] for card in self.cards)
-            if MATCH_STATE_PRECEDENCE[self.match_state] != strongest:
-                raise ValueError("a span reports the strongest state its cards carry")
-        if self.ambiguous_occurrence_count and self.match_state == "exact":
-            raise ValueError("indistinguishable occurrences are never silently bound to one")
-        if tuple(card.sort_key for card in self.cards) != tuple(
-            sorted(card.sort_key for card in self.cards)
-        ):
-            raise ValueError("coverage cards must be in canonical order")
-        return self
-
-
-class CoverageSpanResultV2(CoverageSpanResultV1):
-    tag: Literal["playbill-coverage-span-result-v2"] = "playbill-coverage-span-result-v2"  # type: ignore[assignment]
-    cards: tuple[CoverageCardV2, ...] = ()
-
-
 class CoverageSpanResultV3(_StrictCoverageModel):
     """One locally proved span, independent of unrelated batch truncation."""
 
@@ -677,28 +632,6 @@ class CoverageSpanResultV3(_StrictCoverageModel):
         return self
 
 
-class CoverageBatchSummaryV1(_StrictCoverageModel):
-    """§11.6.4: one summary per operation, not one `none` beside every line."""
-
-    tag: Literal["playbill-coverage-batch-summary-v1"] = "playbill-coverage-batch-summary-v1"
-    exact: int = Field(ge=0)
-    drifted: int = Field(ge=0)
-    candidate: int = Field(ge=0)
-    none: int = Field(ge=0)
-    returned_spans: int = Field(ge=0)
-    omitted_card_count: int = Field(default=0, ge=0)
-
-    @model_validator(mode="after")
-    def _totals(self) -> "CoverageBatchSummaryV1":
-        if self.exact + self.drifted + self.candidate + self.none != self.returned_spans:
-            raise ValueError("coverage summary states must total the returned spans")
-        return self
-
-
-class CoverageBatchSummaryV2(CoverageBatchSummaryV1):
-    tag: Literal["playbill-coverage-batch-summary-v2"] = "playbill-coverage-batch-summary-v2"  # type: ignore[assignment]
-
-
 class CoverageBatchSummaryV3(_StrictCoverageModel):
     tag: Literal["playbill-coverage-batch-summary-v3"] = "playbill-coverage-batch-summary-v3"
     exact: int = Field(ge=0)
@@ -713,77 +646,6 @@ class CoverageBatchSummaryV3(_StrictCoverageModel):
         if self.exact + self.drifted + self.candidate + self.none != self.returned_spans:
             raise ValueError("coverage summary states must total the returned spans")
         return self
-
-
-class CoverageResultV1(_StrictCoverageModel):
-    """The result of one coverage operation, bound to everything it depended on.
-
-    §11.6.3 requires every result to bind the instance and accepted coordinate,
-    the compiler/index digest, the working-set scope, the per-file or snapshot
-    commitments, the access profile, the manifest epoch, watcher health, and
-    completeness/truncation. The snapshot commitments live in the manifest this
-    result names by digest rather than being copied in beside it, so a result
-    and its manifest cannot disagree about what was observed.
-    """
-
-    tag: Literal["playbill-coverage-result-v1"] = "playbill-coverage-result-v1"
-    at: AcceptedCoordinate
-    instance_id: str
-    index_digest: str
-    overlay_digest: str
-    manifest_digest: str | None
-    epoch: int | None = Field(default=None, ge=0)
-    watcher_health: CoverageWatcherHealthV1
-    access_profile: CoverageAccessProfileV1
-    scope: tuple[LogicalSourceIdentityV1, ...] = ()
-    spans: tuple[CoverageSpanResultV1, ...]
-    summary: CoverageBatchSummaryV1
-    health: CoverageHealthV1
-    coverage: CoverageDescriptorV1
-
-    @field_validator("index_digest", "overlay_digest", "manifest_digest")
-    @classmethod
-    def _digest(cls, value: str | None) -> str | None:
-        if value is not None:
-            Sha256Value.from_tagged(value)
-        return value
-
-    @model_validator(mode="after")
-    def _result_law(self) -> "CoverageResultV1":
-        counts = {state: 0 for state in COVERAGE_MATCH_STATES}
-        for span in self.spans:
-            counts[span.match_state] += 1
-        if (
-            self.summary.exact,
-            self.summary.drifted,
-            self.summary.candidate,
-            self.summary.none,
-            self.summary.returned_spans,
-        ) != (
-            counts["exact"],
-            counts["drifted"],
-            counts["candidate"],
-            counts["none"],
-            len(self.spans),
-        ):
-            raise ValueError("coverage summary must reproduce from the span results")
-        floor = min(
-            (COVERAGE_HEALTH_RANK[span.health] for span in self.spans),
-            default=COVERAGE_HEALTH_RANK["complete"],
-        )
-        if COVERAGE_HEALTH_RANK[self.health] != floor:
-            raise ValueError("batch coverage health is the weakest span health, never the best")
-        if (self.manifest_digest is None) != (self.epoch is None):
-            raise ValueError("a manifest digest and its epoch are bound together or absent")
-        if self.scope != logical_sources_sorted(self.scope):
-            raise ValueError("coverage scope must be sorted and unique")
-        return self
-
-
-class CoverageResultV2(CoverageResultV1):
-    tag: Literal["playbill-coverage-result-v2"] = "playbill-coverage-result-v2"  # type: ignore[assignment]
-    spans: tuple[CoverageSpanResultV2, ...]
-    summary: CoverageBatchSummaryV2
 
 
 class CoverageResultV3(_StrictCoverageModel):
@@ -857,10 +719,7 @@ class CoverageResultV3(_StrictCoverageModel):
         return self
 
 
-CoverageResultAny: TypeAlias = Annotated[
-    CoverageResultV1 | CoverageResultV2 | CoverageResultV3,
-    Field(discriminator="tag"),
-]
+CoverageResultAny: TypeAlias = CoverageResultV3
 
 
 # -- the manifest family --------------------------------------------------
@@ -959,8 +818,6 @@ __all__ = [
     "MATCH_STATE_PRECEDENCE",
     "OCCURRENCE_IDENTITY_DIGEST_DOMAIN",
     "CoverageAccessProfileV1",
-    "CoverageBatchSummaryV1",
-    "CoverageBatchSummaryV2",
     "CoverageBatchSummaryV3",
     "CoverageCardBudgetV1",
     "CoverageCardV1",
@@ -975,14 +832,10 @@ __all__ = [
     "CoverageManifestProfileV2",
     "CoverageMatchStateV1",
     "CoverageRequestV1",
-    "CoverageResultV1",
     "CoverageResultAny",
-    "CoverageResultV2",
     "CoverageResultV3",
     "CoverageSelectionV1",
     "CoverageSpanRequestV1",
-    "CoverageSpanResultV1",
-    "CoverageSpanResultV2",
     "CoverageSpanResultV3",
     "CoverageWatcherHealthV1",
     "LogicalSourceIdentityV1",

@@ -35,18 +35,15 @@ from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
-    ExistingStatementHandoffV1,
     _claim_from_view,
     _claim_law_evidence,
     service_list_playbill_claims,
-    service_propose_playbill_claim,
 )
 from cruxible_core.service.playbill_next import (
     NextReason,
     PlaybillNextAccessProfileInvalid,
     PlaybillNextDriftObservationV1,
     PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV1,
     PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationInvalid,
     PlaybillNextWorkspaceObservationV1,
@@ -57,6 +54,10 @@ from cruxible_core.service.playbill_next import (
 )
 from cruxible_core.service.playbill_query import build_accepted_query_facts
 from tests.test_playbill._adoption_fixture import _Builder
+from tests.test_playbill._claim_authoring_support import (
+    ExistingStatementHandoffV1,
+    service_propose_playbill_claim,
+)
 from tests.test_playbill._knowledge_loop_support import (
     activate as activate_work_item_claim,
 )
@@ -195,7 +196,7 @@ def _accept_claim_successor(instance, owner, *, value: str, sequence: int):  # t
         proposal_name=f"next-successor-{sequence}",
         timestamp=f"2026-08-24T17:00:{sequence:02d}.000000Z",
     )
-    activate_work_item_claim(instance, owner, proposed, sequence=sequence)
+    activate_work_item_claim(instance, owner, proposed)
     return current
 
 
@@ -461,6 +462,13 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next.parse_capture_envelope", synthetic_capture
     )
+    commitments = _citation_commitments(
+        instance,
+        coordinate=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=EVALUATION_TIME,
+    )
+    healthy = next(item for item in commitments.values() if item.source_id == "corpus.healthy")
+    calls = 0
 
     result = service_playbill_next(
         instance,
@@ -469,9 +477,17 @@ def test_malformed_capture_snapshot_never_hides_another_citations_repair(
             access_profile=_access(),
             workspace_observation=PlaybillNextWorkspaceObservationV1(
                 source_observations=(
-                    PlaybillNextSourceObservationV1(
+                    PlaybillNextSourceObservationV3(
+                        tag="playbill-next-source-observation-v3",
                         source_id="corpus.healthy",
                         observed_source_digest=observed_digest,
+                        byte_length=healthy.byte_length,
+                        marker_summaries=(),
+                        occurrences=(),
+                        scanned_commitment_digests=(healthy.commitment_digest,),
+                        scan_complete=True,
+                        scan_notes=(),
+                        marker_notes=(),
                     ),
                 )
             ),
@@ -507,7 +523,7 @@ def test_conflict_repair_names_qualifier_separation_not_dispositions(tmp_path: P
         proposal_name="conflicting-work-item",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate_work_item_claim(instance, owner, second, sequence=3)
+    activate_work_item_claim(instance, owner, second)
 
     result = service_playbill_next(
         instance,

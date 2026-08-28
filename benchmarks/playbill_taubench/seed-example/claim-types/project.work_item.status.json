@@ -37,6 +37,25 @@
         "rule_id": "direct-self-asserted",
         "subject_binding": "exact_claim_subject",
         "tag": "playbill-claim-evidence-admission-rule-v1"
+      },
+      {
+        "admission": "direct",
+        "allowed_reducer_digests": [],
+        "attestation_requirement": "none",
+        "capture_contract_digests": [
+          "sha256:7492f007725d36d8a83d60ed998ed263c50144e2a31f672b3cbba4ca8654bc76",
+          "sha256:c75b0b8c058604aa03689e142b2c14f2d100a73a18f18b67432fa68ade9a9e53",
+          "sha256:e4bdfee47f0127746ae024d897b7dcbb0f9bd5b291edb3b4ea44f2f4423dffff"
+        ],
+        "claim_roles": [
+          "observation"
+        ],
+        "evidence_kinds": [
+          "self_asserted"
+        ],
+        "rule_id": "foreign-working-sources",
+        "subject_binding": "exact_claim_subject",
+        "tag": "playbill-claim-evidence-admission-rule-v1"
       }
     ],
     "tag": "playbill-claim-evidence-admission-policy-v1"

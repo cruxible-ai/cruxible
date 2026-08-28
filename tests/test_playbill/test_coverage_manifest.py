@@ -23,14 +23,13 @@ from cruxible_core.playbill.coverage.indexes import (
     build_working_occurrence_overlay,
 )
 from cruxible_core.playbill.coverage.manifest import (
-    COVERAGE_MANIFEST_FILE,
     COVERAGE_MANIFEST_FILE_V2,
     CoverageManifestError,
     CoverageWorkingSetScopeV1,
     advance_coverage_manifest,
     coverage_manifest_body,
     coverage_manifest_body_v2,
-    coverage_manifest_digest,
+    coverage_manifest_digest_v2,
     coverage_manifest_path,
     coverage_manifest_path_v2,
     discard_coverage_manifest,
@@ -40,7 +39,7 @@ from cruxible_core.playbill.coverage.manifest import (
     write_coverage_manifest,
     write_coverage_manifest_v2,
 )
-from cruxible_core.playbill.coverage.resolver import resolve_coverage
+from cruxible_core.playbill.coverage.resolver import resolve_coverage_v3
 from tests.test_playbill._coverage_support import (
     CITED,
     EPILOGUE,
@@ -50,7 +49,9 @@ from tests.test_playbill._coverage_support import (
     SCRATCH,
     capture,
     index,
+    index_v2,
     manifest,
+    manifest_v2,
     overlay,
     profile,
     request,
@@ -71,34 +72,41 @@ def _built() -> tuple[object, object]:
 
 
 def test_manifest_deletion_and_rebuild_reproduce_the_same_projection(tmp_path: Path) -> None:
-    citations, snapshot = _built()
-    body = manifest(citations, snapshot)
-    first = resolve_coverage(
-        request(HANDBOOK), index=citations, overlay=snapshot, access=profile(), manifest=body
+    citations = index_v2(capture(HANDBOOK, CITED, with_handle=True))
+    snapshot = overlay(working(HANDBOOK, HANDBOOK_BODY), citations=citations)
+    body = manifest_v2(citations, snapshot)
+    before = resolve_coverage_v3(
+        request(HANDBOOK),
+        index=citations,
+        overlay=snapshot,
+        access=profile(),
+        manifest=body,
     )
 
-    write_coverage_manifest(tmp_path, body, written_at="2026-08-19T09:00:00Z")
+    write_coverage_manifest_v2(tmp_path, body, written_at="2026-08-19T09:00:00Z")
     discard_coverage_manifest(tmp_path)
-    assert load_coverage_manifest_file(tmp_path) is None
+    assert load_coverage_manifest_file_v2(tmp_path) is None
 
-    rebuilt_citations, rebuilt_snapshot = _built()
-    rebuilt = manifest(rebuilt_citations, rebuilt_snapshot)
-    written = write_coverage_manifest(tmp_path, rebuilt, written_at="2026-08-19T11:30:00Z")
-    reloaded = load_coverage_manifest_file(tmp_path)
-
-    assert written.name == COVERAGE_MANIFEST_FILE
-    assert reloaded is not None
-    assert reloaded.body == rebuilt
-    assert coverage_manifest_digest(rebuilt) == coverage_manifest_digest(body)
-    second = resolve_coverage(
+    rebuilt_citations = index_v2(capture(HANDBOOK, CITED, with_handle=True))
+    rebuilt_snapshot = overlay(working(HANDBOOK, HANDBOOK_BODY), citations=rebuilt_citations)
+    rebuilt = manifest_v2(rebuilt_citations, rebuilt_snapshot)
+    written = write_coverage_manifest_v2(tmp_path, rebuilt, written_at="2026-08-19T11:30:00Z")
+    reloaded = load_coverage_manifest_file_v2(tmp_path)
+    after = resolve_coverage_v3(
         request(HANDBOOK),
         index=rebuilt_citations,
         overlay=rebuilt_snapshot,
         access=profile(),
-        manifest=reloaded.body,
+        manifest=rebuilt,
     )
-    assert canonical_bytes(second.model_dump(mode="json")) == canonical_bytes(
-        first.model_dump(mode="json")
+
+    assert written.name == COVERAGE_MANIFEST_FILE_V2
+    assert reloaded is not None
+    assert reloaded.body == rebuilt
+    assert coverage_manifest_digest_v2(rebuilt) == coverage_manifest_digest_v2(body)
+    assert reloaded.body == body
+    assert canonical_bytes(after.model_dump(mode="json")) == canonical_bytes(
+        before.model_dump(mode="json")
     )
 
 
@@ -177,18 +185,25 @@ def test_the_epoch_advances_and_never_moves_backwards(tmp_path: Path) -> None:
 
 
 def test_republishing_after_an_edit_restores_a_complete_boundary(tmp_path: Path) -> None:
-    citations, snapshot = _built()
-    body = manifest(citations, snapshot)
+    citations = index_v2(capture(HANDBOOK, CITED, with_handle=True))
+    snapshot = overlay(working(HANDBOOK, HANDBOOK_BODY), citations=citations)
+    body = manifest_v2(citations, snapshot)
     edited = overlay(working(HANDBOOK, PREAMBLE + EPILOGUE), citations=citations)
 
-    stale = resolve_coverage(
+    stale = resolve_coverage_v3(
         request(HANDBOOK), index=citations, overlay=edited, access=profile(), manifest=body
     )
     assert stale.spans[0].health == "stale"
 
-    advanced = advance_coverage_manifest(body, index=citations, overlay=edited)
-    write_coverage_manifest(tmp_path, advanced)
-    fresh = resolve_coverage(
+    advanced = coverage_manifest_body_v2(
+        instance_id=INSTANCE_ID,
+        index=citations,
+        overlay=edited,
+        access_profile=profile(),
+        epoch=body.epoch + 1,
+    )
+    write_coverage_manifest_v2(tmp_path, advanced)
+    fresh = resolve_coverage_v3(
         request(HANDBOOK), index=citations, overlay=edited, access=profile(), manifest=advanced
     )
 

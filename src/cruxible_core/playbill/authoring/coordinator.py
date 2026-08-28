@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Callable, Literal
 
-from cruxible_client.contracts.artifacts import ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.attestations import (
     VerifiedApproval,
     verify_approval,
@@ -29,14 +28,10 @@ from cruxible_client.contracts.authoring.models import (
     CandidateStatusV1,
     ClaimAuthoringPayloadV1,
     InsertionAbandonResultV1,
-    InsertionConfirmationObservationV1,
     InsertionConfirmationObservationV2,
-    InsertionConfirmResultV1,
     InsertionConfirmResultV2,
-    InsertionExpectationV1,
     InsertionExpectationV2,
     InsertionPrepareResultV2,
-    InsertionTargetV2,
     PreflightResultV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
@@ -46,41 +41,28 @@ from cruxible_client.contracts.authoring.models import (
     authoring_create_fingerprint,
     authoring_payload_digest,
     insertion_confirm_operation_v2_key,
-    insertion_confirmation_operation_key,
     insertion_prepare_operation_v2_key,
     insertion_prepare_terminal_operation_v2_key,
     reference_expectations_digest,
-    update_insertion_expectation,
 )
-from cruxible_client.contracts.candidates import canonical_candidate_timestamp
-from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.captures import (
     COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
-    build_working_selection_capture,
     capture_contract_digest,
-    capture_contract_path,
     capture_is_coordinator_self_source,
     parse_capture_envelope,
-    render_capture_contract,
 )
 from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV2,
-    ClaimBackingV2,
-    build_claim_citation,
-    claim_artifact_digest,
     claim_citation_references,
     claim_path,
-    claim_statement_address,
     claim_statement_digest,
-    merge_claim_citations,
     new_claim_id,
     parse_claim,
-    render_claim,
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError, PlaybillError
-from cruxible_client.contracts.semantic import ContentSpan, SourceMapping
 from cruxible_client.contracts.source_references import (
     CasSourceReferenceV1,
     ExternalSourceReferenceV1,
@@ -95,17 +77,10 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationPrepareOrConfirmRequired,
     PublicationTerminalStateRefused,
     build_publication_preparation,
-    mark_abandoned,
-    mark_bound,
-    mark_claim_accepted,
-    mark_claim_currency_changed,
-    mark_confirming,
-    mark_expired,
     mark_publication_bound,
     mark_publication_claim_accepted,
     mark_publication_prepared,
     mark_publication_terminal,
-    mint_insertion_expectation,
     mint_insertion_expectation_v2,
     publication_confirmation_from_source,
     publication_confirmation_matches,
@@ -627,20 +602,11 @@ class AuthoringIntentCoordinator:
             created_at = parse_datetime(preflighted.canonical_timestamp)
             if created_at is None:  # pragma: no cover - validated timestamp
                 raise RuntimeError("AuthoringIntent timestamp did not parse")
-            insertion_expectation = (
-                mint_insertion_expectation_v2(
-                    preflighted,
-                    original_claim_artifact_digest=artifact_digest,
-                    claim_statement_digest=statement_digest,
-                    expires_at=created_at + PUBLICATION_EXPECTATION_EXPIRY,
-                )
-                if isinstance(payload.insertion_target, InsertionTargetV2)
-                else mint_insertion_expectation(
-                    preflighted,
-                    original_claim_artifact_digest=artifact_digest,
-                    claim_statement_digest=statement_digest,
-                    expires_at=created_at + PUBLICATION_EXPECTATION_EXPIRY,
-                )
+            insertion_expectation = mint_insertion_expectation_v2(
+                preflighted,
+                original_claim_artifact_digest=artifact_digest,
+                claim_statement_digest=statement_digest,
+                expires_at=created_at + PUBLICATION_EXPECTATION_EXPIRY,
             )
 
         def bind_submit(intent: AuthoringIntentV1) -> AuthoringIntentV1:
@@ -869,123 +835,6 @@ class AuthoringIntentCoordinator:
         intent_id: str,
         *,
         actor: AuthenticatedActor,
-        observation: InsertionConfirmationObservationV1 | InsertionConfirmationObservationV2,
-    ) -> InsertionConfirmResultV1 | InsertionConfirmResultV2:
-        if isinstance(observation, InsertionConfirmationObservationV2):
-            return self._confirm_publication(intent_id, actor=actor, observation=observation)
-        before = self.store.get(intent_id, actor_id=actor.actor_id)
-        was_bound = (
-            before.insertion_expectation is not None
-            and before.insertion_expectation.state == "bound"
-        )
-        current = self._refresh_protocol(before, actor=actor)
-        expectation = current.insertion_expectation
-        if expectation is None:
-            raise InsertionProtocolError("AuthoringIntent has no insertion expectation")
-        if not isinstance(expectation, InsertionExpectationV1):
-            raise InsertionProtocolError("v1 confirmation requires a v1 insertion expectation")
-        if expectation.state == "bound":
-            return InsertionConfirmResultV1(
-                outcome="already_bound" if was_bound else "bound",
-                intent=current,
-                expectation=expectation,
-            )
-        if expectation.state == "expired":
-            return InsertionConfirmResultV1(
-                outcome="expired",
-                intent=current,
-                expectation=expectation,
-            )
-        if expectation.state == "claim_currency_changed":
-            return InsertionConfirmResultV1(
-                outcome="claim_currency_changed",
-                intent=current,
-                expectation=expectation,
-            )
-        if expectation.state == "abandoned":
-            raise InsertionProtocolError("abandoned insertion expectation cannot be confirmed")
-        if expectation.state == "awaiting_claim_acceptance":
-            raise InsertionProtocolError("Claim must be accepted before insertion confirmation")
-
-        now = self.clock()
-        if expectation.state == "pending" and now >= expectation.patch.expires_at:
-            expired = self._transition_expired(current, actor=actor, evaluation_time=now)
-            assert isinstance(expired.insertion_expectation, InsertionExpectationV1)
-            return InsertionConfirmResultV1(
-                outcome="expired",
-                intent=expired,
-                expectation=expired.insertion_expectation,
-            )
-        correspondence = self._confirmation_correspondence(expectation, observation)
-        if correspondence is not None:
-            return InsertionConfirmResultV1(
-                outcome=correspondence,
-                intent=current,
-                expectation=expectation,
-            )
-
-        if expectation.state == "pending":
-            operation_key = insertion_confirmation_operation_key(
-                expectation.expectation_id,
-                observation,
-            )
-
-            def begin_confirmation(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-                live = intent.insertion_expectation
-                if not isinstance(live, InsertionExpectationV1) or live.state != "pending":
-                    return intent
-                next_expectation, _status = self._submit_insertion_successor(
-                    intent,
-                    live,
-                    actor=actor,
-                    observation=observation,
-                )
-                return intent.model_copy(update={"insertion_expectation": next_expectation})
-
-            current = self.store.transition(
-                intent_id,
-                actor_id=actor.actor_id,
-                operation_key=operation_key,
-                transform=begin_confirmation,
-            )
-            expectation = current.insertion_expectation
-            if not isinstance(
-                expectation, InsertionExpectationV1
-            ):  # pragma: no cover - transition invariant
-                raise RuntimeError("confirmation transition lost its insertion expectation")
-
-        current = self._refresh_protocol(current, actor=actor)
-        expectation = current.insertion_expectation
-        assert isinstance(expectation, InsertionExpectationV1)
-        if expectation.state == "bound":
-            return InsertionConfirmResultV1(
-                outcome="bound",
-                intent=current,
-                expectation=expectation,
-            )
-        status = self._insertion_candidate_status(expectation)
-        if status.state in {"approval_invalid", "conflicted_after_rebase"}:
-            current = self._rebase_insertion_successor(
-                current,
-                actor=actor,
-                observation=observation,
-            )
-            expectation = current.insertion_expectation
-            assert isinstance(expectation, InsertionExpectationV1)
-            status = self._insertion_candidate_status(expectation)
-        refused = expectation.successor_candidate_digest is None
-        return InsertionConfirmResultV1(
-            outcome=("backing_candidate_refused" if refused else "backing_candidate_pending"),
-            intent=current,
-            expectation=expectation,
-            successor_status=status,
-        )
-
-    def _confirm_publication(
-        self,
-        intent_id: str,
-        *,
-        actor: AuthenticatedActor,
         observation: InsertionConfirmationObservationV2,
     ) -> InsertionConfirmResultV2:
         before = self.store.get(intent_id, actor_id=actor.actor_id)
@@ -1138,71 +987,42 @@ class AuthoringIntentCoordinator:
                 "intent_id": intent_id,
             },
         ).tagged
-
-        if isinstance(expectation, InsertionExpectationV2):
-            if expectation.state == "abandoned":
-                return InsertionAbandonResultV1(intent=current, expectation=expectation)
-            if expectation.state == "prepared":
-                raise PublicationPrepareOrConfirmRequired(
-                    f"{PublicationPrepareOrConfirmRequired.code}: "
-                    "prepared publication requires prepare/confirm before abandon"
-                )
-            if expectation.state in {"bound", "expired", "claim_currency_changed"}:
-                raise PublicationTerminalStateRefused(
-                    f"{PublicationTerminalStateRefused.code}: publication is already terminal"
-                )
-
-            def abandon_publication(intent: AuthoringIntentV1) -> AuthoringIntentV1:
-                live = intent.insertion_expectation
-                if not isinstance(live, InsertionExpectationV2):
-                    raise InsertionProtocolError("publication expectation changed version")
-                return intent.model_copy(
-                    update={
-                        "insertion_expectation": mark_publication_terminal(
-                            intent,
-                            live,
-                            state="abandoned",
-                            finalized_at=self.clock(),
-                        )
-                    }
-                )
-
-            updated = self.store.transition(
-                intent_id,
-                actor_id=actor.actor_id,
-                operation_key=operation_key,
-                transform=abandon_publication,
+        if expectation.state == "abandoned":
+            return InsertionAbandonResultV1(intent=current, expectation=expectation)
+        if expectation.state == "prepared":
+            raise PublicationPrepareOrConfirmRequired(
+                f"{PublicationPrepareOrConfirmRequired.code}: "
+                "prepared publication requires prepare/confirm before abandon"
             )
-            updated_expectation = updated.insertion_expectation
-            assert isinstance(updated_expectation, InsertionExpectationV2)
-            return InsertionAbandonResultV1(
-                intent=updated,
-                expectation=updated_expectation,
+        if expectation.state in {"bound", "expired", "claim_currency_changed"}:
+            raise PublicationTerminalStateRefused(
+                f"{PublicationTerminalStateRefused.code}: publication is already terminal"
             )
-        assert isinstance(expectation, InsertionExpectationV1)
 
-        def abandon(intent: AuthoringIntentV1) -> AuthoringIntentV1:
+        def abandon_publication(intent: AuthoringIntentV1) -> AuthoringIntentV1:
             live = intent.insertion_expectation
-            if not isinstance(live, InsertionExpectationV1):
-                raise InsertionProtocolError("v1 abandon requires a v1 insertion expectation")
-            abandoned = mark_abandoned(
-                intent,
-                live,
-                finalized_at=self.clock(),
+            if live is None:
+                raise InsertionProtocolError("publication expectation disappeared")
+            return intent.model_copy(
+                update={
+                    "insertion_expectation": mark_publication_terminal(
+                        intent,
+                        live,
+                        state="abandoned",
+                        finalized_at=self.clock(),
+                    )
+                }
             )
-            return intent.model_copy(update={"insertion_expectation": abandoned})
 
         updated = self.store.transition(
             intent_id,
             actor_id=actor.actor_id,
             operation_key=operation_key,
-            transform=abandon,
+            transform=abandon_publication,
         )
-        assert updated.insertion_expectation is not None
-        return InsertionAbandonResultV1(
-            intent=updated,
-            expectation=updated.insertion_expectation,
-        )
+        updated_expectation = updated.insertion_expectation
+        assert updated_expectation is not None
+        return InsertionAbandonResultV1(intent=updated, expectation=updated_expectation)
 
     def replace_payload(
         self,
@@ -1373,327 +1193,6 @@ class AuthoringIntentCoordinator:
         if isinstance(payload, ClaimAuthoringPayloadV1):
             return payload.claim_ref or self.claim_id_factory()
         return f"Procedure:{payload.definition['name']}"
-
-    @staticmethod
-    def _confirmation_correspondence(
-        expectation: InsertionExpectationV1,
-        observation: InsertionConfirmationObservationV1,
-    ) -> Literal["ambiguous", "stale_target"] | None:
-        if observation.observed_occurrence_count != 1:
-            return "ambiguous"
-        patch = expectation.patch
-        if (
-            observation.expectation_id != expectation.expectation_id
-            or observation.source_id != patch.source_id
-            or observation.observed_content_digest != patch.postimage_digest
-            or observation.coordinate.source_byte_length != patch.postimage_byte_length
-            or observation.selected_end_byte - observation.selected_start_byte
-            != patch.body_byte_length
-            or observation.selected_bytes_digest != patch.body_digest
-        ):
-            return "stale_target"
-        return None
-
-    def _transition_expired(
-        self,
-        intent: AuthoringIntentV1,
-        *,
-        actor: AuthenticatedActor,
-        evaluation_time: datetime,
-    ) -> AuthoringIntentV1:
-        expectation = intent.insertion_expectation
-        if not isinstance(expectation, InsertionExpectationV1):
-            raise InsertionProtocolError("v1 expiry requires a v1 insertion expectation")
-        operation_key = typed_digest(
-            Sha256Value,
-            "playbill-insertion-expire-v1",
-            {
-                "evaluation_time": format_datetime(evaluation_time),
-                "expectation_id": expectation.expectation_id,
-            },
-        ).tagged
-
-        def expire(current: AuthoringIntentV1) -> AuthoringIntentV1:
-            live = current.insertion_expectation
-            if not isinstance(live, InsertionExpectationV1):
-                raise InsertionProtocolError("v1 expiry requires a v1 insertion expectation")
-            expired = mark_expired(current, live, evaluation_time=evaluation_time)
-            return current.model_copy(update={"insertion_expectation": expired})
-
-        return self.store.transition(
-            intent.intent_id,
-            actor_id=actor.actor_id,
-            operation_key=operation_key,
-            transform=expire,
-        )
-
-    def _successor_timestamp(self, intent: AuthoringIntentV1) -> str:
-        parent_time = self._protocol_time(intent)
-        return canonical_candidate_timestamp(parent_time + timedelta(microseconds=1))
-
-    @staticmethod
-    def _merged_pins(
-        current: tuple[ArtifactPin, ...],
-        added: ArtifactPin,
-    ) -> tuple[ArtifactPin, ...]:
-        by_key = {(item.role, item.target.qualified): item for item in (*current, added)}
-        return tuple(
-            by_key[key]
-            for key in sorted(
-                by_key,
-                key=lambda item: (item[0].encode("utf-8"), item[1].encode("utf-8")),
-            )
-        )
-
-    @staticmethod
-    def _merged_mappings(
-        current: tuple[SourceMapping, ...],
-        added: SourceMapping,
-    ) -> tuple[SourceMapping, ...]:
-        by_wire = {
-            canonical_bytes(item.model_dump(mode="json")): item for item in (*current, added)
-        }
-        return tuple(by_wire[key] for key in sorted(by_wire))
-
-    def _submit_insertion_successor(
-        self,
-        intent: AuthoringIntentV1,
-        expectation: InsertionExpectationV1,
-        *,
-        actor: AuthenticatedActor,
-        observation: InsertionConfirmationObservationV1,
-    ) -> tuple[InsertionExpectationV1, CandidateStatusV1]:
-        payload = intent.payload
-        if not isinstance(payload, ClaimAuthoringPayloadV1):
-            raise InsertionProtocolError("insertion successor requires a Claim intent")
-        if not isinstance(payload.source, SelfSourceBodyV1):
-            raise InsertionProtocolError("insertion successor requires a self-source body")
-        current_claim = self._current_claim(intent)
-        if current_claim is None or current_claim.lifecycle.state != "live":
-            raise InsertionProtocolError("accepted Claim lineage is unavailable")
-        if (
-            claim_statement_digest(current_claim.statement).tagged
-            != expectation.claim_statement_digest
-        ):
-            raise InsertionProtocolError("Claim currency changed before confirmation")
-        body = payload.source.content
-        observed_at = parse_datetime(intent.canonical_timestamp)
-        if observed_at is None:  # pragma: no cover - timestamp invariant
-            raise RuntimeError("AuthoringIntent timestamp did not parse")
-        accepted = self.instance.accepted_coordinate()
-        public_accepted = AcceptedCoordinate.from_internal(accepted)
-        built = build_working_selection_capture(
-            store=self.instance.body_store(),
-            actor_id=actor.actor_id,
-            claim_id=intent.semantic_identity,
-            rationale=payload.rationale,
-            observed_at=observed_at,
-            accepted_coordinate=public_accepted,
-            source_id=observation.source_id,
-            coordinate={
-                **observation.coordinate.model_dump(mode="json"),
-                "observed_content_digest": observation.observed_content_digest,
-            },
-            selector={
-                "expectation_id": observation.expectation_id,
-                "observed_occurrence_count": observation.observed_occurrence_count,
-                "selected_end_byte": observation.selected_end_byte,
-                "selected_start_byte": observation.selected_start_byte,
-            },
-            selected_content=body,
-        )
-        citation = build_claim_citation(
-            current_claim.identity,
-            capture_digest=built.capture_digest,
-            role="copy",
-            origin="self_published",
-        )
-        prior_citations = (
-            current_claim.backing.citations
-            if isinstance(current_claim.backing, ClaimBackingV2)
-            else ()
-        )
-        source_mapping = SourceMapping(
-            subject=claim_statement_address(claim_path(intent.semantic_identity)),
-            spans=(
-                ContentSpan(
-                    content_digest=built.source_body_digest,
-                    start_byte=0,
-                    end_byte=len(body),
-                ),
-            ),
-        )
-        successor = ClaimArtifactV2(
-            identity=current_claim.identity,
-            statement=current_claim.statement,
-            backing=ClaimBackingV2(
-                referent_context=current_claim.backing.referent_context,
-                capture_digests=tuple(
-                    sorted(
-                        {*current_claim.backing.capture_digests, built.capture_digest},
-                        key=lambda item: item.encode("ascii"),
-                    )
-                ),
-                citations=merge_claim_citations(prior_citations, (citation,)),
-                attestation_digests=current_claim.backing.attestation_digests,
-                input_claim_digests=current_claim.backing.input_claim_digests,
-                reducer_digest=current_claim.backing.reducer_digest,
-                source_mappings=self._merged_mappings(
-                    current_claim.backing.source_mappings,
-                    source_mapping,
-                ),
-            ),
-            authority=current_claim.authority,
-            pins=self._merged_pins(
-                current_claim.pins,
-                ArtifactPin(
-                    role="capture-contract",
-                    target=built.contract.identity,
-                    artifact_digest=capture_contract_digest(built.contract).tagged,
-                ),
-            ),
-            lifecycle=ArtifactLifecycle(
-                predecessor_digest=claim_artifact_digest(current_claim).tagged
-            ),
-        )
-        path = claim_path(intent.semantic_identity)
-        tree = self.instance.tree_at(accepted.git_oid)
-        tree[path] = render_claim(successor)
-        tree[capture_contract_path(built.contract.identity.name)] = render_capture_contract(
-            built.contract
-        )
-        candidate_ref = f"refs/proposals/{actor.actor_id}/intent-{intent.intent_id[4:]}-publication"
-        result = self.instance.proposal_service().submit(
-            actor=actor,
-            request=ProposalAdmissionRequest(
-                target_ref=candidate_ref,
-                proposed_base_oid=accepted.git_oid,
-            ),
-            candidate_tree=tree,
-            timestamp=self._successor_timestamp(intent),
-        )
-        candidate_digest = None if result.candidate is None else result.candidate.candidate_digest
-        if expectation.state == "pending":
-            updated = mark_confirming(
-                expectation,
-                observation=observation,
-                citation_id=citation.citation_id,
-                proposal_id=result.admission.proposal_id,
-                candidate_ref=candidate_ref,
-                candidate_digest=candidate_digest,
-            )
-        else:
-            updated = update_insertion_expectation(
-                expectation,
-                confirmation_observation=observation,
-                citation_id=citation.citation_id,
-                successor_proposal_id=result.admission.proposal_id,
-                successor_candidate_ref=candidate_ref,
-                successor_candidate_digest=candidate_digest,
-            )
-        return updated, self._insertion_candidate_status(updated)
-
-    def _insertion_candidate_status(
-        self,
-        expectation: InsertionExpectationV1,
-    ) -> CandidateStatusV1:
-        if expectation.successor_proposal_id is None:
-            raise InsertionProtocolError("confirming insertion omitted its proposal")
-        if expectation.successor_candidate_digest is not None:
-            candidate = self.instance.proposal_evidence().read_candidate(
-                expectation.successor_candidate_digest
-            )
-            if (
-                candidate.candidate.parent_semantic_root
-                != self.instance.accepted_coordinate().semantic_root
-            ):
-                approvals = self.instance.proposal_evidence().read_approvals(
-                    expectation.successor_candidate_digest
-                )
-                return CandidateStatusV1(
-                    state="approval_invalid" if approvals else "conflicted_after_rebase",
-                    proposal_id=expectation.successor_proposal_id,
-                    candidate_digest=expectation.successor_candidate_digest,
-                    current_accepted_coordinate=AcceptedCoordinate.from_internal(
-                        self.instance.accepted_coordinate()
-                    ),
-                    path_to_acceptance=(
-                        AcceptanceConditionV1(
-                            condition="candidate_rebase",
-                            owner="daemon",
-                            action=(
-                                "Retry confirmation; the coordinator will union current "
-                                "backing and mint the rebased successor."
-                            ),
-                            satisfied=False,
-                        ),
-                    ),
-                )
-            return self._candidate_status(
-                proposal_id=expectation.successor_proposal_id,
-                candidate_digest=expectation.successor_candidate_digest,
-            )
-        evaluation = self.instance.proposal_evidence().read_evaluation(
-            expectation.successor_proposal_id
-        )
-        return CandidateStatusV1(
-            state="terminal",
-            proposal_id=expectation.successor_proposal_id,
-            current_accepted_coordinate=AcceptedCoordinate.from_internal(
-                self.instance.accepted_coordinate()
-            ),
-            path_to_acceptance=tuple(
-                AcceptanceConditionV1(
-                    condition=item.code,
-                    owner="writer",
-                    action=item.message,
-                    satisfied=False,
-                )
-                for item in evaluation.diagnostics
-            ),
-        )
-
-    def _rebase_insertion_successor(
-        self,
-        intent: AuthoringIntentV1,
-        *,
-        actor: AuthenticatedActor,
-        observation: InsertionConfirmationObservationV1,
-    ) -> AuthoringIntentV1:
-        expectation = intent.insertion_expectation
-        if expectation is None:
-            raise InsertionProtocolError("AuthoringIntent has no insertion expectation")
-        operation_key = typed_digest(
-            Sha256Value,
-            "playbill-insertion-rebase-v1",
-            {
-                "accepted_semantic_root": self.instance.accepted_coordinate().semantic_root,
-                "expectation_id": expectation.expectation_id,
-                "observation_digest": insertion_confirmation_operation_key(
-                    expectation.expectation_id,
-                    observation,
-                ),
-            },
-        ).tagged
-
-        def rebase(current: AuthoringIntentV1) -> AuthoringIntentV1:
-            live = current.insertion_expectation
-            if live is None or live.state != "confirming":
-                return current
-            updated, _status = self._submit_insertion_successor(
-                current,
-                live,
-                actor=actor,
-                observation=observation,
-            )
-            return current.model_copy(update={"insertion_expectation": updated})
-
-        return self.store.transition(
-            intent.intent_id,
-            actor_id=actor.actor_id,
-            operation_key=operation_key,
-            transform=rebase,
-        )
 
     def _current_claim(self, intent: AuthoringIntentV1) -> ClaimArtifactAny | None:
         path = claim_path(intent.semantic_identity)
@@ -1887,103 +1386,14 @@ class AuthoringIntentCoordinator:
     ) -> AuthoringIntentV1:
         reduced = self._reduce_status(intent)
         expectation = intent.insertion_expectation
-        evaluation_time = self.clock()
-        if isinstance(expectation, InsertionExpectationV2):
-            return self._refresh_publication_v2(
-                intent,
-                expectation=expectation,
-                reduced=reduced,
-                actor=actor,
-                evaluation_time=evaluation_time,
-            )
-        if (
-            expectation is not None
-            and expectation.state in {"awaiting_claim_acceptance", "pending"}
-            and evaluation_time >= expectation.patch.expires_at
-        ):
-            expired = self._transition_expired(
-                intent.model_copy(update={"candidate_status": reduced}),
-                actor=actor,
-                evaluation_time=evaluation_time,
-            )
-            return expired.model_copy(update={"candidate_status": reduced})
-        if expectation is None or expectation.state in {
-            "bound",
-            "expired",
-            "abandoned",
-            "claim_currency_changed",
-        }:
+        if expectation is None:
             return intent.model_copy(update={"candidate_status": reduced})
-
-        current_claim = self._current_claim(intent)
-        next_expectation = expectation
-        if expectation.state == "awaiting_claim_acceptance":
-            if reduced.state != "accepted":
-                return intent.model_copy(update={"candidate_status": reduced})
-            if current_claim is None or current_claim.lifecycle.state != "live":
-                next_expectation = mark_claim_currency_changed(
-                    intent,
-                    expectation,
-                    finalized_at=self._protocol_time(intent),
-                )
-            elif (
-                claim_statement_digest(current_claim.statement).tagged
-                != expectation.claim_statement_digest
-            ):
-                next_expectation = mark_claim_currency_changed(
-                    intent,
-                    expectation,
-                    finalized_at=self._protocol_time(intent),
-                )
-            else:
-                next_expectation = mark_claim_accepted(expectation)
-        elif (
-            current_claim is None
-            or current_claim.lifecycle.state != "live"
-            or (
-                claim_statement_digest(current_claim.statement).tagged
-                != expectation.claim_statement_digest
-            )
-        ):
-            next_expectation = mark_claim_currency_changed(
-                intent,
-                expectation,
-                finalized_at=self._protocol_time(intent),
-            )
-        elif expectation.state == "confirming" and isinstance(
-            current_claim.backing, ClaimBackingV2
-        ):
-            if expectation.citation_id is not None and any(
-                item.citation_id == expectation.citation_id
-                for item in current_claim.backing.citations
-            ):
-                next_expectation = mark_bound(
-                    intent,
-                    expectation,
-                    finalized_at=self._protocol_time(intent),
-                )
-
-        if next_expectation == expectation:
-            return intent.model_copy(update={"candidate_status": reduced})
-        operation_key = typed_digest(
-            Sha256Value,
-            "playbill-insertion-refresh-v1",
-            {
-                "accepted_semantic_root": self.instance.accepted_coordinate().semantic_root,
-                "expectation_digest": next_expectation.expectation_digest,
-                "intent_id": intent.intent_id,
-            },
-        ).tagged
-        return self.store.transition(
-            intent.intent_id,
-            actor_id=actor.actor_id,
-            operation_key=operation_key,
-            transform=lambda current: current.model_copy(
-                update={
-                    "candidate_status": self._reduce_status(current),
-                    "insertion_expectation": next_expectation,
-                }
-            ),
+        return self._refresh_publication_v2(
+            intent,
+            expectation=expectation,
+            reduced=reduced,
+            actor=actor,
+            evaluation_time=self.clock(),
         )
 
     def _refresh_publication_v2(

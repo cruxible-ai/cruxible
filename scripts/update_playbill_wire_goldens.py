@@ -1,10 +1,11 @@
-"""Rebuild the nine Playbill fixtures authorized by the PC-DEL2 wire cut."""
+"""Rebuild the surviving Playbill fixtures and the TauBench seed example."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_client.contracts.artifacts import ArtifactAuthority, ArtifactIdentity
 from cruxible_client.contracts.canonical import ChangeSetDigest, typed_digest
 from cruxible_client.contracts.captures import (
@@ -15,12 +16,6 @@ from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
     render_claim_type,
-)
-from cruxible_client.contracts.claims import (
-    ClaimArtifact,
-    claim_artifact_digest,
-    claim_statement_digest,
-    render_claim,
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
@@ -39,7 +34,6 @@ from cruxible_core.playbill.settlement import (
     parse_change_set_record,
     render_change_set,
 )
-from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
 
 ROOT = Path(__file__).resolve().parents[1]
 GOLDENS = ROOT / "tests/goldens/playbill"
@@ -134,26 +128,6 @@ def _update_claim_type_golden() -> None:
     _write(path, fixture)
 
 
-def _update_capture_claim_golden() -> None:
-    path = GOLDENS / "capture-claim-v1.json"
-    fixture = _read(path)
-    raw_wire = fixture.get("claim_wire")
-    if not isinstance(raw_wire, str):
-        raise TypeError("capture Claim golden has no Claim wire")
-    raw = json.loads(raw_wire)
-    claim_type = _direct_claim_type()
-    type_digest = claim_type_digest(claim_type).tagged
-    raw["statement"]["claim_type_digest"] = type_digest
-    for pin in raw["pins"]:
-        if pin["role"] == "claim-type":
-            pin["artifact_digest"] = type_digest
-    claim = ClaimArtifact.model_validate(raw)
-    fixture["claim_wire"] = render_claim(claim).decode("utf-8")
-    fixture["statement_digest"] = claim_statement_digest(claim.statement).tagged
-    fixture["artifact_digest"] = claim_artifact_digest(claim).tagged
-    _write(path, fixture)
-
-
 def _update_query_golden() -> None:
     path = GOLDENS / "query-definition-v1.json"
     fixture = _read(path)
@@ -214,18 +188,10 @@ def _update_seed_bundle() -> None:
     for name in ("wi-101-status.json", "wi-102-status.json", "wi-103-status.json"):
         path = SEED / "claims" / name
         payload = _read(path)
-        statement = payload.get("statement")
-        if not isinstance(statement, dict):
-            raise TypeError("seed Claim has no statement")
-        statement["claim_type_digest"] = type_digest
-        nested = payload.get("claim_type_artifact")
-        if isinstance(nested, dict):
-            nested_type = ClaimType.model_validate(_remove_retired_claim_type_fields(nested))
-            if nested_type != claim_type:
-                raise AssertionError("seed Claim carries a different ClaimType")
-            payload["claim_type_artifact"] = nested_type.model_dump(mode="json")
-        DirectClaimAuthoringV1.model_validate(payload)
-        _write(path, payload)
+        claim_input = ClaimInput.model_validate(payload)
+        if claim_input.predicate != claim_type.predicate:
+            raise AssertionError("seed ClaimInput names a different ClaimType predicate")
+        _write(path, claim_input.model_dump(mode="json", exclude_defaults=True))
 
     query_path = SEED / "query-definitions/project.work_items.json"
     query_payload = _read(query_path)
@@ -241,7 +207,6 @@ def _update_seed_bundle() -> None:
 
 def main() -> None:
     _update_claim_type_golden()
-    _update_capture_claim_golden()
     _update_query_golden()
     _update_changeset_golden()
     _update_seed_bundle()

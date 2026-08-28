@@ -57,10 +57,7 @@ from cruxible_client.contracts.projection_extensions import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.coverage.contracts import (
-    CoverageManifestProfileV1,
-    CoverageManifestProfileV2,
-)
+from cruxible_core.playbill.coverage.contracts import CoverageManifestProfileV2
 from cruxible_core.playbill.coverage.indexes import evidence_citation_index_digest
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import (
@@ -148,36 +145,6 @@ class PlaybillFloorManifestV2(_StrictFloorModel):
     coordinate: PlaybillAcceptedCoordinate
     files: tuple[PlaybillFloorFileV1, ...]
     floor_digest: str
-
-
-class PlaybillFloorCoverageManifestV1(CoverageManifestProfileV1):
-    """The coverage boundary an exported floor carries with it (§11.6.3, §11.7).
-
-    A **profile of the coverage-manifest family**: every §11.6.3 field is
-    inherited from :class:`CoverageManifestProfileV1` rather than restated, so
-    the floor boundary and every later profile cannot drift apart into two
-    schemas. What this profile adds is the two counts that say how much accepted
-    evidence the boundary was computed over.
-
-    ``epoch`` and per-source commitments are absent by construction: an export
-    observes no working snapshot, so it has nothing to be fresh *against*.
-    ``watcher_health`` is `absent` for the same reason, and the floor alone
-    therefore proves no `exact` match. Both are enforced below rather than
-    narrowed in the annotation, because the family keeps one type per field.
-    This is the §11.6.3 completeness boundary, stated in a file, so an agent
-    reading the floor without a daemon knows exactly what a `none` would and
-    would not have meant.
-    """
-
-    tag: Literal["playbill-floor-coverage-manifest-v1"] = "playbill-floor-coverage-manifest-v1"
-    cited_commitment_count: int
-    exact_bytes_commitment_count: int
-
-    @model_validator(mode="after")
-    def _export_observes_no_snapshot(self) -> "PlaybillFloorCoverageManifestV1":
-        if self.epoch is not None or self.watcher_health != "absent":
-            raise ValueError("an exported floor observes no working snapshot and proves no epoch")
-        return self
 
 
 class PlaybillFloorCoverageManifestV2(CoverageManifestProfileV2):
@@ -591,7 +558,6 @@ def service_export_playbill_floor(
 __all__ = [
     "COVERAGE_MANIFEST_PATH",
     "MANIFEST_PATH",
-    "PlaybillFloorCoverageManifestV1",
     "PlaybillFloorCoverageManifestV2",
     "PlaybillFloorFileV1",
     "PlaybillFloorManifestV1",

@@ -11,8 +11,6 @@ from pydantic import ValidationError
 from cruxible_core.service.playbill_next import (
     NextReason,
     NextRepairOperation,
-    PlaybillNextSourceObservationV1,
-    PlaybillNextSourceObservationV2,
     PlaybillNextSourceObservationV3,
     PlaybillNextSourceObservationV4,
     PlaybillNextWorkspaceObservationV1,
@@ -28,14 +26,13 @@ def _v4(root: Path) -> dict[str, object]:
     return observation["source_observations"][0]  # type: ignore[index,no-any-return]
 
 
-def test_nested_union_preserves_exact_v1_v2_v3_and_accepts_strict_tagged_v4(
+def test_nested_union_refuses_v1_v2_and_accepts_strict_tagged_v3_v4(
     tmp_path: Path,
 ) -> None:
     previous = {
         "source_id": "corpus.runbook",
         "observed_source_digest": "sha256:" + "a" * 64,
     }
-    assert PlaybillNextSourceObservationV1.model_validate(previous).model_dump() == previous
     richer = _v4(tmp_path)
     scanned = [
         item["commitment_digest"]  # type: ignore[index]
@@ -53,9 +50,6 @@ def test_nested_union_preserves_exact_v1_v2_v3_and_accepts_strict_tagged_v4(
         "scan_notes": richer["scan_notes"],
         "marker_notes": richer["marker_notes"],
     }
-    assert (
-        PlaybillNextSourceObservationV2.model_validate(prior_v2).model_dump(mode="json") == prior_v2
-    )
     prior_v3 = {**prior_v2, "tag": "playbill-next-source-observation-v3", "document_id": "runbook"}
     assert (
         PlaybillNextSourceObservationV3.model_validate(prior_v3).model_dump(mode="json") == prior_v3
@@ -64,8 +58,10 @@ def test_nested_union_preserves_exact_v1_v2_v3_and_accepts_strict_tagged_v4(
     assert isinstance(result.source_observations[0], PlaybillNextSourceObservationV4)  # type: ignore[index]
     assert result.source_observations[0].model_dump(mode="json") == richer  # type: ignore[index]
 
-    legacy = PlaybillNextWorkspaceObservationV1.model_validate({"source_observations": [previous]})
-    assert isinstance(legacy.source_observations[0], PlaybillNextSourceObservationV1)  # type: ignore[index]
+    with pytest.raises(ValidationError):
+        PlaybillNextWorkspaceObservationV1.model_validate({"source_observations": [previous]})
+    with pytest.raises(ValidationError):
+        PlaybillNextWorkspaceObservationV1.model_validate({"source_observations": [prior_v2]})
 
 
 @pytest.mark.parametrize(

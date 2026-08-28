@@ -92,8 +92,6 @@ root aliases, not compilation wire.
 | `cruxible_playbill_list_claim_types` | List the accepted predicate vocabulary | `READ_ONLY` |
 | `cruxible_playbill_get_claim_type` | Read one accepted ClaimType | `READ_ONLY` |
 | `cruxible_playbill_claim_type_migrate` | Compose a ClaimType successor with dependent dispositions | `GOVERNED_WRITE` |
-| `cruxible_playbill_propose_claim` | Propose a direct Claim and its Capture | `GOVERNED_WRITE` |
-| `cruxible_playbill_propose_claims` | Propose several Claims as one change set | `GOVERNED_WRITE` |
 | `cruxible_playbill_claim_retire` | Preflight or submit one attributed, dependency-closed Claim retirement | `GOVERNED_WRITE` |
 | `cruxible_playbill_list_claims` | List accepted Claims by Subject or predicate | `READ_ONLY` |
 | `cruxible_playbill_get_claim` | Read one accepted Claim | `READ_ONLY` |
@@ -181,7 +179,6 @@ evidence-index, overlay, and manifest digests it returns reproduce the answer.
 | Tool | Purpose | Permission |
 |---|---|---|
 | `cruxible_playbill_seed_plan` | Deterministically plan a local seed bundle without contacting an instance | `READ_ONLY` |
-| `cruxible_playbill_seed_apply` | Submit exactly one selected seed group | `GOVERNED_WRITE` |
 
 Seed application stores referenced bodies and composes only existing proposal
 and authoring operations. It never approves or activates. Plan and operation

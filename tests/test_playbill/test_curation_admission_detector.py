@@ -11,17 +11,17 @@ import pytest
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
-from cruxible_client.contracts.claims import LiteralClaimObject
+from cruxible_client.contracts.claims import LiteralClaimObject, parse_claim, render_claim
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.curation_detectors import _attempt_subject_from_path
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.service.playbill_claims import service_propose_playbill_claim
 from cruxible_core.service.playbill_curation import (
     PlaybillCurationListRequestV1,
     service_list_playbill_curation,
 )
 from cruxible_core.service.playbill_next import PlaybillNextWorkspaceObservationV1
+from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
 from tests.test_playbill._knowledge_loop_support import TIMESTAMP, authoring, seed_claims
 
 NOW = datetime(2026, 8, 26, 17, tzinfo=UTC)
@@ -76,36 +76,41 @@ def test_two_distinct_refused_proposals_cluster_by_claim_type_and_code(
     tmp_path: Path,
 ) -> None:
     instance, _owner = seed_claims(tmp_path)
-    first_authoring = authoring("wi-44", "ready", with_claim_type=False)
-    second_authoring = authoring("wi-45", "ready", with_claim_type=False)
-    first = service_propose_playbill_claim(
+    valid = service_propose_playbill_claim(
         instance,
-        authoring=first_authoring.model_copy(
+        authoring=authoring("wi-44", "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="invalid-claim-template",
+        timestamp=TIMESTAMP,
+    )
+    evaluated_oid = valid.proposal.proposal.evaluation.evaluated_tree_oid
+    assert evaluated_oid is not None
+    tree = instance.proposal_tree(evaluated_oid)
+    claim = parse_claim(tree[valid.claim_path], path=valid.claim_path)
+    tree[valid.claim_path] = render_claim(
+        claim.model_copy(
             update={
-                "statement": first_authoring.statement.model_copy(
+                "statement": claim.statement.model_copy(
                     update={"object": LiteralClaimObject(value=1)}
                 )
             }
-        ),
-        actor_id="owner",
-        proposal_name="refused-one",
-        timestamp=TIMESTAMP,
+        )
     )
-    second = service_propose_playbill_claim(
-        instance,
-        authoring=second_authoring.model_copy(
-            update={
-                "statement": second_authoring.statement.model_copy(
-                    update={"object": LiteralClaimObject(value=1)}
-                )
-            }
-        ),
-        actor_id="owner",
-        proposal_name="refused-two",
-        timestamp=TIMESTAMP,
-    )
-    assert first.proposal.proposal.evaluation.verdict == "refused"
-    assert second.proposal.proposal.evaluation.verdict == "refused"
+    refused = []
+    base = instance.accepted_coordinate()
+    for suffix in ("one", "two"):
+        refused.append(
+            instance.proposal_service().submit(
+                actor=AuthenticatedActor(actor_id="owner"),
+                request=ProposalAdmissionRequest(
+                    target_ref=f"refs/proposals/owner/refused-{suffix}",
+                    proposed_base_oid=base.git_oid,
+                ),
+                candidate_tree=tree,
+                timestamp=TIMESTAMP,
+            )
+        )
+    assert all(item.evaluation.verdict == "refused" for item in refused)
 
     result = service_list_playbill_curation(
         instance,

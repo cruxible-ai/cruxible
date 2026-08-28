@@ -19,12 +19,7 @@ from cruxible_client import (
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_client.authoring.seed_client import (
-    SeedApplicationResultV1,
-    SeedPlanResultV1,
-    apply_seed_directory_group,
-    plan_seed_directory,
-)
+from cruxible_client.authoring.seed import SeedPlanResultV1, plan_seed_directory
 from cruxible_client.authoring.sources import (
     compile_client_source_context,
     load_source_catalog,
@@ -32,11 +27,9 @@ from cruxible_client.authoring.sources import (
 )
 from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.models import (
-    InsertionConfirmationObservationV1,
     InsertionConfirmationObservationV2,
     PublicationSourceObservationV2,
 )
-from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
 from cruxible_client.contracts.documents import DocumentShell
@@ -72,7 +65,6 @@ from cruxible_core.playbill.search import (
 )
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.server.config import get_runtime_bearer_token, resolve_server_settings
-from cruxible_core.service.playbill_claims import DirectClaimAuthoringV1
 from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
@@ -115,115 +107,6 @@ class _LocalSourceContextClient:
 
     def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext:
         return playbill_api.playbill_source_context(instance_id)
-
-
-class _LocalSeedClient:
-    """Map the shared seed coordinator onto library-mode runtime operations."""
-
-    def store_playbill_body(
-        self, instance_id: str, content: bytes
-    ) -> contracts.PlaybillCasObjectResult:
-        return playbill_api.playbill_store_body(
-            instance_id,
-            content_base64=base64.b64encode(content).decode("ascii"),
-        )
-
-    def compile_playbill_authoring_input(
-        self,
-        instance_id: str,
-        *,
-        input: Mapping[str, Any],
-        intent_id: str | None,
-    ) -> contracts.PlaybillAuthoringPreflightResult:
-        return playbill_api.playbill_authoring_compile_input(
-            instance_id,
-            input=_AUTHORING_INPUT.validate_python(input),
-            intent_id=intent_id,
-        )
-
-    def submit_playbill_authoring_intent(
-        self, instance_id: str, intent_id: str
-    ) -> contracts.PlaybillAuthoringSubmitResult:
-        return playbill_api.playbill_authoring_submit(instance_id, intent_id)
-
-    def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
-        return playbill_api.playbill_whoami(instance_id)
-
-    def list_playbill_proposals(
-        self,
-        instance_id: str,
-        *,
-        status: Literal["open", "settled"] | None = None,
-    ) -> contracts.PlaybillProposalList:
-        return playbill_api.playbill_list_proposals(
-            instance_id,
-            status=cast(Any, status),
-        )
-
-    def propose_playbill_claims(
-        self,
-        instance_id: str,
-        *,
-        authorings: list[dict[str, Any]],
-        proposal_name: str,
-    ) -> contracts.PlaybillClaimBatchProposal:
-        return playbill_api.playbill_propose_claims(
-            instance_id,
-            authorings=tuple(DirectClaimAuthoringV1.model_validate(item) for item in authorings),
-            proposal_name=proposal_name,
-        )
-
-    def propose_playbill_claim_type(
-        self,
-        instance_id: str,
-        *,
-        claim_type: Mapping[str, Any],
-        proposal_name: str,
-    ) -> contracts.PlaybillProposalInspection:
-        return playbill_api.playbill_propose_claim_type(
-            instance_id,
-            claim_type=ClaimType.model_validate(claim_type),
-            proposal_name=proposal_name,
-        )
-
-    def propose_playbill_subject(
-        self,
-        instance_id: str,
-        *,
-        shell: Mapping[str, Any],
-        proposal_name: str,
-    ) -> contracts.PlaybillProposalInspection:
-        return playbill_api.playbill_propose_subject(
-            instance_id,
-            shell=SubjectShell.model_validate(shell),
-            proposal_name=proposal_name,
-        )
-
-    def propose_playbill_document(
-        self,
-        instance_id: str,
-        *,
-        shell: Mapping[str, Any],
-        proposal_name: str,
-    ) -> contracts.PlaybillProposalInspection:
-        return playbill_api.playbill_propose_document(
-            instance_id,
-            shell=DocumentShell.model_validate(shell),
-            proposal_name=proposal_name,
-        )
-
-    def propose_playbill_query_definition(
-        self,
-        instance_id: str,
-        *,
-        query: Mapping[str, Any],
-        proposal_name: str,
-    ) -> contracts.PlaybillProposalInspection:
-        return playbill_api.playbill_propose_query_definition(
-            instance_id,
-            query=QueryDefinitionV1.model_validate(query),
-            proposal_name=proposal_name,
-        )
 
 
 def reset_client_cache() -> None:
@@ -728,27 +611,6 @@ def handle_playbill_get_claim_type(
     )
 
 
-def handle_playbill_propose_claim(
-    instance_id: str,
-    authoring: dict[str, Any],
-    proposal_name: str,
-) -> contracts.PlaybillClaimProposal:
-    request = DirectClaimAuthoringV1.model_validate(authoring)
-    return _dispatch_remote_or_local(
-        lambda client: client.propose_playbill_claim(
-            instance_id,
-            authoring=request.model_dump(mode="json"),
-            proposal_name=proposal_name,
-        ),
-        lambda: playbill_api.playbill_propose_claim(
-            instance_id,
-            authoring=request,
-            proposal_name=proposal_name,
-        ),
-        operation_name="cruxible_playbill_propose_claim",
-    )
-
-
 def handle_playbill_retire_claim(
     instance_id: str,
     claim_id: str,
@@ -767,27 +629,6 @@ def handle_playbill_retire_claim(
             request=retirement,
         ),
         operation_name="cruxible_playbill_claim_retire",
-    )
-
-
-def handle_playbill_propose_claims(
-    instance_id: str,
-    authorings: list[dict[str, Any]],
-    proposal_name: str,
-) -> contracts.PlaybillClaimBatchProposal:
-    requests = tuple(DirectClaimAuthoringV1.model_validate(item) for item in authorings)
-    return _dispatch_remote_or_local(
-        lambda client: client.propose_playbill_claims(
-            instance_id,
-            authorings=[item.model_dump(mode="json") for item in requests],
-            proposal_name=proposal_name,
-        ),
-        lambda: playbill_api.playbill_propose_claims(
-            instance_id,
-            authorings=requests,
-            proposal_name=proposal_name,
-        ),
-        operation_name="cruxible_playbill_propose_claims",
     )
 
 
@@ -940,12 +781,8 @@ def handle_playbill_authoring_confirm_insertion(
     instance_id: str,
     intent_id: str,
     observation: dict[str, Any],
-) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
-    request = (
-        InsertionConfirmationObservationV2.model_validate(observation)
-        if observation.get("tag") == "playbill-insertion-confirmation-observation-v2"
-        else InsertionConfirmationObservationV1.model_validate(observation)
-    )
+) -> contracts.PlaybillInsertionConfirmResultV2:
+    request = InsertionConfirmationObservationV2.model_validate(observation)
     return _dispatch_remote_or_local(
         lambda client: client.confirm_playbill_authoring_insertion(
             instance_id,
@@ -1725,37 +1562,6 @@ def handle_playbill_seed_plan(
         kind="directory",
     )
     return plan_seed_directory(root, proposal_name=proposal_name)
-
-
-def handle_playbill_seed_apply(
-    instance_id: str,
-    *,
-    bundle_path: str,
-    proposal_name: str,
-    group_id: str | None,
-) -> SeedApplicationResultV1:
-    root = resolve_workspace_path(
-        bundle_path,
-        root=mcp_workspace_root(),
-        kind="directory",
-    )
-    return _dispatch_remote_or_local(
-        lambda client: apply_seed_directory_group(
-            client,
-            instance_id,
-            root=root,
-            proposal_name=proposal_name,
-            group_id=group_id,
-        ),
-        lambda: apply_seed_directory_group(
-            _LocalSeedClient(),
-            instance_id,
-            root=root,
-            proposal_name=proposal_name,
-            group_id=group_id,
-        ),
-        operation_name="cruxible_playbill_seed_apply",
-    )
 
 
 def handle_playbill_export_floor(instance_id: str) -> contracts.PlaybillFloorExport:

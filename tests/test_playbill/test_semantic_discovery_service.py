@@ -52,7 +52,7 @@ def _instance_with_query(tmp_path: Path):
         proposal_name="work-item-query",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, inspection, sequence=3)
+    accept_proposal(instance, owner, inspection)
     return instance, owner
 
 
@@ -202,7 +202,6 @@ def test_interfaces_inventory_uses_the_linespec_interface_pin_projection(tmp_pat
             proposal=proposed,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(base),
         ),
-        sequence=1,
     )
 
     result = service_discover_playbill_semantic(

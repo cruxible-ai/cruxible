@@ -111,12 +111,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_get_claim_type": (
         "Use when you need one predicate's accepted structure, cardinality, and policy."
     ),
-    "cruxible_playbill_propose_claim": (
-        "Use when you need to state one governed fact about a Subject with its rationale."
-    ),
-    "cruxible_playbill_propose_claims": (
-        "Use when several Claims must be admitted together or not at all."
-    ),
     "cruxible_playbill_claim_retire": (
         "Use when one Claim and its transitive Claim dependents must retire with explicit "
         "attribution in one governed ChangeSet."
@@ -265,10 +259,6 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_seed_plan": (
         "Use to inspect the deterministic proposal sequence for a workspace seed bundle; this "
         "does not contact or mutate an instance."
-    ),
-    "cruxible_playbill_seed_apply": (
-        "Use after reviewing a seed plan to submit exactly one selected group. Approval and "
-        "activation remain separate governed acts."
     ),
 }
 

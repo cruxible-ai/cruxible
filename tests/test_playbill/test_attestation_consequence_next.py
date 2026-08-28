@@ -33,11 +33,11 @@ from cruxible_core.service.playbill_claims import (
     _claim_from_view,
     _claim_law_evidence,
     service_list_playbill_claims,
-    service_propose_playbill_claim,
 )
 from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
 from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
 from tests.test_playbill._adoption_fixture import _Builder
+from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
 from tests.test_playbill._knowledge_loop_support import activate, authoring, subject_shell
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_claims import _claim_type
@@ -147,7 +147,7 @@ def threshold_world(
         proposal_name="attestation-consequence-claim",
         timestamp="2026-08-24T17:00:02.000000Z",
     )
-    activate(instance, owner, proposed, sequence=2)
+    activate(instance, owner, proposed)
     claim = _claim_from_view(service_list_playbill_claims(instance).claims[0])
     law = _claim_law_evidence(
         instance,

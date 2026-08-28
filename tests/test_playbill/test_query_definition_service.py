@@ -37,7 +37,7 @@ def _accept_query(tmp_path: Path):
         proposal_name="work-item-query",
         timestamp=TIMESTAMP,
     )
-    accept_proposal(instance, owner, inspection, sequence=3)
+    accept_proposal(instance, owner, inspection)
     return instance, owner
 
 

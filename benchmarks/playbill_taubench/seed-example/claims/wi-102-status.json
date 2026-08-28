@@ -1,71 +1,16 @@
 {
-  "claim_id": null,
-  "claim_type_artifact": null,
-  "dependency_claim_types": [],
-  "dependency_subject_shells": [],
-  "existing_statement_handoffs": [],
-  "materialize_source": true,
-  "predecessor_artifact_digest": null,
+  "citation_role": "evidence",
+  "kind": "claim",
+  "object": {
+    "kind": "literal",
+    "value": "blocked"
+  },
+  "predicate": "project.work_item.status",
   "rationale": "The cutover runbook records the rehearsal as blocked.",
-  "retire": false,
-  "source_selection": {
-    "logical_source_identity": "corpus.runbook.md",
-    "media_type": "text/markdown",
-    "span": {
-      "content_digest": "sha256:1eaa5adaacc290834e82d9f61340b52d0a0c8ed7d995bc7a30604a7c2e9e2601",
-      "end_byte": 95,
-      "start_byte": 30,
-      "tag": "playbill-content-span-v1"
-    },
-    "tag": "playbill-direct-foreign-source-selection-v1"
+  "role": "observation",
+  "source": {
+    "kind": "working_selection",
+    "source_id": "corpus.runbook.md"
   },
-  "statement": {
-    "claim_type": {
-      "kind": "ClaimType",
-      "name": "project.work_item.status"
-    },
-    "claim_type_digest": "sha256:f63af79570a050b3def5e5e7464aa408c40d496f9a625e41b52e1227f968478e",
-    "effective_from": null,
-    "effective_until": null,
-    "object": {
-      "kind": "literal",
-      "value": "blocked"
-    },
-    "predicate": "project.work_item.status",
-    "qualifier": null,
-    "role": "observation",
-    "shell_context_digest": null,
-    "subject": {
-      "artifact_path": "subjects/project.work_item/wi-102.yaml",
-      "selector": {
-        "scheme": "artifact-v1",
-        "value": ""
-      },
-      "tag": "playbill-semantic-address-v1"
-    },
-    "tag": "playbill-claim-statement-v1"
-  },
-  "subject_shell": {
-    "artifact_format": "playbill-subject-v1",
-    "authority": {
-      "approve_roles": [
-        "owner"
-      ],
-      "propose_roles": [
-        "owner"
-      ]
-    },
-    "identity": {
-      "kind": "Subject",
-      "name": "project.work_item/wi-102"
-    },
-    "lifecycle": {
-      "predecessor_digest": null,
-      "state": "live"
-    },
-    "pins": [],
-    "subject_id": "wi-102",
-    "subject_kind": "project.work_item"
-  },
-  "tag": "playbill-direct-claim-authoring-v1"
+  "subject": "project.work_item/wi-102"
 }

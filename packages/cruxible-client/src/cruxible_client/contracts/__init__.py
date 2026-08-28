@@ -558,49 +558,6 @@ class PlaybillClaimHistory(BaseModel):
     entries: list[dict[str, Any]]
 
 
-class PlaybillClaimProposal(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-direct-claim-proposal-v1"] = "playbill-direct-claim-proposal-v1"
-    proposal: PlaybillProposalInspection
-    claim_identity: str
-    claim_path: str
-    statement_digest: str
-    artifact_digest: str
-    capture_digest: str
-    capture_digests: list[str]
-    observed_at: str
-    existing_statements: list[dict[str, Any]]
-    handoffs: list[dict[str, Any]]
-    warnings: list[dict[str, Any]] = []
-
-
-class PlaybillAuthoredClaim(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-authored-claim-v1"] = "playbill-authored-claim-v1"
-    claim_identity: str
-    claim_path: str
-    statement_digest: str
-    artifact_digest: str
-    capture_digest: str
-    capture_digests: list[str]
-    observed_at: str
-    existing_statements: list[dict[str, Any]]
-    handoffs: list[dict[str, Any]]
-    warnings: list[dict[str, Any]] = []
-
-
-class PlaybillClaimBatchProposal(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-direct-claim-batch-proposal-v1"] = (
-        "playbill-direct-claim-batch-proposal-v1"
-    )
-    proposal: PlaybillProposalInspection
-    claims: list[PlaybillAuthoredClaim]
-
-
 class PlaybillClaimRetirePreflight(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -753,25 +710,6 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     # True when this submit amends an existing Claim identity in place.
     identity_stable: bool = False
     claim_revision: int | None = None
-
-
-class PlaybillInsertionConfirmResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-insertion-confirm-result-v1"] = "playbill-insertion-confirm-result-v1"
-    outcome: Literal[
-        "bound",
-        "already_bound",
-        "backing_candidate_pending",
-        "backing_candidate_refused",
-        "ambiguous",
-        "stale_target",
-        "expired",
-        "claim_currency_changed",
-    ]
-    intent: dict[str, Any]
-    expectation: dict[str, Any]
-    successor_status: PlaybillCandidateStatus | None = None
 
 
 class PlaybillInsertionPrepareResult(BaseModel):

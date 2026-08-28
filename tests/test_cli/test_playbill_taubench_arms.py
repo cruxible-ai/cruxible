@@ -10,7 +10,8 @@ The scale is miniature (three Claims, one entrypoint, a three-file corpus, one
 scripted turn) so it runs in the ordinary suite instead of being a benchmark
 nobody runs. What it exercises is not scale:
 
-* the seed bundle applied through the governed loop, one group per proposal,
+* the seed bundle authored through the surviving governed writers, one intent or
+  proposal at a time,
   with approval and activation as separate acts the harness performs;
 * the arm file surface exported as floor-v2 artifacts and the coverage boundary
   in one greppable tree;
@@ -74,36 +75,45 @@ def test_the_seed_plan_is_readable_with_no_instance_daemon_or_context(
     """
 
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "absent-context.json"))
-    printed = recipe.run_cli(
-        "playbill", "seed", "apply", str(recipe.BUNDLE_DIR), "--name", "offline", "--plan"
+    printed = "\n".join(
+        recipe.plan_seed_directory(recipe.BUNDLE_DIR, proposal_name="offline").rendered
     )
 
-    assert "3 proposal(s)" in printed
-    assert "1. claims  [playbill_propose_claims]" in printed
-    assert "2. query_definition:project.work_items" in printed
-    assert "3. procedure:project.work_item.digest" in printed
-    assert printed.count("no proposal of its own") == 4
+    assert "9 proposal(s)" in printed
+    assert "1. claim_type:project.work_item.status" in printed
+    assert "5. claim_input:project.work_item/wi-101#project.work_item.status" in printed
+    assert "8. query_definition:project.work_items" in printed
+    assert "9. procedure:project.work_item.digest" in printed
 
 
-def test_the_seed_bundle_applies_as_three_governed_proposals(arm_run: dict[str, object]) -> None:
-    """Three status Claims, one query, and one Procedure in three proposals.
-
-    The ClaimType and the Subjects cost no proposal at all: the Claim authorings
-    carry them, so the batch admits them in the same generation. Every group is
-    a proposal id the harness approved and activated itself.
-    """
+def test_the_seed_bundle_uses_only_surviving_governed_writers(
+    arm_run: dict[str, object],
+) -> None:
+    """Dependencies, Claims, query, and Procedure settle through nine writes."""
 
     manifest = arm_run["manifest"]
     assert isinstance(manifest, dict)
     groups = manifest["seed"]["groups"]
 
     assert [item["group_id"] for item in groups] == [
-        "claims",
+        "claim_type:project.work_item.status",
+        "subject:project.work_item/wi-101",
+        "subject:project.work_item/wi-102",
+        "subject:project.work_item/wi-103",
+        "claim_input:project.work_item/wi-101#project.work_item.status",
+        "claim_input:project.work_item/wi-102#project.work_item.status",
+        "claim_input:project.work_item/wi-103#project.work_item.status",
         "query_definition:project.work_items",
         "procedure:project.work_item.digest",
     ]
     assert [item["operation"] for item in groups] == [
-        "playbill_propose_claims",
+        "playbill_propose_claim_type",
+        "playbill_propose_subject",
+        "playbill_propose_subject",
+        "playbill_propose_subject",
+        "playbill_authoring_submit",
+        "playbill_authoring_submit",
+        "playbill_authoring_submit",
         "playbill_propose_query_definition",
         "playbill_authoring_submit",
     ]

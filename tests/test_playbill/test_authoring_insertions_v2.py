@@ -15,6 +15,7 @@ from cruxible_client.authoring.insertions import (
     apply_playbill_publication,
 )
 from cruxible_client.contracts.authoring.models import (
+    AuthoringExistingClaimDispositionV1,
     InsertionAnchorWindowV1,
     InsertionTargetV2,
     PublicationSourceObservationV2,
@@ -26,7 +27,12 @@ from cruxible_client.contracts.authoring.models import (
     publication_block_id,
     publication_source_observation_v2_digest,
 )
-from cruxible_client.contracts.claims import ClaimArtifactV2, claim_path, parse_claim
+from cruxible_client.contracts.claims import (
+    ClaimArtifactV2,
+    LiteralClaimObject,
+    claim_path,
+    parse_claim,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBootstrapUnstampedError,
     frame_projection_block,
@@ -51,8 +57,12 @@ from cruxible_core.playbill.authoring.insertions import (
 )
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from tests.test_playbill._support import initialize_local
-from tests.test_playbill.test_authoring_insertions import _activate, _successor_payload
+from cruxible_core.playbill.service.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
+from tests.test_playbill._support import client_material, initialize_local
+from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import (
     TIMESTAMP,
     _seed_claim_surface,
@@ -70,6 +80,56 @@ COORDINATE = AcceptedCoordinate(
 
 def _digest(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _activate(
+    instance,  # type: ignore[no-untyped-def]
+    _owner: object,
+    *,
+    proposal_id: str,
+    candidate_digest: str,
+) -> None:
+    approver = client_material(instance.root.parent, instance)
+    approval = _sign(
+        approver,
+        candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter=approver.principal.principal_id,
+    )
+    activated = service_activate_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        activated_by="owner",
+    )
+    assert activated.status == "accepted"
+
+
+def _successor_payload(claim_id: str, *, value: str):  # type: ignore[no-untyped-def]
+    payload = _self_source_payload()
+    return payload.model_copy(
+        update={
+            "claim_ref": claim_id,
+            "insertion_target": None,
+            "rationale": f"Publish the {value} successor.",
+            "statement": payload.statement.model_copy(
+                update={"object": LiteralClaimObject(value=value)}
+            ),
+            "source": SelfSourceBodyV1(
+                content_base64=base64.b64encode(value.encode()).decode("ascii")
+            ),
+            "existing_claim_dispositions": (
+                AuthoringExistingClaimDispositionV1(
+                    claim_id=claim_id,
+                    disposition="not_tested",
+                ),
+            ),
+        }
+    )
 
 
 def test_terminal_prepare_operation_key_is_a_public_deterministic_helper() -> None:
@@ -623,6 +683,29 @@ def test_prepare_response_loss_and_terminal_conflicts_are_deterministic(tmp_path
         )
 
 
+def test_pending_abandon_is_idempotent_and_retains_one_terminal_tombstone(
+    tmp_path: Path,
+) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+
+    abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
+    retry = coordinator.abandon_insertion(intent_id, actor=actor)
+
+    assert abandoned.expectation.state == "abandoned"
+    assert abandoned.expectation.terminal_tombstone is not None
+    assert retry.model_dump_json() == abandoned.model_dump_json()
+    resumed = coordinator.resume(intent_id, actor=actor).intent
+    assert resumed.insertion_expectation == abandoned.expectation
+    with pytest.raises(PublicationTerminalStateRefused):
+        coordinator.prepare_publication(
+            intent_id,
+            actor=actor,
+            observation=_observation(preimage),
+        )
+
+
 def test_prepared_to_expired_prepare_response_loss_replays_terminal_result(
     tmp_path: Path,
 ) -> None:
@@ -804,6 +887,56 @@ def test_prepared_currency_change_is_passive_until_exact_confirmation(tmp_path: 
     assert confirmation is not None
     bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
     assert bound.outcome == "bound"
+
+
+def test_confirmation_rebases_over_a_concurrent_backing_only_successor(tmp_path: Path) -> None:
+    instance, owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    final = _final_source(intent_id, prepared, preimage)
+    original_intent = coordinator.store.get(intent_id, actor_id=actor.actor_id)
+
+    backing_coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    backing_intent = backing_coordinator.create(
+        actor=actor,
+        payload=_working_payload(occurrence_count=1).model_copy(
+            update={"claim_ref": original_intent.semantic_identity}
+        ),
+        canonical_timestamp="2026-08-21T12:00:02.000000Z",
+    ).intent
+    submitted = backing_coordinator.submit(backing_intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    _activate(
+        instance,
+        owner,
+        proposal_id=submitted.status.proposal_id,
+        candidate_digest=submitted.status.candidate_digest,
+    )
+    path = claim_path(original_intent.semantic_identity)
+    before = parse_claim(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
+    assert isinstance(before, ClaimArtifactV2)
+
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(final),
+    )
+    assert confirmation is not None
+    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+    after = parse_claim(instance.tree_at(instance.accepted_coordinate().git_oid)[path], path=path)
+
+    assert bound.outcome == "bound"
+    assert isinstance(after, ClaimArtifactV2)
+    assert after.statement == before.statement
+    assert {item.citation_id for item in before.backing.citations}.issubset(
+        item.citation_id for item in after.backing.citations
+    )
 
 
 # Kept here so the frozen test module owns one absolute instant used by the

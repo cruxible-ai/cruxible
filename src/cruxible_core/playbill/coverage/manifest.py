@@ -485,6 +485,7 @@ def discard_coverage_manifest(directory: Path) -> None:
     """Delete the manifest; the only cost is provable freshness."""
 
     coverage_manifest_path(directory).unlink(missing_ok=True)
+    coverage_manifest_path_v2(directory).unlink(missing_ok=True)
 
 
 __all__ = [

@@ -13,7 +13,6 @@ from cruxible_client.contracts.artifacts import ArtifactLifecycle
 from cruxible_client.contracts.captures import (
     DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     CanonicalDurationV1,
-    DirectByteSpanSelectionV1,
     DirectForeignSourceSelectionV1,
     capture_contract_digest,
     capture_contract_path,
@@ -53,7 +52,6 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.semantic import ContentSpan
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.subjects import render_subject, subject_path
-from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.playbill.claim_type_migrations import (
@@ -79,23 +77,25 @@ from cruxible_core.playbill.service.documents import (
 )
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_claims import (
-    DirectClaimAuthoringV1,
-    ExistingStatementHandoffV1,
     _claim_from_view,
     service_list_playbill_claims,
-    service_propose_playbill_claim,
 )
 from cruxible_core.service.playbill_next import (
     NextReason,
     PlaybillNextDriftObservationV1,
     PlaybillNextRequestV1,
-    PlaybillNextSourceObservationV1,
     PlaybillNextSourceObservationV3,
     PlaybillNextSourceObservationV4,
     PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
 from tests.test_playbill._adoption_fixture import _Builder
+from tests.test_playbill._claim_authoring_support import (
+    DirectClaimAuthoringV1,
+    ExistingStatementHandoffV1,
+    _activate_direct_claim,
+    service_propose_playbill_claim,
+)
 from tests.test_playbill._knowledge_loop_support import (
     activate,
     authoring,
@@ -104,15 +104,7 @@ from tests.test_playbill._knowledge_loop_support import (
 )
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
-from tests.test_playbill.test_authoring_insertions import (
-    _activate as _activate_insertion,
-)
-from tests.test_playbill.test_authoring_insertions import (
-    _observation as _insertion_observation,
-)
-from tests.test_playbill.test_authoring_insertions import (
-    _payload as _insertion_payload,
-)
+from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
 from tests.test_playbill.test_claims import _claim_type
 from tests.test_playbill.test_dependency_impact import (
     DERIVED_INDEX,
@@ -127,10 +119,6 @@ from tests.test_playbill.test_dependency_impact import (
 from tests.test_playbill.test_dependency_impact import (
     _facts as _dependency_facts,
 )
-from tests.test_playbill.test_direct_claim_authoring import (
-    _activate_direct_claim,
-    _authoring,
-)
 from tests.test_playbill.test_evidence_freshness import _activate as _activate_migration
 from tests.test_playbill.test_projection_next import (
     _claim_backing,
@@ -140,6 +128,7 @@ from tests.test_playbill.test_projection_next import (
     _request as _projection_request,
 )
 from tests.test_playbill.test_reverse_drift_next import (
+    _publish_self_published_claim,
     _published_world,
     _retire,
 )
@@ -275,7 +264,7 @@ def _claim_conflicted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         proposal_name="closed-loop-conflict",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate(instance, owner, conflicting, sequence=3)
+    activate(instance, owner, conflicting)
     before = _request(instance)
     row = _row(instance, "claim_conflicted", before)
     assert row.repair.operation == EXPECTED_OPERATIONS["claim_conflicted"]
@@ -309,7 +298,7 @@ def _claim_conflicted(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         proposal_name="closed-loop-qualify-conflict",
         timestamp="2026-08-24T17:00:04.000000Z",
     )
-    activate(instance, owner, repair, sequence=4)
+    activate(instance, owner, repair)
     _assert_gone(instance, "claim_conflicted", _request(instance))
 
 
@@ -374,7 +363,7 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
         proposal_name="closed-loop-origin-only",
         timestamp="2026-08-24T17:00:02.000000Z",
     )
-    activate(instance, owner, proposed, sequence=2)
+    activate(instance, owner, proposed)
     source = b"status: ready\n"
     source_body = instance.body_store().store(source)
     if not bind:
@@ -402,7 +391,7 @@ def _foreign_world(root: Path, *, bind: bool):  # type: ignore[no-untyped-def]
         proposal_name="closed-loop-bind-evidence",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate(instance, owner, successor, sequence=3)
+    activate(instance, owner, successor)
     return instance, owner, successor, source_id, source_body.digest
 
 
@@ -435,20 +424,38 @@ def _claim_uncovered(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         proposal_name="closed-loop-cover-claim",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate(instance, owner, successor, sequence=3)
+    activate(instance, owner, successor)
     _assert_gone(instance, "claim_uncovered", _request(instance))
 
 
 def _freshness_world(root: Path):  # type: ignore[no-untyped-def]
     instance, owner = initialize_local(root)
+    source_id = "fixture.freshness"
+    _seed_claim_surface(
+        instance,
+        owner,
+        contract=foreign_source_capture_contract(source_id),
+    )
+    body = instance.body_store().store(b"status: ready")
     proposed = service_propose_playbill_claim(
         instance,
-        authoring=_authoring(),
+        authoring=authoring("wi-42", "ready", with_claim_type=False).model_copy(
+            update={
+                "source_selection": DirectForeignSourceSelectionV1(
+                    logical_source_identity=source_id,
+                    span=ContentSpan(
+                        content_digest=body.digest,
+                        start_byte=8,
+                        end_byte=13,
+                    ),
+                )
+            }
+        ),
         actor_id="owner",
         proposal_name="closed-loop-freshness-initial",
         timestamp="2026-08-16T20:00:00.000000Z",
     )
-    _activate_direct_claim(instance, owner, proposed, sequence=1)
+    _activate_direct_claim(instance, owner, proposed)
     path = claim_type_path(_claim_type().predicate)
     predecessor = parse_claim_type(
         instance.tree_at(instance.accepted_coordinate().git_oid)[path],
@@ -492,6 +499,7 @@ def _freshness_world(root: Path):  # type: ignore[no-untyped-def]
 
 def _refresh_claim(instance, owner, *, timestamp: str) -> None:  # type: ignore[no-untyped-def]
     current = _current_claim(instance)
+    body = instance.body_store().store(b"status: ready\n")
     proposed = service_propose_playbill_claim(
         instance,
         authoring=DirectClaimAuthoringV1(
@@ -499,12 +507,20 @@ def _refresh_claim(instance, owner, *, timestamp: str) -> None:  # type: ignore[
             rationale="Recapture the still-standing statement at a fresh instant.",
             claim_id=current.identity.name,
             predecessor_artifact_digest=claim_artifact_digest(current).tagged,
+            source_selection=DirectForeignSourceSelectionV1(
+                logical_source_identity="fixture.freshness",
+                span=ContentSpan(
+                    content_digest=body.digest,
+                    start_byte=8,
+                    end_byte=13,
+                ),
+            ),
         ),
         actor_id="owner",
         proposal_name="closed-loop-refresh-evidence",
         timestamp=timestamp,
     )
-    _activate_direct_claim(instance, owner, proposed, sequence=3)
+    _activate_direct_claim(instance, owner, proposed)
 
 
 def _claim_stale_evidence(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
@@ -554,7 +570,8 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
             update={
                 "claim_id": current.identity.name,
                 "predecessor_artifact_digest": claim_artifact_digest(current).tagged,
-                "source_selection": DirectByteSpanSelectionV1(
+                "source_selection": DirectForeignSourceSelectionV1(
+                    logical_source_identity="fixture.work-items",
                     span=ContentSpan(
                         content_digest=rebound_body.digest,
                         start_byte=8,
@@ -574,6 +591,7 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
         instance.proposal_tree(evaluated_oid)[claim_path(current.identity.name)],
         path=claim_path(current.identity.name),
     )
+    accepted_citation_ids = {item.citation_id for item in claim_citation_references(current)}
     rebound_citation, rebound_envelope = next(
         (candidate, candidate_envelope)
         for candidate in claim_citation_references(proposed_claim)
@@ -585,7 +603,7 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
                 )
             ),
         )
-        if candidate_envelope.commitment.digest == rebound_body.digest
+        if candidate.citation_id not in accepted_citation_ids
     )
     observed = rebound_envelope.commitment.digest
     assert observed != commitment
@@ -606,7 +624,7 @@ def _citation_drifted_changed(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     assert row.repair.operation == _expected_operation(key)
     assert row.repair.required_change == "adjudicate_citation_drift"
 
-    activate(instance, owner, successor, sequence=3)
+    activate(instance, owner, successor)
     _assert_key_gone(
         instance,
         key,
@@ -821,7 +839,7 @@ def _citation_drifted_v4(
         proposal_name=f"closed-loop-adjudicate-{drift_state}-citation",
         timestamp="2026-08-24T17:00:04.000000Z",
     )
-    activate(instance, owner, successor, sequence=4)
+    activate(instance, owner, successor)
     _new_current, new_citation, new_envelope = _foreign_citation(instance)
     current_observation = _v4_citation_observation(
         instance=instance,
@@ -851,7 +869,7 @@ def _citation_drifted_ambiguous(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
 
 
 def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
-    instance, _owner, _successor, source_id, source_digest = _foreign_world(root, bind=True)
+    instance, _owner, _successor, source_id, _source_digest = _foreign_world(root, bind=True)
     before = _request(
         instance,
         workspace=PlaybillNextWorkspaceObservationV1(source_observations=()),
@@ -859,11 +877,15 @@ def _citation_source_unobserved(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     row = _row(instance, "citation_source_unobserved", before)
     assert row.repair.operation == EXPECTED_OPERATIONS["citation_source_unobserved"]
 
+    _current, citation, envelope = _foreign_citation(instance)
     observed = PlaybillNextWorkspaceObservationV1(
         source_observations=(
-            PlaybillNextSourceObservationV1(
+            _v4_citation_observation(
+                instance=instance,
                 source_id=source_id,
-                observed_source_digest=source_digest,
+                citation_id=citation.citation_id,
+                envelope=envelope,
+                state="current",
             ),
         )
     )
@@ -929,45 +951,12 @@ def _projection_backing_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def _publish_replacement_claim(instance, owner) -> None:  # type: ignore[no-untyped-def]
-    coordinator = AuthoringIntentCoordinator.for_instance(instance)
-    actor = AuthenticatedActor(actor_id="owner")
-    intent = coordinator.create(
-        actor=actor,
-        payload=_insertion_payload(),
-        canonical_timestamp="2026-08-21T12:02:00.000000Z",
-    ).intent
-    submitted = coordinator.submit(intent.intent_id, actor=actor)
-    assert submitted.status.proposal_id is not None
-    assert submitted.status.candidate_digest is not None
-    _activate_insertion(
+    _publish_self_published_claim(
         instance,
         owner,
-        proposal_id=submitted.status.proposal_id,
-        candidate_digest=submitted.status.candidate_digest,
-    )
-    pending = coordinator.resume(intent.intent_id, actor=actor).intent.insertion_expectation
-    assert pending is not None
-    confirmation = coordinator.confirm_insertion(
-        intent.intent_id,
-        actor=actor,
-        observation=_insertion_observation(pending.expectation_id),
-    )
-    assert confirmation.successor_status is not None
-    assert confirmation.successor_status.proposal_id is not None
-    assert confirmation.successor_status.candidate_digest is not None
-    _activate_insertion(
-        instance,
-        owner,
-        proposal_id=confirmation.successor_status.proposal_id,
-        candidate_digest=confirmation.successor_status.candidate_digest,
-    )
-    assert (
-        coordinator.confirm_insertion(
-            intent.intent_id,
-            actor=actor,
-            observation=_insertion_observation(pending.expectation_id),
-        ).outcome
-        == "bound"
+        timestamp="2026-08-21T12:02:00.000000Z",
+        successor_timestamp="2026-08-21T12:02:01.000000Z",
+        proposal_suffix="replacement-self-published-copy",
     )
 
 
@@ -1127,7 +1116,7 @@ def _claim_attestation_threshold(
         proposal_name="closed-loop-attestation-threshold",
         timestamp="2026-08-24T17:00:03.000000Z",
     )
-    activate(instance, owner, repair, sequence=3)
+    activate(instance, owner, repair)
     _assert_gone(instance, "claim_attestation_threshold_met", _request(instance))
 
 

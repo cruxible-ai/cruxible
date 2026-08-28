@@ -36,15 +36,20 @@ from cruxible_core.playbill.coverage.contracts import (
 )
 from cruxible_core.playbill.coverage.indexes import (
     CaptureCitationInputV1,
+    CaptureCitationInputV2,
     EvidenceCitationIndexV1,
+    EvidenceCitationIndexV2,
     WorkingOccurrenceOverlayV2,
     WorkingSourceContent,
     build_evidence_citation_index,
+    build_evidence_citation_index_v2,
     build_working_occurrence_overlay,
 )
 from cruxible_core.playbill.coverage.manifest import (
     CoverageManifestBodyV1,
+    CoverageManifestBodyV2,
     coverage_manifest_body,
+    coverage_manifest_body_v2,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
@@ -182,6 +187,29 @@ def index(
     )
 
 
+def index_v2(
+    *captures: CaptureCitationInputV1,
+    at: AcceptedCoordinate | None = None,
+    truncated: bool = False,
+) -> EvidenceCitationIndexV2:
+    """Build the surviving association-aware index from compact test inputs."""
+
+    return build_evidence_citation_index_v2(
+        at=at or coordinate(),
+        captures=tuple(
+            CaptureCitationInputV2.model_validate(
+                {
+                    **item.model_dump(mode="json"),
+                    "tag": "playbill-coverage-capture-citation-input-v2",
+                    "observation_trust": "proposer_observed",
+                }
+            )
+            for item in captures
+        ),
+        truncated=truncated,
+    )
+
+
 def overlay(
     *sources: WorkingSourceContent,
     citations: EvidenceCitationIndexV1,
@@ -215,6 +243,24 @@ def manifest(
     watcher_health: str = "absent",
 ) -> CoverageManifestBodyV1:
     return coverage_manifest_body(
+        instance_id=INSTANCE_ID,
+        index=citations,
+        overlay=snapshot,
+        access_profile=access or profile(),
+        epoch=epoch,
+        watcher_health=watcher_health,  # type: ignore[arg-type]
+    )
+
+
+def manifest_v2(
+    citations: EvidenceCitationIndexV2,
+    snapshot: WorkingOccurrenceOverlayV2,
+    *,
+    access: CoverageAccessProfileV1 | None = None,
+    epoch: int = 0,
+    watcher_health: str = "absent",
+) -> CoverageManifestBodyV2:
+    return coverage_manifest_body_v2(
         instance_id=INSTANCE_ID,
         index=citations,
         overlay=snapshot,

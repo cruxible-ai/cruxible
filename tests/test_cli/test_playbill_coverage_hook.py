@@ -33,7 +33,6 @@ from typing import Any
 
 import pytest
 from click.testing import CliRunner
-from pydantic import TypeAdapter
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_core.cli.commands import _common
@@ -47,7 +46,7 @@ from cruxible_core.playbill.coverage.claude_code import (
     TOOL_KINDS,
     read_post_tool_use_event,
 )
-from cruxible_core.playbill.coverage.contracts import CoverageResultAny
+from cruxible_core.playbill.coverage.contracts import CoverageResultV3
 from cruxible_core.playbill.coverage.middleware import (
     CONFIG_RELATIVE_PATH,
     CoverageMiddlewareV1,
@@ -84,12 +83,12 @@ PREFIX_IDENTITY = "corpus.handbook.md"
 def _resolver(client: Any, instance_id: str) -> ResolveCoverage:
     """The embedding recipe: observations in, one frozen coverage result out."""
 
-    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultAny:
+    def resolve(observations: Sequence[WorkingSourceObservationV1]) -> CoverageResultV3:
         answered = client.resolve_playbill_coverage(
             instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
         )
-        return TypeAdapter(CoverageResultAny).validate_python(answered.result)
+        return CoverageResultV3.model_validate(answered.result)
 
     return resolve
 

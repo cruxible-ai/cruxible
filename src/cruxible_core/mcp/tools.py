@@ -11,7 +11,7 @@ from pydantic import Field
 
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
-from cruxible_client.authoring.seed_client import SeedApplicationResultV1, SeedPlanResultV1
+from cruxible_client.authoring.seed import SeedPlanResultV1
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_core import __version__
 from cruxible_core.mcp import handlers
@@ -323,15 +323,6 @@ def register_tools(
         return handlers.handle_playbill_get_claim_type(instance_id, predicate)
 
     @_tool
-    def cruxible_playbill_propose_claim(
-        instance_id: str,
-        authoring: dict[str, Any],
-        proposal_name: str,
-    ) -> contracts.PlaybillClaimProposal:
-        """Propose one direct Claim with its inert Capture."""
-        return handlers.handle_playbill_propose_claim(instance_id, authoring, proposal_name)
-
-    @_tool
     def cruxible_playbill_claim_retire(
         instance_id: str,
         claim_id: str,
@@ -339,15 +330,6 @@ def register_tools(
     ) -> contracts.PlaybillClaimRetireResponse:
         """Preflight or submit one attributed Claim retirement closure."""
         return handlers.handle_playbill_retire_claim(instance_id, claim_id, request)
-
-    @_tool
-    def cruxible_playbill_propose_claims(
-        instance_id: str,
-        authorings: list[dict[str, Any]],
-        proposal_name: str,
-    ) -> contracts.PlaybillClaimBatchProposal:
-        """Propose several direct Claims as one indivisible change set."""
-        return handlers.handle_playbill_propose_claims(instance_id, authorings, proposal_name)
 
     @_tool
     def cruxible_playbill_authoring_create(
@@ -448,8 +430,8 @@ def register_tools(
         instance_id: str,
         intent_id: str,
         observation: dict[str, Any],
-    ) -> contracts.PlaybillInsertionConfirmResult | contracts.PlaybillInsertionConfirmResultV2:
-        """Confirm an exact client-applied v1 insertion or v2 stamped publication."""
+    ) -> contracts.PlaybillInsertionConfirmResultV2:
+        """Confirm an exact stamped publication."""
         return handlers.handle_playbill_authoring_confirm_insertion(
             instance_id,
             intent_id,
@@ -894,21 +876,6 @@ def register_tools(
         return handlers.handle_playbill_seed_plan(
             bundle_path=bundle_path,
             proposal_name=proposal_name,
-        )
-
-    @_tool
-    def cruxible_playbill_seed_apply(
-        instance_id: str,
-        bundle_path: str,
-        proposal_name: str,
-        group_id: str | None = None,
-    ) -> SeedApplicationResultV1:
-        """Submit exactly one deterministic seed group; never approve or activate it."""
-        return handlers.handle_playbill_seed_apply(
-            instance_id,
-            bundle_path=bundle_path,
-            proposal_name=proposal_name,
-            group_id=group_id,
         )
 
     @_tool

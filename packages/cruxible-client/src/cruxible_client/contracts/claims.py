@@ -447,30 +447,13 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes]:
     return pin.role.encode("utf-8"), pin.target.qualified.encode("utf-8")
 
 
-class ClaimArtifact(_StrictClaimModel):
-    artifact_format: Literal["playbill-claim-v1"] = "playbill-claim-v1"
-    identity: ArtifactIdentity
-    statement: ClaimStatement
-    backing: ClaimBacking
-    authority: ArtifactAuthority
-    pins: tuple[ArtifactPin, ...]
-    lifecycle: ArtifactLifecycle = ArtifactLifecycle()
-
-    @field_validator("pins")
-    @classmethod
-    def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
-        if value != tuple(sorted(value, key=_pin_key)):
-            raise ValueError("Claim pins must be canonically sorted")
-        identities = tuple((item.role, item.target.qualified) for item in value)
-        if len(identities) != len(set(identities)):
-            raise ValueError("Claim pins must be unique by role and target")
-        return value
-
-    @model_validator(mode="after")
-    def _identity_shape(self) -> "ClaimArtifact":
-        if self.identity.kind != "Claim" or not _CLAIM_ID_RE.fullmatch(self.identity.name):
-            raise ValueError("Claim identity must be Claim:CLM- plus 128-bit lowercase hex")
-        return self
+def _canonical_claim_pins(value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
+    if value != tuple(sorted(value, key=_pin_key)):
+        raise ValueError("Claim pins must be canonically sorted")
+    identities = tuple((item.role, item.target.qualified) for item in value)
+    if len(identities) != len(set(identities)):
+        raise ValueError("Claim pins must be unique by role and target")
+    return value
 
 
 class ClaimArtifactV2(_StrictClaimModel):
@@ -485,7 +468,7 @@ class ClaimArtifactV2(_StrictClaimModel):
     @field_validator("pins")
     @classmethod
     def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
-        return ClaimArtifact._pins(value)
+        return _canonical_claim_pins(value)
 
     @model_validator(mode="after")
     def _identity_shape(self) -> "ClaimArtifactV2":
@@ -590,7 +573,7 @@ class ClaimArtifactV3(_StrictClaimModel):
     @field_validator("pins")
     @classmethod
     def _pins(cls, value: tuple[ArtifactPin, ...]) -> tuple[ArtifactPin, ...]:
-        return ClaimArtifact._pins(value)
+        return _canonical_claim_pins(value)
 
     @model_validator(mode="after")
     def _identity_shape(self) -> "ClaimArtifactV3":
@@ -612,7 +595,7 @@ class ClaimArtifactV3(_StrictClaimModel):
 
 
 ClaimArtifactAny: TypeAlias = Annotated[
-    ClaimArtifact | ClaimArtifactV2 | ClaimArtifactV3,
+    ClaimArtifactV2 | ClaimArtifactV3,
     Field(discriminator="artifact_format"),
 ]
 
@@ -648,10 +631,8 @@ def parse_claim(content: bytes, *, path: str) -> ClaimArtifactAny:
     except (UnicodeDecodeError, ValueError) as exc:
         raise ClaimFormatError("Claim is not strict JSON") from exc
     declared = payload.get("artifact_format") if isinstance(payload, dict) else None
-    model: type[ClaimArtifact] | type[ClaimArtifactV2] | type[ClaimArtifactV3]
-    if declared == "playbill-claim-v1":
-        model = ClaimArtifact
-    elif declared == "playbill-claim-v2":
+    model: type[ClaimArtifactV2] | type[ClaimArtifactV3]
+    if declared == "playbill-claim-v2":
         model = ClaimArtifactV2
     elif declared == "playbill-claim-v3":
         model = ClaimArtifactV3
@@ -1615,14 +1596,6 @@ def evaluate_claim_law(
                 "Claim succession cannot weaken or rewrite accepted authority in v1.",
                 path=path,
             )
-        if isinstance(predecessor.claim, (ClaimArtifactV2, ClaimArtifactV3)) and isinstance(
-            claim, ClaimArtifact
-        ):
-            return _diagnostic(
-                "playbill.claim.wire_downgrade",
-                "A v2/v3 Claim lineage cannot be succeeded by the legacy v1 wire.",
-                path=path,
-            )
         old = predecessor.claim.backing
         if not (
             set(old.capture_digests).issubset(claim.backing.capture_digests)
@@ -1960,7 +1933,6 @@ def evaluate_claim_law(
 
 __all__ = [
     "AcceptedClaim",
-    "ClaimArtifact",
     "ClaimArtifactAny",
     "ClaimArtifactV2",
     "ClaimArtifactV3",

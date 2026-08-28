@@ -16,14 +16,14 @@ from cruxible_core.service.playbill_claims import (
     service_expand_playbill_semantic,
     service_explain_playbill_claim,
     service_open_playbill_source,
-    service_propose_playbill_claim,
 )
-from tests.test_playbill._support import initialize_local
-from tests.test_playbill.test_direct_claim_authoring import (
+from tests.test_playbill._claim_authoring_support import (
     TIMESTAMP,
     _activate_direct_claim,
     _authoring,
+    service_propose_playbill_claim,
 )
+from tests.test_playbill._support import initialize_local
 
 
 def test_expand_is_coordinate_bound_and_open_source_enforces_access_and_budget(
