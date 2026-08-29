@@ -2417,6 +2417,8 @@ def _evaluate_scoped_members(
                 target_path not in scope_set
                 or target is None
                 or target.artifact_kind != "claim"
+                or target.lifecycle.state != "retired"
+                or target.lifecycle.predecessor_digest != previous_pin.artifact_digest
                 or target.artifact_digest != candidate_pin.artifact_digest
                 or parent_target is None
                 or parent_target.artifact_digest != previous_pin.artifact_digest
@@ -2425,7 +2427,8 @@ def _evaluate_scoped_members(
                     _diagnostic(
                         "playbill.claim.retirement_pin_delta_invalid",
                         "A retirement may update a Claim-target pin digest only when the "
-                        "exact target changes in the same complete ChangeSet.",
+                        "exact target retires by one succession hop in the same complete "
+                        "ChangeSet.",
                         path,
                     )
                 )

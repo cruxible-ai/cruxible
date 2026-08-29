@@ -40,8 +40,8 @@ from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
     ClaimTypeMigrationDependentInvalid,
+    ClaimTypeMigrationIncomplete,
     ClaimTypeMigrationRequestV3,
-    ClaimTypeMigrationResultV3,
     service_migrate_claim_type,
 )
 from cruxible_core.playbill.proposals import AuthenticatedActor, evaluate_proposal_tree
@@ -504,6 +504,62 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
         leaf.identity,
     ]
 
+    target_not_in_changeset = dict(candidate_tree)
+    target_not_in_changeset[claim_path(middle_id)] = accepted_tree[claim_path(middle_id)]
+    missing_target = evaluate_proposal_tree(
+        base_tree=accepted_tree,
+        current_tree=accepted_tree,
+        proposed_tree=target_not_in_changeset,
+        current=instance.accepted_coordinate(),
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id="owner",
+        promotion_verifier=instance.proposal_service().promotion_verifier,
+    )
+    assert missing_target.candidate is None
+    assert "playbill.change_set.unresolved_pin" in {
+        item.code for item in missing_target.diagnostics
+    }
+
+    skipped_middle = retired_middle.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest="sha256:" + "f" * 64,
+            )
+        }
+    )
+    skipped_middle_digest = claim_artifact_digest(skipped_middle).tagged
+    skipped_leaf = retired_leaf.model_copy(
+        update={
+            "pins": tuple(
+                pin.model_copy(update={"artifact_digest": skipped_middle_digest})
+                if pin.target == middle.identity
+                else pin
+                for pin in retired_leaf.pins
+            )
+        }
+    )
+    skipped_hop_tree = dict(candidate_tree)
+    skipped_hop_tree[claim_path(middle_id)] = render_claim(skipped_middle)
+    skipped_hop_tree[claim_path(leaf_id)] = render_claim(skipped_leaf)
+    skipped_hop = evaluate_proposal_tree(
+        base_tree=accepted_tree,
+        current_tree=accepted_tree,
+        proposed_tree=skipped_hop_tree,
+        current=instance.accepted_coordinate(),
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id="owner",
+        promotion_verifier=instance.proposal_service().promotion_verifier,
+    )
+    assert skipped_hop.candidate is None
+    assert "playbill.claim.retirement_pin_delta_invalid" in {
+        item.code for item in skipped_hop.diagnostics
+    }
+
     with pytest.raises(ClaimRetireClosureMismatch, match="expected"):
         service_retire_claim(
             instance,
@@ -600,7 +656,7 @@ def test_terminal_replay_uses_only_the_original_retirement_changeset(
     assert replayed.retirements == middle_result.retirements
 
 
-def test_migration_can_succeed_one_claim_and_retire_its_dependent(tmp_path: Path) -> None:
+def test_live_target_successor_cannot_advance_a_retiring_dependent_pin(tmp_path: Path) -> None:
     instance, _owner, _root_id, middle_id, leaf_id = _accepted_dependency_world(tmp_path)
     actor = AuthenticatedActor(actor_id="owner")
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
@@ -629,54 +685,19 @@ def test_migration_can_succeed_one_claim_and_retire_its_dependent(tmp_path: Path
             claim_retirement_reason="was-rescinded",
         ),
     )
-    result = service_migrate_claim_type(
-        instance,
-        request=ClaimTypeMigrationRequestV3(
-            mode="submit",
-            successor=successor,
-            dependents=dispositions,
-        ),
-        actor=actor,
-    )
-    assert isinstance(result, ClaimTypeMigrationResultV3)
-    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
-    assert tree_oid is not None
-    candidate_tree = instance.proposal_tree(tree_oid)
-    middle = parse_claim(candidate_tree[claim_path(middle_id)], path=claim_path(middle_id))
-    leaf = parse_claim(candidate_tree[claim_path(leaf_id)], path=claim_path(leaf_id))
-    assert middle.lifecycle.state == "live"
-    assert isinstance(leaf, ClaimArtifactV3)
-    assert leaf.lifecycle.state == "retired"
-    middle_pin = next(pin for pin in leaf.pins if pin.target == middle.identity)
-    assert middle_pin.artifact_digest == claim_artifact_digest(middle).tagged
-
-    bad_digest_leaf = leaf.model_copy(
-        update={
-            "pins": tuple(
-                pin.model_copy(update={"artifact_digest": "sha256:" + "f" * 64})
-                if pin.target == middle.identity
-                else pin
-                for pin in leaf.pins
-            )
-        }
-    )
-    invalid_digest_tree = dict(candidate_tree)
-    invalid_digest_tree[claim_path(leaf_id)] = render_claim(bad_digest_leaf)
-    missing_target_change_tree = dict(candidate_tree)
-    missing_target_change_tree[claim_path(middle_id)] = tree[claim_path(middle_id)]
-    for proposed_tree in (invalid_digest_tree, missing_target_change_tree):
-        evaluation = evaluate_proposal_tree(
-            base_tree=tree,
-            current_tree=tree,
-            proposed_tree=proposed_tree,
-            current=instance.accepted_coordinate(),
-            bodies=instance.body_store(),
-            timestamp=TIMESTAMP,
-            rebased=False,
-            actor_id="owner",
-            promotion_verifier=instance.proposal_service().promotion_verifier,
+    with pytest.raises(
+        ClaimTypeMigrationIncomplete,
+        match="playbill.claim.retirement_pin_delta_invalid",
+    ):
+        service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequestV3(
+                mode="submit",
+                successor=successor,
+                dependents=dispositions,
+            ),
+            actor=actor,
         )
-        assert evaluation.candidate is None
 
 
 def test_retire_refuses_stale_coordinate_and_extra_dependent(tmp_path: Path) -> None:

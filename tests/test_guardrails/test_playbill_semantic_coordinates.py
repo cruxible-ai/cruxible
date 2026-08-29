@@ -96,8 +96,8 @@ LAW_COORDINATES: tuple[
         CLAIM_V3_ACCEPTANCE_LAW,
         "playbill.claim.v3",
         "playbill-claim-v3",
-        5,
-        "sha256:4738989d72eb6d5f20d0f96a56c9bf84735ec1aa9477f68a0f61e16e1e0497c9",
+        6,
+        "sha256:b5df9ee121dc0b2e03cb45192382f7c24c1203408ea0236954ca4ed6ab7d95ab",
     ),
     (
         PROVIDER_ACCEPTANCE_LAW,
