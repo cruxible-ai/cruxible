@@ -197,6 +197,7 @@ def test_v2_delta_reuses_the_real_whole_queue_cursor_without_memo_collision() ->
     assert first_delta.delta_since == first.result_digest
     assert unchanged.items == ()
     assert unchanged.result_digest == second.result_digest
+    assert PlaybillNextResultV2.model_validate_json(first_delta.model_dump_json()) == first_delta
 
 
 @pytest.mark.parametrize(

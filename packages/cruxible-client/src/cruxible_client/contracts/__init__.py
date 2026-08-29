@@ -869,9 +869,8 @@ class PlaybillNextResult(BaseModel):
     unobserved_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
     items: list[dict[str, Any]]
     result_digest: str
-    # Set only on a delta. Items are the changed rows and result_digest commits
-    # the returned payload; the server maps that digest to the complete current
-    # queue so callers may echo it as the next cursor.
+    # Set only on a delta. Items are the changed rows while result_digest names
+    # the complete current queue, so callers may echo it as the next cursor.
     delta_since: str | None = None
     attestation_head_digest: str | None = None
 

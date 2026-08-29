@@ -517,9 +517,9 @@ class PlaybillNextResultV1(_StrictNextModel):
     items: tuple[PlaybillNextItemV1, ...]
     result_digest: str
     # Set only on a delta. The carried items are the deterministic symmetric
-    # difference from that earlier queue and `result_digest` commits these
-    # exact bytes. The server separately remembers which full queue the digest
-    # names so it remains a usable cursor on the next call.
+    # difference from that earlier queue while `result_digest` remains the
+    # current whole-queue cursor. The server remembers that full queue so the
+    # digest remains usable on the next call.
     delta_since: str | None = None
 
     @field_validator("evaluation_time")
@@ -541,7 +541,7 @@ class PlaybillNextResultV1(_StrictNextModel):
             raise ValueError("next result must account for every observation domain")
         if self.items != tuple(sorted(self.items, key=_item_sort_key)):
             raise ValueError("next items do not follow the deterministic order")
-        if self.result_digest != playbill_next_result_digest(self):
+        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next result digest does not reproduce")
         return self
 
@@ -558,7 +558,7 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
 
     @model_validator(mode="after")
     def _v2_digest(self) -> "PlaybillNextResultV2":
-        if self.result_digest != playbill_next_result_digest(self):
+        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next v2 result digest does not reproduce")
         return self
 
