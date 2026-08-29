@@ -888,10 +888,12 @@ def test_prepare_response_loss_and_terminal_conflicts_are_deterministic(tmp_path
 
     assert first.outcome == retry.outcome == "expired"
     assert first.expectation == retry.expectation
+    expired_registrations = _registered_publication_blocks(instance)
+    assert expired_registrations is not None
     assert (
         prepared.preparation.source_id,
         prepared.preparation.block_id,
-    ) not in (_registered_publication_blocks(instance) or ())
+    ) not in expired_registrations
     with pytest.raises(PublicationTerminalStateRefused):
         coordinator.prepare_publication(
             intent_id,
@@ -995,10 +997,12 @@ def test_prepared_to_currency_changed_prepare_response_loss_replays_terminal_res
     assert terminal.outcome == retry.outcome == "claim_currency_changed"
     assert retry.model_dump_json() == terminal.model_dump_json()
     assert prepared.preparation is not None
+    currency_changed_registrations = _registered_publication_blocks(instance)
+    assert currency_changed_registrations is not None
     assert (
         prepared.preparation.source_id,
         prepared.preparation.block_id,
-    ) not in (_registered_publication_blocks(instance) or ())
+    ) not in currency_changed_registrations
 
 
 def test_prepared_to_expired_confirm_response_loss_replays_terminal_result(

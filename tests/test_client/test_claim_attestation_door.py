@@ -84,7 +84,7 @@ def test_environment_key_custody_refuses_unsafe_paths(
         configured = str(key_path)
     elif failure == "daemon_state":
         key_path = tmp_path / "server-state" / "owner.ed25519"
-        key_path.parent.mkdir()
+        key_path.parent.mkdir(mode=0o700)
         key_path.write_bytes(owner.private_key_path.read_bytes())
         os.chmod(key_path, 0o600)
         configured = str(key_path)
@@ -105,3 +105,8 @@ def test_environment_key_custody_refuses_unsafe_paths(
             workspace_root=workspace,
         )
     assert error.value.error_code == "playbill.claim_attestation.local_signing_key_unavailable"
+    if failure == "daemon_state":
+        assert str(error.value) == (
+            "playbill.claim_attestation.local_signing_key_unavailable: "
+            "client ClaimAttestation key is inside a forbidden root"
+        )

@@ -571,15 +571,27 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
             )
         }
     )
-    retirement_with_non_claim_pin_rewrite = predecessor_with_non_claim_pin.model_copy(
+    attributed_retirement_with_non_claim_pin = retired_leaf.model_copy(
         update={
-            "lifecycle": retired_leaf.lifecycle,
-            "retirement": retired_leaf.retirement,
+            "statement": predecessor_with_non_claim_pin.statement.model_copy(
+                update={"effective_until": retired_leaf.statement.effective_until}
+            ),
+            "backing": predecessor_with_non_claim_pin.backing,
+            "pins": predecessor_with_non_claim_pin.pins,
+        }
+    )
+    assert isinstance(attributed_retirement_with_non_claim_pin, ClaimArtifactV3)
+    assert _is_attributed_retirement(
+        attributed_retirement_with_non_claim_pin,
+        predecessor=predecessor_with_non_claim_pin,
+    )
+    retirement_with_non_claim_pin_rewrite = attributed_retirement_with_non_claim_pin.model_copy(
+        update={
             "pins": tuple(
                 pin.model_copy(update={"artifact_digest": "sha256:" + "a" * 64})
                 if pin.target.kind != "Claim"
                 else pin
-                for pin in predecessor_with_non_claim_pin.pins
+                for pin in attributed_retirement_with_non_claim_pin.pins
             ),
         }
     )
