@@ -46,7 +46,6 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationBodyNotMarkerCompatible,
     PublicationClaimNotAccepted,
     PublicationPreparationStale,
-    PublicationPrepareOrConfirmRequired,
     PublicationRevisionLimitExceeded,
     PublicationSourceHasUnrepinnedBlock,
     PublicationTerminalStateRefused,
@@ -56,10 +55,17 @@ from cruxible_core.playbill.authoring.insertions import (
     publication_confirmation_matches,
 )
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
+from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
+)
+from cruxible_core.service.playbill_next import (
+    PlaybillNextRequestV1,
+    PlaybillNextSourceObservationV3,
+    PlaybillNextWorkspaceObservationV1,
+    service_playbill_next,
 )
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
@@ -286,7 +292,7 @@ def test_publication_block_id_is_deterministic_and_parser_safe() -> None:
     assert len(first) == 36
 
 
-def test_prepare_frames_the_accepted_body_and_exact_source_reproduces_confirmation() -> None:
+def test_prepare_confirmation_binds_the_block_frame_not_unrelated_file_bytes() -> None:
     expectation = _expectation()
     preparation = build_publication_preparation(
         expectation,
@@ -302,10 +308,11 @@ def test_prepare_frames_the_accepted_body_and_exact_source_reproduces_confirmati
         + frame_projection_block(stamp=preparation.stamp, body=b"ready\n")
         + b"status: \n"[preparation.rebased_selector.insertion_offset :]
     )
+    moved = b"unrelated prefix\n" + final + b"unrelated suffix\n"
     confirmation = publication_confirmation_from_source(
         intent_id="AIT-" + "b" * 32,
         expectation=prepared,
-        observation=_observation(final),
+        observation=_observation(moved),
     )
 
     assert preparation.revision == 1
@@ -450,7 +457,7 @@ def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
         observation=_observation(preimage),
     )
     concurrent = b"concurrent heading\n" + preimage
-    with pytest.raises(PlaybillInsertionApplyError, match="preimage"):
+    with pytest.raises(PlaybillInsertionApplyError, match="anchor is stale"):
         apply_playbill_publication(
             concurrent,
             intent_id=intent_id,
@@ -642,8 +649,6 @@ def test_pin_15_prepared_status_never_passively_terminalizes_and_exact_confirm_r
     resumed = coordinator.resume(intent_id, actor=actor).intent
     assert resumed.insertion_expectation is not None
     assert resumed.insertion_expectation.state == "prepared"
-    with pytest.raises(PublicationPrepareOrConfirmRequired):
-        coordinator.abandon_insertion(intent_id, actor=actor)
     bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=exact)
 
     assert bound.outcome == "bound"
@@ -654,6 +659,78 @@ def test_pin_15_prepared_status_never_passively_terminalizes_and_exact_confirm_r
     accepted_claim = parse_claim(accepted_tree[path], path=path)
     assert isinstance(accepted_claim, ClaimArtifactV2)
     assert all(citation.origin != "self_published" for citation in accepted_claim.backing.citations)
+
+
+def test_prepared_publication_can_be_abandoned_without_observing_the_source(
+    tmp_path: Path,
+) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.expectation.state == "prepared"
+    assert prepared.preparation is not None
+
+    landed = apply_playbill_publication(
+        preimage,
+        intent_id=intent_id,
+        expectation=prepared.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    markers = tuple(
+        block.summary()
+        for block in parse_projection_blocks(
+            landed.content,
+            source_id=prepared.preparation.source_id,
+        )
+    )
+    coordinate = AcceptedCoordinate.from_internal(_instance.accepted_coordinate())
+    request = PlaybillNextRequestV1(
+        at=coordinate,
+        evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
+        access_profile=CoverageAccessProfileV1(
+            profile_id="publication-orphan-test",
+            permitted_access_classes=("instance", "public"),
+        ),
+        workspace_observation=PlaybillNextWorkspaceObservationV1(
+            source_observations=(
+                PlaybillNextSourceObservationV3(
+                    tag="playbill-next-source-observation-v3",
+                    source_id="repo.work-items",
+                    observed_source_digest=_digest(landed.content),
+                    byte_length=len(landed.content),
+                    marker_summaries=markers,
+                    occurrences=(),
+                    scanned_commitment_digests=(),
+                    scan_complete=True,
+                    scan_notes=(),
+                    marker_notes=(),
+                ),
+            )
+        ),
+    )
+    assert not [
+        item
+        for item in service_playbill_next(_instance, request=request).items
+        if item.reason == "unregistered_projection_block"
+    ]
+
+    abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
+    assert abandoned.expectation.state == "abandoned"
+    assert abandoned.expectation.terminal_tombstone is not None
+    assert abandoned.expectation.terminal_tombstone.preparation_digest is None
+
+    orphaned = tuple(
+        item
+        for item in service_playbill_next(_instance, request=request).items
+        if item.reason == "unregistered_projection_block"
+    )
+    assert len(orphaned) == 1
+    assert orphaned[0].repair.required_change == "remove_or_register_projection_block"
 
 
 def test_prepare_response_loss_and_terminal_conflicts_are_deterministic(tmp_path: Path) -> None:

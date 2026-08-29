@@ -89,10 +89,6 @@ class PublicationTerminalStateRefused(InsertionProtocolError):
     code = "playbill.authoring.publication_terminal_state"
 
 
-class PublicationPrepareOrConfirmRequired(InsertionProtocolError):
-    code = "playbill.authoring.publication_prepare_or_confirm_required"
-
-
 def _raise(error: type[InsertionProtocolError], message: str) -> NoReturn:
     raise error(f"{error.code}: {message}")
 
@@ -188,11 +184,11 @@ def build_publication_preparation(
     if expectation.accepted_claim_coordinate != accepted_coordinate:
         _raise(PublicationPreparationStale, "accepted Claim coordinate changed")
     prior = expectation.preparation
-    if prior is not None and (
-        observation.content_digest == prior.final_postimage_digest
-        and observation.byte_length == prior.final_postimage_byte_length
-    ):
-        blocks = parse_projection_blocks(observation.content, source_id=observation.source_id)
+    if prior is not None:
+        try:
+            blocks = parse_projection_blocks(observation.content, source_id=observation.source_id)
+        except ProjectionMarkerError as exc:
+            _raise_marker_refusal(exc)
         matches = tuple(block for block in blocks if block.block_id == prior.block_id)
         if (
             len(matches) == 1
@@ -200,19 +196,6 @@ def build_publication_preparation(
             and matches[0].body_digest == prior.body_digest
         ):
             return prior
-        _raise(PublicationPreparationStale, "prepared postimage does not reproduce its block")
-    if prior is not None and (
-        observation.content_digest == prior.preimage_digest
-        and observation.byte_length == prior.preimage_byte_length
-    ):
-        return prior
-    if prior is not None and prior.revision >= MAX_PUBLICATION_PREPARATION_REVISIONS:
-        _raise(
-            PublicationRevisionLimitExceeded,
-            f"publication reached its {MAX_PUBLICATION_PREPARATION_REVISIONS}-revision limit; "
-            f"confirm the revision-{MAX_PUBLICATION_PREPARATION_REVISIONS} postimage or wait "
-            f"for the expectation's {PUBLICATION_EXPECTATION_EXPIRY.days}-day expiry",
-        )
 
     block_id = (
         prior.block_id if prior is not None else publication_block_id(expectation.expectation_id)
@@ -285,14 +268,12 @@ def build_publication_preparation(
     parsed = matches[0]
     if parsed.opening_start != block_start:
         _raise(PublicationBodyNotMarkerCompatible, "prospective block span does not reproduce")
-    return build_publication_preparation_v2(
+    preparation = build_publication_preparation_v2(
         expectation_id=expectation.expectation_id,
         revision=1 if prior is None else prior.revision + 1,
         accepted_coordinate=accepted_coordinate,
         accepted_generation=accepted_generation,
         source_id=target.source_id,
-        preimage_digest=observation.content_digest,
-        preimage_byte_length=observation.byte_length,
         rebased_selector=selector,
         operation=target.operation,
         body_digest=body_digest,
@@ -301,8 +282,6 @@ def build_publication_preparation(
         stamp=stamp,
         inserted_block_digest="sha256:" + hashlib.sha256(framed).hexdigest(),
         inserted_block_byte_length=len(framed),
-        final_postimage_digest="sha256:" + hashlib.sha256(final).hexdigest(),
-        final_postimage_byte_length=len(final),
         block_start_byte=parsed.opening_start,
         block_end_byte=parsed.closing_end,
         body_start_byte=parsed.body_start,
@@ -310,6 +289,18 @@ def build_publication_preparation(
         target_digest=insertion_target_v2_digest(target),
         expires_at=expectation.expires_at,
     )
+    if prior is not None and preparation.model_dump(
+        exclude={"revision", "preparation_digest"}
+    ) == prior.model_dump(exclude={"revision", "preparation_digest"}):
+        return prior
+    if prior is not None and prior.revision >= MAX_PUBLICATION_PREPARATION_REVISIONS:
+        _raise(
+            PublicationRevisionLimitExceeded,
+            f"publication reached its {MAX_PUBLICATION_PREPARATION_REVISIONS}-revision limit; "
+            f"confirm the revision-{MAX_PUBLICATION_PREPARATION_REVISIONS} postimage or wait "
+            f"for the expectation's {PUBLICATION_EXPECTATION_EXPIRY.days}-day expiry",
+        )
+    return preparation
 
 
 def mark_publication_prepared(
@@ -371,13 +362,9 @@ def publication_confirmation_matches(
         and observation.expectation_id == expectation.expectation_id
         and observation.preparation_digest == preparation.preparation_digest
         and observation.source_id == preparation.source_id
-        and observation.final_postimage_digest == preparation.final_postimage_digest
-        and observation.final_postimage_byte_length == preparation.final_postimage_byte_length
         and observation.observed_occurrence_count == 1
         and summary.stamp == preparation.stamp
         and summary.observed_body_digest == preparation.body_digest
-        and summary.start_byte == preparation.block_start_byte
-        and summary.end_byte == preparation.block_end_byte
     )
 
 
@@ -388,11 +375,7 @@ def publication_confirmation_from_source(
     observation: PublicationSourceObservationV2,
 ) -> InsertionConfirmationObservationV2 | None:
     preparation = expectation.preparation
-    if preparation is None or (
-        observation.source_id != preparation.source_id
-        or observation.content_digest != preparation.final_postimage_digest
-        or observation.byte_length != preparation.final_postimage_byte_length
-    ):
+    if preparation is None or observation.source_id != preparation.source_id:
         return None
     try:
         blocks = parse_projection_blocks(observation.content, source_id=observation.source_id)
@@ -406,8 +389,6 @@ def publication_confirmation_from_source(
         expectation_id=expectation.expectation_id,
         preparation_digest=preparation.preparation_digest,
         source_id=observation.source_id,
-        final_postimage_digest=observation.content_digest,
-        final_postimage_byte_length=observation.byte_length,
         marker_summary=matches[0].summary(),
         observed_occurrence_count=1,
     )
@@ -436,12 +417,6 @@ def _terminal_v2(
         preparation_digest=(None if preparation is None else preparation.preparation_digest),
         source_id=None if preparation is None else preparation.source_id,
         block_id=None if preparation is None else preparation.block_id,
-        final_postimage_digest=(
-            None if preparation is None else preparation.final_postimage_digest
-        ),
-        final_postimage_byte_length=(
-            None if preparation is None else preparation.final_postimage_byte_length
-        ),
         accepted_claim_identity=expectation.claim_identity,
         accepted_claim_artifact_digest=expectation.original_claim_artifact_digest,
         accepted_claim_coordinate=expectation.accepted_claim_coordinate,
@@ -486,11 +461,6 @@ def mark_publication_terminal(
         return expectation
     if expectation.state in {"bound", "expired", "abandoned", "claim_currency_changed"}:
         _raise(PublicationTerminalStateRefused, "publication is already terminal")
-    if state == "abandoned" and expectation.state == "prepared":
-        _raise(
-            PublicationPrepareOrConfirmRequired,
-            "prepared publication must be prepared or confirmed before abandon",
-        )
     if state == "expired" and ensure_utc(finalized_at) < expectation.expires_at:
         raise InsertionProtocolError("publication has not reached expires_at")
     return _terminal_v2(intent, expectation, state=state, finalized_at=finalized_at)
@@ -507,7 +477,6 @@ __all__ = [
     "PublicationClaimNotAccepted",
     "PublicationConfirmationMismatch",
     "PublicationNotPrepared",
-    "PublicationPrepareOrConfirmRequired",
     "PublicationPreparationStale",
     "PublicationRevisionLimitExceeded",
     "PublicationSourceHasUnrepinnedBlock",

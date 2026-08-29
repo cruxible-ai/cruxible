@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts import PlaybillNextReason
+from cruxible_client.contracts.authoring.models import InsertionExpectationV2
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -68,6 +69,7 @@ from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
@@ -1232,10 +1234,11 @@ def _claim_retirement_sequences(instance: PlaybillInstance) -> dict[str, int]:
 
     retired: dict[str, int] = {}
     for generation in instance.accepted_history():
-        if generation.record is None:
+        record = getattr(generation, "record", None)
+        if record is None:
             continue
         tree = instance.tree_at(generation.oid)
-        for member in generation.record.members:
+        for member in record.members:
             if member.artifact_kind != "claim" or member.path not in tree:
                 continue
             claim = parse_claim(tree[member.path], path=member.path)
@@ -1564,6 +1567,8 @@ def _citation_relation_items(
     accepted_sequence_by_semantic_root = {
         generation.semantic_root.tagged: generation.sequence
         for generation in instance.accepted_history()
+        if getattr(generation, "semantic_root", None) is not None
+        and getattr(generation, "sequence", None) is not None
     }
     exact_by_claim: dict[str, list[Mapping[str, object]]] = defaultdict(list)
     uses_by_source: dict[str, list[_CitationRelationUse]] = defaultdict(list)
@@ -2684,6 +2689,42 @@ def _document_items(
     return tuple(items)
 
 
+def _registered_publication_blocks(
+    instance: PlaybillInstance,
+) -> frozenset[tuple[str, str, bytes, str]] | None:
+    """Fold exact prepared/bound publication frames from latest intent events."""
+
+    exhaust_root = instance.root / instance.descriptor.storage.exhaust
+    if not (exhaust_root / "authoring-intents").is_dir():
+        return frozenset()
+    try:
+        latest = {
+            event.intent.intent_id: event.intent
+            for event in AuthoringIntentStore(exhaust_root).events()
+        }
+    except (OSError, PlaybillError):
+        return None
+    registrations: set[tuple[str, str, bytes, str]] = set()
+    for intent in latest.values():
+        expectation = intent.insertion_expectation
+        if (
+            not isinstance(expectation, InsertionExpectationV2)
+            or expectation.state not in {"prepared", "bound"}
+            or expectation.preparation is None
+        ):
+            continue
+        preparation = expectation.preparation
+        registrations.add(
+            (
+                preparation.source_id,
+                preparation.block_id,
+                canonical_bytes(preparation.stamp.model_dump(mode="json")),
+                preparation.body_digest,
+            )
+        )
+    return frozenset(registrations)
+
+
 def _projection_items(
     instance: PlaybillInstance,
     *,
@@ -2721,6 +2762,7 @@ def _projection_items(
     if not sources:
         return ()
 
+    registrations = _registered_publication_blocks(instance)
     tree = instance.tree_at(coordinate.git_oid)
     facts = build_accepted_query_facts(instance, coordinate=coordinate)
     subjects = {subject.path: subject for subject in facts.subjects}
@@ -2735,6 +2777,39 @@ def _projection_items(
     items: list[PlaybillNextItemV1] = []
     for source in sources:
         for marker in source.marker_summaries:
+            registration = (
+                source.source_id,
+                marker.stamp.block_id,
+                canonical_bytes(marker.stamp.model_dump(mode="json")),
+                marker.stamp.body_digest,
+            )
+            if (
+                marker.stamp.block_id.startswith("pub-")
+                and registrations is not None
+                and registration not in registrations
+            ):
+                target = f"{source.source_id}#{marker.stamp.block_id}"
+                items.append(
+                    _item(
+                        severity="warning",
+                        reason="unregistered_projection_block",
+                        subject_identity=target,
+                        related_identities=(),
+                        detail={
+                            "source_id": source.source_id,
+                            "block_id": marker.stamp.block_id,
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.document.propose",
+                            target=target,
+                            required_change="remove_or_register_projection_block",
+                            arguments={
+                                "source_id": source.source_id,
+                                "block_id": marker.stamp.block_id,
+                            },
+                        ),
+                    )
+                )
             visible = True
             stale: list[str] = []
             retired: list[str] = []

@@ -75,7 +75,6 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationClaimNotAccepted,
     PublicationConfirmationMismatch,
     PublicationNotPrepared,
-    PublicationPrepareOrConfirmRequired,
     PublicationTerminalStateRefused,
     build_publication_preparation,
     mark_publication_bound,
@@ -1136,11 +1135,6 @@ class AuthoringIntentCoordinator:
         ).tagged
         if expectation.state == "abandoned":
             return InsertionAbandonResultV1(intent=current, expectation=expectation)
-        if expectation.state == "prepared":
-            raise PublicationPrepareOrConfirmRequired(
-                f"{PublicationPrepareOrConfirmRequired.code}: "
-                "prepared publication requires prepare/confirm before abandon"
-            )
         if expectation.state in {"bound", "expired", "claim_currency_changed"}:
             raise PublicationTerminalStateRefused(
                 f"{PublicationTerminalStateRefused.code}: publication is already terminal"

@@ -70,7 +70,7 @@ def test_publication_apply_refuses_wrong_body_and_duplicate_block() -> None:
         expectation=payload,
         retained_body=b"ready\n",
     )
-    with pytest.raises(PlaybillInsertionApplyError, match="neither prepared preimage"):
+    with pytest.raises(PlaybillInsertionApplyError, match="conflicting publication block"):
         apply_playbill_publication(
             applied.content + applied.content,
             intent_id="AIT-" + "a" * 32,

@@ -89,6 +89,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextWorkspaceObservationV1,
     service_playbill_next,
 )
+from tests.test_playbill import test_authoring_insertions_v2 as publication_v2
 from tests.test_playbill import test_citation_retirement_relations as citation_retirement
 from tests.test_playbill._adoption_fixture import _Builder
 from tests.test_playbill._claim_authoring_support import (
@@ -162,6 +163,7 @@ EXPECTED_OPERATIONS = {
     "document_modified": "playbill.document.propose",
     "claim_cites_retired": "playbill.claim.retire",
     "retired_claim_source_stale": "playbill.document.propose",
+    "unregistered_projection_block": "playbill.document.propose",
 }
 
 
@@ -1156,6 +1158,10 @@ def _retired_claim_source_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) ->
     )
 
 
+def _unregistered_projection_block(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    publication_v2.test_prepared_publication_can_be_abandoned_without_observing_the_source(root)
+
+
 CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("claim_conflicted", None): _claim_conflicted,
     ("claim_uncovered", None): _claim_uncovered,
@@ -1196,6 +1202,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("document_modified", None): _document_modified,
     ("claim_cites_retired", None): _claim_cites_retired,
     ("retired_claim_source_stale", None): _retired_claim_source_stale,
+    ("unregistered_projection_block", None): _unregistered_projection_block,
 }
 
 

@@ -69,17 +69,21 @@ def apply_playbill_publication(
             "retained accepted body does not reproduce the publication preparation"
         )
 
-    current_digest = _digest(content)
-    if (
-        current_digest == preparation.final_postimage_digest
-        and len(content) == preparation.final_postimage_byte_length
-    ):
+    try:
+        assert_projection_block_frame(
+            content,
+            source_id=preparation.source_id,
+            block_id=preparation.block_id,
+            stamp=preparation.stamp,
+            body_digest=preparation.body_digest,
+        )
         updated = content
         outcome: Literal["applied", "already_applied"] = "already_applied"
-    elif (
-        current_digest == preparation.preimage_digest
-        and len(content) == preparation.preimage_byte_length
-    ):
+    except ProjectionMarkerError:
+        if f"playbill:block:{preparation.block_id}".encode("ascii") in content:
+            raise PlaybillInsertionApplyError(
+                "local source contains a conflicting publication block"
+            )
         selector = preparation.rebased_selector
         anchor = selector.content
         empty_append = (
@@ -97,17 +101,6 @@ def apply_playbill_publication(
             offset = selector.insertion_offset
             updated = content[:offset] + framed + content[offset:]
         outcome = "applied"
-    else:
-        raise PlaybillInsertionApplyError(
-            "local source is neither prepared preimage nor exact final postimage"
-        )
-    if (
-        len(updated) != preparation.final_postimage_byte_length
-        or _digest(updated) != preparation.final_postimage_digest
-    ):
-        raise PlaybillInsertionApplyError(
-            "applied publication bytes do not reproduce the committed final postimage"
-        )
     try:
         match = assert_projection_block_frame(
             updated,
@@ -115,8 +108,6 @@ def apply_playbill_publication(
             block_id=preparation.block_id,
             stamp=preparation.stamp,
             body_digest=preparation.body_digest,
-            start_byte=preparation.block_start_byte,
-            end_byte=preparation.block_end_byte,
         )
     except ProjectionMarkerError as exc:
         raise PlaybillInsertionApplyError(
@@ -128,8 +119,6 @@ def apply_playbill_publication(
         "expectation_id": typed_expectation.expectation_id,
         "preparation_digest": preparation.preparation_digest,
         "source_id": preparation.source_id,
-        "final_postimage_digest": preparation.final_postimage_digest,
-        "final_postimage_byte_length": preparation.final_postimage_byte_length,
         "marker_summary": match.summary().model_dump(mode="json"),
         "observed_occurrence_count": 1,
     }
