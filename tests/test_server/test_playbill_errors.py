@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import errors as client_errors
+from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_core.errors import (
     AuthenticationError,
     ConfigError,
@@ -114,6 +115,15 @@ def test_insertion_protocol_refusal_is_a_typed_bad_request() -> None:
     assert status == 400
     assert body.error_type == "PublicationClaimNotAccepted"
     assert body.error_code == "playbill.authoring.publication_claim_not_accepted"
+
+
+def test_daemon_proposal_integrity_failure_is_never_reported_as_a_conflict() -> None:
+    status, body = error_to_response(
+        ProposalIntegrityError("proposal evaluation record failed internal validation")
+    )
+
+    assert status == 500
+    assert body.error_type == "ProposalIntegrityError"
 
 
 def test_non_insertion_code_attribute_does_not_widen_the_error_envelope() -> None:

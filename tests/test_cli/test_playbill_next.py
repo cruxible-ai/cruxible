@@ -116,3 +116,72 @@ def test_cli_next_no_longer_accepts_the_microsecond_flag() -> None:
 
     assert result.exit_code != 0
     assert "No such option" in result.output
+
+
+def test_cli_next_delta_labels_additions_and_removals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    removed = {
+        "item_id": "sha256:" + "a" * 64,
+        "severity": "warning",
+        "reason": "claim_conflicted",
+        "subject_identity": "Claim:removed",
+        "repair": {"operation": "playbill.authoring.create"},
+    }
+    added = {
+        "item_id": "sha256:" + "b" * 64,
+        "severity": "repair",
+        "reason": "claim_uncovered",
+        "subject_identity": "Claim:added",
+        "repair": {"operation": "playbill.authoring.create"},
+    }
+
+    class StubClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
+            assert instance_id == "inst_next"
+            self.calls += 1
+            items = [removed, added] if values.get("since_result_digest") else [added]
+            return contracts.PlaybillNextResult(
+                coordinate=COORDINATE,
+                evaluation_time="2026-08-24T18:00:00Z",
+                observed_domains=["accepted_state", "workspace_floor", "workspace_sources"],
+                unobserved_domains=[],
+                items=items,
+                result_digest="sha256:" + str(self.calls) * 64,
+                delta_since="sha256:" + "0" * 64 if self.calls == 1 else None,
+            )
+
+    client = StubClient()
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace",
+        lambda _root: {},
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.observe_playbill_next_workspace_with_coverage",
+        lambda *_args, **_kwargs: ({}, COORDINATE),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://next.example.test",
+            "--instance-id",
+            "inst_next",
+            "playbill",
+            "next",
+            "--evaluation-time",
+            "2026-08-24T18:00:00Z",
+            "--delta",
+            "sha256:" + "0" * 64,
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "removed  warning  claim_conflicted  Claim:removed" in result.output
+    assert "added  repair  claim_uncovered  Claim:added" in result.output
+    assert client.calls == 2

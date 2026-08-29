@@ -1766,6 +1766,7 @@ def submit_authoring_intent(
                 "coordinate": (
                     activation.accepted_coordinate.git_oid if activation is not None else None
                 ),
+                "receipt": activation.tag if activation is not None else None,
             },
             next_command=_submit_next_command(submitted, activated=activation is not None),
         )
@@ -2301,7 +2302,7 @@ def next_work(
 
     def _next_at_scanned_coordinate(
         client: CruxibleClient, instance_id: str
-    ) -> contracts.PlaybillNextResult:
+    ) -> tuple[contracts.PlaybillNextResult, contracts.PlaybillNextResult | None]:
         observed, coordinate = observe_playbill_next_workspace_with_coverage(
             client,
             instance_id,
@@ -2309,7 +2310,7 @@ def next_work(
             observation=workspace_observation,
             access_profile=profile,
         )
-        return client.next_playbill(
+        result = client.next_playbill(
             instance_id,
             evaluation_time=stamped_evaluation_time,
             access_profile=profile,
@@ -2318,8 +2319,19 @@ def next_work(
             workspace_observation=observed,
             since_result_digest=since_result_digest,
         )
+        if since_result_digest is None:
+            return result, None
+        full = client.next_playbill(
+            instance_id,
+            evaluation_time=stamped_evaluation_time,
+            access_profile=profile,
+            at=coordinate,
+            expiring_within={"microseconds": expiring_within},
+            workspace_observation=observed,
+        )
+        return result, full
 
-    result = _server_call(
+    result, full = _server_call(
         _next_at_scanned_coordinate,
         command_name="playbill next",
     )
@@ -2328,10 +2340,18 @@ def next_work(
         return
     if not result.items:
         click.echo("No repair work in the observed domains.")
+    current_ids = frozenset(item["item_id"] for item in full.items) if full is not None else None
     for item in result.items:
         repair = item["repair"]
+        change = (
+            "removed  "
+            if current_ids is not None and item["item_id"] not in current_ids
+            else "added  "
+            if current_ids is not None
+            else ""
+        )
         click.echo(
-            f"{item['severity']}  {item['reason']}  {item['subject_identity']}  "
+            f"{change}{item['severity']}  {item['reason']}  {item['subject_identity']}  "
             f"next={repair['operation']}"
         )
     if result.unobserved_domains:

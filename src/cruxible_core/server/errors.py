@@ -15,7 +15,6 @@ from cruxible_client.contracts.errors import (
     PrincipalIntegrityError,
     ProjectionCoordinateError,
     ProposalAdmissionError,
-    ProposalIntegrityError,
     SettlementIntegrityError,
 )
 from cruxible_client.errors import ErrorResponse, response_to_error
@@ -182,7 +181,6 @@ def _status_for_error(exc: CoreError) -> int:
             ApprovalIntegrityError,
             PlaybillBootstrapError,
             PrincipalIntegrityError,
-            ProposalIntegrityError,
             ProjectionCoordinateError,
             SettlementIntegrityError,
             ReviewOperationalConcurrentChangeError,

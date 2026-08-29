@@ -7,6 +7,7 @@ from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from threading import RLock
 from typing import Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -515,9 +516,10 @@ class PlaybillNextResultV1(_StrictNextModel):
     unobserved_domains: tuple[NextDomain, ...]
     items: tuple[PlaybillNextItemV1, ...]
     result_digest: str
-    # Set only on a delta. `result_digest` then still names the WHOLE queue --
-    # it is the cursor the caller echoes back next time -- so it deliberately
-    # does not reproduce from the partial `items` carried here.
+    # Set only on a delta. The carried items are the deterministic symmetric
+    # difference from that earlier queue and `result_digest` commits these
+    # exact bytes. The server separately remembers which full queue the digest
+    # names so it remains a usable cursor on the next call.
     delta_since: str | None = None
 
     @field_validator("evaluation_time")
@@ -539,7 +541,7 @@ class PlaybillNextResultV1(_StrictNextModel):
             raise ValueError("next result must account for every observation domain")
         if self.items != tuple(sorted(self.items, key=_item_sort_key)):
             raise ValueError("next items do not follow the deterministic order")
-        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
+        if self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next result digest does not reproduce")
         return self
 
@@ -556,7 +558,7 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
 
     @model_validator(mode="after")
     def _v2_digest(self) -> "PlaybillNextResultV2":
-        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
+        if self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next v2 result digest does not reproduce")
         return self
 
@@ -3087,15 +3089,17 @@ def service_playbill_next(
 # Bounded, per-process memory of which rows each queue digest stood for. A miss
 # -- restart, eviction, a digest minted elsewhere -- is not an error: it yields
 # the whole queue, which answers the caller's question either way.
-_QUEUE_MEMO: OrderedDict[str, frozenset[str]] = OrderedDict()
+_QUEUE_MEMO: OrderedDict[str, tuple[PlaybillNextItemV1, ...]] = OrderedDict()
 _QUEUE_MEMO_LIMIT = 32
+_QUEUE_MEMO_LOCK = RLock()
 
 
 def _remember_queue(result_digest: str, items: tuple[PlaybillNextItemV1, ...]) -> None:
-    _QUEUE_MEMO.pop(result_digest, None)
-    _QUEUE_MEMO[result_digest] = frozenset(item.item_id for item in items)
-    while len(_QUEUE_MEMO) > _QUEUE_MEMO_LIMIT:
-        _QUEUE_MEMO.popitem(last=False)
+    with _QUEUE_MEMO_LOCK:
+        _QUEUE_MEMO.pop(result_digest, None)
+        _QUEUE_MEMO[result_digest] = items
+        while len(_QUEUE_MEMO) > _QUEUE_MEMO_LIMIT:
+            _QUEUE_MEMO.popitem(last=False)
 
 
 def _delta_of(
@@ -3103,17 +3107,37 @@ def _delta_of(
     *,
     since: str,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
-    """Return only the rows new since a remembered queue, keeping the full cursor.
+    """Return the reproducible symmetric difference from a remembered queue."""
 
-    `result_digest` still names the whole queue: it is what the caller echoes
-    back next time, so it must not describe the subset carried here.
-    """
-
-    seen = _QUEUE_MEMO.get(since)
-    if seen is None:
+    with _QUEUE_MEMO_LOCK:
+        previous = _QUEUE_MEMO.get(since)
+    if previous is None:
         return full
-    fresh = tuple(item for item in full.items if item.item_id not in seen)
-    return full.model_copy(update={"items": fresh, "delta_since": since})
+    previous_by_id = {item.item_id: item for item in previous}
+    current_ids = frozenset(item.item_id for item in full.items)
+    previous_ids = frozenset(previous_by_id)
+    changed = tuple(
+        sorted(
+            (
+                *(item for item in full.items if item.item_id not in previous_ids),
+                *(previous_by_id[item_id] for item_id in previous_ids - current_ids),
+            ),
+            key=_item_sort_key,
+        )
+    )
+    provisional = full.model_copy(
+        update={
+            "items": changed,
+            "result_digest": "sha256:" + "0" * 64,
+            "delta_since": since,
+        }
+    )
+    values = provisional.model_dump(mode="json")
+    delta = type(full).model_validate(
+        {**values, "result_digest": playbill_next_result_digest(provisional)}
+    )
+    _remember_queue(delta.result_digest, full.items)
+    return delta
 
 
 __all__ = [

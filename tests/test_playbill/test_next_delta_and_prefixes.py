@@ -9,6 +9,8 @@ listed, never resolved to whichever sorted first.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from cruxible_core.playbill.id_prefixes import (
@@ -76,6 +78,7 @@ def test_only_a_well_formed_short_prefix_resolves(value: str) -> None:
 
 
 def _result(item_ids: tuple[str, ...]):  # type: ignore[no-untyped-def]
+    from cruxible_client.contracts.projection import AcceptedCoordinate
     from cruxible_core.service.playbill_next import (
         PlaybillNextItemV1,
         PlaybillNextRepairV1,
@@ -102,9 +105,14 @@ def _result(item_ids: tuple[str, ...]):  # type: ignore[no-untyped-def]
         )
         items.append(item.model_copy(update={"item_id": playbill_next_item_id(item)}))
     return PlaybillNextResultV1.model_construct(
-        coordinate=None,
-        evaluation_time="2026-08-20T00:00:00.000000Z",
-        observed_domains=(),
+        coordinate=AcceptedCoordinate(
+            git_oid="1" * 64,
+            semantic_root="sha256:" + "2" * 64,
+            generation_root="sha256:" + "3" * 64,
+            compiler_digest="sha256:" + "4" * 64,
+        ),
+        evaluation_time=datetime(2026, 8, 20, tzinfo=UTC),
+        observed_domains=("accepted_state", "workspace_floor", "workspace_sources"),
         unobserved_domains=(),
         items=tuple(items),
         result_digest="sha256:" + "9" * 64,
@@ -124,20 +132,26 @@ def test_a_delta_against_an_unknown_digest_returns_the_whole_queue() -> None:
     assert delta.delta_since is None
 
 
-def test_a_delta_against_a_known_digest_carries_only_the_new_rows() -> None:
-    from cruxible_core.service.playbill_next import _delta_of, _remember_queue
+def test_a_delta_against_a_known_digest_carries_additions_and_removals() -> None:
+    from cruxible_core.service.playbill_next import (
+        _delta_of,
+        _remember_queue,
+        playbill_next_result_digest,
+    )
 
-    first = _result(("one",))
+    first = _result(("one", "removed"))
     _remember_queue(first.result_digest, first.items)
     second = _result(("one", "two"))
 
     delta = _delta_of(second, since=first.result_digest)
 
-    assert [item.subject_identity for item in delta.items] == ["Claim:two"]
+    assert {item.subject_identity for item in delta.items} == {"Claim:removed", "Claim:two"}
     assert delta.delta_since == first.result_digest
-    # The cursor still names the WHOLE queue: it is what the caller echoes back,
-    # so it must not describe the subset carried here.
-    assert delta.result_digest == second.result_digest
+    assert delta.result_digest == playbill_next_result_digest(delta)
+
+    unchanged = _delta_of(second, since=delta.result_digest)
+    assert unchanged.items == ()
+    assert unchanged.result_digest == playbill_next_result_digest(unchanged)
 
 
 @pytest.mark.parametrize(
