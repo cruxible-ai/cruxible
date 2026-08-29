@@ -156,8 +156,9 @@ def evaluate_principal_lifecycle(
         return _refused(
             "playbill.principal.independent_approval_minimum",
             "independent_approval_required mode must keep at least two active ordinary "
-            "principals; loosen the approval policy first, then revoke. For a lost key, "
-            "use recovery re-keying instead of revocation.",
+            "principals; register a replacement ordinary in the same ChangeSet, then "
+            "revoke. Policy loosening is unavailable until the coordinator convergence. "
+            "For a lost key, use recovery re-keying instead of revocation.",
         )
     return PrincipalLifecycleEvaluation(action=action)
 

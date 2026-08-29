@@ -181,7 +181,10 @@ def test_independent_mode_refuses_revocation_below_two_ordinaries(tmp_path: Path
     assert refused.candidate is None
     (diagnostic,) = refused.evaluation.diagnostics
     assert diagnostic.code == "playbill.principal.independent_approval_minimum"
-    assert "loosen the approval policy first, then revoke" in diagnostic.message
+    assert "register a replacement ordinary in the same ChangeSet" in diagnostic.message
+    assert "Policy loosening is unavailable until the coordinator convergence" in (
+        diagnostic.message
+    )
     assert "recovery re-keying" in diagnostic.message
 
 
