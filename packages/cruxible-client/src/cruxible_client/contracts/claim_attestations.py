@@ -27,6 +27,7 @@ from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.types import PrincipalRecord
 
 if TYPE_CHECKING:
     from cruxible_client.contracts.claims import AcceptedClaim
@@ -584,6 +585,25 @@ def verify_claim_attestation_v2_signature(
         ) from exc
 
 
+def verify_claim_attestation_v2_principal(
+    attestation: ClaimAttestationV2,
+    *,
+    principal: PrincipalRecord,
+) -> None:
+    """Enforce the V2 ordinary-principal law at the crypto boundary."""
+
+    statement = attestation.statement
+    if principal.kind != "ordinary":
+        raise ClaimAttestationError("V2 ClaimAttestation signer must be an ordinary principal")
+    if principal.status != "active":
+        raise ClaimAttestationError("V2 ClaimAttestation signer must be active")
+    if principal.principal_id != statement.attesting_principal_id:
+        raise ClaimAttestationError("V2 ClaimAttestation signer identity differs")
+    if principal.public_key_digest != statement.signing_key_digest:
+        raise ClaimAttestationError("V2 ClaimAttestation signing key digest differs")
+    verify_claim_attestation_v2_signature(attestation, public_key=principal.public_key)
+
+
 def verify_claim_attestation(
     attestation: ClaimAttestation,
     *,
@@ -724,5 +744,6 @@ __all__ = [
     "render_claim_attestation",
     "store_claim_attestation",
     "verify_claim_attestation",
+    "verify_claim_attestation_v2_principal",
     "verify_claim_attestation_v2_signature",
 ]

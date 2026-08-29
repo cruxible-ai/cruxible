@@ -289,6 +289,15 @@ class ClaimAttestationEvidenceStore:
             root_digest=claim_attestation_published_root_digest(draft),
         )
 
+    def _empty_root(self) -> ClaimAttestationPublishedRootV1:
+        empty_map = self._head_map(())
+        return self._published_root(
+            sequence=0,
+            previous=None,
+            event_digest=None,
+            partition_map_digest=empty_map.map_digest,
+        )
+
     @staticmethod
     def _partition_head(event: ClaimAttestationEventV1) -> ClaimAttestationPartitionHeadV1:
         draft = ClaimAttestationPartitionHeadV1.model_construct(
@@ -425,6 +434,11 @@ class ClaimAttestationEvidenceStore:
         chain = tuple(reversed(reversed_chain))
         if not chain or chain[0].sequence != 0:
             raise _error("store_corrupt", "attestation published-root chain lacks genesis")
+        markers_by_digest: dict[str, ClaimAttestationEventV1] = {}
+        for marker_event in self._all_markers():
+            if marker_event.event_digest in markers_by_digest:
+                raise _error("store_corrupt", "published attestation event is not unique")
+            markers_by_digest[marker_event.event_digest] = marker_event
         loaded: list[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1]] = []
         prior_map: dict[str, ClaimAttestationPartitionHeadV1] = {}
         for index, root in enumerate(chain):
@@ -442,16 +456,11 @@ class ClaimAttestationEvidenceStore:
                     raise _error("store_corrupt", "attestation genesis is not empty")
             else:
                 assert root.event_digest is not None
-                matching = tuple(
-                    event
-                    for event in self._all_markers()
-                    if event.event_digest == root.event_digest
-                )
-                if len(matching) != 1:
+                published_event = markers_by_digest.get(root.event_digest)
+                if published_event is None:
                     raise _error("store_corrupt", "published attestation event is not unique")
-                event = matching[0]
                 expected = dict(prior_map)
-                expected[event.partition_digest] = self._partition_head(event)
+                expected[published_event.partition_digest] = self._partition_head(published_event)
                 if current_map != expected:
                     raise _error("store_corrupt", "attestation published map transition differs")
             loaded.append((root, node))
@@ -627,6 +636,44 @@ class ClaimAttestationEvidenceStore:
                 raise
             return self._result(event, payload, root, root)
 
+    def duplicate(
+        self,
+        *,
+        attestation: ClaimAttestationV2,
+    ) -> ClaimAttestationAppendResultV1 | None:
+        """Return an authenticated duplicate as a read, before append eligibility."""
+
+        statement = attestation.statement
+        statement_digest = claim_attestation_v2_statement_digest(statement)
+        envelope_digest = claim_attestation_v2_envelope_digest(attestation)
+        partition_digest = claim_attestation_partition_digest(
+            instance_id=self.instance_id,
+            claim_identity=statement.claim_identity,
+            claim_artifact_digest=statement.claim_artifact_digest,
+        )
+        with self._locked():
+            if not self.root.exists():
+                return None
+            self._load_manifest()
+            current_root = self._ready()
+            for event in self._partition_events(partition_digest):
+                payload = self._payload_for_event(event)
+                if (
+                    payload.attesting_principal_id == statement.attesting_principal_id
+                    and payload.statement_digest == statement_digest
+                ):
+                    if (
+                        payload.envelope_digest != envelope_digest
+                        or payload.attestation != attestation
+                    ):
+                        raise _error(
+                            "idempotency_payload_mismatch",
+                            "stored attestation differs under the idempotency key",
+                        )
+                    recorded = self._root_for_event(event.event_digest)
+                    return self._result(event, payload, recorded, current_root)
+            return None
+
     def _payload_for_event(self, event: ClaimAttestationEventV1) -> ClaimAttestationEventPayloadV1:
         value = self._load_object("payload", event.payload_digest, ClaimAttestationEventPayloadV1)
         assert isinstance(value, ClaimAttestationEventPayloadV1)
@@ -669,7 +716,7 @@ class ClaimAttestationEvidenceStore:
     def head(self) -> str:
         with self._locked():
             if not self.root.exists():
-                return NULL_DIGEST
+                return self._empty_root().root_digest
             self._load_manifest()
             return self._ready().root_digest
 
@@ -678,7 +725,7 @@ class ClaimAttestationEvidenceStore:
     ) -> tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...]:
         with self._locked():
             if not self.root.exists():
-                if at_head is not None and at_head != NULL_DIGEST:
+                if at_head is not None and at_head != self._empty_root().root_digest:
                     raise _error("attestation_head_unknown", "attestation head is unknown")
                 return ()
             self._load_manifest()
