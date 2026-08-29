@@ -158,6 +158,7 @@ class AdoptionFixtureProfile:
             + self.query_definitions
             + self.seed_claims
             + self.generations * self.claims_per_generation
+            + 1  # the governed approval-policy singleton
             + 1  # the direct self-asserted capture contract
             + 3  # the daemon, owner, and independent reviewer principal records
         )

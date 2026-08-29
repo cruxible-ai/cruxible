@@ -9,6 +9,7 @@ from typing import Callable, Literal
 
 from cruxible_client.contracts.attestations import (
     VerifiedApproval,
+    approval_requirements_satisfied,
     verify_approval,
 )
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1, lower_authoring_input
@@ -75,7 +76,6 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationClaimNotAccepted,
     PublicationConfirmationMismatch,
     PublicationNotPrepared,
-    PublicationPrepareOrConfirmRequired,
     PublicationTerminalStateRefused,
     build_publication_preparation,
     mark_publication_bound,
@@ -1136,11 +1136,6 @@ class AuthoringIntentCoordinator:
         ).tagged
         if expectation.state == "abandoned":
             return InsertionAbandonResultV1(intent=current, expectation=expectation)
-        if expectation.state == "prepared":
-            raise PublicationPrepareOrConfirmRequired(
-                f"{PublicationPrepareOrConfirmRequired.code}: "
-                "prepared publication requires prepare/confirm before abandon"
-            )
         if expectation.state in {"bound", "expired", "claim_currency_changed"}:
             raise PublicationTerminalStateRefused(
                 f"{PublicationTerminalStateRefused.code}: publication is already terminal"
@@ -1712,11 +1707,32 @@ class AuthoringIntentCoordinator:
             except ApprovalIntegrityError:
                 invalid_approval = True
             else:
-                if not principal_lifecycle and verified.signer_id == admission.actor_id:
+                if (
+                    not principal_lifecycle
+                    and candidate.approval_requirements
+                    and verified.signer_id == admission.actor_id
+                ):
                     invalid_approval = True
                 verified_approvals.append(verified)
         conditions: list[AcceptanceConditionV1] = []
-        approvals_complete = True
+        approvals_complete = approval_requirements_satisfied(
+            candidate,
+            verified_approvals,
+            principals=generation.principals,
+            creator_principal_id=admission.actor_id,
+        )
+        if candidate.approval_requirements:
+            conditions.append(
+                AcceptanceConditionV1(
+                    condition="external-approval",
+                    owner="approver",
+                    action=(
+                        "independent_approval_required mode needs one active ordinary approver "
+                        "other than the candidate creator."
+                    ),
+                    satisfied=approvals_complete,
+                )
+            )
         if principal_lifecycle:
             actor_binding_satisfied = any(
                 approval.signer_id == admission.actor_id for approval in verified_approvals

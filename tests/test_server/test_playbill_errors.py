@@ -8,6 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import errors as client_errors
+from cruxible_client.contracts.errors import (
+    ProposalEvaluationIntegrityError,
+    ProposalIntegrityError,
+)
 from cruxible_core.errors import (
     AuthenticationError,
     ConfigError,
@@ -114,6 +118,55 @@ def test_insertion_protocol_refusal_is_a_typed_bad_request() -> None:
     assert status == 400
     assert body.error_type == "PublicationClaimNotAccepted"
     assert body.error_code == "playbill.authoring.publication_claim_not_accepted"
+
+
+def test_daemon_proposal_integrity_failure_is_never_reported_as_a_conflict() -> None:
+    status, body = error_to_response(
+        ProposalEvaluationIntegrityError("proposal evaluation record failed internal validation")
+    )
+
+    assert status == 500
+    assert body.error_type == "ProposalEvaluationIntegrityError"
+
+
+def test_general_proposal_integrity_conflicts_remain_retryable() -> None:
+    status, body = error_to_response(ProposalIntegrityError("proposal evaluation raced main"))
+
+    assert status == 409
+    assert body.error_type == "ProposalIntegrityError"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_status"),
+    [
+        (ProposalIntegrityError("proposal evaluation raced main"), 409),
+        (
+            ProposalEvaluationIntegrityError(
+                "proposal evaluation record failed internal validation"
+            ),
+            500,
+        ),
+    ],
+)
+def test_proposal_integrity_split_reaches_the_http_surface(
+    playbill_http: tuple[TestClient, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    error: ProposalIntegrityError,
+    expected_status: int,
+) -> None:
+    client, instance_id, _private_key = playbill_http
+
+    def fail_search(*_args: object, **_kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr("cruxible_core.runtime.playbill_api.playbill_search", fail_search)
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/search",
+        json={"mode": "list"},
+    )
+
+    assert response.status_code == expected_status, response.text
+    assert response.json()["error_type"] == type(error).__name__
 
 
 def test_non_insertion_code_attribute_does_not_widen_the_error_envelope() -> None:

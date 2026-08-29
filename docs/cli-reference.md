@@ -64,17 +64,23 @@ Allocates an empty daemon-owned host and remembers it.
 ## playbill init
 
 ~~~text
-cruxible playbill init --key-dir DIR --reviewer-key-dir DIR
+cruxible playbill init --key-dir DIR
   [--principal-id ID]
+  [--reviewer-key-dir DIR]
+  [--require-independent-approval]
   [--recovery-key-dir DIR]
   [--recovery-principal-id ID]
   [--profile local|cloud]
 ~~~
 
-Generates two client-held ordinary keys outside the workspace and bootstraps the
-ledger with their public principal records. `--reviewer-key-dir` is required and
-names the independent second custody directory. The optional recovery key
-remains lifecycle-only.
+Generates a client-held ordinary key outside the workspace and bootstraps the
+ledger with its public principal record. An optional `--reviewer-key-dir` adds a
+second ordinary principal; pair it with `--require-independent-approval` to make
+one non-creator approval mandatory. Local key directories provide attribution
+and repository hygiene, not a security boundary. Organization review normally
+rides branch protection/CODEOWNERS on the state repository; real custody
+separation belongs at the parked Cloud broker/leasing seam. The optional
+recovery key remains lifecycle-only.
 
 ## playbill body
 

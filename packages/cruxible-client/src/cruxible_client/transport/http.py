@@ -230,12 +230,14 @@ class CruxibleClient:
         *,
         principals: Sequence[Mapping[str, Any]],
         operating_profile: Literal["local", "cloud"] = "local",
+        require_independent_approval: bool = False,
     ) -> contracts.PlaybillInitResult:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/init",
             json={
                 "principals": [dict(item) for item in principals],
                 "operating_profile": operating_profile,
+                "require_independent_approval": require_independent_approval,
             },
         )
         return self._parse_model(response, contracts.PlaybillInitResult)

@@ -29,6 +29,7 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.subjects import AcceptedSubject, parse_subject, subject_digest
+from cruxible_core.errors import DataValidationError
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.exhaust.records import (
     QUERY_RECEIPT_EVENT_KIND,
@@ -298,7 +299,7 @@ def service_run_playbill_query(
     """
 
     if evaluation_time.tzinfo is None or evaluation_time.utcoffset() is None:
-        raise ProposalIntegrityError("query evaluation_time must be timezone-aware")
+        raise DataValidationError("query evaluation_time must be timezone-aware")
     coordinate = _resolve_coordinate(instance, at)
     definition = accepted_query_definition(instance, name=name, coordinate=coordinate)
     facts = build_accepted_query_facts(

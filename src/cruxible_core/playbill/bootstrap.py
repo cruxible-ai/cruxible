@@ -9,6 +9,13 @@ from dataclasses import dataclass
 
 from pydantic import ValidationError
 
+from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_PATH,
+    ApprovalPolicyFormatError,
+    ApprovalPolicyV1,
+    parse_approval_policy,
+    render_approval_policy,
+)
 from cruxible_client.contracts.canonical import (
     BootstrapRoot,
     ChangeSetDigest,
@@ -39,6 +46,7 @@ class VerifiedGenesis:
     descriptor: GenerationDescriptor
     generation_root: GenerationRoot
     principals: tuple[PrincipalRecord, ...]
+    approval_policy: ApprovalPolicyV1
 
 
 def bootstrap_root(*, instance_id: str, daemon_public_key: str) -> BootstrapRoot:
@@ -99,14 +107,21 @@ def generation_root(descriptor: GenerationDescriptor) -> GenerationRoot:
     )
 
 
-def genesis_tree(principals: Sequence[PrincipalRecord]) -> dict[str, bytes]:
+def genesis_tree(
+    principals: Sequence[PrincipalRecord],
+    *,
+    approval_policy: ApprovalPolicyV1,
+) -> dict[str, bytes]:
     ordered = sorted(principals, key=lambda record: record.principal_id)
     if [record.principal_id for record in ordered] != sorted(
         {record.principal_id for record in ordered}
     ):
         raise PlaybillBootstrapError("genesis principals must be unique")
     return {
-        f"principals/{record.principal_id}.yaml": render_principal(record) for record in ordered
+        APPROVAL_POLICY_PATH: render_approval_policy(approval_policy),
+        **{
+            f"principals/{record.principal_id}.yaml": render_principal(record) for record in ordered
+        },
     }
 
 
@@ -126,12 +141,26 @@ def verify_genesis(
         raise PlaybillBootstrapError("genesis is not signed by the bootstrap daemon key")
 
     tree = ledger.read_tree(oid)
-    expected_tree = genesis_tree(trust_root.principals)
+    policy_content = tree.get(APPROVAL_POLICY_PATH)
+    if policy_content is None:
+        raise PlaybillBootstrapError("genesis approval policy is missing")
+    try:
+        approval_policy = parse_approval_policy(policy_content, path=APPROVAL_POLICY_PATH)
+    except ApprovalPolicyFormatError as exc:
+        raise PlaybillBootstrapError("genesis approval policy is invalid") from exc
+    expected_tree = genesis_tree(
+        trust_root.principals,
+        approval_policy=approval_policy,
+    )
     if set(tree) != set(expected_tree):
         raise PlaybillBootstrapError("genesis principal registry paths differ from trust root")
 
     parsed: list[PrincipalRecord] = []
     for path in sorted(expected_tree):
+        if path == APPROVAL_POLICY_PATH:
+            if tree[path] != expected_tree[path]:  # pragma: no cover - parser already proves this
+                raise PlaybillBootstrapError("genesis approval policy is not canonical")
+            continue
         content = tree[path]
         try:
             payload = json.loads(content)
@@ -167,6 +196,7 @@ def verify_genesis(
         descriptor=descriptor,
         generation_root=generation_root(descriptor),
         principals=tuple(parsed),
+        approval_policy=approval_policy,
     )
 
 
@@ -174,11 +204,12 @@ def prepare_genesis(
     ledger: GitLedger,
     *,
     trust_root: PlaybillTrustRoot,
+    approval_policy: ApprovalPolicyV1,
     timestamp: str,
 ) -> VerifiedGenesis:
     """Create, verify, and install the one no-parent genesis commit."""
 
-    tree = genesis_tree(trust_root.principals)
+    tree = genesis_tree(trust_root.principals, approval_policy=approval_policy)
     oid = ledger.create_signed_genesis(tree, timestamp=timestamp)
     verified = verify_genesis(ledger, oid, trust_root=trust_root)
     ledger.set_main_genesis(oid)

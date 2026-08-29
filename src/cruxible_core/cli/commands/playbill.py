@@ -31,6 +31,7 @@ from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_NAMES,
     AuthoringExampleName,
     authoring_example,
+    query_claims_by_type_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.authoring.sources import (
@@ -408,8 +409,13 @@ def create_host(instance_id: str | None, output_json: bool) -> None:
 @click.option("--principal-id", default="bootstrap-admin", show_default=True)
 @click.option(
     "--reviewer-key-dir",
-    required=True,
-    help="Independent second ordinary-principal custody directory outside the workspace.",
+    default=None,
+    help="Optional second ordinary-principal custody directory outside the workspace.",
+)
+@click.option(
+    "--require-independent-approval",
+    is_flag=True,
+    help="Require one non-creator ordinary approval for governed changes.",
 )
 @click.option("--recovery-key-dir", default=None, help="Optional offline recovery custody dir.")
 @click.option("--recovery-principal-id", default="recovery", show_default=True)
@@ -419,28 +425,37 @@ def create_host(instance_id: str | None, output_json: bool) -> None:
 def init_playbill(
     key_dir: str,
     principal_id: str,
-    reviewer_key_dir: str,
+    reviewer_key_dir: str | None,
+    require_independent_approval: bool,
     recovery_key_dir: str | None,
     recovery_principal_id: str,
     profile: str,
     output_json: bool,
 ) -> None:
-    """Create two ordinary client keys and optional recovery custody, then bootstrap."""
+    """Create client custody and bootstrap the governed approval policy."""
 
     workspace = Path.cwd().resolve()
+    if require_independent_approval and reviewer_key_dir is None:
+        raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
     owner = generate_client_principal_key(
         Path(key_dir).expanduser(),
         principal_id=principal_id,
         kind="ordinary",
         forbidden_roots=(workspace,),
     )
-    reviewer = generate_client_principal_key(
-        Path(reviewer_key_dir).expanduser(),
-        principal_id="reviewer",
-        kind="ordinary",
-        forbidden_roots=(workspace,),
+    reviewer = (
+        None
+        if reviewer_key_dir is None
+        else generate_client_principal_key(
+            Path(reviewer_key_dir).expanduser(),
+            principal_id="reviewer",
+            kind="ordinary",
+            forbidden_roots=(workspace,),
+        )
     )
-    principals = [owner.principal, reviewer.principal]
+    principals = [owner.principal]
+    if reviewer is not None:
+        principals.append(reviewer.principal)
     if recovery_key_dir is not None:
         recovery = generate_client_principal_key(
             Path(recovery_key_dir).expanduser(),
@@ -454,6 +469,7 @@ def init_playbill(
             selected,
             principals=[item.model_dump(mode="json") for item in principals],
             operating_profile=cast(Any, profile),
+            require_independent_approval=require_independent_approval,
         ),
         command_name="playbill init",
     )
@@ -461,10 +477,12 @@ def init_playbill(
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
+    click.echo(f"Approval policy: {result.approval_policy_mode}")
     click.echo(f"Owner public key: {owner.principal.public_key}")
     click.echo(f"Owner private key retained locally at: {owner.private_key_path}")
-    click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
-    click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
+    if reviewer is not None:
+        click.echo(f"Reviewer public key: {reviewer.principal.public_key}")
+        click.echo(f"Reviewer private key retained locally at: {reviewer.private_key_path}")
 
 
 @playbill_group.group("body")
@@ -1766,6 +1784,7 @@ def submit_authoring_intent(
                 "coordinate": (
                     activation.accepted_coordinate.git_oid if activation is not None else None
                 ),
+                "receipt": activation.tag if activation is not None else None,
             },
             next_command=_submit_next_command(submitted, activated=activation is not None),
         )
@@ -2064,11 +2083,27 @@ def query_group() -> None:
 
 
 @query_group.command("propose")
-@click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--name", "proposal_name", required=True)
+@click.option("--envelope", type=click.Path(exists=True, dir_okay=False))
+@click.option("--example", type=click.Choice(["query-claims-by-type"]))
+@click.option("--name", "proposal_name")
 @json_option
 @handle_errors
-def propose_query_definition(envelope: str, proposal_name: str, output_json: bool) -> None:
+def propose_query_definition(
+    envelope: str | None,
+    example: str | None,
+    proposal_name: str | None,
+    output_json: bool,
+) -> None:
+    if (envelope is None) == (example is None):
+        raise click.UsageError("choose exactly one of --envelope or --example")
+    if example is not None:
+        if proposal_name is not None:
+            raise click.UsageError("--name applies only when --envelope is supplied")
+        _emit_json(query_claims_by_type_example().model_dump(mode="json"))
+        return
+    if proposal_name is None:
+        raise click.UsageError("--name is required with --envelope")
+    assert envelope is not None
     definition = _read_mapping(envelope)
     result = _server_call(
         lambda client, instance_id: client.propose_playbill_query_definition(
@@ -2301,7 +2336,7 @@ def next_work(
 
     def _next_at_scanned_coordinate(
         client: CruxibleClient, instance_id: str
-    ) -> contracts.PlaybillNextResult:
+    ) -> tuple[contracts.PlaybillNextResult, contracts.PlaybillNextResult | None]:
         observed, coordinate = observe_playbill_next_workspace_with_coverage(
             client,
             instance_id,
@@ -2309,7 +2344,7 @@ def next_work(
             observation=workspace_observation,
             access_profile=profile,
         )
-        return client.next_playbill(
+        result = client.next_playbill(
             instance_id,
             evaluation_time=stamped_evaluation_time,
             access_profile=profile,
@@ -2318,8 +2353,19 @@ def next_work(
             workspace_observation=observed,
             since_result_digest=since_result_digest,
         )
+        if since_result_digest is None:
+            return result, None
+        full = client.next_playbill(
+            instance_id,
+            evaluation_time=stamped_evaluation_time,
+            access_profile=profile,
+            at=coordinate,
+            expiring_within={"microseconds": expiring_within},
+            workspace_observation=observed,
+        )
+        return result, full
 
-    result = _server_call(
+    result, full = _server_call(
         _next_at_scanned_coordinate,
         command_name="playbill next",
     )
@@ -2327,11 +2373,25 @@ def next_work(
         _emit_json(result.model_dump(mode="json"))
         return
     if not result.items:
-        click.echo("No repair work in the observed domains.")
+        click.echo(
+            "No changes since the requested queue digest."
+            if result.delta_since is not None
+            else "No repair work in the observed domains."
+        )
+    current_ids = frozenset(item["item_id"] for item in full.items) if full is not None else None
     for item in result.items:
         repair = item["repair"]
+        change = (
+            "removed  "
+            if result.delta_since is not None
+            and current_ids is not None
+            and item["item_id"] not in current_ids
+            else "added  "
+            if result.delta_since is not None and current_ids is not None
+            else ""
+        )
         click.echo(
-            f"{item['severity']}  {item['reason']}  {item['subject_identity']}  "
+            f"{change}{item['severity']}  {item['reason']}  {item['subject_identity']}  "
             f"next={repair['operation']}"
         )
     if result.unobserved_domains:

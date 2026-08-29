@@ -6,6 +6,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
+from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_PATH,
+    ApprovalPolicyFormatError,
+    parse_approval_policy,
+)
 from cruxible_client.contracts.errors import PrincipalIntegrityError
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
@@ -123,12 +128,39 @@ def evaluate_principal_lifecycle(
             "revocation, or recovery policy.",
         )
     try:
-        principal_registry_from_tree(
+        candidate_principals = principal_registry_from_tree(
             candidate_tree,
             semantic_root=current.semantic_root,
         )
     except PrincipalIntegrityError as exc:
         return _refused("playbill.principal.registry_invalid", str(exc))
+    try:
+        approval_policy = parse_approval_policy(
+            candidate_tree[APPROVAL_POLICY_PATH],
+            path=APPROVAL_POLICY_PATH,
+        )
+    except (KeyError, ApprovalPolicyFormatError) as exc:
+        return _refused(
+            "playbill.principal.approval_policy_invalid",
+            f"Accepted approval policy is unavailable or invalid: {exc}",
+        )
+    active_ordinary_count = sum(
+        record.kind == "ordinary" and record.status == "active"
+        for record in candidate_principals.principals
+    )
+    if (
+        action == "revoke"
+        and approval_policy.mode == "independent_approval_required"
+        and active_ordinary_count < 2
+    ):
+        return _refused(
+            "playbill.principal.independent_approval_minimum",
+            "independent_approval_required mode must keep at least two active ordinary "
+            "principals; register a replacement ordinary principal in its own ChangeSet "
+            "first, then "
+            "revoke. Policy loosening is unavailable until the coordinator convergence. "
+            "For a lost key, use recovery re-keying instead of revocation.",
+        )
     return PrincipalLifecycleEvaluation(action=action)
 
 

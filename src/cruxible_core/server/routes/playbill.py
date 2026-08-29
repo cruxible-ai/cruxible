@@ -105,6 +105,7 @@ async def playbill_init(
         resolve_server_instance_id(instance_id),
         principals=req.principals,
         operating_profile=req.operating_profile,
+        require_independent_approval=req.require_independent_approval,
     )
 
 

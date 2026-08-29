@@ -64,6 +64,7 @@ PlaybillAuthoringCompileRequestV3 = AuthoringIntentCompileRequestV3
 class PlaybillInitRequest(_StrictPlaybillRequest):
     principals: tuple[PrincipalRecord, ...]
     operating_profile: OperatingProfile = "local"
+    require_independent_approval: bool = False
 
 
 class PlaybillStoreBodyRequest(_StrictPlaybillRequest):

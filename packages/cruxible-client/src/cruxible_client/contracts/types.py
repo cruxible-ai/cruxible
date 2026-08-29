@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.canonical import Sha256Value
 
 GitObjectFormat = Literal["sha1", "sha256"]
@@ -96,8 +97,8 @@ class PlaybillTrustRoot(StrictModel):
             for record in self.principals
             if record.kind == "ordinary" and record.status == "active"
         ]
-        if len(ordinary) < 2:
-            raise ValueError("trust root requires at least two active ordinary principals")
+        if len(ordinary) < 1:
+            raise ValueError("trust root requires at least one active ordinary principal")
         if any(
             record.kind == "daemon" for record in self.principals if record.principal_id != "daemon"
         ):
@@ -292,6 +293,7 @@ class PlaybillInspection(StrictModel):
     authority: AuthorityMatrix
     operating_profile: OperatingProfile
     recovery_posture: RecoveryPosture
+    approval_policy_mode: ApprovalPolicyMode
     principals: tuple[PrincipalInspection, ...]
     managed_root: str
     storage_directories: dict[str, str]

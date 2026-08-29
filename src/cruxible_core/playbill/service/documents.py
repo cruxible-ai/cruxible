@@ -305,7 +305,11 @@ def service_submit_playbill_approval(
     principal_lifecycle = all(
         member.artifact_kind == "principal-lifecycle" for member in candidate.members
     )
-    if not principal_lifecycle and attestation.signer_id == proposal.admission.actor_id:
+    if (
+        not principal_lifecycle
+        and candidate.approval_requirements
+        and attestation.signer_id == proposal.admission.actor_id
+    ):
         raise ApprovalIntegrityError(
             "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve; "
             "after an eligible signer approves, run playbill proposal activate"

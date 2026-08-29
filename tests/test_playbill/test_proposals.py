@@ -7,7 +7,7 @@ from inspect import getsource
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.candidates import (
     CandidateRecord,
@@ -21,7 +21,10 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_client.contracts.errors import ProposalAdmissionError
+from cruxible_client.contracts.errors import (
+    ProposalAdmissionError,
+    ProposalEvaluationIntegrityError,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
@@ -153,6 +156,31 @@ def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None
     assert len(list((exhaust / "proposals").glob("*.json"))) == 1
     assert len(list((exhaust / "evaluations").glob("*.json"))) == 1
     assert list((exhaust / "candidates").glob("*.json")) == []
+
+
+def test_internal_evaluation_model_failure_uses_the_narrow_integrity_class(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cruxible_core.playbill import proposals
+
+    class BrokenEvaluationRecord(BaseModel):
+        missing_internal_field: str
+
+    instance, _owner = initialize_local(tmp_path)
+    body = instance.store_document_body(b"body")
+    monkeypatch.setattr(proposals, "ProposalEvaluationRecord", BrokenEvaluationRecord)
+
+    with pytest.raises(
+        ProposalEvaluationIntegrityError,
+        match="failed deterministic validation",
+    ):
+        instance.proposal_service().submit(
+            actor=AuthenticatedActor(actor_id="owner"),
+            request=_request(instance),
+            candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+            timestamp=TIMESTAMP,
+        )
 
 
 @pytest.mark.parametrize(

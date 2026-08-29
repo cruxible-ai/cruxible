@@ -7,11 +7,13 @@ from collections import Counter, OrderedDict, defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from threading import RLock
 from typing import Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts import PlaybillNextReason
+from cruxible_client.contracts.authoring.models import InsertionExpectationV2
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -68,6 +70,7 @@ from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
+from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
@@ -513,9 +516,10 @@ class PlaybillNextResultV1(_StrictNextModel):
     unobserved_domains: tuple[NextDomain, ...]
     items: tuple[PlaybillNextItemV1, ...]
     result_digest: str
-    # Set only on a delta. `result_digest` then still names the WHOLE queue --
-    # it is the cursor the caller echoes back next time -- so it deliberately
-    # does not reproduce from the partial `items` carried here.
+    # Set only on a delta. The carried items are the deterministic symmetric
+    # difference from that earlier queue while `result_digest` remains the
+    # current whole-queue cursor. The server remembers that full queue so the
+    # digest remains usable on the next call.
     delta_since: str | None = None
 
     @field_validator("evaluation_time")
@@ -1184,11 +1188,82 @@ def _relation_use(value: Mapping[str, object]) -> _CitationRelationUse:
 
 
 def post_retirement_examined_support_suppresses_claim_cites_retired(
-    _claim_artifact_digest: str,
+    claim_artifact_digest: str,
+    *,
+    claim_identity: str | None = None,
+    retired_activation_sequence: int | None = None,
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
+    accepted_sequence_by_semantic_root: Mapping[str, int] | None = None,
 ) -> bool:
-    """Future attestation-door seam; no accepted attestation can suppress today."""
+    """Suppress only after a current Claim was examined after the cited retirement."""
 
-    return False
+    if (
+        claim_identity is None
+        or retired_activation_sequence is None
+        or accepted_sequence_by_semantic_root is None
+    ):
+        return False
+    latest_by_principal: dict[
+        str, tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1]
+    ] = {}
+    for event, payload in door_events:
+        statement = payload.attestation.statement
+        if (
+            statement.claim_identity.qualified != claim_identity
+            or statement.claim_artifact_digest != claim_artifact_digest
+        ):
+            continue
+        previous = latest_by_principal.get(payload.attesting_principal_id)
+        if previous is None or event.sequence > previous[0].sequence:
+            latest_by_principal[payload.attesting_principal_id] = (event, payload)
+    return any(
+        payload.current_at_append
+        and payload.attestation.statement.attestation_basis == "examined_existing"
+        and payload.attestation.statement.stance == "support"
+        and (
+            accepted_sequence_by_semantic_root.get(
+                payload.attestation.statement.referent_coordinate.semantic_root,
+                -1,
+            )
+            >= retired_activation_sequence
+        )
+        for _event, payload in latest_by_principal.values()
+    )
+
+
+def _claim_retirement_sequences(instance: PlaybillInstance) -> dict[str, int]:
+    """Return the replay-proven activation sequence of every retired Claim."""
+
+    retired: dict[str, int] = {}
+    for generation in instance.accepted_history():
+        record = getattr(generation, "record", None)
+        if record is None:
+            continue
+        tree = instance.tree_at(generation.oid)
+        for member in record.members:
+            if member.artifact_kind != "claim" or member.path not in tree:
+                continue
+            claim = parse_claim(tree[member.path], path=member.path)
+            if claim.lifecycle.state == "retired":
+                retired[claim.identity.qualified] = generation.sequence
+    return retired
+
+
+def _complete_retirement_activation_sequence(
+    witnesses: tuple[str, ...],
+    *,
+    retired_claim_count: int,
+    retirement_sequences: Mapping[str, int],
+) -> int | None:
+    """Return the latest retirement only when display witnesses are complete."""
+
+    if (
+        not witnesses
+        or retired_claim_count != len(witnesses)
+        or any(witness not in retirement_sequences for witness in witnesses)
+    ):
+        return None
+    return max(retirement_sequences[witness] for witness in witnesses)
 
 
 def _whole_source_selection(envelope: object) -> bool:
@@ -1431,8 +1506,17 @@ def _claim_cites_retired_item(
     retired_claim_count: int,
     retired_citation_count: int,
     retired_claim_witnesses: tuple[str, ...],
+    retired_activation_sequence: int | None = None,
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
+    accepted_sequence_by_semantic_root: Mapping[str, int] | None = None,
 ) -> PlaybillNextItemV1 | None:
-    if post_retirement_examined_support_suppresses_claim_cites_retired(live_claim_artifact_digest):
+    if post_retirement_examined_support_suppresses_claim_cites_retired(
+        live_claim_artifact_digest,
+        claim_identity=live_claim_identity,
+        retired_activation_sequence=retired_activation_sequence,
+        door_events=door_events,
+        accepted_sequence_by_semantic_root=accepted_sequence_by_semantic_root,
+    ):
         return None
     return _item(
         severity="warning",
@@ -1489,6 +1573,7 @@ def _citation_relation_items(
     coordinate: AcceptedProjectionCoordinate,
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
 ) -> tuple[tuple[PlaybillNextItemV1, ...], frozenset[tuple[str, str]]]:
     """Serve retirement relations from the immutable accepted-coordinate slice."""
 
@@ -1497,6 +1582,17 @@ def _citation_relation_items(
     if not any(path.startswith("claims/") for path in instance.tree_at(coordinate.git_oid)):
         return (), frozenset()
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    retirement_sequences = _claim_retirement_sequences(instance) if door_events else {}
+    accepted_sequence_by_semantic_root = (
+        {
+            generation.semantic_root.tagged: generation.sequence
+            for generation in instance.accepted_history()
+            if getattr(generation, "semantic_root", None) is not None
+            and getattr(generation, "sequence", None) is not None
+        }
+        if door_events
+        else {}
+    )
     exact_by_claim: dict[str, list[Mapping[str, object]]] = defaultdict(list)
     uses_by_source: dict[str, list[_CitationRelationUse]] = defaultdict(list)
     observed_sources = {
@@ -1565,18 +1661,19 @@ def _citation_relation_items(
             raise PlaybillNextAcceptedStateInvalid(
                 f"{PlaybillNextAcceptedStateInvalid.code}: retired conflict is incomplete"
             )
+        retired_claim_count = sum(
+            value
+            for fact in preferred
+            for value in (fact.get("retired_claim_count"),)
+            if isinstance(value, int) and not isinstance(value, bool)
+        )
         item = _claim_cites_retired_item(
             coordinate=public_coordinate,
             live_claim_identity=live_identity,
             live_claim_artifact_digest=live_digest,
             relation_kind=str(preferred[0].get("relation_kind")),
             live_citation_id=live_citation,
-            retired_claim_count=sum(
-                value
-                for fact in preferred
-                for value in (fact.get("retired_claim_count"),)
-                if isinstance(value, int) and not isinstance(value, bool)
-            ),
+            retired_claim_count=retired_claim_count,
             retired_citation_count=sum(
                 value
                 for fact in preferred
@@ -1584,6 +1681,13 @@ def _citation_relation_items(
                 if isinstance(value, int) and not isinstance(value, bool)
             ),
             retired_claim_witnesses=witnesses,
+            retired_activation_sequence=_complete_retirement_activation_sequence(
+                witnesses,
+                retired_claim_count=retired_claim_count,
+                retirement_sequences=retirement_sequences,
+            ),
+            door_events=door_events,
+            accepted_sequence_by_semantic_root=accepted_sequence_by_semantic_root,
         )
         if item is not None:
             items.append(item)
@@ -1631,9 +1735,10 @@ def _citation_relation_items(
             retired = tuple(active_retired.values())
             if not retired:
                 return
+            retired_claim_identities = {entry.claim_identity for entry in retired}
             witnesses = tuple(
                 sorted(
-                    {entry.claim_identity for entry in retired},
+                    retired_claim_identities,
                     key=lambda item: item.encode("utf-8"),
                 )[:8]
             )
@@ -1643,9 +1748,16 @@ def _citation_relation_items(
                 live_claim_artifact_digest=live_use.claim_artifact_digest,
                 relation_kind="current_span_overlap",
                 live_citation_id=live_use.citation_id,
-                retired_claim_count=len({entry.claim_identity for entry in retired}),
+                retired_claim_count=len(retired_claim_identities),
                 retired_citation_count=len(retired),
                 retired_claim_witnesses=witnesses,
+                retired_activation_sequence=_complete_retirement_activation_sequence(
+                    witnesses,
+                    retired_claim_count=len(retired_claim_identities),
+                    retirement_sequences=retirement_sequences,
+                ),
+                door_events=door_events,
+                accepted_sequence_by_semantic_root=accepted_sequence_by_semantic_root,
             )
             if row is not None:
                 items.append(row)
@@ -2602,6 +2714,35 @@ def _document_items(
     return tuple(items)
 
 
+def _registered_publication_blocks(
+    instance: PlaybillInstance,
+) -> frozenset[tuple[str, str]] | None:
+    """Fold durable prepared/bound publication identities from latest intent events."""
+
+    exhaust_root = instance.root / instance.descriptor.storage.exhaust
+    if not (exhaust_root / "authoring-intents").is_dir():
+        return frozenset()
+    try:
+        latest = {
+            event.intent.intent_id: event.intent
+            for event in AuthoringIntentStore(exhaust_root).events()
+        }
+    except (OSError, PlaybillError):
+        return None
+    registrations: set[tuple[str, str]] = set()
+    for intent in latest.values():
+        expectation = intent.insertion_expectation
+        if (
+            not isinstance(expectation, InsertionExpectationV2)
+            or expectation.state not in {"prepared", "bound"}
+            or expectation.preparation is None
+        ):
+            continue
+        preparation = expectation.preparation
+        registrations.add((preparation.source_id, preparation.block_id))
+    return frozenset(registrations)
+
+
 def _projection_items(
     instance: PlaybillInstance,
     *,
@@ -2639,6 +2780,7 @@ def _projection_items(
     if not sources:
         return ()
 
+    registrations = _registered_publication_blocks(instance)
     tree = instance.tree_at(coordinate.git_oid)
     facts = build_accepted_query_facts(instance, coordinate=coordinate)
     subjects = {subject.path: subject for subject in facts.subjects}
@@ -2653,6 +2795,34 @@ def _projection_items(
     items: list[PlaybillNextItemV1] = []
     for source in sources:
         for marker in source.marker_summaries:
+            registration = (source.source_id, marker.stamp.block_id)
+            if (
+                marker.stamp.block_id.startswith("pub-")
+                and registrations is not None
+                and registration not in registrations
+            ):
+                target = f"{source.source_id}#{marker.stamp.block_id}"
+                items.append(
+                    _item(
+                        severity="warning",
+                        reason="unregistered_projection_block",
+                        subject_identity=target,
+                        related_identities=(),
+                        detail={
+                            "source_id": source.source_id,
+                            "block_id": marker.stamp.block_id,
+                        },
+                        repair=PlaybillNextRepairV1(
+                            operation="playbill.document.propose",
+                            target=target,
+                            required_change="remove_or_register_projection_block",
+                            arguments={
+                                "source_id": source.source_id,
+                                "block_id": marker.stamp.block_id,
+                            },
+                        ),
+                    )
+                )
             visible = True
             stale: list[str] = []
             retired: list[str] = []
@@ -2846,6 +3016,7 @@ def service_playbill_next(
         coordinate=coordinate,
         access_profile=request.access_profile,
         observation=request.workspace_observation,
+        door_events=door_events,
     )
     items = tuple(
         sorted(
@@ -2929,15 +3100,17 @@ def service_playbill_next(
 # Bounded, per-process memory of which rows each queue digest stood for. A miss
 # -- restart, eviction, a digest minted elsewhere -- is not an error: it yields
 # the whole queue, which answers the caller's question either way.
-_QUEUE_MEMO: OrderedDict[str, frozenset[str]] = OrderedDict()
+_QUEUE_MEMO: OrderedDict[str, tuple[PlaybillNextItemV1, ...]] = OrderedDict()
 _QUEUE_MEMO_LIMIT = 32
+_QUEUE_MEMO_LOCK = RLock()
 
 
 def _remember_queue(result_digest: str, items: tuple[PlaybillNextItemV1, ...]) -> None:
-    _QUEUE_MEMO.pop(result_digest, None)
-    _QUEUE_MEMO[result_digest] = frozenset(item.item_id for item in items)
-    while len(_QUEUE_MEMO) > _QUEUE_MEMO_LIMIT:
-        _QUEUE_MEMO.popitem(last=False)
+    with _QUEUE_MEMO_LOCK:
+        _QUEUE_MEMO.pop(result_digest, None)
+        _QUEUE_MEMO[result_digest] = items
+        while len(_QUEUE_MEMO) > _QUEUE_MEMO_LIMIT:
+            _QUEUE_MEMO.popitem(last=False)
 
 
 def _delta_of(
@@ -2945,17 +3118,30 @@ def _delta_of(
     *,
     since: str,
 ) -> PlaybillNextResultV1 | PlaybillNextResultV2:
-    """Return only the rows new since a remembered queue, keeping the full cursor.
+    """Return the reproducible symmetric difference from a remembered queue."""
 
-    `result_digest` still names the whole queue: it is what the caller echoes
-    back next time, so it must not describe the subset carried here.
-    """
-
-    seen = _QUEUE_MEMO.get(since)
-    if seen is None:
+    with _QUEUE_MEMO_LOCK:
+        previous = _QUEUE_MEMO.get(since)
+    if previous is None:
         return full
-    fresh = tuple(item for item in full.items if item.item_id not in seen)
-    return full.model_copy(update={"items": fresh, "delta_since": since})
+    previous_by_id = {item.item_id: item for item in previous}
+    current_ids = frozenset(item.item_id for item in full.items)
+    previous_ids = frozenset(previous_by_id)
+    changed = tuple(
+        sorted(
+            (
+                *(item for item in full.items if item.item_id not in previous_ids),
+                *(previous_by_id[item_id] for item_id in previous_ids - current_ids),
+            ),
+            key=_item_sort_key,
+        )
+    )
+    # The digest is the whole-queue cursor, not a digest of the displayed
+    # symmetric-difference subset. That base invariant keeps a repeated delta
+    # request idempotent and prevents a subset from overwriting the full queue
+    # in the per-process memo (delta_since is intentionally outside v2's
+    # accepted-state digest preimage).
+    return full.model_copy(update={"items": changed, "delta_since": since})
 
 
 __all__ = [

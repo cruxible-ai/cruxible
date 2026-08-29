@@ -81,7 +81,7 @@ class _Cli:
         return activated
 
     def bootstrap(self, tmp_path: Path) -> dict[str, Any]:
-        """Bootstrap two ordinary principals plus recovery custody."""
+        """Bootstrap an optional two-ordinary mode plus recovery custody."""
 
         custody = tmp_path / "custody"
         recovery_custody = tmp_path / "recovery-custody"
@@ -152,6 +152,43 @@ def served_cli(
     get_playbill_manager().clear()
     reset_registry()
     reset_permissions()
+
+
+def test_cli_init_key_dir_alone_bootstraps_a_solo_instance(
+    served_cli: _Cli,
+    tmp_path: Path,
+) -> None:
+    cruxible = served_cli
+    host = cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
+    custody = tmp_path / "solo-custody"
+    initialized = cruxible.json(
+        "playbill",
+        "init",
+        "--key-dir",
+        str(custody),
+        "--principal-id",
+        CREATOR_ID,
+    )
+    assert initialized["instance_id"] == host["instance_id"]
+    assert initialized["approval_policy_mode"] == "self_approval_allowed"
+    assert (custody / f"{CREATOR_ID}.ed25519").is_file()
+    assert not (custody / f"{SIGNER_ID}.ed25519").exists()
+
+
+def test_cli_independent_approval_flag_requires_reviewer_custody(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "playbill",
+            "init",
+            "--key-dir",
+            str(tmp_path / "solo-custody"),
+            "--require-independent-approval",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "requires --reviewer-key-dir" in result.output
+    assert not (tmp_path / "solo-custody").exists()
 
 
 def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(

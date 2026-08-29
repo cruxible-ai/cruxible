@@ -166,6 +166,10 @@ class ProposalIntegrityError(PlaybillError):
     """Persisted proposal or candidate evidence failed deterministic verification."""
 
 
+class ProposalEvaluationIntegrityError(ProposalIntegrityError):
+    """Daemon-created proposal evaluation bytes failed their own typed contract."""
+
+
 class ApprovalIntegrityError(PlaybillError):
     """An approval statement, signer, signature, or required quorum was refused."""
 

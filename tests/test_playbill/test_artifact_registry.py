@@ -11,6 +11,7 @@ from cruxible_core.playbill.projection_artifacts import (
 
 
 def test_pc_d_activates_procedure_and_line_paths() -> None:
+    assert registered_path_kind("governance/approval-policy.yaml") == "approval-policy"
     assert registered_path_kind("claim-types/project.work_item/status.yaml") == "claim-type"
     assert registered_path_kind("capture-contracts/erp-release.yaml") == "capture-contract"
     assert registered_path_kind("claims/12/CLM-12" + "ab" * 15 + ".yaml") == "claim"
@@ -28,6 +29,7 @@ def test_pc_f_activates_the_query_definition_path_kind() -> None:
 def test_pc_e1_activates_procedure_line_run_input_and_promotion_tags() -> None:
     assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == (
         "playbill-accepted-state-run-input-v1",
+        "playbill-approval-policy-v1",
         "playbill-capture-contract-v1",
         "playbill-capture-envelope-v1",
         "playbill-claim-v2",

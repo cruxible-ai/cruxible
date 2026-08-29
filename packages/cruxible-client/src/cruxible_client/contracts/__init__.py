@@ -8,6 +8,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.primitives import canonical_json
 
@@ -27,6 +28,7 @@ PlaybillAuthoringExampleName = Literal[
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
+    "query-claims-by-type",
 ]
 PlaybillNextReason: TypeAlias = Literal[
     "claim_conflicted",
@@ -49,6 +51,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "document_modified",
     "claim_cites_retired",
     "retired_claim_source_stale",
+    "unregistered_projection_block",
 ]
 
 
@@ -118,6 +121,7 @@ class PlaybillInitResult(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     trust_root: dict[str, Any]
     recovery_posture: str
+    approval_policy_mode: ApprovalPolicyMode
 
 
 class PlaybillCasObjectResult(BaseModel):
@@ -865,8 +869,8 @@ class PlaybillNextResult(BaseModel):
     unobserved_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
     items: list[dict[str, Any]]
     result_digest: str
-    # Set only on a delta: result_digest still names the whole queue, so it is
-    # the cursor to echo back, not a description of the rows carried here.
+    # Set only on a delta. Items are the changed rows while result_digest names
+    # the complete current queue, so callers may echo it as the next cursor.
     delta_since: str | None = None
     attestation_head_digest: str | None = None
 

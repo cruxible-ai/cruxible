@@ -61,7 +61,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:d2001fe1364b14fc5fbb3bfc2b8fd5cab71bfaf37a2ebbd85d978010cf05e69b"
+    "sha256:d8b0fa2d128627600bbbac790855467185bd0f2bfdc8f7cae6da0609a4c8eb48"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -1001,8 +1001,6 @@ class PublicationPreparationV2(_StrictAuthoringModel):
     accepted_coordinate: AcceptedCoordinate
     accepted_generation: int = Field(ge=0)
     source_id: str
-    preimage_digest: str
-    preimage_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
     rebased_selector: InsertionAnchorWindowV1
     operation: InsertionOperation
     body_digest: str
@@ -1011,8 +1009,6 @@ class PublicationPreparationV2(_StrictAuthoringModel):
     stamp: ProjectionBlockStampV1
     inserted_block_digest: str
     inserted_block_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
-    final_postimage_digest: str
-    final_postimage_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
     block_start_byte: int = Field(ge=0)
     block_end_byte: int = Field(ge=0)
     body_start_byte: int = Field(ge=0)
@@ -1023,10 +1019,8 @@ class PublicationPreparationV2(_StrictAuthoringModel):
 
     @field_validator(
         "expectation_id",
-        "preimage_digest",
         "body_digest",
         "inserted_block_digest",
-        "final_postimage_digest",
         "target_digest",
         "preparation_digest",
     )
@@ -1061,7 +1055,6 @@ class PublicationPreparationV2(_StrictAuthoringModel):
             <= self.body_start_byte
             <= self.body_end_byte
             <= self.block_end_byte
-            <= self.final_postimage_byte_length
         ):
             raise ValueError("publication block/body spans are malformed")
         if self.body_end_byte - self.body_start_byte != self.body_byte_length:
@@ -1101,12 +1094,10 @@ class InsertionConfirmationObservationV2(_StrictAuthoringModel):
     expectation_id: str
     preparation_digest: str
     source_id: str
-    final_postimage_digest: str
-    final_postimage_byte_length: int = Field(ge=0, le=MAX_PUBLICATION_SOURCE_BYTES)
     marker_summary: ProjectionMarkerSummaryV1
     observed_occurrence_count: int = Field(ge=0)
 
-    @field_validator("expectation_id", "preparation_digest", "final_postimage_digest")
+    @field_validator("expectation_id", "preparation_digest")
     @classmethod
     def _digests(cls, value: str) -> str:
         return _sha256(value, label="publication confirmation digest")
@@ -1140,8 +1131,6 @@ class InsertionTerminalTombstoneV2(_StrictAuthoringModel):
     preparation_digest: str | None = None
     source_id: str | None = None
     block_id: str | None = None
-    final_postimage_digest: str | None = None
-    final_postimage_byte_length: int | None = Field(default=None, ge=0)
     accepted_claim_identity: str
     accepted_claim_artifact_digest: str
     accepted_claim_coordinate: AcceptedCoordinate | None = None
@@ -1153,7 +1142,6 @@ class InsertionTerminalTombstoneV2(_StrictAuthoringModel):
         "result_key",
         "expectation_id",
         "preparation_digest",
-        "final_postimage_digest",
         "accepted_claim_artifact_digest",
         "tombstone_digest",
     )
@@ -1182,8 +1170,6 @@ class InsertionTerminalTombstoneV2(_StrictAuthoringModel):
             self.preparation_digest,
             self.source_id,
             self.block_id,
-            self.final_postimage_digest,
-            self.final_postimage_byte_length,
         )
         if self.final_state == "bound" and not all(item is not None for item in commitments):
             raise ValueError("bound publication tombstone requires exact source commitments")

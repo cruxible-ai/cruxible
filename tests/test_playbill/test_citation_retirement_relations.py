@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from cruxible_client.authoring.workspace import _coverage_v3_fields
-from cruxible_client.contracts.claims import claim_path
+from cruxible_client.contracts.artifacts import ArtifactLifecycle
+from cruxible_client.contracts.claims import (
+    claim_artifact_digest,
+    claim_path,
+    parse_claim,
+    render_claim,
+)
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -29,7 +35,7 @@ from cruxible_core.playbill.coverage.contracts import (
     PlaybillCitationWindowObservationV1,
 )
 from cruxible_core.playbill.coverage.indexes import WorkingOccurrenceV1
-from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_propose_playbill_document,
@@ -38,8 +44,10 @@ from cruxible_core.playbill.service.documents import (
 from cruxible_core.service.playbill_coverage import service_resolve_playbill_coverage
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
+    PlaybillNextRequestV2,
     PlaybillNextSourceObservationV4,
     PlaybillNextWorkspaceObservationV1,
+    _complete_retirement_activation_sequence,
     post_retirement_examined_support_suppresses_claim_cites_retired,
     service_playbill_next,
 )
@@ -119,8 +127,135 @@ def test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_
     assert not [item for item in _next(instance).items if item.reason == "claim_cites_retired"]
 
 
-def test_future_examined_support_seam_is_named_and_always_false_today() -> None:
+def test_examined_support_seam_fails_closed_without_complete_fold_inputs() -> None:
     assert not post_retirement_examined_support_suppresses_claim_cites_retired("sha256:" + "1" * 64)
+
+
+def test_truncated_retirement_witnesses_cannot_suppress_a_later_retirement() -> None:
+    witnesses = tuple(f"Claim:CLM-{index:032x}" for index in range(8))
+    sequences = {witness: index + 1 for index, witness in enumerate(witnesses)}
+
+    assert (
+        _complete_retirement_activation_sequence(
+            witnesses,
+            retired_claim_count=9,
+            retirement_sequences=sequences,
+        )
+        is None
+    )
+    assert (
+        _complete_retirement_activation_sequence(
+            witnesses,
+            retired_claim_count=8,
+            retirement_sequences=sequences,
+        )
+        == 8
+    )
+
+
+def test_post_retirement_examined_support_suppresses_and_rearms_through_real_surfaces(
+    tmp_path: Path,
+) -> None:
+    from cruxible_core.service.playbill_claim_attestations import (
+        service_append_claim_attestation,
+    )
+    from tests.test_playbill.test_claim_attestation_service import _request
+
+    instance, owner, _actor, retired_claim_id, live_claim_id, *_rest = shared_capture_world(
+        tmp_path
+    )
+    instant = EVALUATION_TIME
+
+    def append(*, stance: str, basis: str, offset: int) -> None:
+        request = _request(
+            instance,
+            owner,
+            live_claim_id,
+            tmp_path,
+            basis=basis,
+            stance=stance,
+            attested_at=instant + timedelta(minutes=offset),
+        )
+        service_append_claim_attestation(
+            instance,
+            request=request,
+            actor_id="owner",
+            recorded_at=instant + timedelta(minutes=offset),
+        )
+
+    def rows() -> tuple:  # type: ignore[no-untyped-def]
+        return tuple(
+            item
+            for item in service_playbill_next(
+                instance,
+                request=PlaybillNextRequestV2(
+                    evaluation_time=instant + timedelta(hours=1),
+                    access_profile=_access(),
+                ),
+            ).items
+            if item.reason == "claim_cites_retired"
+        )
+
+    append(stance="support", basis="examined_existing", offset=0)
+    _retire_claim(instance, owner, retired_claim_id)
+    assert len(rows()) == 1, "a pre-retirement referent may not suppress"
+
+    append(stance="support", basis="examined_existing", offset=1)
+    assert rows() == ()
+    ((event, payload),) = instance.claim_attestation_evidence_store().fold_events()
+    not_current = payload.model_copy(update={"current_at_append": False})
+    assert not post_retirement_examined_support_suppresses_claim_cites_retired(
+        payload.attestation.statement.claim_artifact_digest,
+        claim_identity=payload.attestation.statement.claim_identity.qualified,
+        retired_activation_sequence=instance.accepted_history()[-1].sequence,
+        door_events=((event, not_current),),
+        accepted_sequence_by_semantic_root={
+            generation.semantic_root.tagged: generation.sequence
+            for generation in instance.accepted_history()
+        },
+    )
+    append(stance="unsure", basis="examined_existing", offset=2)
+    assert len(rows()) == 1
+    append(stance="support", basis="examined_existing", offset=3)
+    assert rows() == ()
+    append(stance="support", basis="new_capture", offset=4)
+    assert len(rows()) == 1, "new-capture support is not an examined-existing review"
+    append(stance="support", basis="examined_existing", offset=5)
+    assert rows() == ()
+
+    path = claim_path(live_claim_id)
+    base = instance.accepted_coordinate()
+    tree = instance.tree_at(base.git_oid)
+    live = parse_claim(tree[path], path=path)
+    successor = live.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=claim_artifact_digest(live).tagged,
+            )
+        }
+    )
+    tree[path] = render_claim(successor)
+    proposal = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/rearm-citation-review",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-24T19:10:00.000000Z",
+    )
+    assert proposal.candidate is not None, proposal.evaluation.diagnostics
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=proposal.admission.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    instance.refresh()
+
+    assert len(rows()) == 1, "a Claim successor re-arms review for its new artifact digest"
 
 
 def test_relation_delta_reopens_only_the_changed_claim_captures(

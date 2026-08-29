@@ -53,6 +53,7 @@ from cruxible_client.contracts.governance import (
     ApprovalRequirement,
     PermissionTier,
     governance_identifier,
+    validate_approval_requirements,
 )
 from cruxible_client.contracts.laws import PLAYBILL_ACCEPTANCE_LAWS, AcceptanceLawRegistry
 from cruxible_client.contracts.principals import (
@@ -172,9 +173,7 @@ class ChangeSetRecord(_StrictSettlementModel):
     def _approval_requirements(
         cls, value: tuple[ApprovalRequirement, ...]
     ) -> tuple[ApprovalRequirement, ...]:
-        if value:
-            raise ValueError("approval requirements are retired and must be empty")
-        return value
+        return validate_approval_requirements(value, label="v1 change-set")
 
     @field_validator("compiler_digest", "mandate_digest")
     @classmethod

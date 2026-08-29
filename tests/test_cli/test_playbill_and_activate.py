@@ -100,3 +100,30 @@ def test_and_activate_names_the_approve_command_in_brief_when_it_stops(
     assert result.exit_code == 0, result.output
     assert client.activations == []
     assert f"cruxible playbill proposal approve {PROPOSAL_ID}" in result.output
+
+
+def test_and_activate_brief_prints_the_accepted_coordinate_and_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _SubmitClient("ready_to_activate")
+    activation = contracts.PlaybillWorkspaceActivationResult(
+        proposal_id=PROPOSAL_ID,
+        activated_by="owner",
+        status="accepted",
+        accepted_coordinate=COORDINATE,
+        floor_refresh=contracts.PlaybillFloorRefreshResult(status="not_configured"),
+    )
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.activate_with_workspace_refresh",
+        lambda *_args, **_kwargs: activation,
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [*COMMON, "submit", INTENT_ID, "--and-activate", "--brief"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert f"coordinate: {COORDINATE.git_oid}" in result.output
+    assert "receipt: playbill-activation-receipt-v1" in result.output

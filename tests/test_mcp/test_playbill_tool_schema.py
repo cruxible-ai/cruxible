@@ -37,6 +37,7 @@ def test_init_and_explain_publish_their_protocol_enums() -> None:
     init = schemas["cruxible_playbill_init"].inputSchema
     assert {"instance_id", "principals"} <= set(init["required"])
     assert init["properties"]["operating_profile"]["enum"] == ["local", "cloud"]
+    assert init["properties"]["require_independent_approval"]["default"] is False
 
     explain = schemas["cruxible_playbill_explain"].inputSchema
     assert explain["properties"]["detail"]["enum"] == ["summary", "evidence", "proof"]
@@ -88,6 +89,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
+        "query-claims-by-type",
     ]
     bind_schema = schemas["cruxible_playbill_authoring_bind"].inputSchema
     assert set(bind_schema["properties"]) == {

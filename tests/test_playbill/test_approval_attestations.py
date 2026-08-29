@@ -24,7 +24,10 @@ from cruxible_client.contracts.candidates import (
     candidate_digest,
 )
 from cruxible_client.contracts.errors import ApprovalIntegrityError
-from cruxible_client.contracts.governance import ApprovalRequirement
+from cruxible_client.contracts.governance import (
+    INDEPENDENT_APPROVAL_REQUIREMENTS,
+    ApprovalRequirement,
+)
 from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.types import PrincipalRecord
 
@@ -186,10 +189,24 @@ def test_noncreator_voluntary_approval_verifies_without_default_requirement() ->
     assert tuple(item.signer_id for item in verified) == ("reviewer",)
 
 
-def test_creator_cannot_submit_or_join_voluntary_approvals() -> None:
+def test_creator_may_approve_the_empty_self_approval_profile() -> None:
     owner_private, owner = _key("owner", ("owner",))
     reviewer_private, reviewer = _key("reviewer", ("reviewer",))
     candidate = _candidate()
+    creator = _submission(owner_private, candidate, signer_id="owner")
+    verified = verify_candidate_approvals(
+        candidate,
+        (creator,),
+        principals=_registry(owner, reviewer),
+        creator_principal_id="owner",
+    )
+    assert tuple(item.signer_id for item in verified) == ("owner",)
+
+
+def test_creator_cannot_satisfy_or_join_independent_approvals() -> None:
+    owner_private, owner = _key("owner", ("owner",))
+    reviewer_private, reviewer = _key("reviewer", ("reviewer",))
+    candidate = _candidate(approval_requirements=INDEPENDENT_APPROVAL_REQUIREMENTS)
     creator = _submission(owner_private, candidate, signer_id="owner")
     with pytest.raises(
         ApprovalIntegrityError,
@@ -247,8 +264,10 @@ def test_principal_lifecycle_allows_creator_key_binding_without_a_quorum() -> No
     ) == ("reviewer",)
 
 
-def test_nondefault_committed_requirement_refuses_at_the_wire_boundary() -> None:
-    with pytest.raises(ValueError, match="retired and must be empty"):
+def test_only_the_two_installed_requirement_profiles_cross_the_wire_boundary() -> None:
+    independent = _candidate(approval_requirements=INDEPENDENT_APPROVAL_REQUIREMENTS)
+    assert independent.approval_requirements == INDEPENDENT_APPROVAL_REQUIREMENTS
+    with pytest.raises(ValueError, match="not one installed profile"):
         _candidate(approval_requirements=(ApprovalRequirement(role="reviewer"),))
 
 

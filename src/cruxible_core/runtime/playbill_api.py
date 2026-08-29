@@ -313,6 +313,7 @@ def playbill_init(
     *,
     principals: tuple[PrincipalRecord, ...],
     operating_profile: OperatingProfile = "local",
+    require_independent_approval: bool = False,
 ) -> contracts.PlaybillInitResult:
     check_permission("cruxible_playbill_init", instance_id=instance_id)
     actor_id = _actor_id()
@@ -331,6 +332,7 @@ def playbill_init(
         instance_id,
         client_principals=principals,
         operating_profile=operating_profile,
+        require_independent_approval=require_independent_approval,
     )
     return contracts.PlaybillInitResult(
         instance_id=instance_id,
@@ -339,6 +341,7 @@ def playbill_init(
         ),
         trust_root=instance.trust_root.model_dump(mode="json"),
         recovery_posture=instance.descriptor.recovery_posture,
+        approval_policy_mode=instance.inspect().approval_policy_mode,
     )
 
 

@@ -21,6 +21,12 @@ from cruxible_client.contracts.acquisition_policies import (
     evaluate_acquisition_policy_law,
     parse_acquisition_policy,
 )
+from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_PATH,
+    ApprovalPolicyFormatError,
+    approval_policy_digest,
+    parse_approval_policy,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring_profiles import (
     AuthoringProfileError,
@@ -122,16 +128,19 @@ from cruxible_client.contracts.errors import (
     PlaybillError,
     PrincipalIntegrityError,
     ProposalAdmissionError,
+    ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
     SubjectFormatError,
 )
 from cruxible_client.contracts.governance import (
+    INDEPENDENT_APPROVAL_REQUIREMENTS,
     ActivationPolicy,
     ApprovalRequirement,
     MutationDisposition,
     PermissionTier,
 )
 from cruxible_client.contracts.laws import (
+    APPROVAL_POLICY_ACCEPTANCE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     InstalledAcceptanceLaw,
@@ -241,6 +250,7 @@ from cruxible_core.playbill.query.engine import (
 )
 
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$")
+_APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.yaml$")
 _PRINCIPAL_PATH_RE = re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$")
 _SUBJECT_PATH_RE = re.compile(
     r"^subjects/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
@@ -283,6 +293,7 @@ another. There is only one evaluator now, so only the rebase still asks.
 """
 
 _SEMANTIC_MEMBER_PATTERNS: Final = (
+    _APPROVAL_POLICY_PATH_RE,
     _DOCUMENT_PATH_RE,
     _SUBJECT_PATH_RE,
     *_DEPENDENCY_CLOSED_PATTERNS,
@@ -2001,6 +2012,67 @@ def _document_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _approval_policy_member(context: _MemberContext) -> _MemberVerdict:
+    if context.path != APPROVAL_POLICY_PATH or context.scope != (APPROVAL_POLICY_PATH,):
+        return _MemberVerdict(diagnostics=(_unregistered(context.path),))
+    if context.parent_content is None:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.approval_policy.successor_required",
+                    "Approval policy is a genesis singleton and may only change by successor.",
+                    context.path,
+                ),
+            )
+        )
+    try:
+        policy = parse_approval_policy(context.content, path=context.path)
+    except ApprovalPolicyFormatError as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.approval_policy.format_invalid",
+                    str(exc),
+                    context.path,
+                ),
+            )
+        )
+    try:
+        predecessor = parse_approval_policy(context.parent_content, path=context.path)
+    except ApprovalPolicyFormatError as exc:
+        raise ProposalIntegrityError("accepted approval policy cannot be reproduced") from exc
+    if policy.mode == "independent_approval_required":
+        active_ordinary_count = sum(
+            record.kind == "ordinary" and record.status == "active"
+            for record in context.principals.principals
+        )
+        if active_ordinary_count < 2:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.approval_policy.independent_approval_minimum",
+                        "independent_approval_required mode needs at least two active ordinary "
+                        "principals; register the missing approver before tightening the policy.",
+                        context.path,
+                    ),
+                )
+            )
+    return _accepted(
+        context,
+        APPROVAL_POLICY_ACCEPTANCE_LAW,
+        predecessor_artifact_digest=approval_policy_digest(predecessor).tagged,
+        candidate_artifact_digest=approval_policy_digest(policy).tagged,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "artifact_digest": approval_policy_digest(policy).tagged,
+            "mode": policy.mode,
+            "verdict": "accepted",
+        },
+    )
+
+
 def _principal_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one control-plane principal transition as an ordinary scoped member.
 
@@ -2054,6 +2126,14 @@ def _principal_member(context: _MemberContext) -> _MemberVerdict:
 
 
 _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
+    _MemberKind(
+        name="approval-policy",
+        pattern=_APPROVAL_POLICY_PATH_RE,
+        removal_code="playbill.approval_policy.removal_unsupported",
+        removal_message="Approval policy is a genesis singleton and cannot be removed.",
+        evaluate=_approval_policy_member,
+        format_code="playbill.approval_policy.format_invalid",
+    ),
     _MemberKind(
         name="procedure",
         pattern=_PROCEDURE_PATH_RE,
@@ -2150,6 +2230,7 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
     ),
 )
 ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
+    "approval-policy",
     "procedure",
     "exhaust-promotion",
     "line",
@@ -2314,6 +2395,7 @@ def _evaluate_scoped_members(
                 rebased,
             )
         except (
+            ApprovalPolicyFormatError,
             CaptureFormatError,
             ClaimFormatError,
             DocumentFormatError,
@@ -2387,7 +2469,6 @@ def _evaluate_scoped_members(
     claim_admission_query_digests_by_path: dict[str, tuple[str, ...]] = {}
     claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = ()
     diagnostics: list[CompilerDiagnostic] = []
-    scope_set = set(scope)
     for path in scope:
         parent_content = current_tree.get(path)
         candidate_content = candidate_tree.get(path)
@@ -2413,10 +2494,15 @@ def _evaluate_scoped_members(
                 if parent_target_path is None
                 else parent.dependencies.states.get(parent_target_path)
             )
+            # Exact parent/candidate artifact correspondence below implies
+            # same-ChangeSet membership because scope is the canonical tree
+            # diff. A separate target_path-in-scope predicate was redundant
+            # and could not fail independently of these digest equalities.
             if (
-                target_path not in scope_set
-                or target is None
+                target is None
                 or target.artifact_kind != "claim"
+                or target.lifecycle.state != "retired"
+                or target.lifecycle.predecessor_digest != previous_pin.artifact_digest
                 or target.artifact_digest != candidate_pin.artifact_digest
                 or parent_target is None
                 or parent_target.artifact_digest != previous_pin.artifact_digest
@@ -2425,7 +2511,8 @@ def _evaluate_scoped_members(
                     _diagnostic(
                         "playbill.claim.retirement_pin_delta_invalid",
                         "A retirement may update a Claim-target pin digest only when the "
-                        "exact target changes in the same complete ChangeSet.",
+                        "exact target retires by one succession hop in the same complete "
+                        "ChangeSet.",
                         path,
                     )
                 )
@@ -2518,6 +2605,7 @@ def _evaluate_scoped_members(
         )
     if tuple(item.path for item in accepted) != scope:
         raise ProposalIntegrityError("evaluator did not cover every scoped member")
+    approval_requirements = _approval_requirements(current_tree)
     if wire_version == "playbill-validated-candidate-v1":
         record: CandidateRecordAnyVersion = _candidate_record_v1(
             accepted,
@@ -2527,6 +2615,7 @@ def _evaluate_scoped_members(
             diff_digest=diff_digest,
             manifest_root_value=manifest_root_from_members(candidate_state.members).tagged,
             timestamp=timestamp,
+            approval_requirements=approval_requirements,
         )
     elif facts is None:  # pragma: no cover - only v1 skips closure
         raise ProposalIntegrityError("multi-member candidate requires a closure judgement")
@@ -2539,6 +2628,7 @@ def _evaluate_scoped_members(
             diff_digest=diff_digest,
             manifest_root_value=manifest_root_from_members(candidate_state.members).tagged,
             timestamp=timestamp,
+            approval_requirements=approval_requirements,
         )
     else:
         record = _candidate_record_v3(
@@ -2549,6 +2639,7 @@ def _evaluate_scoped_members(
             diff_digest=diff_digest,
             manifest_root_value=candidate_state.merkle.root.tagged,
             timestamp=timestamp,
+            approval_requirements=approval_requirements,
         )
     return CandidateEvaluation(
         candidate_tree,
@@ -2617,8 +2708,18 @@ def _multi_member_evidence(
     return tuple(members), tuple(law_evidence)
 
 
-def _approval_requirements(accepted: list[_AcceptedMember]) -> tuple[ApprovalRequirement, ...]:
-    del accepted
+def _approval_requirements(
+    current_tree: Mapping[str, bytes],
+) -> tuple[ApprovalRequirement, ...]:
+    content = current_tree.get(APPROVAL_POLICY_PATH)
+    if content is None:
+        raise ProposalIntegrityError("accepted state is missing its governed approval policy")
+    try:
+        policy = parse_approval_policy(content, path=APPROVAL_POLICY_PATH)
+    except ApprovalPolicyFormatError as exc:
+        raise ProposalIntegrityError("accepted approval policy cannot be reproduced") from exc
+    if policy.mode == "independent_approval_required":
+        return INDEPENDENT_APPROVAL_REQUIREMENTS
     return ()
 
 
@@ -2641,6 +2742,7 @@ def _candidate_record_v3(
     diff_digest: SemanticDiffDigest,
     manifest_root_value: str,
     timestamp: str,
+    approval_requirements: tuple[ApprovalRequirement, ...],
 ) -> CandidateRecordV3:
     """Assemble the candidate this build produces: merkle root, edge root."""
 
@@ -2661,7 +2763,7 @@ def _candidate_record_v3(
         candidate=semantic_candidate,
         candidate_digest=candidate_digest(semantic_candidate).tagged,
         required_tier=_aggregate_tier([item.required_tier for item in accepted]),
-        approval_requirements=_approval_requirements(accepted),
+        approval_requirements=approval_requirements,
         activation_policy=_aggregate_activation([item.activation_policy for item in accepted]),
         closure_proof=ClosureProofV3(
             paths=scope,
@@ -2684,6 +2786,7 @@ def _candidate_record_v2(
     diff_digest: SemanticDiffDigest,
     manifest_root_value: str,
     timestamp: str,
+    approval_requirements: tuple[ApprovalRequirement, ...],
 ) -> CandidateRecordV2:
     """Reproduce the candidate an accepted v2 generation was judged against.
 
@@ -2710,7 +2813,7 @@ def _candidate_record_v2(
         candidate=semantic_candidate,
         candidate_digest=candidate_digest(semantic_candidate).tagged,
         required_tier=_aggregate_tier([item.required_tier for item in accepted]),
-        approval_requirements=_approval_requirements(accepted),
+        approval_requirements=approval_requirements,
         activation_policy=_aggregate_activation([item.activation_policy for item in accepted]),
         closure_proof=ClosureProofV2(
             paths=scope,
@@ -2742,6 +2845,7 @@ def _candidate_record_v1(
     diff_digest: SemanticDiffDigest,
     manifest_root_value: str,
     timestamp: str,
+    approval_requirements: tuple[ApprovalRequirement, ...],
 ) -> CandidateRecord:
     """Reproduce the candidate an accepted v1 generation was judged against.
 
@@ -2775,7 +2879,7 @@ def _candidate_record_v1(
         candidate=semantic_candidate,
         candidate_digest=candidate_digest(semantic_candidate).tagged,
         required_tier=item.required_tier,
-        approval_requirements=_approval_requirements(accepted),
+        approval_requirements=approval_requirements,
         activation_policy=item.activation_policy,
         closure_paths=scope,
         members=(
@@ -3078,7 +3182,7 @@ class ProposalService:
                 evaluated_at=timestamp,
             )
         except ValidationError as exc:
-            raise ProposalIntegrityError(
+            raise ProposalEvaluationIntegrityError(
                 "proposal evaluation record failed deterministic validation"
             ) from exc
         self.evidence.write_evaluation(evaluation)

@@ -43,6 +43,23 @@ class ApprovalRequirement(_StrictGovernanceModel):
         return governance_identifier(value, label="approval role")
 
 
+INDEPENDENT_APPROVAL_REQUIREMENTS = (
+    ApprovalRequirement(role="independent-principal", minimum_distinct_signers=1),
+)
+
+
+def validate_approval_requirements(
+    value: tuple[ApprovalRequirement, ...],
+    *,
+    label: str,
+) -> tuple[ApprovalRequirement, ...]:
+    """Accept only the two policy-derived wire profiles."""
+
+    if value not in ((), INDEPENDENT_APPROVAL_REQUIREMENTS):
+        raise ValueError(f"{label} approval requirements are not one installed profile")
+    return value
+
+
 class AcceptanceLawCoordinate(_StrictGovernanceModel):
     """An installed historical acceptance law selected by accepted artifact state."""
 
@@ -65,7 +82,9 @@ __all__ = [
     "AcceptanceLawCoordinate",
     "ActivationPolicy",
     "ApprovalRequirement",
+    "INDEPENDENT_APPROVAL_REQUIREMENTS",
     "MutationDisposition",
     "PermissionTier",
     "governance_identifier",
+    "validate_approval_requirements",
 ]
