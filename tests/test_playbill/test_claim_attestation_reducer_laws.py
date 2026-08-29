@@ -49,15 +49,20 @@ def _door_world(
     instance, claim_id, owner = _accepted_claim_world(root)
     coordinate = AcceptedCoordinate.from_internal(instance.accepted_coordinate())
     captures = tuple(
-        build_coordinator_self_source_capture(
-            store=instance.body_store(),
-            actor_id="owner",
-            claim_id=claim_id,
-            body=f"new observation {index}\n".encode(),
-            observed_at=RECORDED_AT,
-            accepted_coordinate=coordinate,
-        ).capture_digest
-        for index in range(capture_count)
+        sorted(
+            (
+                build_coordinator_self_source_capture(
+                    store=instance.body_store(),
+                    actor_id="owner",
+                    claim_id=claim_id,
+                    body=f"new observation {index}\n".encode(),
+                    observed_at=RECORDED_AT,
+                    accepted_coordinate=coordinate,
+                ).capture_digest
+                for index in range(capture_count)
+            ),
+            key=lambda item: item.encode("ascii"),
+        )
     )
     service_append_claim_attestation(
         instance,
@@ -220,6 +225,7 @@ def test_multi_capture_partial_resolution_retains_only_unadmitted_membership(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, claim_id, _owner, captures = _door_world(tmp_path, capture_count=2)
+    admitted_capture, retained_capture = captures
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     claim = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
     digest = claim_artifact_digest(claim).tagged
@@ -239,10 +245,10 @@ def test_multi_capture_partial_resolution_retains_only_unadmitted_membership(
     )
     monkeypatch.setattr(
         "cruxible_core.service.playbill_next._claim_admission_accounts",
-        lambda *_args, **_kwargs: (_account(captures[0], "admitted", "a"),),
+        lambda *_args, **_kwargs: (_account(admitted_capture, "admitted", "a"),),
     )
     rows = _door_rows(instance)
-    assert [row.detail["capture_digest"] for row in rows] == [captures[1]]
+    assert [row.detail["capture_digest"] for row in rows] == [retained_capture]
 
 
 def test_unsure_and_later_events_never_erase_new_capture_memberships(tmp_path: Path) -> None:
