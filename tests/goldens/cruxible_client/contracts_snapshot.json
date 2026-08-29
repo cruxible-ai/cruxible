@@ -6,7 +6,10 @@
         "claim-existing-capture",
         "claim-flow-a",
         "claim-self-source",
-        "procedure"
+        "procedure",
+        "claim-adjudicate-contradicting-evidence",
+        "claim-cite-supporting-evidence",
+        "claim-adjudicate-unreviewed-evidence"
       ]
     },
     "PlaybillHostStatus": {
@@ -31,6 +34,9 @@
         "self_published_source_stale",
         "claim_dependency_stale",
         "claim_attestation_threshold_met",
+        "claim_contradicting_evidence_available",
+        "claim_new_evidence_supporting",
+        "claim_new_evidence_unreviewed",
         "document_modified",
         "claim_cites_retired",
         "retired_claim_source_stale"
@@ -2600,7 +2606,10 @@
               "claim-existing-capture",
               "claim-flow-a",
               "claim-self-source",
-              "procedure"
+              "procedure",
+              "claim-adjudicate-contradicting-evidence",
+              "claim-cite-supporting-evidence",
+              "claim-adjudicate-unreviewed-evidence"
             ],
             "title": "Name",
             "type": "string"
@@ -2642,7 +2651,10 @@
               "claim-existing-capture",
               "claim-flow-a",
               "claim-self-source",
-              "procedure"
+              "procedure",
+              "claim-adjudicate-contradicting-evidence",
+              "claim-cite-supporting-evidence",
+              "claim-adjudicate-unreviewed-evidence"
             ],
             "title": "Name",
             "type": "string"
@@ -11113,6 +11125,26 @@
     },
     "PlaybillNextResult": {
       "fields": {
+        "attestation_head_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "attestation_head_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attestation Head Digest"
+          }
+        },
         "coordinate": {
           "has_default": false,
           "has_default_factory": false,
@@ -11202,8 +11234,11 @@
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-next-result-v1",
             "default": "playbill-next-result-v1",
+            "enum": [
+              "playbill-next-result-v1",
+              "playbill-next-result-v2"
+            ],
             "title": "Tag",
             "type": "string"
           }
@@ -11271,6 +11306,18 @@
         },
         "additionalProperties": false,
         "properties": {
+          "attestation_head_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attestation Head Digest"
+          },
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
@@ -11315,8 +11362,11 @@
             "type": "string"
           },
           "tag": {
-            "const": "playbill-next-result-v1",
             "default": "playbill-next-result-v1",
+            "enum": [
+              "playbill-next-result-v1",
+              "playbill-next-result-v2"
+            ],
             "title": "Tag",
             "type": "string"
           },

@@ -262,7 +262,7 @@ toml = [
 
 [[package]]
 name = "cruxible"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -320,7 +320,7 @@ dev = [{ name = "types-pyyaml", specifier = ">=6.0.12.20250915" }]
 
 [[package]]
 name = "cruxible-client"
-version = "0.4.0"
+version = "0.5.0"
 source = { editable = "packages/cruxible-client" }
 dependencies = [
     { name = "cryptography" },

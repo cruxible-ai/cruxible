@@ -48,6 +48,9 @@
   "/api/v1/{instance_id}/playbill/bodies": {
     "POST": "PlaybillCasObjectResult"
   },
+  "/api/v1/{instance_id}/playbill/claim-attestations": {
+    "POST": "ClaimAttestationAppendResultV1"
+  },
   "/api/v1/{instance_id}/playbill/claim-types": {
     "GET": "PlaybillClaimTypeList"
   },

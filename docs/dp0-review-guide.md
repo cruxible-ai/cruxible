@@ -190,6 +190,7 @@ GET  /api/v1/{instance_id}/playbill/procedures/{name}/readiness
 POST /api/v1/{instance_id}/playbill/procedures/{name}/bind
 POST /api/v1/{instance_id}/playbill/procedures/{name}/runs
 GET  /api/v1/{instance_id}/playbill/procedure-runs/{run_id}
+POST /api/v1/{instance_id}/playbill/claim-attestations
 POST /api/v1/{instance_id}/playbill/discover
 POST /api/v1/{instance_id}/playbill/expand
 POST /api/v1/{instance_id}/playbill/coverage/resolve

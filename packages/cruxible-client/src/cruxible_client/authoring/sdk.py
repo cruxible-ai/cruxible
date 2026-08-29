@@ -148,6 +148,7 @@ SDK_CONTRACT_SNAPSHOT_DIGEST = AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST
 # snapshot, program stamp, and digest guardrail. Once publicly released, changes
 # require a coordinated daemon/client version succession instead.
 SUPPORTED_DAEMON_CONTRACTS: Mapping[str, str] = {
+    "0.4.0": "sha256:f008e9dfde54a8b7ad801b0c19cb419614512a02166784414dc58345c0abd0f2",
     AUTHORING_SDK_VERSION: SDK_CONTRACT_SNAPSHOT_DIGEST,
 }
 
