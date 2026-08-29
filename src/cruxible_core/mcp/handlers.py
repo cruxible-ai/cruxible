@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import threading
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from typing import Any, Literal, TypeVar, cast
 
 from pydantic import TypeAdapter
@@ -15,6 +16,10 @@ from cruxible_client import (
     contracts,
     inspect_workspace_floor,
     materialize_playbill_floor,
+)
+from cruxible_client.authoring.attestations import (
+    append_prepared_claim_attestation,
+    local_attestation_signer_from_environment,
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
@@ -29,6 +34,12 @@ from cruxible_client.contracts.attestations import ApprovalAttestation
 from cruxible_client.contracts.authoring.models import (
     InsertionConfirmationObservationV2,
     PublicationSourceObservationV2,
+)
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationAppendRequestV1,
+    ClaimAttestationAppendResultV1,
+    ClaimStance,
+    PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1, ExpansionBudgetV1
@@ -107,6 +118,62 @@ class _LocalSourceContextClient:
 
     def playbill_source_context(self, instance_id: str) -> contracts.PlaybillSourceContext:
         return playbill_api.playbill_source_context(instance_id)
+
+
+class _LocalAttestationClient:
+    """Expose the client-side signing adapter without giving the daemon a key."""
+
+    def playbill_whoami(self, instance_id: str) -> contracts.PlaybillWhoAmI:
+        return playbill_api.playbill_whoami(instance_id)
+
+    def list_playbill_principals(self, instance_id: str) -> contracts.PlaybillPrincipalList:
+        return playbill_api.playbill_list_principals(instance_id)
+
+    def get_playbill_claim(
+        self,
+        instance_id: str,
+        identity: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate | None = None,
+        evaluation_time: str | None = None,
+    ) -> contracts.PlaybillClaimViewV2:
+        return playbill_api.playbill_get_claim(
+            instance_id,
+            identity,
+            at=(
+                None
+                if at is None
+                else AcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+            ),
+            evaluation_time=(
+                None if evaluation_time is None else datetime.fromisoformat(evaluation_time)
+            ),
+        )
+
+    def get_playbill_subject(
+        self,
+        instance_id: str,
+        subject_kind: str,
+        subject_id: str,
+        *,
+        at: contracts.PlaybillAcceptedCoordinate,
+    ) -> contracts.PlaybillSubjectView:
+        return playbill_api.playbill_get_subject(
+            instance_id,
+            f"Subject:{subject_kind}/{subject_id}",
+            at=AcceptedCoordinate.model_validate(at.model_dump(mode="json")),
+        )
+
+    def append_playbill_claim_attestation(
+        self,
+        instance_id: str,
+        *,
+        request: ClaimAttestationAppendRequestV1,
+    ) -> ClaimAttestationAppendResultV1:
+        return playbill_api.playbill_append_claim_attestation(instance_id, request=request)
+
+    def server_info(self) -> contracts.ServerInfoResult:
+        return host_api.server_info()
 
 
 def reset_client_cache() -> None:
@@ -632,6 +699,57 @@ def handle_playbill_retire_claim(
     )
 
 
+def _handle_claim_attestation(
+    client: Any,
+    instance_id: str,
+    prepared: PreparedClaimAttestationRequestV1,
+) -> ClaimAttestationAppendResultV1:
+    signer = local_attestation_signer_from_environment(
+        client,
+        instance_id,
+        workspace_root=mcp_workspace_root(),
+    )
+    return append_prepared_claim_attestation(
+        client,
+        instance_id,
+        prepared=prepared,
+        signer=signer,
+    )
+
+
+def handle_playbill_claim_attest(
+    instance_id: str,
+    claim_id: str,
+    stance: ClaimStance,
+    note: str | None,
+) -> ClaimAttestationAppendResultV1:
+    prepared = PreparedClaimAttestationRequestV1(
+        claim_id=claim_id.removeprefix("Claim:"),
+        attestation_basis="examined_existing",
+        stance=stance,
+        attested_at=datetime.now(UTC),
+        note=note,
+    )
+    return _dispatch_remote_or_local(
+        lambda client: _handle_claim_attestation(client, instance_id, prepared),
+        lambda: _handle_claim_attestation(_LocalAttestationClient(), instance_id, prepared),
+        operation_name="cruxible_playbill_claim_attest",
+    )
+
+
+def handle_playbill_claim_attest_new_capture(
+    instance_id: str,
+    request: PreparedClaimAttestationRequestV1,
+) -> ClaimAttestationAppendResultV1:
+    if request.attestation_basis != "new_capture":
+        raise DataValidationError("new-Capture attestation requires attestation_basis=new_capture")
+    return _dispatch_remote_or_local(
+        lambda client: _handle_claim_attestation(client, instance_id, request),
+        lambda: _handle_claim_attestation(_LocalAttestationClient(), instance_id, request),
+        operation_name="cruxible_playbill_claim_attest_new_capture",
+    )
+
+
 def handle_playbill_authoring_create(
     instance_id: str,
     payload: dict[str, Any],
@@ -648,11 +766,20 @@ def handle_playbill_authoring_create(
 
 def handle_playbill_authoring_example(
     name: contracts.PlaybillAuthoringExampleName,
+    *,
+    claim_id: str | None = None,
+    capture_digest: str | None = None,
 ) -> contracts.PlaybillAuthoringExampleResult:
     if name == "claim-type":
+        if claim_id is not None or capture_digest is not None:
+            raise DataValidationError("claim-type does not accept claim_id or capture_digest hints")
         payload = defaulted_claim_type_input_example().model_dump(mode="json")
     else:
-        payload = authoring_example(name).model_dump(mode="json")
+        payload = authoring_example(
+            name,
+            claim_id=claim_id,
+            capture_digest=capture_digest,
+        ).model_dump(mode="json")
     return contracts.PlaybillAuthoringExampleResult(name=name, payload=payload)
 
 

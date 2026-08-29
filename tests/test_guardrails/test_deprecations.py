@@ -12,10 +12,13 @@ import pytest
 from cruxible_core import __version__
 from cruxible_core.deprecation import (
     DEPRECATION_REGISTRY,
+    DeprecationNotice,
     attach_mcp_deprecations,
     emit_cli_deprecation,
     emit_http_deprecations,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class _Headers:
@@ -64,7 +67,10 @@ def test_every_registry_entry_emits_on_each_transport_and_has_a_schedule_row(
 
 
 def test_emitters_use_existing_warning_envelopes_without_renaming_them() -> None:
-    notice = DEPRECATION_REGISTRY[0]
+    notice = DeprecationNotice(
+        surface="synthetic deprecated input",
+        replacement="replacement input",
+    )
     expected = notice.as_dict()
 
     assert attach_mcp_deprecations({"warnings": ["existing"]}, [notice]) == {
@@ -80,6 +86,20 @@ def test_emitters_use_existing_warning_envelopes_without_renaming_them() -> None
 def test_registry_surfaces_are_unique() -> None:
     surfaces = [notice.surface for notice in DEPRECATION_REGISTRY]
     assert len(surfaces) == len(set(surfaces))
+
+
+def test_removed_050_surfaces_are_absent_from_code_and_registry() -> None:
+    assert DEPRECATION_REGISTRY == ()
+
+    removed_source_markers = {
+        "LEGACY_OUTCOME_RECORD",
+        "LEGACY_OUTCOME_PROFILE",
+        "PROCEDURE_STRING_WARNINGS",
+        "ProcedureTransitionResult",
+    }
+    live_source = "\n".join(path.read_text() for path in sorted((REPO_ROOT / "src").rglob("*.py")))
+    for marker in removed_source_markers:
+        assert marker not in live_source
 
 
 def _release_tuple(version: str) -> tuple[int, ...]:

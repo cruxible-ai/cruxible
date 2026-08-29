@@ -20,7 +20,10 @@ from cruxible_client.contracts.attestations import (
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
     ClaimAttestationStatement,
+    ClaimAttestationStatementV2,
+    ClaimAttestationV2,
     claim_attestation_statement_bytes,
+    claim_attestation_v2_statement_bytes,
 )
 from cruxible_client.contracts.errors import PlaybillKeyError
 from cruxible_core.playbill.keys import assert_outside_roots
@@ -91,6 +94,10 @@ class ClaimAttestationSigner(Protocol):
 
     def sign_claim_attestation(self, statement: ClaimAttestationStatement) -> ClaimAttestation: ...
 
+    def sign_claim_attestation_v2(
+        self, statement: ClaimAttestationStatementV2
+    ) -> ClaimAttestationV2: ...
+
 
 @dataclass(frozen=True)
 class LocalEd25519ClaimAttestationSigner:
@@ -141,6 +148,20 @@ class LocalEd25519ClaimAttestationSigner:
             **statement.model_dump(mode="json"),
             signature=signature,
         )
+
+    def sign_claim_attestation_v2(
+        self,
+        statement: ClaimAttestationStatementV2,
+    ) -> ClaimAttestationV2:
+        if statement.attesting_principal_id != self.signer or (
+            statement.signing_key_digest != self.signing_key_id
+        ):
+            raise PlaybillKeyError("V2 ClaimAttestation names a different signer or key")
+        private_key = _load_private_key(self.private_key_path)
+        if private_key.public_key().public_bytes_raw().hex() != self.public_key:
+            raise PlaybillKeyError("ClaimAttestation key changed after signer initialization")
+        signature = private_key.sign(claim_attestation_v2_statement_bytes(statement)).hex()
+        return ClaimAttestationV2(statement=statement, signature=signature)
 
 
 def _load_private_key(path: Path) -> Ed25519PrivateKey:

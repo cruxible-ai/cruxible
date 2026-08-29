@@ -48,6 +48,8 @@ playbill claim get
 playbill claim history
 playbill claim list
 playbill claim retire
+playbill claim attest
+playbill claim-attestation recover
 playbill claim-type get
 playbill claim-type list
 playbill claim-type migrate
@@ -189,6 +191,8 @@ GET  /api/v1/{instance_id}/playbill/procedures/{name}/readiness
 POST /api/v1/{instance_id}/playbill/procedures/{name}/bind
 POST /api/v1/{instance_id}/playbill/procedures/{name}/runs
 GET  /api/v1/{instance_id}/playbill/procedure-runs/{run_id}
+POST /api/v1/{instance_id}/playbill/claim-attestations
+POST /api/v1/{instance_id}/playbill/claim-attestations/recover
 POST /api/v1/{instance_id}/playbill/discover
 POST /api/v1/{instance_id}/playbill/expand
 POST /api/v1/{instance_id}/playbill/coverage/resolve
@@ -246,6 +250,8 @@ cruxible_playbill_propose_claim_type
 cruxible_playbill_list_claim_types
 cruxible_playbill_get_claim_type
 cruxible_playbill_claim_retire
+cruxible_playbill_claim_attest
+cruxible_playbill_claim_attest_new_capture
 cruxible_playbill_list_claims
 cruxible_playbill_get_claim
 cruxible_playbill_claim_history

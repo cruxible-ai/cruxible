@@ -14,7 +14,10 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
+from cruxible_client.contracts.errors import (
+    ClaimAttestationRequestInvalid,
+    PlaybillSinceRequestInvalid,
+)
 from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
@@ -86,6 +89,13 @@ def create_app() -> FastAPI:
             typed = PlaybillSinceRequestInvalid.from_validation_errors(exc.errors())
             request.state.error_type = typed.__class__.__name__
             status_code, body = error_to_response(typed)
+            content = body.model_dump(mode="json")
+            content["errors"] = [_format_request_validation_error(err) for err in exc.errors()]
+            return JSONResponse(status_code=status_code, content=content)
+        if request.url.path.endswith("/playbill/claim-attestations"):
+            attestation_error = ClaimAttestationRequestInvalid.from_validation_errors(exc.errors())
+            request.state.error_type = attestation_error.__class__.__name__
+            status_code, body = error_to_response(attestation_error)
             content = body.model_dump(mode="json")
             content["errors"] = [_format_request_validation_error(err) for err in exc.errors()]
             return JSONResponse(status_code=status_code, content=content)

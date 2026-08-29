@@ -85,6 +85,9 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-flow-a",
         "claim-self-source",
         "procedure",
+        "claim-adjudicate-contradicting-evidence",
+        "claim-cite-supporting-evidence",
+        "claim-adjudicate-unreviewed-evidence",
     ]
     bind_schema = schemas["cruxible_playbill_authoring_bind"].inputSchema
     assert set(bind_schema["properties"]) == {

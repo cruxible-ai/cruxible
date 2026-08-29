@@ -20,10 +20,15 @@ from cruxible_client import (
     contracts,
     observe_playbill_next_workspace,
 )
+from cruxible_client.authoring.attestations import (
+    append_prepared_claim_attestation,
+    local_attestation_signer_from_environment,
+)
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.blocks import repin_projection_block
 from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_FACTORIES,
+    AUTHORING_EXAMPLE_NAMES,
     AuthoringExampleName,
     authoring_example,
 )
@@ -36,6 +41,10 @@ from cruxible_client.authoring.sources import (
 from cruxible_client.authoring.workspace import observe_playbill_next_workspace_with_coverage
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.claim_attestations import (
+    ClaimStance,
+    PreparedClaimAttestationRequestV1,
+)
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
@@ -1304,6 +1313,77 @@ def claim_group() -> None:
     """Propose, read, and explain first-class governed Claims."""
 
 
+@playbill_group.group("claim-attestation")
+def claim_attestation_group() -> None:
+    """Operate the principal-authored Claim-attestation evidence ledger."""
+
+
+@claim_attestation_group.command("recover")
+@handle_errors
+def recover_claim_attestations() -> None:
+    """Roll the sole durable unpublished attestation forward after a poison refusal."""
+
+    _server_call(
+        lambda client, instance_id: client.recover_playbill_claim_attestations(instance_id),
+        command_name="playbill claim-attestation recover",
+    )
+    click.echo("Claim-attestation evidence ledger recovered.")
+
+
+@claim_group.command("attest")
+@click.argument("claim_id")
+@click.option("--support", is_flag=True)
+@click.option("--contradict", is_flag=True)
+@click.option("--unsure", is_flag=True)
+@click.option("--note")
+@json_option
+@handle_errors
+def attest_claim(
+    claim_id: str,
+    support: bool,
+    contradict: bool,
+    unsure: bool,
+    note: str | None,
+    output_json: bool,
+) -> None:
+    """Sign that this caller examined the current exact Claim."""
+
+    selected = tuple(
+        value
+        for enabled, value in (
+            (support, "support"),
+            (contradict, "contradict"),
+            (unsure, "unsure"),
+        )
+        if enabled
+    )
+    if len(selected) != 1:
+        raise click.UsageError("choose exactly one of --support, --contradict, or --unsure")
+    stance = selected[0]
+
+    def call(client: CruxibleClient, instance_id: str):  # type: ignore[no-untyped-def]
+        signer = local_attestation_signer_from_environment(
+            client,
+            instance_id,
+            workspace_root=Path.cwd(),
+        )
+        return append_prepared_claim_attestation(
+            client,
+            instance_id,
+            prepared=PreparedClaimAttestationRequestV1(
+                claim_id=claim_id.removeprefix("Claim:"),
+                attestation_basis="examined_existing",
+                stance=cast(ClaimStance, stance),
+                attested_at=datetime.now(UTC),
+                note=note,
+            ),
+            signer=signer,
+        )
+
+    result = _server_call(call, command_name="playbill claim attest")
+    _emit_json(result.model_dump(mode="json"))
+
+
 @claim_group.command("retire")
 @click.argument("claim_id", required=False)
 @click.argument("request_file", required=False, type=click.Path(exists=True, dir_okay=False))
@@ -1421,16 +1501,20 @@ def authoring_group() -> None:
 @click.option(
     "--example",
     "example_name",
-    type=click.Choice(tuple(AUTHORING_EXAMPLE_FACTORIES)),
+    type=click.Choice(AUTHORING_EXAMPLE_NAMES),
     help="Print one model-generated payload template and exit.",
 )
 @json_option
+@click.option("--claim-id")
+@click.option("--capture-digest")
 @handle_errors
 @click.pass_context
 def create_authoring_intent(
     ctx: click.Context,
     payload: str | None,
     example_name: str | None,
+    claim_id: str | None,
+    capture_digest: str | None,
     output_json: bool,
 ) -> None:
     """Create a durable authoring intent or print a schema-derived example.
@@ -1444,8 +1528,17 @@ def create_authoring_intent(
 
     if (payload is None) == (example_name is None):
         raise click.UsageError("provide exactly one of PAYLOAD or --example")
+    if payload is not None and (claim_id is not None or capture_digest is not None):
+        raise click.UsageError("--claim-id/--capture-digest require --example")
     if example_name is not None:
-        example = authoring_example(cast(AuthoringExampleName, example_name))
+        try:
+            example = authoring_example(
+                cast(AuthoringExampleName, example_name),
+                claim_id=claim_id,
+                capture_digest=capture_digest,
+            )
+        except ValueError as exc:
+            raise click.UsageError(str(exc)) from exc
         click.echo(
             json.dumps(
                 example.model_dump(mode="json"),

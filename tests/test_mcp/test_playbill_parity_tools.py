@@ -5,10 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from cruxible_client import contracts
 from cruxible_client.authoring.examples import authoring_example
 from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_core.cli.commands.playbill import _cli_claim_type_input_example
+from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.playbill.claim_type_inputs import (
     claim_type_input_example,
@@ -40,6 +43,45 @@ def test_claim_type_example_has_cli_mcp_factory_parity() -> None:
     assert result.payload["predicate"] == authoring_example("claim-flow-a").predicate
     assert result.payload["anticipated_source_ids"] == ["repo.replace-me"]
     assert result.name == "claim-type"
+
+
+def test_attestation_door_example_hints_have_mcp_client_parity() -> None:
+    claim_id = "CLM-" + "a" * 32
+    capture_digest = "sha256:" + "b" * 64
+    result = handlers.handle_playbill_authoring_example(
+        "claim-cite-supporting-evidence",
+        claim_id=claim_id,
+        capture_digest=capture_digest,
+    )
+    assert result.payload == authoring_example(
+        "claim-cite-supporting-evidence",
+        claim_id=claim_id,
+        capture_digest=capture_digest,
+    ).model_dump(mode="json")
+    with pytest.raises(ValueError, match="require claim_id and capture_digest"):
+        authoring_example("claim-cite-supporting-evidence")
+    with pytest.raises(ValueError, match="require claim_id and capture_digest"):
+        handlers.handle_playbill_authoring_example(
+            "claim-cite-supporting-evidence",
+            claim_id=claim_id,
+        )
+    with pytest.raises(ValueError, match="require claim_id and capture_digest"):
+        handlers.handle_playbill_authoring_example(
+            "claim-cite-supporting-evidence",
+            capture_digest=capture_digest,
+        )
+    with pytest.raises(ValueError, match="apply only"):
+        handlers.handle_playbill_authoring_example(
+            "claim-flow-a",
+            claim_id=claim_id,
+            capture_digest=capture_digest,
+        )
+    with pytest.raises(DataValidationError, match="does not accept"):
+        handlers.handle_playbill_authoring_example(
+            "claim-type",
+            claim_id=claim_id,
+            capture_digest=capture_digest,
+        )
 
 
 def test_publication_prepare_handler_preserves_advisory_warnings(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -26,20 +26,27 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import claim_path, claim_statement_digest
+from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.service.playbill_claim_attestations import service_append_claim_attestation
 from cruxible_core.service.playbill_claims import (
     _claim_from_view,
     _claim_law_evidence,
     service_list_playbill_claims,
 )
 from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
-from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
+from cruxible_core.service.playbill_next import (
+    PlaybillNextRequestV1,
+    PlaybillNextRequestV2,
+    service_playbill_next,
+)
 from tests.test_playbill._adoption_fixture import _Builder
 from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
 from tests.test_playbill._knowledge_loop_support import activate, authoring, subject_shell
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_claim_attestation_service import _request
 from tests.test_playbill.test_claims import _claim_type
 
 EVALUATION_TIME = datetime(2026, 8, 24, 18, tzinfo=UTC)
@@ -162,8 +169,8 @@ def threshold_world(
         attestations = attestation_mutator(instance, claim, attestations)
     patched = law.model_copy(update={"verified_attestations": attestations})
     monkeypatch.setattr(
-        "cruxible_core.service.playbill_next._claim_law_evidence",
-        lambda _instance, *, path, at: patched,
+        "cruxible_core.service.playbill_next._claim_law_evidence_index",
+        lambda _instance, *, at: {claim_path(claim.identity.name): patched},
     )
     return instance, owner, claim
 
@@ -218,6 +225,114 @@ def test_two_distinct_current_principals_emit_one_deterministic_queue_row(
         )
         == before_verdict
     )
+
+
+def test_latest_door_record_supersedes_all_legacy_for_that_principal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def legacy(_instance, claim, items):  # type: ignore[no-untyped-def]
+        return (
+            _verified(
+                _instance,
+                claim,
+                suffix="a",
+                control_domain="owner-unsure",
+                principal_name="owner",
+            ),
+            _verified(
+                _instance,
+                claim,
+                suffix="c",
+                control_domain="owner-contradict",
+                principal_name="owner",
+            ).model_copy(
+                update={
+                    "statement": _verified(
+                        _instance,
+                        claim,
+                        suffix="c",
+                        control_domain="owner-contradict",
+                        principal_name="owner",
+                    ).statement.model_copy(update={"stance": "contradict"})
+                }
+            ),
+            _verified(
+                _instance,
+                claim,
+                suffix="b",
+                control_domain="reviewer-b",
+                principal_name="reviewer-b",
+            ),
+        )
+
+    instance, owner, claim = threshold_world(
+        tmp_path,
+        monkeypatch,
+        attestation_mutator=legacy,
+    )
+    first = _request(
+        instance,
+        owner,
+        claim.identity.name,
+        tmp_path,
+        stance="unsure",
+        attested_at=EVALUATION_TIME - timedelta(minutes=4),
+    )
+    first_receipt = service_append_claim_attestation(
+        instance,
+        request=first,
+        actor_id="owner",
+        recorded_at=EVALUATION_TIME - timedelta(minutes=3),
+    )
+
+    def rows() -> tuple:  # type: ignore[no-untyped-def]
+        return tuple(
+            item
+            for item in service_playbill_next(
+                instance,
+                request=PlaybillNextRequestV2(
+                    evaluation_time=EVALUATION_TIME,
+                    access_profile=_access(),
+                ),
+            ).items
+            if item.reason == "claim_attestation_threshold_met"
+        )
+
+    assert len(rows()) == 1
+    support = _request(
+        instance,
+        owner,
+        claim.identity.name,
+        tmp_path,
+        stance="support",
+        attested_at=EVALUATION_TIME - timedelta(minutes=2),
+    )
+    service_append_claim_attestation(
+        instance,
+        request=support,
+        actor_id="owner",
+        recorded_at=EVALUATION_TIME - timedelta(minutes=1),
+    )
+    assert rows() == ()
+
+    expired = _request(
+        instance,
+        owner,
+        claim.identity.name,
+        tmp_path,
+        stance="unsure",
+        attested_at=EVALUATION_TIME - timedelta(seconds=30),
+        valid_until=EVALUATION_TIME,
+    )
+    latest = service_append_claim_attestation(
+        instance,
+        request=expired,
+        actor_id="owner",
+        recorded_at=EVALUATION_TIME - timedelta(seconds=15),
+    )
+    assert latest.partition_sequence > first_receipt.partition_sequence
+    assert rows() == ()
 
 
 @pytest.mark.parametrize(
@@ -319,3 +434,20 @@ def test_thresholds_zero_one_and_two_count_distinct_principals(
     assert len(rows) == expected_rows
     if rows:
         assert rows[0].detail["independent_control_component_count"] == attestation_count
+
+
+def test_threshold_fold_refuses_missing_law_evidence_as_typed_integrity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner, _claim = threshold_world(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next._claim_law_evidence_index",
+        lambda _instance, *, at: {},
+    )
+
+    with pytest.raises(
+        ProposalIntegrityError,
+        match="accepted Claim has no reproducible Claim law evidence",
+    ):
+        _rows(instance)

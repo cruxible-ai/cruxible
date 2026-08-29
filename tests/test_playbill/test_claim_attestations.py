@@ -11,10 +11,16 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestation,
     ClaimAttestationError,
     ClaimAttestationStatement,
+    ClaimAttestationStatementV2,
     claim_attestation_statement_bytes,
+    claim_attestation_v2_envelope_digest,
+    claim_attestation_v2_statement_bytes,
+    claim_attestation_v2_statement_digest,
     read_claim_attestation,
     store_claim_attestation,
     verify_claim_attestation,
+    verify_claim_attestation_v2_principal,
+    verify_claim_attestation_v2_signature,
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
@@ -124,6 +130,64 @@ def test_client_held_principal_signs_exact_claim_and_cas_round_trips(tmp_path: P
             providers={},
             store=instance.body_store(),
         )
+
+
+def test_parallel_v2_signer_commits_complete_exact_claim_context(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    coordinate, capture, claim = _accepted_claim(instance)
+    statement = ClaimAttestationStatementV2(
+        instance_id=instance.descriptor.instance_id,
+        referent_coordinate=coordinate,
+        claim_identity=claim.claim.identity,
+        claim_artifact_digest=claim.artifact_digest,
+        claim_statement_digest=claim.statement_digest,
+        subject_shell_digest=subject_digest(_subject()).tagged,
+        attesting_principal_id="owner",
+        signing_key_digest=owner.principal.public_key_digest,
+        attestation_basis="examined_existing",
+        stance="support",
+        cited_capture_digests=(capture.capture_digest,),
+        attested_at=NOW,
+    )
+    signer = LocalEd25519ClaimAttestationSigner.open(
+        signer="owner",
+        signing_key_id=owner.principal.public_key_digest,
+        private_key_path=owner.private_key_path,
+        expected_public_key=owner.principal.public_key,
+        forbidden_roots=(tmp_path / "workspace", instance.root),
+    )
+    attestation = signer.sign_claim_attestation_v2(statement)
+    verify_claim_attestation_v2_signature(
+        attestation,
+        public_key=owner.principal.public_key,
+    )
+    assert b'"algorithm":"ed25519-v1"' in claim_attestation_v2_statement_bytes(statement)
+    assert b'"domain":"playbill-claim-attestation-signature-v2"' in (
+        claim_attestation_v2_statement_bytes(statement)
+    )
+    assert claim_attestation_v2_statement_digest(statement) != (
+        claim_attestation_v2_envelope_digest(attestation)
+    )
+
+    tampered = attestation.model_copy(
+        update={
+            "statement": statement.model_copy(
+                update={"claim_artifact_digest": "sha256:" + "9" * 64}
+            )
+        }
+    )
+    with pytest.raises(ClaimAttestationError, match="signature does not verify"):
+        verify_claim_attestation_v2_signature(
+            tampered,
+            public_key=owner.principal.public_key,
+        )
+
+    for forbidden_kind in ("recovery", "daemon"):
+        with pytest.raises(ClaimAttestationError, match="ordinary principal"):
+            verify_claim_attestation_v2_principal(
+                attestation,
+                principal=owner.principal.model_copy(update={"kind": forbidden_kind}),
+            )
 
 
 def test_wrong_instance_tamper_and_missing_capture_fail_closed(tmp_path: Path) -> None:

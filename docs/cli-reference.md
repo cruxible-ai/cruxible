@@ -130,6 +130,7 @@ dependent the request names; it never authors retirement decisions from diagnost
 
 ~~~text
 cruxible playbill claim retire IDENTITY REQUEST_FILE
+cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
 cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
 cruxible playbill claim get IDENTITY
 cruxible playbill claim history IDENTITY
@@ -142,6 +143,16 @@ attributed retirement over the complete dependent Claim closure; the request
 must name every dependent reason and never receives a daemon-synthesized end
 time. explain returns the verdict together with the law evidence and source
 handles it was computed from.
+
+## playbill claim-attestation
+
+~~~text
+cruxible playbill claim-attestation recover
+~~~
+
+Recovery is an admin-only repair for an interrupted evidence-ledger append. It
+rolls the sole durable unpublished event forward and refuses rather than choosing
+between ambiguous histories.
 
 ## playbill authoring
 

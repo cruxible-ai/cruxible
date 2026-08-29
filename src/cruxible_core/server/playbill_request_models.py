@@ -226,6 +226,20 @@ class PlaybillNextRequest(_StrictPlaybillRequest):
     since_result_digest: str | None = None
 
 
+class PlaybillNextRequestV2(_StrictPlaybillRequest):
+    tag: Literal["playbill-next-request-v2"] = "playbill-next-request-v2"
+    at: AcceptedCoordinate | None = None
+    evaluation_time: datetime
+    access_profile: dict[str, Any]
+    expiring_within: dict[str, Any] | None = None
+    workspace_observation: dict[str, Any] | None = None
+    since_result_digest: str | None = None
+    at_attestation_head_digest: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+
+
 class PlaybillCurationListRequest(_StrictPlaybillRequest):
     tag: Literal["playbill-curation-list-request-v1"] = "playbill-curation-list-request-v1"
     evaluation_time: datetime

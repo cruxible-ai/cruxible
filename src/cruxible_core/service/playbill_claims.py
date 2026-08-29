@@ -519,6 +519,32 @@ def _claim_law_evidence_index(
     return found
 
 
+def _claim_law_evidence_by_artifact_index(
+    instance: PlaybillInstance,
+    *,
+    at: AcceptedProjectionCoordinate,
+) -> dict[tuple[str, str], ClaimLawEvidenceAny]:
+    """Index every accepted Claim law account in one bounded history pass."""
+
+    found: dict[tuple[str, str], ClaimLawEvidenceAny] = {}
+    target_sequence = next(
+        item.sequence for item in instance.accepted_history() if item.oid == at.git_oid
+    )
+    for generation in instance.accepted_history()[1:]:
+        if generation.sequence > target_sequence:
+            break
+        record = generation.record
+        if record is None or isinstance(record, ChangeSetRecord):
+            continue
+        for evidence in record.law_evidence:
+            raw = evidence.result.get("claim_evidence")
+            if raw is None:
+                continue
+            parsed = parse_claim_law_evidence(raw)
+            found[(evidence.path, parsed.artifact_digest)] = parsed
+    return found
+
+
 def _accepted_generation_time(
     instance: PlaybillInstance,
     coordinate: AcceptedProjectionCoordinate,

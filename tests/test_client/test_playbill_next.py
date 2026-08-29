@@ -60,7 +60,8 @@ def test_client_sends_explicit_time_access_and_workspace_observation() -> None:
     assert result.observed_domains == ["accepted_state", "workspace_floor"]
     assert captured[0].url.path == "/api/v1/inst/playbill/next"
     payload: dict[str, Any] = json.loads(captured[0].content)
-    assert payload["tag"] == "playbill-next-request-v1"
+    assert payload["tag"] == "playbill-next-request-v2"
+    assert "at_attestation_head_digest" not in payload
     assert payload["evaluation_time"] == "2026-08-24T18:00:00Z"
     assert payload["workspace_observation"]["floor_status"] == "missing"
     assert "result_digest" not in payload

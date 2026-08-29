@@ -2,6 +2,7 @@
   "format": "playbill-served-surface-dp0b-v1",
   "facade_operations": [
     "playbill_activate",
+    "playbill_append_claim_attestation",
     "playbill_audit",
     "playbill_authoring_abandon_insertion",
     "playbill_authoring_compile",
@@ -60,6 +61,7 @@
     "playbill_propose_source_bundle",
     "playbill_propose_subject",
     "playbill_readmit_proposal",
+    "playbill_recover_claim_attestations",
     "playbill_resolve_coverage",
     "playbill_retire_claim",
     "playbill_review_proposal",
@@ -72,6 +74,6 @@
     "playbill_submit_approval",
     "playbill_whoami"
   ],
-  "http_delegate_count": 70,
-  "mcp_delegate_count": 66
+  "http_delegate_count": 72,
+  "mcp_delegate_count": 67
 }

@@ -21,6 +21,9 @@ AuthoringExampleName = Literal[
     "claim-flow-a",
     "claim-self-source",
     "procedure",
+    "claim-adjudicate-contradicting-evidence",
+    "claim-cite-supporting-evidence",
+    "claim-adjudicate-unreviewed-evidence",
 ]
 
 
@@ -163,13 +166,71 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "procedure": procedure_example,
 }
 
+_DOOR_EXAMPLES = {
+    "claim-adjudicate-contradicting-evidence",
+    "claim-cite-supporting-evidence",
+    "claim-adjudicate-unreviewed-evidence",
+}
+AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
+    "claim-existing-capture",
+    "claim-flow-a",
+    "claim-self-source",
+    "procedure",
+    "claim-adjudicate-contradicting-evidence",
+    "claim-cite-supporting-evidence",
+    "claim-adjudicate-unreviewed-evidence",
+)
 
-def authoring_example(name: AuthoringExampleName) -> AuthoringInputV1:
+
+def _door_example(
+    name: AuthoringExampleName,
+    *,
+    claim_id: str,
+    capture_digest: str,
+) -> ClaimInput:
+    rationale = {
+        "claim-adjudicate-contradicting-evidence": (
+            "Replace with the adjudication of this contradicting Capture."
+        ),
+        "claim-cite-supporting-evidence": (
+            "Replace the statement fields, then cite this supporting Capture."
+        ),
+        "claim-adjudicate-unreviewed-evidence": (
+            "Replace with the adjudication reached after reviewing this Capture."
+        ),
+    }[name]
+    return ClaimInput(
+        kind="claim",
+        subject="project.work_item/replace-me",
+        predicate="project.work_item.status",
+        object=LiteralObjectInput(kind="literal", value="replace-me"),
+        role="observation",
+        rationale=rationale,
+        source=ExistingCaptureInput(kind="existing_capture", capture_digest=capture_digest),
+        citation_role="evidence",
+        claim_id=claim_id,
+    )
+
+
+def authoring_example(
+    name: AuthoringExampleName,
+    *,
+    claim_id: str | None = None,
+    capture_digest: str | None = None,
+) -> AuthoringInputV1:
+    door = name in _DOOR_EXAMPLES
+    if door:
+        if claim_id is None or capture_digest is None:
+            raise ValueError("attestation-door examples require claim_id and capture_digest")
+        return _door_example(name, claim_id=claim_id, capture_digest=capture_digest)
+    if claim_id is not None or capture_digest is not None:
+        raise ValueError("claim_id/capture_digest apply only to attestation-door examples")
     return AUTHORING_EXAMPLE_FACTORIES[name]()
 
 
 __all__ = [
     "AUTHORING_EXAMPLE_FACTORIES",
+    "AUTHORING_EXAMPLE_NAMES",
     "AuthoringExampleName",
     "authoring_example",
     "claim_existing_capture_example",

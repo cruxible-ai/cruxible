@@ -61,6 +61,7 @@ from cruxible_core.errors import (
     TraceNotFoundError,
 )
 from cruxible_core.playbill.authoring.insertions import InsertionProtocolError
+from cruxible_core.playbill.claim_attestation_store import ClaimAttestationStoreError
 from cruxible_core.playbill.review_operational import (
     ReviewOperationalConcurrentChangeError,
     ReviewOperationalStoreError,
@@ -101,6 +102,13 @@ def _status_for_error(exc: CoreError) -> int:
         return 403
     if isinstance(exc, CitationHandleResolutionError):
         return 409 if exc.failure_kind == "stale" else 400
+    if isinstance(exc, ClaimAttestationStoreError):
+        if exc.error_code in {
+            "playbill.claim_attestation.attestation_head_unknown",
+            "playbill.claim_attestation.idempotency_payload_mismatch",
+        }:
+            return 400
+        return 500
     if isinstance(
         exc,
         (

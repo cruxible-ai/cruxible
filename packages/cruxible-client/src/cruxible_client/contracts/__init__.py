@@ -24,6 +24,9 @@ PlaybillAuthoringExampleName = Literal[
     "claim-flow-a",
     "claim-self-source",
     "procedure",
+    "claim-adjudicate-contradicting-evidence",
+    "claim-cite-supporting-evidence",
+    "claim-adjudicate-unreviewed-evidence",
 ]
 PlaybillNextReason: TypeAlias = Literal[
     "claim_conflicted",
@@ -40,6 +43,9 @@ PlaybillNextReason: TypeAlias = Literal[
     "self_published_source_stale",
     "claim_dependency_stale",
     "claim_attestation_threshold_met",
+    "claim_contradicting_evidence_available",
+    "claim_new_evidence_supporting",
+    "claim_new_evidence_unreviewed",
     "document_modified",
     "claim_cites_retired",
     "retired_claim_source_stale",
@@ -852,7 +858,7 @@ class PlaybillProcedureRunState(BaseModel):
 class PlaybillNextResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-next-result-v1"] = "playbill-next-result-v1"
+    tag: Literal["playbill-next-result-v1", "playbill-next-result-v2"] = "playbill-next-result-v1"
     coordinate: PlaybillAcceptedCoordinate
     evaluation_time: str
     observed_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
@@ -862,6 +868,15 @@ class PlaybillNextResult(BaseModel):
     # Set only on a delta: result_digest still names the whole queue, so it is
     # the cursor to echo back, not a description of the rows carried here.
     delta_since: str | None = None
+    attestation_head_digest: str | None = None
+
+    @model_validator(mode="after")
+    def _attestation_coordinate(self) -> "PlaybillNextResult":
+        if (self.tag == "playbill-next-result-v2") != (self.attestation_head_digest is not None):
+            raise ValueError("Next v2 alone requires an attestation evidence head")
+        if self.attestation_head_digest is not None:
+            Sha256Value.from_tagged(self.attestation_head_digest)
+        return self
 
 
 class PlaybillCurationListResult(BaseModel):

@@ -25,6 +25,10 @@ from cruxible_client.contracts.captures import (
     CanonicalDurationV1,
     parse_capture_envelope,
 )
+from cruxible_client.contracts.claim_attestation_store import (
+    ClaimAttestationEventPayloadV1,
+    ClaimAttestationEventV1,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -36,8 +40,11 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
+    ClaimArtifactV3,
     ClaimCitationV1,
+    ClaimLawEvidenceAny,
     LiteralClaimObject,
+    _is_claim_type_rederivation,
     claim_artifact_digest,
     claim_citation_references,
     claim_path,
@@ -56,7 +63,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_query_semantic_result_digest,
 )
 from cruxible_client.contracts.documents import document_path, parse_document
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
@@ -92,8 +99,12 @@ from cruxible_core.playbill.query.impact import (
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.service.query_definitions import accepted_query_definition
 from cruxible_core.service.playbill_claims import (
+    CaptureAdmissionAccountV1,
+    _claim_admission_accounts,
     _claim_from_view,
     _claim_law_evidence,
+    _claim_law_evidence_by_artifact_index,
+    _claim_law_evidence_index,
     service_list_playbill_claims,
 )
 from cruxible_core.service.playbill_evidence import (
@@ -105,6 +116,7 @@ from cruxible_core.service.playbill_search import claim_resolution_statuses
 
 NEXT_ITEM_ID_DOMAIN = "playbill-next-item-v1"
 NEXT_RESULT_DIGEST_DOMAIN = "playbill-next-result-v1"
+NEXT_RESULT_V2_DIGEST_DOMAIN = "playbill-next-result-v2"
 DEFAULT_EXPIRING_WITHIN_MICROSECONDS = 604_800_000_000
 MAX_DEPENDENCY_LINEAGE_GENERATIONS = 256
 
@@ -402,13 +414,33 @@ class PlaybillNextRequestV1(_StrictNextModel):
         return ensure_utc(value)
 
 
+class PlaybillNextRequestV2(PlaybillNextRequestV1):
+    tag: Literal["playbill-next-request-v2"] = "playbill-next-request-v2"  # type: ignore[assignment]
+    at_attestation_head_digest: str | None = None
+
+    @field_validator("at_attestation_head_digest")
+    @classmethod
+    def _attestation_head(cls, value: str | None) -> str | None:
+        if value is not None:
+            Sha256Value.from_tagged(value)
+        return value
+
+
+PlaybillNextRequestAny: TypeAlias = PlaybillNextRequestV1 | PlaybillNextRequestV2
+
+
 def validate_playbill_next_request(
-    value: PlaybillNextRequestV1 | Mapping[str, object],
-) -> PlaybillNextRequestV1:
-    if isinstance(value, PlaybillNextRequestV1):
+    value: PlaybillNextRequestAny | Mapping[str, object],
+) -> PlaybillNextRequestAny:
+    if isinstance(value, (PlaybillNextRequestV1, PlaybillNextRequestV2)):
         return value
     try:
-        return PlaybillNextRequestV1.model_validate(value)
+        model = (
+            PlaybillNextRequestV2
+            if value.get("tag") == "playbill-next-request-v2"
+            else PlaybillNextRequestV1
+        )
+        return model.model_validate(value)
     except ValidationError as exc:
         roots = {str(item["loc"][0]) for item in exc.errors() if item["loc"]}
         if "access_profile" in roots:
@@ -510,6 +542,23 @@ class PlaybillNextResultV1(_StrictNextModel):
         return self
 
 
+class PlaybillNextResultV2(PlaybillNextResultV1):
+    tag: Literal["playbill-next-result-v2"] = "playbill-next-result-v2"  # type: ignore[assignment]
+    attestation_head_digest: str
+
+    @field_validator("attestation_head_digest")
+    @classmethod
+    def _attestation_digest(cls, value: str) -> str:
+        Sha256Value.from_tagged(value)
+        return value
+
+    @model_validator(mode="after")
+    def _v2_digest(self) -> "PlaybillNextResultV2":
+        if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
+            raise ValueError("next v2 result digest does not reproduce")
+        return self
+
+
 _REPAIR_COMMAND_PATHS: Mapping[str, str] = {
     "playbill.authoring.create": "playbill authoring create",
     "playbill.authoring.bind": "playbill authoring bind",
@@ -534,6 +583,11 @@ _REPAIR_COMMAND_PLACEHOLDERS: Mapping[str, str] = {
     "PAYLOAD_FILE": "payload_file",
     "REQUEST_FILE": "request_file",
     "ENVELOPE_FILE": "envelope_file",
+}
+_ATTESTATION_REPAIR_EXAMPLES: Mapping[str, str] = {
+    "adjudicate_contradicting_evidence": "claim-adjudicate-contradicting-evidence",
+    "cite_supporting_evidence": "claim-cite-supporting-evidence",
+    "adjudicate_unreviewed_evidence": "claim-adjudicate-unreviewed-evidence",
 }
 
 
@@ -602,9 +656,23 @@ def _item(
 ) -> PlaybillNextItemV1:
     # Composed here rather than at each emitting site: a row whose command was
     # forgotten would be indistinguishable from one that has no command.
-    repair = repair.model_copy(
-        update={"command": _repair_command(repair.operation, arguments=repair.arguments)}
-    )
+    command = _repair_command(repair.operation, arguments=repair.arguments)
+    example = _ATTESTATION_REPAIR_EXAMPLES.get(repair.required_change)
+    if example is not None and isinstance(repair.arguments, Mapping):
+        claim_id = repair.arguments.get("claim_id")
+        capture_digest = repair.arguments.get("capture_digest")
+        if isinstance(claim_id, str) and isinstance(capture_digest, str):
+            command = " ".join(
+                (
+                    "cruxible playbill authoring create --example",
+                    shlex.quote(example),
+                    "--claim-id",
+                    shlex.quote(claim_id),
+                    "--capture-digest",
+                    shlex.quote(capture_digest),
+                )
+            )
+    repair = repair.model_copy(update={"command": command})
     values = {
         "severity": severity,
         "reason": reason,
@@ -637,11 +705,18 @@ def _item_sort_key(item: PlaybillNextItemV1) -> tuple[int, bytes, bytes, bytes]:
     )
 
 
-def playbill_next_result_digest(result: PlaybillNextResultV1) -> str:
+def playbill_next_result_digest(result: PlaybillNextResultV1 | PlaybillNextResultV2) -> str:
     payload = result.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("result_digest")
-    return typed_digest(Sha256Value, NEXT_RESULT_DIGEST_DOMAIN, payload).tagged
+    domain = (
+        NEXT_RESULT_V2_DIGEST_DOMAIN
+        if isinstance(result, PlaybillNextResultV2)
+        else NEXT_RESULT_DIGEST_DOMAIN
+    )
+    if isinstance(result, PlaybillNextResultV2):
+        payload.pop("delta_since")
+    return typed_digest(Sha256Value, domain, payload).tagged
 
 
 def _resolve_coordinate(
@@ -669,15 +744,11 @@ def _claim_attestation_threshold_items(
     coordinate: PlaybillAcceptedCoordinate,
     evaluation_time: datetime,
     claims: tuple[ClaimArtifactAny, ...],
+    law_evidence: Mapping[str, ClaimLawEvidenceAny],
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
 ) -> tuple[PlaybillNextItemV1, ...]:
     """Emit v4 queue consequences from current independent attestation components."""
 
-    internal = instance.resolve_accepted_coordinate(
-        git_oid=coordinate.git_oid,
-        semantic_root=coordinate.semantic_root,
-        generation_root=coordinate.generation_root,
-        compiler_digest=coordinate.compiler_digest,
-    )
     tree = instance.tree_at(coordinate.git_oid)
     claim_types: dict[str, ClaimType] = {}
     items: list[PlaybillNextItemV1] = []
@@ -691,18 +762,33 @@ def _claim_attestation_threshold_items(
         policy = claim_type.attestation_consequence_policy
         if policy is None:
             continue
-        evidence = _claim_law_evidence(
-            instance,
-            path=claim_path(claim.identity.name),
-            at=internal,
-        )
+        evidence = law_evidence.get(claim_path(claim.identity.name))
+        if evidence is None:
+            raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
         current = current_verified_claim_attestations(
             tree,
             claim,
             evidence.verified_attestations,
         )
+        exact_door = tuple(
+            (event, payload)
+            for event, payload in door_events
+            if payload.attestation.statement.claim_identity == claim.identity
+            and payload.attestation.statement.claim_artifact_digest
+            == claim_artifact_digest(claim).tagged
+            and payload.attestation.statement.attestation_basis == "examined_existing"
+        )
+        latest_door_by_principal: dict[
+            str, tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1]
+        ] = {}
+        for event, payload in exact_door:
+            principal_id = payload.attesting_principal_id
+            previous = latest_door_by_principal.get(principal_id)
+            if previous is None or event.sequence > previous[0].sequence:
+                latest_door_by_principal[principal_id] = (event, payload)
+        superseded_legacy = frozenset(latest_door_by_principal)
         for rule in policy.rules:
-            matching = tuple(
+            matching_legacy = tuple(
                 item
                 for item in current
                 if item.current
@@ -711,20 +797,38 @@ def _claim_attestation_threshold_items(
                 and item.statement.claim_statement_digest
                 == claim_statement_digest(claim.statement).tagged
                 and item.statement.stance == rule.stance
+                and item.statement.provider_or_principal.name not in superseded_legacy
                 and item.statement.observed_at <= evaluation_time
                 and (
                     item.statement.valid_until is None
                     or evaluation_time < item.statement.valid_until
                 )
             )
+            matching_door = tuple(
+                payload
+                for _event, payload in latest_door_by_principal.values()
+                if payload.current_at_append
+                and payload.attestation.statement.stance == rule.stance
+                and payload.attestation.statement.attested_at <= evaluation_time
+                and (
+                    payload.attestation.statement.valid_until is None
+                    or evaluation_time < payload.attestation.statement.valid_until
+                )
+            )
             principal_identities = frozenset(
-                item.statement.provider_or_principal.qualified for item in matching
+                (
+                    *(item.statement.provider_or_principal.name for item in matching_legacy),
+                    *(item.attesting_principal_id for item in matching_door),
+                )
             )
             if len(principal_identities) < rule.minimum_independent_control_components:
                 continue
             attestation_digests = tuple(
                 sorted(
-                    (item.attestation_digest for item in matching),
+                    (
+                        *(item.attestation_digest for item in matching_legacy),
+                        *(item.envelope_digest for item in matching_door),
+                    ),
                     key=lambda item: item.encode("ascii"),
                 )
             )
@@ -774,6 +878,7 @@ def _claim_items(
     coordinate: PlaybillAcceptedCoordinate,
     evaluation_time: datetime,
     expiring_within: CanonicalDurationV1,
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
 ) -> tuple[PlaybillNextItemV1, ...]:
     listed = service_list_playbill_claims(instance, at=coordinate)
     claims = tuple(
@@ -792,12 +897,21 @@ def _claim_items(
                 }
             )
         ].append(claim)
+    internal = instance.resolve_accepted_coordinate(
+        git_oid=coordinate.git_oid,
+        semantic_root=coordinate.semantic_root,
+        generation_root=coordinate.generation_root,
+        compiler_digest=coordinate.compiler_digest,
+    )
+    law_evidence = _claim_law_evidence_index(instance, at=internal)
     items = list(
         _claim_attestation_threshold_items(
             instance,
             coordinate=coordinate,
             evaluation_time=evaluation_time,
             claims=claims,
+            law_evidence=law_evidence,
+            door_events=door_events,
         )
     )
     for group in groups.values():
@@ -1802,6 +1916,226 @@ def _bounded_claim_lineages(
     )
 
 
+@dataclass(frozen=True)
+class _AttestationLineageArtifact:
+    claim: ClaimArtifactAny
+    artifact_digest: str
+    tree: dict[str, bytes]
+
+
+def _attestation_claim_lineage(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    claim_identity: str,
+) -> tuple[tuple[_AttestationLineageArtifact, ...], bool]:
+    """Recover one Claim lineage at the request coordinate, oldest first."""
+
+    path = claim_path(claim_identity)
+    history = instance.accepted_history()
+    target_index = next(
+        index for index, item in enumerate(history) if item.oid == coordinate.git_oid
+    )
+    current_tree = instance.tree_at(coordinate.git_oid)
+    raw = current_tree.get(path)
+    if raw is None:
+        return (), True
+    current = parse_claim(raw, path=path)
+    found = [
+        _AttestationLineageArtifact(
+            claim=current,
+            artifact_digest=claim_artifact_digest(current).tagged,
+            tree=current_tree,
+        )
+    ]
+    expected = current.lifecycle.predecessor_digest
+    scanned = history[max(0, target_index - MAX_DEPENDENCY_LINEAGE_GENERATIONS) : target_index]
+    for generation in reversed(scanned):
+        if expected is None:
+            break
+        tree = instance.tree_at(generation.oid)
+        predecessor_raw = tree.get(path)
+        if predecessor_raw is None:
+            continue
+        predecessor = parse_claim(predecessor_raw, path=path)
+        digest = claim_artifact_digest(predecessor).tagged
+        if digest != expected:
+            continue
+        found.append(
+            _AttestationLineageArtifact(
+                claim=predecessor,
+                artifact_digest=digest,
+                tree=tree,
+            )
+        )
+        expected = predecessor.lifecycle.predecessor_digest
+    return tuple(reversed(found)), expected is not None
+
+
+def _attestation_resolving_accounts(
+    instance: PlaybillInstance,
+    *,
+    lineage: tuple[_AttestationLineageArtifact, ...],
+    law_by_artifact: Mapping[tuple[str, str], ClaimLawEvidenceAny],
+) -> tuple[dict[str, tuple[CaptureAdmissionAccountV1, ...]], bool]:
+    """Select immutable accounts under authored/rederivation authority law."""
+
+    if not lineage:
+        return {}, True
+    path = claim_path(lineage[-1].claim.identity.name)
+    authority_digest: str | None = None
+    predecessor: _AttestationLineageArtifact | None = None
+    accounts_by_authority: dict[str, tuple[CaptureAdmissionAccountV1, ...]] = {}
+    artifact_accounts: dict[str, tuple[CaptureAdmissionAccountV1, ...]] = {}
+    incomplete = False
+    for artifact in lineage:
+        mechanically_rederived = False
+        if predecessor is not None:
+            mechanically_rederived = _is_claim_type_rederivation(
+                artifact.claim,
+                predecessor=predecessor.claim,
+                claim_type_digest=artifact.claim.statement.claim_type_digest,
+                claim_type_identity=artifact.claim.statement.claim_type,
+            )
+        if authority_digest is None or not mechanically_rederived:
+            authority_digest = artifact.artifact_digest
+        if authority_digest not in accounts_by_authority:
+            authority = next(item for item in lineage if item.artifact_digest == authority_digest)
+            law = law_by_artifact.get((path, authority_digest))
+            if law is None:
+                accounts_by_authority[authority_digest] = ()
+                incomplete = True
+            else:
+                try:
+                    accounts_by_authority[authority_digest] = _claim_admission_accounts(
+                        instance,
+                        claim=authority.claim,
+                        tree=authority.tree,
+                        law=law,
+                    )
+                except (PlaybillError, ValueError):
+                    accounts_by_authority[authority_digest] = ()
+                    incomplete = True
+        artifact_accounts[artifact.artifact_digest] = accounts_by_authority[authority_digest]
+        predecessor = artifact
+    return artifact_accounts, incomplete
+
+
+def _claim_attestation_door_items(
+    instance: PlaybillInstance,
+    *,
+    coordinate: AcceptedProjectionCoordinate,
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
+) -> tuple[PlaybillNextItemV1, ...]:
+    """Fold new-capture memberships against immutable acceptance-time accounts."""
+
+    law_by_artifact = _claim_law_evidence_by_artifact_index(instance, at=coordinate)
+    lineage_cache: dict[str, tuple[tuple[_AttestationLineageArtifact, ...], bool]] = {}
+    account_cache: dict[str, tuple[dict[str, tuple[CaptureAdmissionAccountV1, ...]], bool]] = {}
+    items: list[PlaybillNextItemV1] = []
+    reason_by_stance: Mapping[str, tuple[NextReason, NextSeverity, str]] = {
+        "contradict": (
+            "claim_contradicting_evidence_available",
+            "repair",
+            "adjudicate_contradicting_evidence",
+        ),
+        "support": (
+            "claim_new_evidence_supporting",
+            "warning",
+            "cite_supporting_evidence",
+        ),
+        "unsure": (
+            "claim_new_evidence_unreviewed",
+            "warning",
+            "adjudicate_unreviewed_evidence",
+        ),
+    }
+    for event, payload in door_events:
+        statement = payload.attestation.statement
+        if statement.attestation_basis != "new_capture":
+            continue
+        claim_id = statement.claim_identity.name
+        cached_lineage = lineage_cache.get(claim_id)
+        if cached_lineage is None:
+            cached_lineage = _attestation_claim_lineage(
+                instance,
+                coordinate=coordinate,
+                claim_identity=claim_id,
+            )
+            lineage_cache[claim_id] = cached_lineage
+        lineage, lineage_incomplete = cached_lineage
+        cached_accounts = account_cache.get(claim_id)
+        if cached_accounts is None:
+            cached_accounts = _attestation_resolving_accounts(
+                instance,
+                lineage=lineage,
+                law_by_artifact=law_by_artifact,
+            )
+            account_cache[claim_id] = cached_accounts
+        accounts_by_artifact, account_incomplete = cached_accounts
+        lineage_digests = {item.artifact_digest for item in lineage}
+        membership_proven = statement.claim_artifact_digest in lineage_digests
+        terminal = bool(
+            membership_proven
+            and lineage
+            and isinstance(lineage[-1].claim, ClaimArtifactV3)
+            and lineage[-1].claim.lifecycle.state == "retired"
+        )
+        for capture_digest in statement.cited_capture_digests:
+            resolved = terminal or any(
+                any(
+                    account.capture_digest == capture_digest and account.status == "admitted"
+                    for account in accounts
+                )
+                for accounts in accounts_by_artifact.values()
+            )
+            if resolved:
+                continue
+            lineage_status = (
+                "incomplete"
+                if lineage_incomplete or account_incomplete or not membership_proven
+                else "proven"
+            )
+            reason, severity, required_change = reason_by_stance[statement.stance]
+            items.append(
+                _item(
+                    severity=severity,
+                    reason=reason,
+                    subject_identity=statement.claim_identity.qualified,
+                    related_identities=tuple(
+                        sorted(
+                            (
+                                f"Capture:{capture_digest}",
+                                f"Principal:{statement.attesting_principal_id}",
+                            ),
+                            key=lambda item: item.encode("utf-8"),
+                        )
+                    ),
+                    detail={
+                        "claim_id": claim_id,
+                        "claim_artifact_digest": statement.claim_artifact_digest,
+                        "capture_digest": capture_digest,
+                        "attestation_event_digest": event.event_digest,
+                        "attestation_basis": statement.attestation_basis,
+                        "stance": statement.stance,
+                        "attesting_principal": statement.attesting_principal_id,
+                        "current_at_append": payload.current_at_append,
+                        "lineage_status": lineage_status,
+                    },
+                    repair=PlaybillNextRepairV1(
+                        operation="playbill.authoring.create",
+                        target=statement.claim_identity.qualified,
+                        required_change=required_change,
+                        arguments={
+                            "claim_id": claim_id,
+                            "capture_digest": capture_digest,
+                        },
+                    ),
+                )
+            )
+    return tuple(items)
+
+
 def _claim_dependency_items(
     instance: PlaybillInstance,
     *,
@@ -2482,12 +2816,18 @@ def _projection_items(
 def service_playbill_next(
     instance: PlaybillInstance,
     *,
-    request: PlaybillNextRequestV1,
-) -> PlaybillNextResultV1:
+    request: PlaybillNextRequestAny,
+) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Fold accepted state and explicit client observations into one repair queue."""
 
     coordinate = _resolve_coordinate(instance, request.at)
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    attestation_head: str | None = None
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = ()
+    if isinstance(request, PlaybillNextRequestV2):
+        store = instance.claim_attestation_evidence_store()
+        attestation_head = request.at_attestation_head_digest or store.head()
+        door_events = store.fold_events(at_head=attestation_head)
     workspace_domains, workspace_items = _workspace_items(
         instance,
         coordinate=public_coordinate,
@@ -2515,6 +2855,16 @@ def service_playbill_next(
                     coordinate=public_coordinate,
                     evaluation_time=request.evaluation_time,
                     expiring_within=request.expiring_within,
+                    door_events=door_events,
+                ),
+                *(
+                    _claim_attestation_door_items(
+                        instance,
+                        coordinate=coordinate,
+                        door_events=door_events,
+                    )
+                    if isinstance(request, PlaybillNextRequestV2)
+                    else ()
                 ),
                 *workspace_items,
                 *_projection_items(
@@ -2556,17 +2906,20 @@ def service_playbill_next(
         "unobserved_domains": unobserved,
         "items": items,
     }
-    provisional = PlaybillNextResultV1.model_construct(
+    result_model: type[PlaybillNextResultV1] | type[PlaybillNextResultV2]
+    if isinstance(request, PlaybillNextRequestV2):
+        assert attestation_head is not None
+        result_model = PlaybillNextResultV2
+        values["attestation_head_digest"] = attestation_head
+    else:
+        result_model = PlaybillNextResultV1
+    provisional = result_model.model_construct(
         _fields_set=None,
         result_digest="sha256:" + "0" * 64,
-        coordinate=public_coordinate,
-        evaluation_time=request.evaluation_time,
-        observed_domains=observed,
-        unobserved_domains=unobserved,
-        items=items,
+        **values,
     )
     result_digest = playbill_next_result_digest(provisional)
-    full = PlaybillNextResultV1.model_validate({**values, "result_digest": result_digest})
+    full = result_model.model_validate({**values, "result_digest": result_digest})
     _remember_queue(result_digest, full.items)
     if request.since_result_digest is None:
         return full
@@ -2587,7 +2940,11 @@ def _remember_queue(result_digest: str, items: tuple[PlaybillNextItemV1, ...]) -
         _QUEUE_MEMO.popitem(last=False)
 
 
-def _delta_of(full: PlaybillNextResultV1, *, since: str) -> PlaybillNextResultV1:
+def _delta_of(
+    full: PlaybillNextResultV1 | PlaybillNextResultV2,
+    *,
+    since: str,
+) -> PlaybillNextResultV1 | PlaybillNextResultV2:
     """Return only the rows new since a remembered queue, keeping the full cursor.
 
     `result_digest` still names the whole queue: it is what the caller echoes
@@ -2605,13 +2962,16 @@ __all__ = [
     "DEFAULT_EXPIRING_WITHIN_MICROSECONDS",
     "NEXT_ITEM_ID_DOMAIN",
     "NEXT_RESULT_DIGEST_DOMAIN",
+    "NEXT_RESULT_V2_DIGEST_DOMAIN",
     "PlaybillNextAccessProfileInvalid",
     "PlaybillNextAcceptedStateInvalid",
     "PlaybillNextCoordinateNotAccepted",
     "PlaybillNextDriftObservationV1",
     "PlaybillNextItemV1",
     "PlaybillNextRequestV1",
+    "PlaybillNextRequestV2",
     "PlaybillNextResultV1",
+    "PlaybillNextResultV2",
     "PlaybillNextSourceObservationV3",
     "PlaybillNextSourceObservationV4",
     "PlaybillNextWorkspaceObservationInvalid",
