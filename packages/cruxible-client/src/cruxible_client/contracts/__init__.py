@@ -8,6 +8,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.primitives import canonical_json
 
@@ -120,6 +121,7 @@ class PlaybillInitResult(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     trust_root: dict[str, Any]
     recovery_posture: str
+    approval_policy_mode: ApprovalPolicyMode
 
 
 class PlaybillCasObjectResult(BaseModel):

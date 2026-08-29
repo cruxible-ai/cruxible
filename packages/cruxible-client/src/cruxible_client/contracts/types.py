@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.canonical import Sha256Value
 
 GitObjectFormat = Literal["sha1", "sha256"]
@@ -292,6 +293,7 @@ class PlaybillInspection(StrictModel):
     authority: AuthorityMatrix
     operating_profile: OperatingProfile
     recovery_posture: RecoveryPosture
+    approval_policy_mode: ApprovalPolicyMode
     principals: tuple[PrincipalInspection, ...]
     managed_root: str
     storage_directories: dict[str, str]

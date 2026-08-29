@@ -1726,7 +1726,10 @@ class AuthoringIntentCoordinator:
                 AcceptanceConditionV1(
                     condition="external-approval",
                     owner="approver",
-                    action="One independent active ordinary principal must approve.",
+                    action=(
+                        "independent_approval_required mode needs one active ordinary approver "
+                        "other than the candidate creator."
+                    ),
                     satisfied=approvals_complete,
                 )
             )

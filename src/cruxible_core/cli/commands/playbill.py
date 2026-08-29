@@ -477,6 +477,7 @@ def init_playbill(
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
+    click.echo(f"Approval policy: {result.approval_policy_mode}")
     click.echo(f"Owner public key: {owner.principal.public_key}")
     click.echo(f"Owner private key retained locally at: {owner.private_key_path}")
     if reviewer is not None:
@@ -2372,15 +2373,21 @@ def next_work(
         _emit_json(result.model_dump(mode="json"))
         return
     if not result.items:
-        click.echo("No repair work in the observed domains.")
+        click.echo(
+            "No changes since the requested queue digest."
+            if result.delta_since is not None
+            else "No repair work in the observed domains."
+        )
     current_ids = frozenset(item["item_id"] for item in full.items) if full is not None else None
     for item in result.items:
         repair = item["repair"]
         change = (
             "removed  "
-            if current_ids is not None and item["item_id"] not in current_ids
+            if result.delta_since is not None
+            and current_ids is not None
+            and item["item_id"] not in current_ids
             else "added  "
-            if current_ids is not None
+            if result.delta_since is not None and current_ids is not None
             else ""
         )
         click.echo(

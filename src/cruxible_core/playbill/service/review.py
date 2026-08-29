@@ -348,8 +348,9 @@ def service_prepare_playbill_approval(
         and signer_id == creator_principal_id
     ):
         raise ApprovalIntegrityError(
-            "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve; "
-            "after an eligible signer approves, run playbill proposal activate"
+            "playbill.approval.creator_forbidden: independent_approval_required mode needs "
+            "an active ordinary approver other than the candidate creator; after that "
+            "eligible signer approves, run playbill proposal activate"
         )
     if not principal_lifecycle and principal.kind == "recovery":
         raise ApprovalIntegrityError("recovery principal cannot approve ordinary Documents")

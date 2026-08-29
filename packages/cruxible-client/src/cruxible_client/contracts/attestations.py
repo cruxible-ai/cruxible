@@ -222,8 +222,9 @@ def verify_candidate_approvals(
     independent_required = bool(candidate.approval_requirements)
     if purpose == "ordinary-artifact" and independent_required and creator_present:
         raise ApprovalIntegrityError(
-            "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve; "
-            "after an eligible signer approves, run playbill proposal activate"
+            "playbill.approval.creator_forbidden: independent_approval_required mode needs "
+            "an active ordinary approver other than the candidate creator; after that "
+            "eligible signer approves, run playbill proposal activate"
         )
     if not approval_requirements_satisfied(
         candidate,
@@ -232,8 +233,8 @@ def verify_candidate_approvals(
         creator_principal_id=creator_principal_id,
     ):
         raise ApprovalIntegrityError(
-            "playbill.approval.requirement_unsatisfied: candidate requires one independent "
-            "active ordinary principal approval"
+            "playbill.approval.requirement_unsatisfied: independent_approval_required mode "
+            "needs one active ordinary approver other than the candidate creator"
         )
 
     return verified

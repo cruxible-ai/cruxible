@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
-from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
+from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_PATH,
+    ApprovalPolicyV1,
+    parse_approval_policy,
+)
 from cruxible_client.contracts.attestations import ApprovalSubmission
 from cruxible_client.contracts.candidates import CandidateRecordAnyVersion
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -470,6 +474,11 @@ class PlaybillInstance:
         storage_directories = {
             name: str(path) for name, path in paths.items() if name != "credentials"
         }
+        accepted_tree = self.tree_at(self._recovered.head.oid)
+        approval_policy = parse_approval_policy(
+            accepted_tree[APPROVAL_POLICY_PATH],
+            path=APPROVAL_POLICY_PATH,
+        )
         return PlaybillInspection(
             descriptor_tag=self.descriptor.tag,
             format_version=self.descriptor.format_version,
@@ -483,6 +492,7 @@ class PlaybillInstance:
             authority=self.descriptor.authority,
             operating_profile=self.descriptor.operating_profile,
             recovery_posture=self.descriptor.recovery_posture,
+            approval_policy_mode=approval_policy.mode,
             principals=principals,
             managed_root=str(self.root),
             storage_directories=storage_directories,

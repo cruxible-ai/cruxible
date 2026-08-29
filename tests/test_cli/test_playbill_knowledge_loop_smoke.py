@@ -170,6 +170,7 @@ def test_cli_init_key_dir_alone_bootstraps_a_solo_instance(
         CREATOR_ID,
     )
     assert initialized["instance_id"] == host["instance_id"]
+    assert initialized["approval_policy_mode"] == "self_approval_allowed"
     assert (custody / f"{CREATOR_ID}.ed25519").is_file()
     assert not (custody / f"{SIGNER_ID}.ed25519").exists()
 

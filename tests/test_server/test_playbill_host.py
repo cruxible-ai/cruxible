@@ -107,6 +107,7 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
     )
     assert initialized.status_code == 200, initialized.text
     assert initialized.json()["instance_id"] == instance_id
+    assert initialized.json()["approval_policy_mode"] == "self_approval_allowed"
     assert managed_root.is_dir()
     assert not (Path(record.location) / ".cruxible" / "state.db").exists()
 
@@ -160,7 +161,9 @@ def test_independent_approval_init_requires_and_accepts_a_second_ordinary_princi
         },
     )
     assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["approval_policy_mode"] == "independent_approval_required"
     instance = get_playbill_manager().get(governed_id)
+    assert instance.inspect().approval_policy_mode == "independent_approval_required"
     assert instance._verified_genesis.approval_policy.mode == "independent_approval_required"
 
 

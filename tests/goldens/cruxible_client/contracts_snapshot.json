@@ -1,5 +1,11 @@
 {
   "literal_aliases": {
+    "ApprovalPolicyMode": {
+      "values": [
+        "self_approval_allowed",
+        "independent_approval_required"
+      ]
+    },
     "PlaybillAuthoringExampleName": {
       "values": [
         "claim-type",
@@ -10446,6 +10452,20 @@
     },
     "PlaybillInitResult": {
       "fields": {
+        "approval_policy_mode": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "approval_policy_mode",
+          "required": true,
+          "schema": {
+            "enum": [
+              "self_approval_allowed",
+              "independent_approval_required"
+            ],
+            "title": "Approval Policy Mode",
+            "type": "string"
+          }
+        },
         "coordinate": {
           "has_default": false,
           "has_default_factory": false,
@@ -10545,6 +10565,14 @@
         },
         "additionalProperties": false,
         "properties": {
+          "approval_policy_mode": {
+            "enum": [
+              "self_approval_allowed",
+              "independent_approval_required"
+            ],
+            "title": "Approval Policy Mode",
+            "type": "string"
+          },
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
@@ -10572,12 +10600,14 @@
           "instance_id",
           "coordinate",
           "trust_root",
-          "recovery_posture"
+          "recovery_posture",
+          "approval_policy_mode"
         ],
         "title": "PlaybillInitResult",
         "type": "object"
       },
       "required_fields": [
+        "approval_policy_mode",
         "coordinate",
         "instance_id",
         "recovery_posture",

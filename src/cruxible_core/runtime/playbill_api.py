@@ -341,6 +341,7 @@ def playbill_init(
         ),
         trust_root=instance.trust_root.model_dump(mode="json"),
         recovery_posture=instance.descriptor.recovery_posture,
+        approval_policy_mode=instance.inspect().approval_policy_mode,
     )
 
 

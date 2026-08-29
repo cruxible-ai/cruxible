@@ -128,6 +128,7 @@ from cruxible_client.contracts.errors import (
     PlaybillError,
     PrincipalIntegrityError,
     ProposalAdmissionError,
+    ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
     SubjectFormatError,
 )
@@ -2024,8 +2025,38 @@ def _approval_policy_member(context: _MemberContext) -> _MemberVerdict:
                 ),
             )
         )
-    policy = parse_approval_policy(context.content, path=context.path)
-    predecessor = parse_approval_policy(context.parent_content, path=context.path)
+    try:
+        policy = parse_approval_policy(context.content, path=context.path)
+    except ApprovalPolicyFormatError as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.approval_policy.format_invalid",
+                    str(exc),
+                    context.path,
+                ),
+            )
+        )
+    try:
+        predecessor = parse_approval_policy(context.parent_content, path=context.path)
+    except ApprovalPolicyFormatError as exc:
+        raise ProposalIntegrityError("accepted approval policy cannot be reproduced") from exc
+    if policy.mode == "independent_approval_required":
+        active_ordinary_count = sum(
+            record.kind == "ordinary" and record.status == "active"
+            for record in context.principals.principals
+        )
+        if active_ordinary_count < 2:
+            return _MemberVerdict(
+                diagnostics=(
+                    _diagnostic(
+                        "playbill.approval_policy.independent_approval_minimum",
+                        "independent_approval_required mode needs at least two active ordinary "
+                        "principals; register the missing approver before tightening the policy.",
+                        context.path,
+                    ),
+                )
+            )
     return _accepted(
         context,
         APPROVAL_POLICY_ACCEPTANCE_LAW,
@@ -2438,7 +2469,6 @@ def _evaluate_scoped_members(
     claim_admission_query_digests_by_path: dict[str, tuple[str, ...]] = {}
     claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] = ()
     diagnostics: list[CompilerDiagnostic] = []
-    scope_set = set(scope)
     for path in scope:
         parent_content = current_tree.get(path)
         candidate_content = candidate_tree.get(path)
@@ -2464,9 +2494,12 @@ def _evaluate_scoped_members(
                 if parent_target_path is None
                 else parent.dependencies.states.get(parent_target_path)
             )
+            # Exact parent/candidate artifact correspondence below implies
+            # same-ChangeSet membership because scope is the canonical tree
+            # diff. A separate target_path-in-scope predicate was redundant
+            # and could not fail independently of these digest equalities.
             if (
-                target_path not in scope_set
-                or target is None
+                target is None
                 or target.artifact_kind != "claim"
                 or target.lifecycle.state != "retired"
                 or target.lifecycle.predecessor_digest != previous_pin.artifact_digest
@@ -3149,7 +3182,7 @@ class ProposalService:
                 evaluated_at=timestamp,
             )
         except ValidationError as exc:
-            raise ProposalIntegrityError(
+            raise ProposalEvaluationIntegrityError(
                 "proposal evaluation record failed deterministic validation"
             ) from exc
         self.evidence.write_evaluation(evaluation)
