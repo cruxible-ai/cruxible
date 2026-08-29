@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Claim retirement closure is one coordinated disposition.** A retiring
+  dependent may advance a Claim-target pin by one verified succession hop only
+  when that target also retires in the same complete ChangeSet; the earlier
+  pre-release mixed-disposition ClaimType migration (live target successor plus
+  dependent retirement) is deliberately withdrawn. Publication confirmation
+  now binds the declared block frame rather than whole-file digests; prerelease
+  v1-shaped in-flight insertion expectations must be recreated after this wire
+  contraction.
+
 - **Governed approval-policy spine and solo initialization (PC-C3).** New
   instances carry the `governance/approval-policy.yaml` singleton in the signed
   genesis tree. One ordinary principal is sufficient by default; operators can

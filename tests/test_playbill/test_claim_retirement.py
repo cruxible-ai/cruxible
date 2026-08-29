@@ -18,6 +18,7 @@ from cruxible_client.contracts.claims import (
     ClaimRetireDependentV1,
     ClaimRetireRequestV1,
     LiteralClaimObject,
+    _is_attributed_retirement,
     claim_artifact_digest,
     claim_path,
     parse_claim,
@@ -503,6 +504,89 @@ def test_transitive_dual_edge_closure_freezes_inputs_and_advances_only_claim_pin
         middle.identity,
         leaf.identity,
     ]
+
+    statement_rewrite = retired_leaf.model_copy(
+        update={
+            "statement": retired_leaf.statement.model_copy(
+                update={"object": LiteralClaimObject(value="rewritten while retiring")}
+            )
+        }
+    )
+    statement_tree = {**candidate_tree, claim_path(leaf_id): render_claim(statement_rewrite)}
+    statement_result = evaluate_proposal_tree(
+        base_tree=accepted_tree,
+        current_tree=accepted_tree,
+        proposed_tree=statement_tree,
+        current=instance.accepted_coordinate(),
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id="owner",
+        promotion_verifier=instance.proposal_service().promotion_verifier,
+    )
+    assert statement_result.candidate is None
+    assert "playbill.claim.retirement_delta_invalid" in {
+        item.code for item in statement_result.diagnostics
+    }
+
+    backing_rewrite = retired_leaf.model_copy(
+        update={
+            "backing": retired_leaf.backing.model_copy(
+                update={"input_claim_digests": (claim_artifact_digest(retired_root).tagged,)}
+            )
+        }
+    )
+    backing_tree = {**candidate_tree, claim_path(leaf_id): render_claim(backing_rewrite)}
+    backing_result = evaluate_proposal_tree(
+        base_tree=accepted_tree,
+        current_tree=accepted_tree,
+        proposed_tree=backing_tree,
+        current=instance.accepted_coordinate(),
+        bodies=instance.body_store(),
+        timestamp=TIMESTAMP,
+        rebased=False,
+        actor_id="owner",
+        promotion_verifier=instance.proposal_service().promotion_verifier,
+    )
+    assert backing_result.candidate is None
+    assert "playbill.claim.retirement_delta_invalid" in {
+        item.code for item in backing_result.diagnostics
+    }
+
+    non_claim_pin = ArtifactPin(
+        role="claim-type",
+        target=leaf.statement.claim_type,
+        artifact_digest=leaf.statement.claim_type_digest,
+    )
+    predecessor_with_non_claim_pin = leaf.model_copy(
+        update={
+            "pins": tuple(
+                sorted(
+                    (*leaf.pins, non_claim_pin),
+                    key=lambda pin: (
+                        pin.role.encode("utf-8"),
+                        pin.target.qualified.encode("utf-8"),
+                    ),
+                )
+            )
+        }
+    )
+    retirement_with_non_claim_pin_rewrite = predecessor_with_non_claim_pin.model_copy(
+        update={
+            "lifecycle": retired_leaf.lifecycle,
+            "retirement": retired_leaf.retirement,
+            "pins": tuple(
+                pin.model_copy(update={"artifact_digest": "sha256:" + "a" * 64})
+                if pin.target.kind != "Claim"
+                else pin
+                for pin in predecessor_with_non_claim_pin.pins
+            ),
+        }
+    )
+    assert not _is_attributed_retirement(
+        retirement_with_non_claim_pin_rewrite,
+        predecessor=predecessor_with_non_claim_pin,
+    )
 
     target_not_in_changeset = dict(candidate_tree)
     target_not_in_changeset[claim_path(middle_id)] = accepted_tree[claim_path(middle_id)]

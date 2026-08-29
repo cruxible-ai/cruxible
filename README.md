@@ -142,15 +142,16 @@ export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat /tmp/cruxible-playbill-bootstrap)"
 uv run cruxible playbill host create --instance-id playbill-demo
 uv run cruxible playbill init \
   --key-dir /tmp/cruxible-playbill-owner \
-  --reviewer-key-dir /tmp/cruxible-playbill-reviewer \
   --principal-id bootstrap-admin
 uv run cruxible playbill document list
 ~~~
 
-The init command prints both private-key paths. The daemon receives only the two
-public ordinary-principal records. `--reviewer-key-dir DIR` is required so the
-genesis registry has independent client custody. See the
-[Quickstart](docs/quickstart.md) for a complete Document proposal and activation.
+The init command prints each generated private-key path and sends only public
+principal records to the daemon. The one-key form is a complete solo setup with
+self-approval allowed. Add `--reviewer-key-dir DIR
+--require-independent-approval` to opt into a second ordinary principal and
+creator-excluded approval from genesis. See the [Quickstart](docs/quickstart.md)
+for a complete Document proposal and activation.
 
 ## Security boundaries
 
@@ -158,8 +159,10 @@ Runtime bearer credentials and Playbill principals solve different problems:
 
 - bearer credentials authorize transport operations and carry a capability tier;
 - Playbill principals identify and attribute governed acts at exact coordinates;
-- repository ref governance supplies organizational authorization;
-- owner/reviewer/recovery private keys remain in client custody;
+- repository branch protection and CODEOWNERS supply organizational review;
+- local key directories support attribution and repository hygiene, not a
+  security boundary; actual custody separation belongs at the Cloud
+  broker/leasing seam;
 - the daemon has a separate instance-specific key for ledger mechanics;
 - source compilation happens client-side, so the daemon never dereferences a
   client filesystem path.
