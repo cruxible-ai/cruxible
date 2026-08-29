@@ -31,6 +31,7 @@ from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_NAMES,
     AuthoringExampleName,
     authoring_example,
+    query_claims_by_type_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.authoring.sources import (
@@ -2065,11 +2066,27 @@ def query_group() -> None:
 
 
 @query_group.command("propose")
-@click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--name", "proposal_name", required=True)
+@click.option("--envelope", type=click.Path(exists=True, dir_okay=False))
+@click.option("--example", type=click.Choice(["query-claims-by-type"]))
+@click.option("--name", "proposal_name")
 @json_option
 @handle_errors
-def propose_query_definition(envelope: str, proposal_name: str, output_json: bool) -> None:
+def propose_query_definition(
+    envelope: str | None,
+    example: str | None,
+    proposal_name: str | None,
+    output_json: bool,
+) -> None:
+    if (envelope is None) == (example is None):
+        raise click.UsageError("choose exactly one of --envelope or --example")
+    if example is not None:
+        if proposal_name is not None:
+            raise click.UsageError("--name applies only when --envelope is supplied")
+        _emit_json(query_claims_by_type_example().model_dump(mode="json"))
+        return
+    if proposal_name is None:
+        raise click.UsageError("--name is required with --envelope")
+    assert envelope is not None
     definition = _read_mapping(envelope)
     result = _server_call(
         lambda client, instance_id: client.propose_playbill_query_definition(

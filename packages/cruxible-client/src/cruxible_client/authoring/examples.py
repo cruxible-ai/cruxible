@@ -14,7 +14,20 @@ from cruxible_client.authoring.inputs import (
     SelfSourceInput,
     WorkingSelectionInput,
 )
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+from cruxible_client.contracts.query.definitions import (
+    QueryDefinitionV1,
+    QueryEvaluationPolicyV1,
+)
+from cruxible_client.contracts.query.grammar import (
+    QueryBudgetsV1,
+    QueryClaimValueRefV1,
+    QueryEntryV1,
+    QueryProjectionFieldV1,
+    QueryProjectionV1,
+    QuerySubjectFieldRefV1,
+)
 
 AuthoringExampleName = Literal[
     "claim-existing-capture",
@@ -159,6 +172,55 @@ def procedure_example() -> ProcedureInput:
     )
 
 
+def query_claims_by_type_example() -> QueryDefinitionV1:
+    """Return a governed query template for current supported work-item status."""
+
+    return QueryDefinitionV1(
+        identity=ArtifactIdentity(
+            kind="QueryDefinition",
+            name="project.work_items_by_status",
+        ),
+        description="List supported current status Claims for project work items.",
+        entry=QueryEntryV1(binding="item", subject_kinds=("project.work_item",)),
+        result_binding="item",
+        result_shape="subject",
+        result_cardinality="many",
+        dedupe="subject",
+        projection=QueryProjectionV1(
+            fields=(
+                QueryProjectionFieldV1(
+                    name="item_id",
+                    value=QuerySubjectFieldRefV1(binding="item", field="subject_id"),
+                ),
+                QueryProjectionFieldV1(
+                    name="status",
+                    value=QueryClaimValueRefV1(
+                        binding="item",
+                        predicate="project.work_item.status",
+                    ),
+                ),
+            )
+        ),
+        evaluation_policy=QueryEvaluationPolicyV1(
+            visible_verdicts=("supported",),
+            visible_currency=("current",),
+            conflict_behavior="surface_conflicts",
+        ),
+        default_budgets=QueryBudgetsV1(max_results=100, max_traversal_depth=0),
+        maximum_budgets=QueryBudgetsV1(max_results=1000, max_traversal_depth=0),
+        pins=(
+            ArtifactPin(
+                role="claim-type",
+                target=ArtifactIdentity(
+                    kind="ClaimType",
+                    name="project.work_item.status",
+                ),
+                artifact_digest="sha256:" + "0" * 64,
+            ),
+        ),
+    )
+
+
 AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], AuthoringInputV1]]] = {
     "claim-existing-capture": claim_existing_capture_example,
     "claim-flow-a": claim_flow_a_example,
@@ -237,4 +299,5 @@ __all__ = [
     "claim_flow_a_example",
     "claim_self_source_example",
     "procedure_example",
+    "query_claims_by_type_example",
 ]

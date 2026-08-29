@@ -27,6 +27,7 @@ PlaybillAuthoringExampleName = Literal[
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
+    "query-claims-by-type",
 ]
 PlaybillNextReason: TypeAlias = Literal[
     "claim_conflicted",
