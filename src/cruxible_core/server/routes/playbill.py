@@ -8,6 +8,10 @@ from typing import Literal
 from fastapi import APIRouter
 
 from cruxible_client import contracts
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationAppendRequestV1,
+    ClaimAttestationAppendResultV1,
+)
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -43,6 +47,7 @@ from cruxible_core.server.playbill_request_models import (
     PlaybillInsertionConfirmRequest,
     PlaybillInsertionPrepareRequest,
     PlaybillNextRequest,
+    PlaybillNextRequestV2,
     PlaybillProposalReadmitRequest,
     PlaybillProposeClaimTypeInputRequest,
     PlaybillProposeClaimTypeRequest,
@@ -559,6 +564,20 @@ async def retire_claim(
 
 
 @router.post(
+    "/{instance_id}/playbill/claim-attestations",
+    response_model=ClaimAttestationAppendResultV1,
+)
+async def append_claim_attestation(
+    instance_id: str,
+    req: ClaimAttestationAppendRequestV1,
+) -> ClaimAttestationAppendResultV1:
+    return playbill_api.playbill_append_claim_attestation(
+        resolve_server_instance_id(instance_id),
+        request=req,
+    )
+
+
+@router.post(
     "/{instance_id}/playbill/authoring/intents",
     response_model=contracts.PlaybillAuthoringIntentView,
 )
@@ -989,7 +1008,7 @@ async def procedure_run_status(
 )
 async def next_work(
     instance_id: str,
-    req: PlaybillNextRequest,
+    req: PlaybillNextRequest | PlaybillNextRequestV2,
 ) -> contracts.PlaybillNextResult:
     return playbill_api.playbill_next(
         resolve_server_instance_id(instance_id),

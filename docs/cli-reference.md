@@ -130,6 +130,7 @@ dependent the request names; it never authors retirement decisions from diagnost
 
 ~~~text
 cruxible playbill claim retire IDENTITY REQUEST_FILE
+cruxible playbill claim attest IDENTITY --support|--contradict|--unsure [--note TEXT]
 cruxible playbill claim list [--subject PATH] [--predicate P] [--include-retired]
 cruxible playbill claim get IDENTITY
 cruxible playbill claim history IDENTITY

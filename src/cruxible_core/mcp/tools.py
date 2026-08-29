@@ -12,6 +12,10 @@ from pydantic import Field
 from cruxible_client import contracts
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.authoring.seed import SeedPlanResultV1
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationAppendResultV1,
+    PreparedClaimAttestationRequestV1,
+)
 from cruxible_client.contracts.source_catalog import SourceCompilationBundle
 from cruxible_core import __version__
 from cruxible_core.mcp import handlers
@@ -332,6 +336,26 @@ def register_tools(
         return handlers.handle_playbill_retire_claim(instance_id, claim_id, request)
 
     @_tool
+    def cruxible_playbill_claim_attest(
+        instance_id: str,
+        claim_id: str,
+        stance: Literal["support", "contradict", "unsure"],
+        note: str | None = None,
+    ) -> ClaimAttestationAppendResultV1:
+        """Sign that the caller examined this exact Claim, then append the evidence."""
+
+        return handlers.handle_playbill_claim_attest(instance_id, claim_id, stance, note)
+
+    @_tool
+    def cruxible_playbill_claim_attest_new_capture(
+        instance_id: str,
+        request: PreparedClaimAttestationRequestV1,
+    ) -> ClaimAttestationAppendResultV1:
+        """Sign and append a structured new-Capture Claim observation."""
+
+        return handlers.handle_playbill_claim_attest_new_capture(instance_id, request)
+
+    @_tool
     def cruxible_playbill_authoring_create(
         instance_id: str,
         payload: AuthoringInputV1,
@@ -344,9 +368,15 @@ def register_tools(
     @_tool
     def cruxible_playbill_authoring_example(
         name: contracts.PlaybillAuthoringExampleName,
+        claim_id: str | None = None,
+        capture_digest: str | None = None,
     ) -> contracts.PlaybillAuthoringExampleResult:
         """Return one model-constructed input template with no daemon call."""
-        return handlers.handle_playbill_authoring_example(name)
+        return handlers.handle_playbill_authoring_example(
+            name,
+            claim_id=claim_id,
+            capture_digest=capture_digest,
+        )
 
     @_tool
     def cruxible_playbill_authoring_get(

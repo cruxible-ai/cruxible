@@ -21,6 +21,7 @@ EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
     ("playbill", "claim", "retire"): "active",
+    ("playbill", "claim", "attest"): "active",
     ("playbill", "authoring", "create"): "manual",
     ("playbill", "authoring", "bind"): "active",
     ("playbill", "authoring", "compile"): "active",

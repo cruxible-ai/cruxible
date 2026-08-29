@@ -40,6 +40,7 @@ MUTATING_COMMAND_TARGETS: dict[tuple[str, ...], str] = {
     ("playbill", "claim-type", "propose"): "active",
     ("playbill", "claim-type", "migrate"): "active",
     ("playbill", "claim", "retire"): "active",
+    ("playbill", "claim", "attest"): "active",
     ("playbill", "authoring", "create"): "manual",
     ("playbill", "authoring", "bind"): "active",
     ("playbill", "authoring", "compile"): "active",
@@ -445,6 +446,11 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
             "claim": _group(
                 "Read, explain, and retire first-class Claims.",
                 {
+                    "attest": _command(
+                        "playbill",
+                        "attest_claim",
+                        "Sign that this caller examined the current exact Claim.",
+                    ),
                     "retire": _command(
                         "playbill",
                         "retire_claim",

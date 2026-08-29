@@ -30,6 +30,10 @@ from cruxible_client.contracts.authoring.models import (
     WorkingSelectionObservationV1,
 )
 from cruxible_client.contracts.candidates import canonical_candidate_timestamp
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationAppendRequestV1,
+    ClaimAttestationAppendResultV1,
+)
 from cruxible_client.contracts.claim_types import ClaimType
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.discovery import (
@@ -136,6 +140,7 @@ from cruxible_core.service.playbill_audit import (
     service_playbill_audit,
     validate_playbill_audit_request,
 )
+from cruxible_core.service.playbill_claim_attestations import service_append_claim_attestation
 from cruxible_core.service.playbill_claims import (
     service_expand_playbill_semantic,
     service_explain_playbill_claim,
@@ -842,6 +847,19 @@ def playbill_retire_claim(
         actor=AuthenticatedActor(actor_id=_actor_id()),
     )
     return _CLAIM_RETIRE_RESPONSE.validate_python(result.model_dump(mode="json"))
+
+
+def playbill_append_claim_attestation(
+    instance_id: str,
+    *,
+    request: ClaimAttestationAppendRequestV1,
+) -> ClaimAttestationAppendResultV1:
+    check_permission("cruxible_playbill_claim_attest", instance_id=instance_id)
+    return service_append_claim_attestation(
+        get_playbill_manager().get(instance_id),
+        request=request,
+        actor_id=_actor_id(),
+    )
 
 
 def _authoring_coordinator(

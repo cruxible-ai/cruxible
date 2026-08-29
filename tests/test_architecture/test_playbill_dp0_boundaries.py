@@ -374,6 +374,8 @@ def test_public_registration_catalogs_are_playbill_only() -> None:
         "cruxible_playbill_list_claim_types",
         "cruxible_playbill_get_claim_type",
         "cruxible_playbill_claim_retire",
+        "cruxible_playbill_claim_attest",
+        "cruxible_playbill_claim_attest_new_capture",
         "cruxible_playbill_list_claims",
         "cruxible_playbill_get_claim",
         "cruxible_playbill_claim_history",

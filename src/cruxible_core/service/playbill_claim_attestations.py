@@ -33,7 +33,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_client.contracts.principals import principal_registry_from_tree
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.source_references import LedgerSourceReferenceV1
@@ -45,7 +45,7 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.service.playbill_evidence import _capture_contracts
 
 
-class ClaimAttestationRefusal(PlaybillError):
+class ClaimAttestationRefusal(PlaybillFormatError):
     """One typed, stable refusal from the attestation door."""
 
     def __init__(self, suffix: str, message: str) -> None:
