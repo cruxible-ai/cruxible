@@ -4,20 +4,32 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle
 from cruxible_client.contracts.authoring.models import (
     ClaimAuthoringPayloadV3,
     ClaimDependencyDraftsV1,
     ExistingCaptureCitationSourceV1,
 )
 from cruxible_client.contracts.captures import (
+    COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT,
     build_coordinator_self_source_capture,
     build_working_selection_capture,
+    capture_contract_digest,
+    capture_contract_path,
+    parse_capture_envelope,
+    render_capture_contract,
+    render_capture_envelope,
 )
+from cruxible_client.contracts.cas_contracts import BodyAccessContext
 from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendRequestV1,
     ClaimAttestationCaptureReferenceV1,
     ClaimAttestationStatementV2,
+    ClaimAttestationV2,
+    claim_attestation_v2_statement_bytes,
 )
 from cruxible_client.contracts.claims import (
     SubjectClaimObject,
@@ -26,6 +38,7 @@ from cruxible_client.contracts.claims import (
     claim_statement_digest,
     parse_claim,
 )
+from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
@@ -35,6 +48,7 @@ from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.signing import LocalEd25519ClaimAttestationSigner
 from cruxible_core.service.playbill_claim_attestations import (
     ClaimAttestationRefusal,
+    _examined_capture_semantics,
     service_append_claim_attestation,
 )
 from cruxible_core.service.playbill_next import (
@@ -116,6 +130,39 @@ def _request(
     )
 
 
+def _resign(
+    request: ClaimAttestationAppendRequestV1,
+    owner,
+    **statement_updates: object,
+) -> ClaimAttestationAppendRequestV1:  # type: ignore[no-untyped-def]
+    statement = request.attestation.statement.model_copy(update=statement_updates)
+    private_key = serialization.load_ssh_private_key(
+        owner.private_key_path.read_bytes(),
+        password=None,
+    )
+    assert isinstance(private_key, Ed25519PrivateKey)
+    attestation = ClaimAttestationV2(
+        statement=statement,
+        signature=private_key.sign(claim_attestation_v2_statement_bytes(statement)).hex(),
+    )
+    return request.model_copy(update={"attestation": attestation})
+
+
+def _assert_refusal(
+    instance,
+    request: ClaimAttestationAppendRequestV1,
+    code: str,
+) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(ClaimAttestationRefusal) as error:
+        service_append_claim_attestation(
+            instance,
+            request=request,
+            actor_id="owner",
+            recorded_at=RECORDED_AT,
+        )
+    assert error.value.error_code == f"playbill.claim_attestation.{code}"
+
+
 def test_served_append_verifies_and_duplicate_is_an_identical_read(tmp_path: Path) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     request = _request(instance, owner, claim_id, tmp_path)
@@ -151,6 +198,386 @@ def test_served_append_refuses_actor_relay_before_store_disclosure(tmp_path: Pat
         )
 
     assert error.value.error_code == "playbill.claim_attestation.actor_signer_mismatch"
+
+
+def test_service_gate_independently_refuses_nonordinary_principal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    request = _request(instance, owner, claim_id, tmp_path)
+
+    class Registry:
+        def require_active(self, principal_id: str):  # type: ignore[no-untyped-def]
+            assert principal_id == "owner"
+            return owner.principal.model_copy(update={"kind": "recovery"})
+
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_claim_attestations.principal_registry_from_tree",
+        lambda *_args, **_kwargs: Registry(),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_claim_attestations.verify_claim_attestation_v2_principal",
+        lambda *_args, **_kwargs: None,
+    )
+
+    _assert_refusal(instance, request, "principal_not_ordinary")
+
+
+@pytest.mark.parametrize(
+    ("updates", "code"),
+    [
+        ({"instance_id": "inst_other"}, "statement_binding_mismatch"),
+        ({"claim_artifact_digest": "sha256:" + "9" * 64}, "claim_artifact_digest_mismatch"),
+        ({"subject_shell_digest": "sha256:" + "8" * 64}, "statement_binding_mismatch"),
+    ],
+)
+def test_signed_claim_bindings_refuse_cross_instance_artifact_and_shell_tampering(
+    tmp_path: Path,
+    updates: dict[str, object],
+    code: str,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    request = _resign(_request(instance, owner, claim_id, tmp_path), owner, **updates)
+    _assert_refusal(instance, request, code)
+
+
+def test_unaccepted_referent_and_missing_claim_refuse_exact_codes(tmp_path: Path) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    request = _request(instance, owner, claim_id, tmp_path)
+    bad_coordinate = request.attestation.statement.referent_coordinate.model_copy(
+        update={"git_oid": "9" * 40}
+    )
+    _assert_refusal(
+        instance,
+        _resign(request, owner, referent_coordinate=bad_coordinate),
+        "referent_coordinate_unaccepted",
+    )
+    _assert_refusal(
+        instance,
+        _resign(
+            request,
+            owner,
+            claim_identity=request.attestation.statement.claim_identity.model_copy(
+                update={"name": "CLM-ffffffffffffffffffffffffffffffff"}
+            ),
+        ),
+        "claim_not_found_at_referent",
+    )
+
+
+@pytest.mark.parametrize("checked_phase", ["referent", "append"])
+def test_signing_key_digest_is_checked_at_each_coordinate_independently(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    checked_phase: str,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    request = _resign(
+        _request(instance, owner, claim_id, tmp_path),
+        owner,
+        signing_key_digest="sha256:" + "7" * 64,
+    )
+    from cruxible_core.service import playbill_claim_attestations as service_module
+
+    original = service_module._principal_at
+
+    def phase_selective(tree, *, coordinate, statement, phase):  # type: ignore[no-untyped-def]
+        if phase != checked_phase:
+            return owner.principal
+        return original(
+            tree,
+            coordinate=coordinate,
+            statement=statement,
+            phase=phase,
+        )
+
+    monkeypatch.setattr(service_module, "_principal_at", phase_selective)
+    if checked_phase == "append":
+        monkeypatch.setattr(
+            service_module,
+            "verify_claim_attestation_v2_principal",
+            lambda *_args, **_kwargs: None,
+        )
+    _assert_refusal(instance, request, f"signing_key_invalid_at_{checked_phase}")
+
+
+def test_principal_inactive_codes_are_distinct_by_coordinate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    request = _request(instance, owner, claim_id, tmp_path)
+    from cruxible_core.service import playbill_claim_attestations as service_module
+
+    class InactiveRegistry:
+        def require_active(self, _principal_id: str):  # type: ignore[no-untyped-def]
+            raise PlaybillFormatError("inactive")
+
+    monkeypatch.setattr(
+        service_module,
+        "principal_registry_from_tree",
+        lambda *_args, **_kwargs: InactiveRegistry(),
+    )
+    _assert_refusal(instance, request, "principal_inactive_at_referent")
+
+    original = service_module._principal_at
+
+    def referent_allowed(tree, *, coordinate, statement, phase):  # type: ignore[no-untyped-def]
+        if phase == "referent":
+            return owner.principal
+        return original(tree, coordinate=coordinate, statement=statement, phase=phase)
+
+    monkeypatch.setattr(service_module, "_principal_at", referent_allowed)
+    _assert_refusal(instance, request, "principal_inactive_at_append")
+
+
+def test_examined_existing_semantics_refuse_nonbacking_and_copy_only(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    claim = parse_claim(tree[claim_path(claim_id)], path=claim_path(claim_id))
+    with pytest.raises(ClaimAttestationRefusal) as absent:
+        _examined_capture_semantics(claim, "sha256:" + "6" * 64)
+    assert absent.value.error_code.endswith("examined_capture_not_backing")
+
+    citation = claim.backing.citations[0].model_copy(update={"role": "copy"})
+    copy_only = claim.model_copy(
+        update={"backing": claim.backing.model_copy(update={"citations": (citation,)})}
+    )
+    with pytest.raises(ClaimAttestationRefusal) as copy:
+        _examined_capture_semantics(copy_only, citation.capture_digest)
+    assert copy.value.error_code.endswith("examined_capture_not_evidence")
+
+
+def _coordinator_new_capture(instance, claim_id: str):  # type: ignore[no-untyped-def]
+    return build_coordinator_self_source_capture(
+        store=instance.body_store(),
+        actor_id="owner",
+        claim_id=claim_id,
+        body=b"new exact Claim-bound observation\n",
+        observed_at=RECORDED_AT,
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+    )
+
+
+def _store_envelope(instance, envelope):  # type: ignore[no-untyped-def]
+    return instance.body_store().store(render_capture_envelope(envelope)).digest
+
+
+def test_new_capture_account_commits_only_server_evaluated_admissions(tmp_path: Path) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    capture = _coordinator_new_capture(instance, claim_id)
+    service_append_claim_attestation(
+        instance,
+        request=_request(
+            instance,
+            owner,
+            claim_id,
+            tmp_path,
+            basis="new_capture",
+            captures=(capture.capture_digest,),
+        ),
+        actor_id="owner",
+        recorded_at=RECORDED_AT,
+    )
+    account = instance.claim_attestation_evidence_store().events()[0][1].verification_account
+    assert account.admitted_capture_digests == ()
+    assert account.statement.cited_capture_digests == (capture.capture_digest,)
+
+
+def test_new_capture_refuses_unavailable_invalid_and_unresolved_contract(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    missing = "sha256:" + "6" * 64
+    _assert_refusal(
+        instance,
+        _request(
+            instance,
+            owner,
+            claim_id,
+            tmp_path,
+            basis="new_capture",
+            captures=(missing,),
+        ),
+        "capture_unavailable",
+    )
+    malformed = instance.body_store().store(b"not a Capture envelope").digest
+    _assert_refusal(
+        instance,
+        _request(
+            instance,
+            owner,
+            claim_id,
+            tmp_path,
+            basis="new_capture",
+            captures=(malformed,),
+        ),
+        "capture_invalid",
+    )
+
+    direct = _coordinator_new_capture(instance, claim_id)
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            direct.capture_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    unresolved = _store_envelope(
+        instance,
+        envelope.model_copy(update={"capture_contract_digest": "sha256:" + "5" * 64}),
+    )
+    _assert_refusal(
+        instance,
+        _request(
+            instance,
+            owner,
+            claim_id,
+            tmp_path,
+            basis="new_capture",
+            captures=(unresolved,),
+        ),
+        "capture_contract_unresolved",
+    )
+
+
+def test_new_capture_refuses_provider_executable_binding_and_admission_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    direct = _coordinator_new_capture(instance, claim_id)
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            direct.capture_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    variants = (
+        (
+            envelope.model_copy(
+                update={"producer": ArtifactIdentity(kind="Provider", name="missing-provider")}
+            ),
+            "capture_provider_unresolved",
+        ),
+        (
+            envelope.model_copy(
+                update={
+                    "run_coordinate": envelope.run_coordinate.model_copy(
+                        update={
+                            "executable_identity": ArtifactIdentity(
+                                kind="Provider", name="missing-executable"
+                            )
+                        }
+                    )
+                }
+            ),
+            "capture_executable_unresolved",
+        ),
+        (
+            envelope.model_copy(
+                update={
+                    "commitment": envelope.commitment.model_copy(
+                        update={"byte_length": envelope.commitment.byte_length + 1}
+                    )
+                }
+            ),
+            "capture_binding_invalid",
+        ),
+    )
+    for variant, code in variants:
+        digest = _store_envelope(instance, variant)
+        _assert_refusal(
+            instance,
+            _request(
+                instance,
+                owner,
+                claim_id,
+                tmp_path,
+                basis="new_capture",
+                captures=(digest,),
+            ),
+            code,
+        )
+
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_claim_attestations.evaluate_capture_evidence_admissions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("unreproducible policy")),
+    )
+    _assert_refusal(
+        instance,
+        _request(
+            instance,
+            owner,
+            claim_id,
+            tmp_path,
+            basis="new_capture",
+            captures=(direct.capture_digest,),
+        ),
+        "capture_admission_refused",
+    )
+
+
+def test_new_capture_refuses_contract_not_live_at_referent(tmp_path: Path) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    direct = _coordinator_new_capture(instance, claim_id)
+    envelope = parse_capture_envelope(
+        instance.body_store().read(
+            direct.capture_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    old_digest = capture_contract_digest(COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT).tagged
+    retired = COORDINATOR_SELF_SOURCE_CAPTURE_CONTRACT.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=old_digest,
+            )
+        }
+    )
+    retired_digest = capture_contract_digest(retired).tagged
+    retired_envelope = envelope.model_copy(
+        update={
+            "capture_contract_digest": retired_digest,
+            "run_coordinate": envelope.run_coordinate.model_copy(
+                update={"executable_digest": retired_digest}
+            ),
+        }
+    )
+    retired_capture = _store_envelope(instance, retired_envelope)
+    request = _request(
+        instance,
+        owner,
+        claim_id,
+        tmp_path,
+        basis="new_capture",
+        captures=(retired_capture,),
+    )
+    signed_coordinate = request.attestation.statement.referent_coordinate
+    referent = instance.resolve_accepted_coordinate(
+        git_oid=signed_coordinate.git_oid,
+        semantic_root=signed_coordinate.semantic_root,
+        generation_root=signed_coordinate.generation_root,
+        compiler_digest=signed_coordinate.compiler_digest,
+    )
+    referent_tree = instance.tree_at(referent.git_oid)
+    referent_tree[capture_contract_path(retired.identity.name)] = render_capture_contract(retired)
+    claim = parse_claim(referent_tree[claim_path(claim_id)], path=claim_path(claim_id))
+    from cruxible_core.service.playbill_claim_attestations import _new_capture_accounts
+
+    with pytest.raises(ClaimAttestationRefusal) as error:
+        _new_capture_accounts(
+            instance,
+            statement=request.attestation.statement,
+            claim=claim,
+            referent=referent,
+            referent_tree=referent_tree,
+            append_tree=referent_tree,
+        )
+    assert error.value.error_code.endswith("capture_contract_not_live_at_referent")
 
 
 def test_next_v2_reads_one_exact_evidence_head_while_v1_stays_legacy(

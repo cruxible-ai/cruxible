@@ -9,6 +9,7 @@ from typing import NoReturn
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.captures import (
     CaptureContractV1,
+    capture_contract_is_self_asserted,
     parse_capture_envelope,
     verify_capture,
 )
@@ -23,6 +24,7 @@ from cruxible_client.contracts.claim_attestations import (
     claim_attestation_v2_statement_digest,
     verify_claim_attestation_v2_principal,
 )
+from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
     ClaimArtifactV3,
@@ -31,6 +33,7 @@ from cruxible_client.contracts.claims import (
     claim_artifact_digest,
     claim_path,
     claim_statement_digest,
+    evaluate_capture_evidence_admissions,
     parse_claim,
 )
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
@@ -41,7 +44,8 @@ from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.instance import PlaybillInstance
-from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.service.playbill_claims import _claim_law_evidence
 from cruxible_core.service.playbill_evidence import _capture_contracts
 
 
@@ -183,11 +187,36 @@ def _new_capture_accounts(
     instance: PlaybillInstance,
     *,
     statement: ClaimAttestationStatementV2,
+    claim: ClaimArtifactAny,
+    referent: AcceptedProjectionCoordinate,
     referent_tree: dict[str, bytes],
     append_tree: dict[str, bytes],
 ) -> tuple[tuple[str, ...], tuple[ClaimAttestationResolvedArtifactV1, ...]]:
     contracts = _capture_contracts(referent_tree)
     providers = _provider_digests(referent_tree)
+    admitted: list[str] = []
+    claim_type_content = referent_tree.get(claim_type_path(claim.statement.predicate))
+    if claim_type_content is None:
+        _refuse("capture_admission_refused", "ClaimType is absent at the signed referent")
+    try:
+        claim_type = parse_claim_type(
+            claim_type_content,
+            path=claim_type_path(claim.statement.predicate),
+        )
+        law = _claim_law_evidence(
+            instance,
+            path=claim_path(claim.identity.name),
+            at=referent,
+        )
+    except (PlaybillError, ValueError) as exc:
+        raise ClaimAttestationRefusal(
+            "capture_admission_refused",
+            "Claim evidence admission inputs do not reproduce at the signed referent",
+        ) from exc
+    principals = principal_registry_from_tree(
+        referent_tree,
+        semantic_root=referent.semantic_root,
+    )
     resolved: dict[tuple[str, str], ClaimAttestationResolvedArtifactV1] = {}
     for digest in statement.cited_capture_digests:
         try:
@@ -215,6 +244,50 @@ def _new_capture_accounts(
                 "capture_contract_not_live_at_referent",
                 "CaptureContract is not live at referent",
             )
+        executable = envelope.run_coordinate.executable_identity
+        if executable == contract.identity:
+            if envelope.run_coordinate.executable_digest != accepted.artifact_digest:
+                _refuse(
+                    "capture_executable_unresolved",
+                    "Capture executable does not resolve to its exact CaptureContract",
+                )
+        elif executable.kind == "Provider":
+            executable_digest = providers.get(executable.qualified)
+            if executable_digest != envelope.run_coordinate.executable_digest:
+                _refuse(
+                    "capture_executable_unresolved",
+                    "Capture executable Provider is not accepted at its exact digest",
+                )
+        else:
+            _refuse(
+                "capture_executable_unresolved",
+                "Capture executable is not an accepted CaptureContract or Provider",
+            )
+
+        provenance_grade = (
+            "self-asserted" if capture_contract_is_self_asserted(contract) else "daemon-fetched"
+        )
+        if envelope.producer.kind == "Provider":
+            if envelope.producer.qualified not in providers:
+                _refuse("capture_provider_unresolved", "Capture Provider is not accepted")
+        elif envelope.producer.kind == "Principal":
+            try:
+                principals.require_active(envelope.producer.name)
+            except PlaybillError as exc:
+                raise ClaimAttestationRefusal(
+                    "capture_provider_unresolved",
+                    "Capture producer Principal is not active at the signed referent",
+                ) from exc
+            if provenance_grade != "self-asserted":
+                _refuse(
+                    "capture_provider_unresolved",
+                    "daemon-fetched Capture provenance requires an accepted Provider",
+                )
+        else:
+            _refuse(
+                "capture_provider_unresolved",
+                "Capture producer is neither an accepted Provider nor active Principal",
+            )
         try:
             verify_capture(
                 digest,
@@ -233,6 +306,27 @@ def _new_capture_accounts(
                 "capture_binding_invalid",
                 "Capture does not reproduce against its accepted contract and producer",
             ) from exc
+        try:
+            decisions = evaluate_capture_evidence_admissions(
+                claim,
+                claim_type=claim_type,
+                capture_digest=digest,
+                capture_contract=accepted,
+                envelope=envelope,
+                verified_attestations=law.verified_attestations,
+            )
+        except (PlaybillError, ValueError) as exc:
+            raise ClaimAttestationRefusal(
+                "capture_admission_refused",
+                "Capture evidence admission could not be evaluated",
+            ) from exc
+        if not decisions:
+            _refuse(
+                "capture_admission_refused",
+                "CaptureContract declares no evaluable evidence kind",
+            )
+        if any(item.trace.result.verdict == "eligible" for item in decisions):
+            admitted.append(digest)
         contract_resolved = ClaimAttestationResolvedArtifactV1(
             identity=contract.identity,
             artifact_digest=accepted.artifact_digest,
@@ -251,7 +345,7 @@ def _new_capture_accounts(
                 live_at_append=_live_at_append(identity, append_tree=append_tree),
             )
     return (
-        statement.cited_capture_digests,
+        tuple(admitted),
         tuple(
             resolved[key]
             for key in sorted(
@@ -342,6 +436,8 @@ def service_append_claim_attestation(
         admitted, resolved = _new_capture_accounts(
             instance,
             statement=statement,
+            claim=claim,
+            referent=referent,
             referent_tree=referent_tree,
             append_tree=append_tree,
         )
