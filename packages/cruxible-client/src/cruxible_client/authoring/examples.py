@@ -37,6 +37,7 @@ AuthoringExampleName = Literal[
     "claim-adjudicate-contradicting-evidence",
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
+    "query-claims-by-type",
 ]
 
 
@@ -221,11 +222,14 @@ def query_claims_by_type_example() -> QueryDefinitionV1:
     )
 
 
-AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], AuthoringInputV1]]] = {
+AuthoringExample = AuthoringInputV1 | QueryDefinitionV1
+
+AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], AuthoringExample]]] = {
     "claim-existing-capture": claim_existing_capture_example,
     "claim-flow-a": claim_flow_a_example,
     "claim-self-source": claim_self_source_example,
     "procedure": procedure_example,
+    "query-claims-by-type": query_claims_by_type_example,
 }
 
 _DOOR_EXAMPLES = {
@@ -279,7 +283,7 @@ def authoring_example(
     *,
     claim_id: str | None = None,
     capture_digest: str | None = None,
-) -> AuthoringInputV1:
+) -> AuthoringExample:
     door = name in _DOOR_EXAMPLES
     if door:
         if claim_id is None or capture_digest is None:

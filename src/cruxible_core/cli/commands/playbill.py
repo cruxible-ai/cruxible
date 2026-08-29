@@ -436,9 +436,7 @@ def init_playbill(
 
     workspace = Path.cwd().resolve()
     if require_independent_approval and reviewer_key_dir is None:
-        raise click.UsageError(
-            "--require-independent-approval requires --reviewer-key-dir"
-        )
+        raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
     owner = generate_client_principal_key(
         Path(key_dir).expanduser(),
         principal_id=principal_id,

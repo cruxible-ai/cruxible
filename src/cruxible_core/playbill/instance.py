@@ -208,9 +208,11 @@ class PlaybillInstance:
             raise PlaybillBootstrapError(f"managed Playbill root already exists: {managed_root}")
 
         clients, recovery_posture = _validate_client_principals(client_principals)
-        if require_independent_approval and sum(
-            record.kind == "ordinary" and record.status == "active" for record in clients
-        ) < 2:
+        if (
+            require_independent_approval
+            and sum(record.kind == "ordinary" and record.status == "active" for record in clients)
+            < 2
+        ):
             raise PlaybillBootstrapError(
                 "independent approval requires at least two active ordinary principals"
             )

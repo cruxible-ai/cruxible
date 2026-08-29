@@ -120,8 +120,7 @@ def genesis_tree(
     return {
         APPROVAL_POLICY_PATH: render_approval_policy(approval_policy),
         **{
-            f"principals/{record.principal_id}.yaml": render_principal(record)
-            for record in ordered
+            f"principals/{record.principal_id}.yaml": render_principal(record) for record in ordered
         },
     }
 

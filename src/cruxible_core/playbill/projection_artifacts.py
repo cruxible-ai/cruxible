@@ -1008,21 +1008,21 @@ def parse_projection_tree(
                     parse_acquisition_policy,
                 )
 
-                policy = parse_acquisition_policy(content, path=path)
-                identity = policy.identity.qualified
+                acquisition_policy = parse_acquisition_policy(content, path=path)
+                identity = acquisition_policy.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
                 identities[identity] = path
                 input_digest = file_digest(content).tagged
-                artifact_digest = acquisition_policy_digest(policy).tagged
+                artifact_digest = acquisition_policy_digest(acquisition_policy).tagged
                 envelopes.append(
                     ArtifactEnvelopeRow(
                         identity=identity,
                         kind="source-acquisition-policy",
-                        format_tag=policy.artifact_format,
+                        format_tag=acquisition_policy.artifact_format,
                         path=path,
                         artifact_digest=artifact_digest,
-                        predecessor_digest=policy.lifecycle.predecessor_digest,
+                        predecessor_digest=acquisition_policy.lifecycle.predecessor_digest,
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
@@ -1037,7 +1037,7 @@ def parse_projection_tree(
                         target_identity=pin.target.qualified,
                         target_digest=pin.artifact_digest,
                     )
-                    for pin in policy.pins
+                    for pin in acquisition_policy.pins
                 )
                 semantic_facts.append(
                     ProjectionFact(
@@ -1045,7 +1045,7 @@ def parse_projection_tree(
                         schema_version=1,
                         subject_identity=identity,
                         fact_key="complete_policy",
-                        value=policy.model_dump(mode="json"),
+                        value=acquisition_policy.model_dump(mode="json"),
                     )
                 )
                 continue

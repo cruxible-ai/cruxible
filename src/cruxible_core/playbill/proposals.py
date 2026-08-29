@@ -2040,6 +2040,8 @@ def _approval_policy_member(context: _MemberContext) -> _MemberVerdict:
             "verdict": "accepted",
         },
     )
+
+
 def _principal_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one control-plane principal transition as an ordinary scoped member.
 
