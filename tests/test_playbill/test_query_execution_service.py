@@ -8,9 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from cruxible_client.contracts.errors import ClaimNotFoundError, ProposalIntegrityError
+from cruxible_client.contracts.errors import ClaimNotFoundError
 from cruxible_client.contracts.query.definitions import query_definition_path
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
+from cruxible_core.errors import DataValidationError
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust.backends import LocalJournalBackend
@@ -244,7 +245,7 @@ def test_absent_query_definition_is_refused_before_any_evaluation(tmp_path: Path
 def test_naive_evaluation_time_is_refused_rather_than_localized(tmp_path: Path) -> None:
     instance, _owner = _instance_with_query(tmp_path)
 
-    with pytest.raises(ProposalIntegrityError, match="timezone-aware"):
+    with pytest.raises(DataValidationError, match="timezone-aware"):
         service_run_playbill_query(
             instance,
             name=QUERY_NAME,

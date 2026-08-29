@@ -55,7 +55,9 @@ def test_sdk_attest_signs_with_a_real_local_key_and_appends_once(tmp_path: Path)
     assert len(instance.claim_attestation_evidence_store().events()) == 1
 
 
-@pytest.mark.parametrize("failure", ["relative", "permissions", "mismatch", "workspace"])
+@pytest.mark.parametrize(
+    "failure", ["relative", "permissions", "mismatch", "workspace", "daemon_state"]
+)
 def test_environment_key_custody_refuses_unsafe_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -77,6 +79,12 @@ def test_environment_key_custody_refuses_unsafe_paths(
         configured = str(key_path)
     elif failure == "workspace":
         key_path = workspace / "owner.ed25519"
+        key_path.write_bytes(owner.private_key_path.read_bytes())
+        os.chmod(key_path, 0o600)
+        configured = str(key_path)
+    elif failure == "daemon_state":
+        key_path = tmp_path / "server-state" / "owner.ed25519"
+        key_path.parent.mkdir()
         key_path.write_bytes(owner.private_key_path.read_bytes())
         os.chmod(key_path, 0o600)
         configured = str(key_path)

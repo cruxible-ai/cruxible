@@ -34,6 +34,7 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import PlaybillKeyError
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.errors import InstanceScopeError
 
 PRINCIPAL_KEY_PATH_ENV = "CRUXIBLE_PRINCIPAL_KEY_PATH"
 
@@ -187,10 +188,15 @@ def local_attestation_signer_from_environment(
         )
         if principal is None or principal.status != "active" or principal.kind != "ordinary":
             raise PlaybillKeyError("authenticated actor is not an active ordinary principal")
-        # Instance-scoped credentials cannot call the unscoped server-info
-        # endpoint. Local custody needs only the caller-controlled workspace
-        # boundary; daemon state is never discovered through the wire here.
-        roots = () if workspace_root is None else (workspace_root,)
+        # Preserve the daemon-state custody boundary whenever the unscoped
+        # endpoint is available. Instance-scoped credentials deliberately
+        # cannot call it, but that transport limitation must not make the
+        # attestation command unusable for an otherwise authorized actor.
+        try:
+            daemon_state_root = Path(client.server_info().state_dir)
+        except InstanceScopeError:
+            daemon_state_root = None
+        roots = tuple(root for root in (workspace_root, daemon_state_root) if root is not None)
         return LocalEd25519ClaimAttestationSigner.open(
             signer=whoami.actor_id,
             signing_key_id=principal.public_key_digest,

@@ -15,6 +15,8 @@ from cruxible_client.contracts.errors import (
     PrincipalIntegrityError,
     ProjectionCoordinateError,
     ProposalAdmissionError,
+    ProposalEvaluationIntegrityError,
+    ProposalIntegrityError,
     SettlementIntegrityError,
 )
 from cruxible_client.errors import ErrorResponse, response_to_error
@@ -108,6 +110,8 @@ def _status_for_error(exc: CoreError) -> int:
         }:
             return 400
         return 500
+    if isinstance(exc, ProposalEvaluationIntegrityError):
+        return 500
     if isinstance(
         exc,
         (
@@ -183,6 +187,7 @@ def _status_for_error(exc: CoreError) -> int:
             PrincipalIntegrityError,
             ProjectionCoordinateError,
             SettlementIntegrityError,
+            ProposalIntegrityError,
             ReviewOperationalConcurrentChangeError,
         ),
     ):
