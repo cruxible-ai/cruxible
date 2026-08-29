@@ -16,10 +16,10 @@ from cruxible_client.contracts.claim_attestations import (
     claim_attestation_v2_envelope_digest,
     claim_attestation_v2_statement_bytes,
     claim_attestation_v2_statement_digest,
-    verify_claim_attestation_v2_principal,
     read_claim_attestation,
     store_claim_attestation,
     verify_claim_attestation,
+    verify_claim_attestation_v2_principal,
     verify_claim_attestation_v2_signature,
 )
 from cruxible_client.contracts.claims import (
