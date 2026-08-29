@@ -47,6 +47,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV2,
     PlaybillNextSourceObservationV4,
     PlaybillNextWorkspaceObservationV1,
+    _complete_retirement_activation_sequence,
     post_retirement_examined_support_suppresses_claim_cites_retired,
     service_playbill_next,
 )
@@ -130,6 +131,28 @@ def test_examined_support_seam_fails_closed_without_complete_fold_inputs() -> No
     assert not post_retirement_examined_support_suppresses_claim_cites_retired("sha256:" + "1" * 64)
 
 
+def test_truncated_retirement_witnesses_cannot_suppress_a_later_retirement() -> None:
+    witnesses = tuple(f"Claim:CLM-{index:032x}" for index in range(8))
+    sequences = {witness: index + 1 for index, witness in enumerate(witnesses)}
+
+    assert (
+        _complete_retirement_activation_sequence(
+            witnesses,
+            retired_claim_count=9,
+            retirement_sequences=sequences,
+        )
+        is None
+    )
+    assert (
+        _complete_retirement_activation_sequence(
+            witnesses,
+            retired_claim_count=8,
+            retirement_sequences=sequences,
+        )
+        == 8
+    )
+
+
 def test_post_retirement_examined_support_suppresses_and_rearms_through_real_surfaces(
     tmp_path: Path,
 ) -> None:
@@ -179,6 +202,18 @@ def test_post_retirement_examined_support_suppresses_and_rearms_through_real_sur
 
     append(stance="support", basis="examined_existing", offset=1)
     assert rows() == ()
+    ((event, payload),) = instance.claim_attestation_evidence_store().fold_events()
+    not_current = payload.model_copy(update={"current_at_append": False})
+    assert not post_retirement_examined_support_suppresses_claim_cites_retired(
+        payload.attestation.statement.claim_artifact_digest,
+        claim_identity=payload.attestation.statement.claim_identity.qualified,
+        retired_activation_sequence=instance.accepted_history()[-1].sequence,
+        door_events=((event, not_current),),
+        accepted_sequence_by_semantic_root={
+            generation.semantic_root.tagged: generation.sequence
+            for generation in instance.accepted_history()
+        },
+    )
     append(stance="unsure", basis="examined_existing", offset=2)
     assert len(rows()) == 1
     append(stance="support", basis="examined_existing", offset=3)

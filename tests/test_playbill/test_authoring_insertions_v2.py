@@ -45,6 +45,7 @@ from cruxible_core.playbill.authoring.insertions import (
     PublicationAnchorStale,
     PublicationBodyNotMarkerCompatible,
     PublicationClaimNotAccepted,
+    PublicationConfirmationMismatch,
     PublicationPreparationStale,
     PublicationRevisionLimitExceeded,
     PublicationSourceHasUnrepinnedBlock,
@@ -65,6 +66,7 @@ from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV3,
     PlaybillNextWorkspaceObservationV1,
+    _registered_publication_blocks,
     service_playbill_next,
 )
 from tests.test_playbill._support import client_material, initialize_local
@@ -328,6 +330,73 @@ def test_prepare_confirmation_binds_the_block_frame_not_unrelated_file_bytes() -
         confirmation,
         intent_id="AIT-" + "c" * 32,
     )
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        "preparation_digest",
+        "source_id",
+        "occurrence_count",
+        "stamp",
+        "body_digest",
+    ],
+)
+def test_coordinator_refuses_each_exact_block_frame_binding_mismatch(
+    tmp_path: Path,
+    mismatch: str,
+) -> None:
+    _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    final = _final_source(intent_id, prepared, preimage)
+    exact = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(final),
+    )
+    assert exact is not None
+    if mismatch == "preparation_digest":
+        changed = exact.model_copy(update={"preparation_digest": "sha256:" + "1" * 64})
+    elif mismatch == "source_id":
+        changed = exact.model_copy(update={"source_id": "repo.other"})
+    elif mismatch == "occurrence_count":
+        changed = exact.model_copy(update={"observed_occurrence_count": 2})
+    elif mismatch == "stamp":
+        changed = exact.model_copy(
+            update={
+                "marker_summary": exact.marker_summary.model_copy(
+                    update={
+                        "stamp": exact.marker_summary.stamp.model_copy(
+                            update={
+                                "body_digest": "sha256:" + "2" * 64,
+                            }
+                        )
+                    }
+                )
+            }
+        )
+    else:
+        changed = exact.model_copy(
+            update={
+                "marker_summary": exact.marker_summary.model_copy(
+                    update={"observed_body_digest": "sha256:" + "3" * 64}
+                )
+            }
+        )
+
+    assert not publication_confirmation_matches(
+        prepared.expectation,
+        changed,
+        intent_id=intent_id,
+    )
+    with pytest.raises(PublicationConfirmationMismatch, match="exact preparation"):
+        coordinator.confirm_insertion(intent_id, actor=actor, observation=changed)
 
 
 def test_prepare_refuses_stale_ambiguous_and_marker_incompatible_bodies() -> None:
@@ -719,6 +788,39 @@ def test_prepared_publication_can_be_abandoned_without_observing_the_source(
         if item.reason == "unregistered_projection_block"
     ]
 
+    # The sibling block-repin repair legitimately changes the stamp/body
+    # commitments. Registration follows the durable expectation identity, not
+    # the old marker bytes, so that repair cannot manufacture a false orphan.
+    source_observation = request.workspace_observation.source_observations[0]
+    repinned_markers = tuple(
+        marker.model_copy(
+            update={
+                "stamp": marker.stamp.model_copy(
+                    update={"declared_generation": marker.stamp.declared_generation + 1}
+                )
+            }
+        )
+        for marker in source_observation.marker_summaries
+    )
+    repinned_request = request.model_copy(
+        update={
+            "workspace_observation": request.workspace_observation.model_copy(
+                update={
+                    "source_observations": (
+                        source_observation.model_copy(
+                            update={"marker_summaries": repinned_markers}
+                        ),
+                    )
+                }
+            )
+        }
+    )
+    assert not [
+        item
+        for item in service_playbill_next(_instance, request=repinned_request).items
+        if item.reason == "unregistered_projection_block"
+    ]
+
     abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
     assert abandoned.expectation.state == "abandoned"
     assert abandoned.expectation.terminal_tombstone is not None
@@ -726,17 +828,51 @@ def test_prepared_publication_can_be_abandoned_without_observing_the_source(
 
     orphaned = tuple(
         item
-        for item in service_playbill_next(_instance, request=request).items
+        for item in service_playbill_next(_instance, request=repinned_request).items
         if item.reason == "unregistered_projection_block"
     )
     assert len(orphaned) == 1
+    assert orphaned[0].severity == "warning"
+    assert orphaned[0].repair.operation == "playbill.document.propose"
     assert orphaned[0].repair.required_change == "remove_or_register_projection_block"
+    assert orphaned[0].repair.arguments == {
+        "source_id": "repo.work-items",
+        "block_id": prepared.preparation.block_id,
+    }
+
+    voluntary_marker = repinned_markers[0].model_copy(
+        update={"stamp": repinned_markers[0].stamp.model_copy(update={"block_id": "notes"})}
+    )
+    voluntary_request = repinned_request.model_copy(
+        update={
+            "workspace_observation": repinned_request.workspace_observation.model_copy(
+                update={
+                    "source_observations": (
+                        source_observation.model_copy(
+                            update={"marker_summaries": (voluntary_marker,)}
+                        ),
+                    )
+                }
+            )
+        }
+    )
+    assert not [
+        item
+        for item in service_playbill_next(_instance, request=voluntary_request).items
+        if item.reason == "unregistered_projection_block"
+    ]
 
 
 def test_prepare_response_loss_and_terminal_conflicts_are_deterministic(tmp_path: Path) -> None:
-    _instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
+    instance, _owner, coordinator, actor, intent_id, preimage, clock = _submitted_publication(
         tmp_path
     )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
     clock[0] = datetime(2026, 8, 29, 12, tzinfo=UTC)
 
     first = coordinator.prepare_publication(
@@ -752,6 +888,10 @@ def test_prepare_response_loss_and_terminal_conflicts_are_deterministic(tmp_path
 
     assert first.outcome == retry.outcome == "expired"
     assert first.expectation == retry.expectation
+    assert (
+        prepared.preparation.source_id,
+        prepared.preparation.block_id,
+    ) not in (_registered_publication_blocks(instance) or ())
     with pytest.raises(PublicationTerminalStateRefused):
         coordinator.prepare_publication(
             intent_id,
@@ -854,6 +994,11 @@ def test_prepared_to_currency_changed_prepare_response_loss_replays_terminal_res
 
     assert terminal.outcome == retry.outcome == "claim_currency_changed"
     assert retry.model_dump_json() == terminal.model_dump_json()
+    assert prepared.preparation is not None
+    assert (
+        prepared.preparation.source_id,
+        prepared.preparation.block_id,
+    ) not in (_registered_publication_blocks(instance) or ())
 
 
 def test_prepared_to_expired_confirm_response_loss_replays_terminal_result(

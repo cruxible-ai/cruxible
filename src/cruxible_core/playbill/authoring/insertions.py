@@ -382,14 +382,17 @@ def publication_confirmation_from_source(
     except ProjectionMarkerError:
         return None
     matches = tuple(block for block in blocks if block.block_id == preparation.block_id)
-    if len(matches) != 1:
+    # parse_projection_blocks already refuses repeated block identities, so a
+    # successful parse has cardinality zero or one for this exact block ID.
+    if not matches:
         return None
+    (match,) = matches
     return InsertionConfirmationObservationV2(
         intent_id=intent_id,
         expectation_id=expectation.expectation_id,
         preparation_digest=preparation.preparation_digest,
         source_id=observation.source_id,
-        marker_summary=matches[0].summary(),
+        marker_summary=match.summary(),
         observed_occurrence_count=1,
     )
 
