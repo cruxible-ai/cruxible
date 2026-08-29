@@ -156,6 +156,9 @@ EXPECTED_OPERATIONS = {
     "self_published_source_stale": "playbill.authoring.create",
     "claim_dependency_stale": "playbill.authoring.create",
     "claim_attestation_threshold_met": "playbill.authoring.create",
+    "claim_contradicting_evidence_available": "playbill.authoring.create",
+    "claim_new_evidence_supporting": "playbill.authoring.create",
+    "claim_new_evidence_unreviewed": "playbill.authoring.create",
     "document_modified": "playbill.document.propose",
     "claim_cites_retired": "playbill.claim.retire",
     "retired_claim_source_stale": "playbill.document.propose",
@@ -1123,6 +1126,24 @@ def _claim_attestation_threshold(
     _assert_gone(instance, "claim_attestation_threshold_met", _request(instance))
 
 
+def _claim_attestation_door(
+    root: Path,
+    _monkeypatch: pytest.MonkeyPatch,
+    *,
+    stance: str,
+    reason: str,
+) -> None:
+    from tests.test_playbill.test_claim_attestation_service import (
+        _assert_successor_resolves_attestation_membership,
+    )
+
+    _assert_successor_resolves_attestation_membership(
+        root,
+        stance=stance,
+        reason=reason,
+    )
+
+
 def _claim_cites_retired(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
     citation_retirement.test_shared_capture_emits_one_claim_cites_retired_row_and_retirement_clears_it(
         root
@@ -1152,6 +1173,26 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("self_published_source_stale", None): _self_published_source_stale,
     ("claim_dependency_stale", None): _claim_dependency_stale,
     ("claim_attestation_threshold_met", None): _claim_attestation_threshold,
+    ("claim_contradicting_evidence_available", None): lambda root, monkeypatch: (
+        _claim_attestation_door(
+            root,
+            monkeypatch,
+            stance="contradict",
+            reason="claim_contradicting_evidence_available",
+        )
+    ),
+    ("claim_new_evidence_supporting", None): lambda root, monkeypatch: _claim_attestation_door(
+        root,
+        monkeypatch,
+        stance="support",
+        reason="claim_new_evidence_supporting",
+    ),
+    ("claim_new_evidence_unreviewed", None): lambda root, monkeypatch: _claim_attestation_door(
+        root,
+        monkeypatch,
+        stance="unsure",
+        reason="claim_new_evidence_unreviewed",
+    ),
     ("document_modified", None): _document_modified,
     ("claim_cites_retired", None): _claim_cites_retired,
     ("retired_claim_source_stale", None): _retired_claim_source_stale,
