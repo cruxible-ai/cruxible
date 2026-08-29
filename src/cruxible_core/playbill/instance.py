@@ -162,6 +162,7 @@ class PlaybillInstance:
         self._verified_genesis = verified_genesis
         self._recovered = recovered
         self._promotion_verifier = promotion_verifier
+        self._claim_attestation_store: ClaimAttestationEvidenceStore | None = None
 
     @staticmethod
     def _accepted_query_facts(
@@ -553,11 +554,13 @@ class PlaybillInstance:
             ClaimAttestationEvidenceStore,
         )
 
-        paths = self._validated_paths(self.root, self.descriptor.storage)
-        return ClaimAttestationEvidenceStore(
-            paths["exhaust"],
-            instance_id=self.descriptor.instance_id,
-        )
+        if self._claim_attestation_store is None:
+            paths = self._validated_paths(self.root, self.descriptor.storage)
+            self._claim_attestation_store = ClaimAttestationEvidenceStore(
+                paths["exhaust"],
+                instance_id=self.descriptor.instance_id,
+            )
+        return self._claim_attestation_store
 
     def accepted_history(self) -> tuple[RecoveredGeneration, ...]:
         """Return the genesis-rooted, replay-verified accepted history."""

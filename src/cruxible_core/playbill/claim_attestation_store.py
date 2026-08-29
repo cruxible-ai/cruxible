@@ -149,6 +149,10 @@ class ClaimAttestationEvidenceStore:
         self.instance_id = instance_id
         self.crash_hook = crash_hook
         self._poisoned = False
+        self._validated_chain_cache: (
+            tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...] | None
+        ) = None
+        self._accelerator_cache: ClaimAttestationAcceleratorV1 | None = None
 
     @contextmanager
     def _locked(self) -> Iterator[None]:
@@ -420,6 +424,11 @@ class ClaimAttestationEvidenceStore:
     def _validated_chain(
         self, root_digest: str
     ) -> tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...]:
+        if (
+            self._validated_chain_cache is not None
+            and self._validated_chain_cache[-1][0].root_digest == root_digest
+        ):
+            return self._validated_chain_cache
         reversed_chain: list[ClaimAttestationPublishedRootV1] = []
         seen: set[str] = set()
         current = root_digest
@@ -467,7 +476,9 @@ class ClaimAttestationEvidenceStore:
                     raise _error("store_corrupt", "attestation published map transition differs")
             loaded.append((root, node))
             prior_map = current_map
-        return tuple(loaded)
+        result = tuple(loaded)
+        self._validated_chain_cache = result
+        return result
 
     def _recover_unpublished(self) -> None:
         pointer = self._load_pointer()
@@ -577,6 +588,20 @@ class ClaimAttestationEvidenceStore:
         chain: tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...],
     ) -> ClaimAttestationAcceleratorV1:
         root_digest = chain[-1][0].root_digest
+        if (
+            self._accelerator_cache is not None
+            and self._accelerator_cache.at_published_root_digest == root_digest
+        ):
+            path = self._accelerator_path(root_digest)
+            try:
+                if (
+                    not path.is_symlink()
+                    and path.is_file()
+                    and path.read_bytes() == _render(self._accelerator_cache)
+                ):
+                    return self._accelerator_cache
+            except OSError:
+                pass
         pairs = self._event_pairs_for_chain(chain)
         expected = self._build_accelerator(root_digest, pairs)
         path = self._accelerator_path(root_digest)
@@ -591,7 +616,65 @@ class ClaimAttestationEvidenceStore:
                 actual = None
         if actual != expected:
             _replace_pointer(path, _render(expected))
+        self._accelerator_cache = expected
         return expected
+
+    @staticmethod
+    def _extend_accelerator(
+        previous: ClaimAttestationAcceleratorV1,
+        *,
+        root_digest: str,
+        event: ClaimAttestationEventV1,
+        payload: ClaimAttestationEventPayloadV1,
+    ) -> ClaimAttestationAcceleratorV1:
+        statement = payload.attestation.statement
+        latest = {
+            (partition, basis, principal): digest
+            for partition, basis, principal, digest in previous.latest_event_by_principal
+        }
+        latest[
+            (
+                event.partition_digest,
+                statement.attestation_basis,
+                statement.attesting_principal_id,
+            )
+        ] = event.event_digest
+        idempotency = set(previous.idempotency_entries)
+        idempotency.add(
+            (
+                event.partition_digest,
+                statement.attesting_principal_id,
+                payload.statement_digest,
+                event.event_digest,
+            )
+        )
+        memberships = list(previous.outstanding_memberships)
+        if statement.attestation_basis == "new_capture":
+            memberships.extend(
+                ClaimAttestationOutstandingMembershipV1(
+                    claim_identity=statement.claim_identity,
+                    capture_digest=capture_digest,
+                    event_digest=event.event_digest,
+                )
+                for capture_digest in statement.cited_capture_digests
+            )
+        return ClaimAttestationAcceleratorV1(
+            at_published_root_digest=root_digest,
+            latest_event_by_principal=tuple(
+                sorted((*key, digest) for key, digest in latest.items())
+            ),
+            idempotency_entries=tuple(sorted(idempotency)),
+            outstanding_memberships=tuple(
+                sorted(
+                    memberships,
+                    key=lambda item: (
+                        item.claim_identity.qualified.encode("utf-8"),
+                        item.capture_digest.encode("ascii"),
+                        item.event_digest.encode("ascii"),
+                    ),
+                )
+            ),
+        )
 
     def _publish_event(
         self,
@@ -624,6 +707,23 @@ class ClaimAttestationEvidenceStore:
             self.root / "published.json",
             _render(ClaimAttestationPublishedPointerV1(root_digest=root.root_digest)),
         )
+        new_chain = (*chain, (root, node))
+        self._validated_chain_cache = new_chain
+        if (
+            self._accelerator_cache is not None
+            and self._accelerator_cache.at_published_root_digest == previous_root.root_digest
+        ):
+            payload = self._payload_for_event(event)
+            self._accelerator_cache = self._extend_accelerator(
+                self._accelerator_cache,
+                root_digest=root.root_digest,
+                event=event,
+                payload=payload,
+            )
+            _replace_pointer(
+                self._accelerator_path(root.root_digest),
+                _render(self._accelerator_cache),
+            )
         if crash:
             self._crash("after_step4")
         return root
@@ -650,27 +750,44 @@ class ClaimAttestationEvidenceStore:
                 initialized_at=verification_account.recorded_at,
             )
             current_root = self._ready()
-            events = self._partition_events(partition_digest)
-            for event in events:
+            assert self._accelerator_cache is not None
+            duplicate_digest = next(
+                (
+                    event_digest
+                    for partition, principal, digest, event_digest in (
+                        self._accelerator_cache.idempotency_entries
+                    )
+                    if partition == partition_digest
+                    and principal == statement.attesting_principal_id
+                    and digest == statement_digest
+                ),
+                None,
+            )
+            if duplicate_digest is not None:
+                event = self._load_object("event", duplicate_digest, ClaimAttestationEventV1)
+                assert isinstance(event, ClaimAttestationEventV1)
                 payload = self._payload_for_event(event)
-                if (
-                    payload.attesting_principal_id == statement.attesting_principal_id
-                    and payload.statement_digest == statement_digest
-                ):
-                    if (
-                        payload.envelope_digest != envelope_digest
-                        or payload.attestation != attestation
-                    ):
-                        raise _error(
-                            "idempotency_payload_mismatch",
-                            "stored attestation differs under the idempotency key",
-                        )
-                    recorded = self._root_for_event(event.event_digest)
-                    return self._result(event, payload, recorded, current_root)
+                if payload.envelope_digest != envelope_digest or payload.attestation != attestation:
+                    raise _error(
+                        "idempotency_payload_mismatch",
+                        "stored attestation differs under the idempotency key",
+                    )
+                recorded = self._root_for_event(event.event_digest)
+                return self._result(event, payload, recorded, current_root)
+            assert self._validated_chain_cache is not None
+            current_map = self._validated_chain_cache[-1][1]
+            partition_head = next(
+                (
+                    item.head
+                    for item in current_map.entries
+                    if item.partition_digest == partition_digest
+                ),
+                None,
+            )
             previous = (
                 claim_attestation_partition_genesis_digest(partition_digest)
-                if not events
-                else events[-1].event_digest
+                if partition_head is None
+                else partition_head.event_digest
             )
             payload_draft = ClaimAttestationEventPayloadV1.model_construct(
                 tag="playbill-claim-attestation-event-payload-v1",
@@ -697,7 +814,7 @@ class ClaimAttestationEvidenceStore:
                 tag="playbill-claim-attestation-event-v1",
                 instance_id=self.instance_id,
                 partition_digest=partition_digest,
-                sequence=len(events) + 1,
+                sequence=1 if partition_head is None else partition_head.sequence + 1,
                 previous_event_digest=previous,
                 payload_digest=payload.payload_digest,
                 event_digest=NULL_DIGEST,
@@ -753,22 +870,30 @@ class ClaimAttestationEvidenceStore:
                 return None
             self._load_manifest()
             current_root = self._ready()
-            for event in self._partition_events(partition_digest):
+            assert self._accelerator_cache is not None
+            event_digest = next(
+                (
+                    candidate
+                    for partition, principal, digest, candidate in (
+                        self._accelerator_cache.idempotency_entries
+                    )
+                    if partition == partition_digest
+                    and principal == statement.attesting_principal_id
+                    and digest == statement_digest
+                ),
+                None,
+            )
+            if event_digest is not None:
+                event = self._load_object("event", event_digest, ClaimAttestationEventV1)
+                assert isinstance(event, ClaimAttestationEventV1)
                 payload = self._payload_for_event(event)
-                if (
-                    payload.attesting_principal_id == statement.attesting_principal_id
-                    and payload.statement_digest == statement_digest
-                ):
-                    if (
-                        payload.envelope_digest != envelope_digest
-                        or payload.attestation != attestation
-                    ):
-                        raise _error(
-                            "idempotency_payload_mismatch",
-                            "stored attestation differs under the idempotency key",
-                        )
-                    recorded = self._root_for_event(event.event_digest)
-                    return self._result(event, payload, recorded, current_root)
+                if payload.envelope_digest != envelope_digest or payload.attestation != attestation:
+                    raise _error(
+                        "idempotency_payload_mismatch",
+                        "stored attestation differs under the idempotency key",
+                    )
+                recorded = self._root_for_event(event.event_digest)
+                return self._result(event, payload, recorded, current_root)
             return None
 
     def _payload_for_event(self, event: ClaimAttestationEventV1) -> ClaimAttestationEventPayloadV1:
