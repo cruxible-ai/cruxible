@@ -144,6 +144,16 @@ must name every dependent reason and never receives a daemon-synthesized end
 time. explain returns the verdict together with the law evidence and source
 handles it was computed from.
 
+## playbill claim-attestation
+
+~~~text
+cruxible playbill claim-attestation recover
+~~~
+
+Recovery is an admin-only repair for an interrupted evidence-ledger append. It
+rolls the sole durable unpublished event forward and refuses rather than choosing
+between ambiguous histories.
+
 ## playbill authoring
 
 ~~~text
