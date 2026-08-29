@@ -1184,11 +1184,64 @@ def _relation_use(value: Mapping[str, object]) -> _CitationRelationUse:
 
 
 def post_retirement_examined_support_suppresses_claim_cites_retired(
-    _claim_artifact_digest: str,
+    claim_artifact_digest: str,
+    *,
+    claim_identity: str | None = None,
+    retired_activation_sequence: int | None = None,
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
+    accepted_sequence_by_semantic_root: Mapping[str, int] | None = None,
 ) -> bool:
-    """Future attestation-door seam; no accepted attestation can suppress today."""
+    """Suppress only after a current Claim was examined after the cited retirement."""
 
-    return False
+    if (
+        claim_identity is None
+        or retired_activation_sequence is None
+        or accepted_sequence_by_semantic_root is None
+    ):
+        return False
+    latest_by_principal: dict[
+        str, tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1]
+    ] = {}
+    for event, payload in door_events:
+        statement = payload.attestation.statement
+        if (
+            statement.claim_identity.qualified != claim_identity
+            or statement.claim_artifact_digest != claim_artifact_digest
+        ):
+            continue
+        previous = latest_by_principal.get(payload.attesting_principal_id)
+        if previous is None or event.sequence > previous[0].sequence:
+            latest_by_principal[payload.attesting_principal_id] = (event, payload)
+    return any(
+        payload.current_at_append
+        and payload.attestation.statement.attestation_basis == "examined_existing"
+        and payload.attestation.statement.stance == "support"
+        and (
+            accepted_sequence_by_semantic_root.get(
+                payload.attestation.statement.referent_coordinate.semantic_root,
+                -1,
+            )
+            >= retired_activation_sequence
+        )
+        for _event, payload in latest_by_principal.values()
+    )
+
+
+def _claim_retirement_sequences(instance: PlaybillInstance) -> dict[str, int]:
+    """Return the replay-proven activation sequence of every retired Claim."""
+
+    retired: dict[str, int] = {}
+    for generation in instance.accepted_history():
+        if generation.record is None:
+            continue
+        tree = instance.tree_at(generation.oid)
+        for member in generation.record.members:
+            if member.artifact_kind != "claim" or member.path not in tree:
+                continue
+            claim = parse_claim(tree[member.path], path=member.path)
+            if claim.lifecycle.state == "retired":
+                retired[claim.identity.qualified] = generation.sequence
+    return retired
 
 
 def _whole_source_selection(envelope: object) -> bool:
@@ -1431,8 +1484,17 @@ def _claim_cites_retired_item(
     retired_claim_count: int,
     retired_citation_count: int,
     retired_claim_witnesses: tuple[str, ...],
+    retired_activation_sequence: int | None = None,
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
+    accepted_sequence_by_semantic_root: Mapping[str, int] | None = None,
 ) -> PlaybillNextItemV1 | None:
-    if post_retirement_examined_support_suppresses_claim_cites_retired(live_claim_artifact_digest):
+    if post_retirement_examined_support_suppresses_claim_cites_retired(
+        live_claim_artifact_digest,
+        claim_identity=live_claim_identity,
+        retired_activation_sequence=retired_activation_sequence,
+        door_events=door_events,
+        accepted_sequence_by_semantic_root=accepted_sequence_by_semantic_root,
+    ):
         return None
     return _item(
         severity="warning",
@@ -1489,6 +1551,7 @@ def _citation_relation_items(
     coordinate: AcceptedProjectionCoordinate,
     access_profile: CoverageAccessProfileV1,
     observation: PlaybillNextWorkspaceObservationV1 | None,
+    door_events: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...] = (),
 ) -> tuple[tuple[PlaybillNextItemV1, ...], frozenset[tuple[str, str]]]:
     """Serve retirement relations from the immutable accepted-coordinate slice."""
 
@@ -1497,6 +1560,11 @@ def _citation_relation_items(
     if not any(path.startswith("claims/") for path in instance.tree_at(coordinate.git_oid)):
         return (), frozenset()
     public_coordinate = PlaybillAcceptedCoordinate.from_internal(coordinate)
+    retirement_sequences = _claim_retirement_sequences(instance)
+    accepted_sequence_by_semantic_root = {
+        generation.semantic_root.tagged: generation.sequence
+        for generation in instance.accepted_history()
+    }
     exact_by_claim: dict[str, list[Mapping[str, object]]] = defaultdict(list)
     uses_by_source: dict[str, list[_CitationRelationUse]] = defaultdict(list)
     observed_sources = {
@@ -1584,6 +1652,13 @@ def _citation_relation_items(
                 if isinstance(value, int) and not isinstance(value, bool)
             ),
             retired_claim_witnesses=witnesses,
+            retired_activation_sequence=(
+                max(retirement_sequences[witness] for witness in witnesses)
+                if witnesses and all(witness in retirement_sequences for witness in witnesses)
+                else None
+            ),
+            door_events=door_events,
+            accepted_sequence_by_semantic_root=accepted_sequence_by_semantic_root,
         )
         if item is not None:
             items.append(item)
@@ -1646,6 +1721,13 @@ def _citation_relation_items(
                 retired_claim_count=len({entry.claim_identity for entry in retired}),
                 retired_citation_count=len(retired),
                 retired_claim_witnesses=witnesses,
+                retired_activation_sequence=(
+                    max(retirement_sequences[witness] for witness in witnesses)
+                    if witnesses and all(witness in retirement_sequences for witness in witnesses)
+                    else None
+                ),
+                door_events=door_events,
+                accepted_sequence_by_semantic_root=accepted_sequence_by_semantic_root,
             )
             if row is not None:
                 items.append(row)
@@ -2846,6 +2928,7 @@ def service_playbill_next(
         coordinate=coordinate,
         access_profile=request.access_profile,
         observation=request.workspace_observation,
+        door_events=door_events,
     )
     items = tuple(
         sorted(
