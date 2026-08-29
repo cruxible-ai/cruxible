@@ -219,13 +219,44 @@ def verify_candidate_approvals(
         for submission in submissions
     )
     creator_present = any(item.signer_id == creator_principal_id for item in verified)
-    if purpose == "ordinary-artifact" and creator_present:
+    independent_required = bool(candidate.approval_requirements)
+    if purpose == "ordinary-artifact" and independent_required and creator_present:
         raise ApprovalIntegrityError(
             "playbill.approval.creator_forbidden: ordinary candidate creator cannot approve; "
             "after an eligible signer approves, run playbill proposal activate"
         )
+    if not approval_requirements_satisfied(
+        candidate,
+        verified,
+        principals=principals,
+        creator_principal_id=creator_principal_id,
+    ):
+        raise ApprovalIntegrityError(
+            "playbill.approval.requirement_unsatisfied: candidate requires one independent "
+            "active ordinary principal approval"
+        )
 
     return verified
+
+
+def approval_requirements_satisfied(
+    candidate: CandidateRecordAnyVersion,
+    approvals: tuple[VerifiedApproval, ...] | list[VerifiedApproval],
+    *,
+    principals: PrincipalRegistrySnapshot,
+    creator_principal_id: str,
+) -> bool:
+    """Evaluate the one closed approval profile without role inference."""
+
+    if not candidate.approval_requirements:
+        return True
+    eligible = {
+        approval.signer_id
+        for approval in approvals
+        if approval.signer_id != creator_principal_id
+        and principals.require_active(approval.signer_id).kind == "ordinary"
+    }
+    return len(eligible) >= candidate.approval_requirements[0].minimum_distinct_signers
 
 
 __all__ = [
@@ -236,6 +267,7 @@ __all__ = [
     "VerifiedApproval",
     "approval_digest",
     "approval_statement_bytes",
+    "approval_requirements_satisfied",
     "verify_approval",
     "verify_candidate_approvals",
 ]

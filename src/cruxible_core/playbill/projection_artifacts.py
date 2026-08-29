@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Literal, Mapping, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_IDENTITY,
+    approval_policy_digest,
+    parse_approval_policy,
+)
 from cruxible_client.contracts.artifacts import (
     ArtifactFormatRegistry,
     ArtifactFormatTag,
@@ -64,6 +69,10 @@ if TYPE_CHECKING:
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
 PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
     (
+        ArtifactPathKind(
+            "approval-policy",
+            re.compile(r"^governance/approval-policy\.yaml$"),
+        ),
         ArtifactPathKind(
             "principal",
             re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$"),
@@ -143,6 +152,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             tag,
             implemented=tag
             in {
+                "playbill-approval-policy-v1",
                 "playbill-capture-contract-v1",
                 "playbill-capture-envelope-v1",
                 "playbill-claim-v2",
@@ -164,6 +174,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             },
         )
         for tag in (
+            "playbill-approval-policy-v1",
             "playbill-accepted-state-run-input-v1",
             "playbill-capture-contract-v1",
             "playbill-capture-envelope-v1",
@@ -187,6 +198,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
 )
 
 RegisteredPathKind = Literal[
+    "approval-policy",
     "capture-contract",
     "changeset",
     "claim",
@@ -561,6 +573,27 @@ def parse_projection_tree(
         kind = registered_path_kind(path)
         payload = _load_object(content, path=path)
         try:
+            if kind == "approval-policy":
+                policy = parse_approval_policy(content, path=path)
+                digest = approval_policy_digest(policy).tagged
+                identities[APPROVAL_POLICY_IDENTITY] = path
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=APPROVAL_POLICY_IDENTITY,
+                        kind="approval-policy",
+                        format_tag=policy.tag,
+                        path=path,
+                        artifact_digest=digest,
+                        predecessor_digest=None,
+                        revision=projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                continue
             if kind == "principal":
                 principal = PrincipalRecord.model_validate(payload)
                 if render_principal(principal) != content:

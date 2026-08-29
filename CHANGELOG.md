@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Governed approval-policy spine and solo initialization (PC-C3).** New
+  instances carry the `governance/approval-policy.yaml` singleton in the signed
+  genesis tree. One ordinary principal is sufficient by default; operators can
+  opt into creator-excluded independent approval with a second principal and
+  `playbill init --require-independent-approval`. Tightening is an ordinary
+  governed successor while loosening must satisfy the current independent
+  policy. Local key directories remain attribution/repository-hygiene
+  boundaries, not security boundaries; organization review rides repository
+  protection, with real custody separation reserved for the Cloud broker seam.
+
 - **Principal-authored Claim attestations (PC-ATT).** A signed evidence-plane
   ledger records exact-Claim observations against accepted coordinates, exposes
   idempotent append through SDK, HTTP, MCP, and CLI composition, and contributes
@@ -20,11 +30,11 @@
   admission can now require daemon-bound, accepted-state QueryDefinitions and
   persists deterministic evaluation accounts for proposal and replay checks.
   Per-artifact authority-role wire is removed; principals instead declare the
-  closed `ordinary`, `recovery`, or instance-owned `daemon` kind. New instances
-  require two independently held ordinary principals, so `playbill init` now
-  requires `--reviewer-key-dir`; `principal add` uses `--kind` rather than
-  `--role`. This is a pre-release clean cut and existing prerelease worlds must
-  be rebuilt.
+  closed `ordinary`, `recovery`, or instance-owned `daemon` kind. `principal
+  add` uses `--kind` rather than `--role`. PC-C3 subsequently moved approval
+  policy into the governed singleton spine and restored solo initialization.
+  This remains a pre-release clean cut and existing prerelease worlds must be
+  rebuilt.
 
 - **Activation attribution + lifecycle key-possession (PC-G12q fix round).**
   Activation mutation receipts now carry a required `activated_by` naming the
@@ -33,16 +43,14 @@
   lifecycle transitions require the proposing actor's own cryptographic
   approval with its current key (the affected principal only for
   self-rotation) — the one case where a creator's
-  self-signature is mandatory rather than refused; ordinary candidates keep
-  creator-refusal and need no approvals.
+  self-signature is mandatory rather than refused. PC-C3 now derives ordinary
+  candidate approval behavior from the governed approval-policy singleton.
 
 - **Playbill delegates authorization to repository ref governance (PC-G12q).**
   The in-daemon approval quorum is withdrawn: candidates require no approval by
   default, creator-suffices activation remains a separate attributed act, and
-  non-creators may still record verified voluntary approvals. Creator
-  self-approval remains refused for record honesty. PC-C1 supersedes the
-  short-lived single-key initialization surface: two ordinary client principals
-  and `--reviewer-key-dir` are required at genesis.
+  non-creators may still record verified voluntary approvals. PC-C3 supersedes
+  the interim forced-independent posture with a governed opt-in approval policy.
 
 - **Playbill publication prepare retries now distinguish live persistence from
   terminal replay (pre-release compatibility note).** The exported

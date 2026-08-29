@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import (
     PlaybillBootstrapError,
@@ -63,7 +64,14 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
             signing_key_path=daemon.private_key_path,
             allowed_signers_path=credentials / ALLOWED_SIGNERS_FILE,
         )
-        verified.append(prepare_genesis(ledger, trust_root=trust, timestamp=FIXED_TIMESTAMP))
+        verified.append(
+            prepare_genesis(
+                ledger,
+                trust_root=trust,
+                approval_policy=ApprovalPolicyV1(mode="self_approval_allowed"),
+                timestamp=FIXED_TIMESTAMP,
+            )
+        )
 
     sha1, sha256 = verified
     assert len(sha1.oid) == 40

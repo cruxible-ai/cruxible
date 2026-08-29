@@ -54,6 +54,7 @@ class PlaybillInstanceManager:
         *,
         client_principals: tuple[PrincipalRecord, ...],
         operating_profile: OperatingProfile = "local",
+        require_independent_approval: bool = False,
     ) -> PlaybillInstance:
         managed_root, trust_path, workspaces = self._paths(instance_id)
         with self._lock:
@@ -65,6 +66,7 @@ class PlaybillInstanceManager:
                 client_principals=client_principals,
                 workspace_roots=workspaces,
                 operating_profile=operating_profile,
+                require_independent_approval=require_independent_approval,
             )
             trust_path.parent.mkdir(parents=True, exist_ok=True)
             payload = canonical_bytes(instance.trust_root.model_dump(mode="json")) + b"\n"

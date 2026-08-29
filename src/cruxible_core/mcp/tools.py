@@ -73,9 +73,15 @@ def register_tools(
         instance_id: str,
         principals: list[dict[str, Any]],
         operating_profile: Literal["local", "cloud"] = "local",
+        require_independent_approval: bool = False,
     ) -> contracts.PlaybillInitResult:
         """Bootstrap Playbill from client-generated public principals."""
-        return handlers.handle_playbill_init(instance_id, principals, operating_profile)
+        return handlers.handle_playbill_init(
+            instance_id,
+            principals,
+            operating_profile,
+            require_independent_approval,
+        )
 
     @_tool
     def cruxible_playbill_store_body(

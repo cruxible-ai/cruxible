@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from cruxible_client.contracts.canonical import AcceptanceLawDigest, canonical_digest, typed_digest
 from cruxible_client.contracts.laws import (
+    APPROVAL_POLICY_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
     CLAIM_TYPE_ACCEPTANCE_LAW,
     CLAIM_TYPE_V3_ACCEPTANCE_LAW,
@@ -36,6 +37,13 @@ LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
     ...,
 ] = (
+    (
+        APPROVAL_POLICY_ACCEPTANCE_LAW,
+        "playbill.approval-policy.v1",
+        "playbill-approval-policy-v1",
+        1,
+        "sha256:027ad99ab0bde3c646371498d16ca8cd3005646fcfc9ac0f4ef3848fa2f2d631",
+    ),
     (
         DOCUMENT_ACCEPTANCE_LAW,
         "playbill.document.v1",
@@ -185,14 +193,14 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:fe78a873435082435055ac285846f1525af016d9796855112dfbb6c957ca4017"
+    expected = "sha256:3429408c61799f64d841e0da6bb2c2c985f2f750e7bb5617e0230b6ca13fce84"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "projection_content": "claims-procedures-runtime-v1",
             "schema_version": 1,
-            "semantic_revision": 7,
+            "semantic_revision": 8,
         },
     )
     assert computed == expected

@@ -101,25 +101,67 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
         kind="ordinary",
         forbidden_roots=(managed_root,),
     )
-    reviewer = generate_client_principal_key(
-        tmp_path / "reviewer-custody",
-        principal_id="reviewer",
-        kind="ordinary",
-        forbidden_roots=(managed_root,),
-    )
     initialized = host_client.post(
         f"/api/v1/{instance_id}/playbill/init",
-        json={
-            "principals": [
-                owner.principal.model_dump(mode="json"),
-                reviewer.principal.model_dump(mode="json"),
-            ]
-        },
+        json={"principals": [owner.principal.model_dump(mode="json")]},
     )
     assert initialized.status_code == 200, initialized.text
     assert initialized.json()["instance_id"] == instance_id
     assert managed_root.is_dir()
     assert not (Path(record.location) / ".cruxible" / "state.db").exists()
+
+
+def test_independent_approval_init_requires_and_accepts_a_second_ordinary_principal(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    solo_id = host_client.post(
+        "/api/v1/runtime/instances", json={"instance_id": "inst_solo_refusal"}
+    ).json()["instance_id"]
+    solo_record = get_registry().get(solo_id)
+    assert solo_record is not None
+    solo_root = Path(solo_record.location) / ".cruxible" / "playbill-v1"
+    owner = generate_client_principal_key(
+        tmp_path / "solo-owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(solo_root,),
+    )
+    refused = host_client.post(
+        f"/api/v1/{solo_id}/playbill/init",
+        json={
+            "principals": [owner.principal.model_dump(mode="json")],
+            "require_independent_approval": True,
+        },
+    )
+    assert refused.status_code == 409
+    assert "independent approval requires at least two" in refused.text
+
+    governed_id = host_client.post(
+        "/api/v1/runtime/instances", json={"instance_id": "inst_independent"}
+    ).json()["instance_id"]
+    governed_record = get_registry().get(governed_id)
+    assert governed_record is not None
+    governed_root = Path(governed_record.location) / ".cruxible" / "playbill-v1"
+    reviewer = generate_client_principal_key(
+        tmp_path / "independent-reviewer-custody",
+        principal_id="reviewer",
+        kind="ordinary",
+        forbidden_roots=(governed_root,),
+    )
+    accepted = host_client.post(
+        f"/api/v1/{governed_id}/playbill/init",
+        json={
+            "principals": [
+                owner.principal.model_dump(mode="json"),
+                reviewer.principal.model_dump(mode="json"),
+            ],
+            "require_independent_approval": True,
+        },
+    )
+    assert accepted.status_code == 200, accepted.text
+    instance = get_playbill_manager().get(governed_id)
+    assert instance._verified_genesis.approval_policy.mode == "independent_approval_required"
 
 
 def test_authenticated_bootstrap_binds_owner_to_credential_identity(

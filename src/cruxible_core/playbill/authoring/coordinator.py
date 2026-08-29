@@ -9,6 +9,7 @@ from typing import Callable, Literal
 
 from cruxible_client.contracts.attestations import (
     VerifiedApproval,
+    approval_requirements_satisfied,
     verify_approval,
 )
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1, lower_authoring_input
@@ -1706,11 +1707,29 @@ class AuthoringIntentCoordinator:
             except ApprovalIntegrityError:
                 invalid_approval = True
             else:
-                if not principal_lifecycle and verified.signer_id == admission.actor_id:
+                if (
+                    not principal_lifecycle
+                    and candidate.approval_requirements
+                    and verified.signer_id == admission.actor_id
+                ):
                     invalid_approval = True
                 verified_approvals.append(verified)
         conditions: list[AcceptanceConditionV1] = []
-        approvals_complete = True
+        approvals_complete = approval_requirements_satisfied(
+            candidate,
+            verified_approvals,
+            principals=generation.principals,
+            creator_principal_id=admission.actor_id,
+        )
+        if candidate.approval_requirements:
+            conditions.append(
+                AcceptanceConditionV1(
+                    condition="external-approval",
+                    owner="approver",
+                    action="One independent active ordinary principal must approve.",
+                    satisfied=approvals_complete,
+                )
+            )
         if principal_lifecycle:
             actor_binding_satisfied = any(
                 approval.signer_id == admission.actor_id for approval in verified_approvals

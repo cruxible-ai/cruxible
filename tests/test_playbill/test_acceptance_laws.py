@@ -6,6 +6,7 @@ import pytest
 
 from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.laws import (
+    APPROVAL_POLICY_LAW,
     CLAIM_LAW_V2,
     CLAIM_LAW_V3,
     CLAIM_TYPE_LAW,
@@ -30,6 +31,15 @@ def test_document_law_resolves_from_artifact_tag_and_replays_by_exact_digest() -
             digest=DOCUMENT_LAW.digest,
         )
         == resolved
+    )
+
+
+def test_approval_policy_law_resolves_as_the_governed_singleton() -> None:
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+            artifact_tag="playbill-approval-policy-v1"
+        ).coordinate
+        == APPROVAL_POLICY_LAW
     )
 
 
@@ -90,6 +100,7 @@ def test_claim_type_v1_v3_and_v4_survive_but_removed_v2_has_no_acceptance_law() 
 
 def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
     assert ROLE_DEMOTED_MEMBER_FAMILIES == (
+        "approval-policy",
         "procedure",
         "exhaust-promotion",
         "line",

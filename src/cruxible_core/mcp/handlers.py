@@ -252,6 +252,7 @@ def handle_playbill_init(
     instance_id: str,
     principals: list[dict[str, Any]],
     operating_profile: str,
+    require_independent_approval: bool = False,
 ) -> contracts.PlaybillInitResult:
     records = tuple(PrincipalRecord.model_validate(item) for item in principals)
     return _dispatch_remote_or_local(
@@ -259,11 +260,13 @@ def handle_playbill_init(
             instance_id,
             principals=[item.model_dump(mode="json") for item in records],
             operating_profile=cast(Any, operating_profile),
+            require_independent_approval=require_independent_approval,
         ),
         lambda: playbill_api.playbill_init(
             instance_id,
             principals=records,
             operating_profile=cast(Any, operating_profile),
+            require_independent_approval=require_independent_approval,
         ),
         operation_name="cruxible_playbill_init",
     )

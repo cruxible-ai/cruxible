@@ -9,6 +9,7 @@ from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.governance import AcceptanceLawCoordinate
 
 DOCUMENT_LAW_IDENTIFIER = "playbill.document.v1"
+APPROVAL_POLICY_LAW_IDENTIFIER = "playbill.approval-policy.v1"
 CLAIM_TYPE_LAW_IDENTIFIER = "playbill.claim-type.v1"
 CLAIM_TYPE_LAW_V3_IDENTIFIER = "playbill.claim-type.v3"
 CLAIM_TYPE_LAW_V4_IDENTIFIER = "playbill.claim-type.v4"
@@ -154,6 +155,11 @@ def _artifact_law_coordinate(
     )
 
 
+APPROVAL_POLICY_LAW = _artifact_law_coordinate(
+    APPROVAL_POLICY_LAW_IDENTIFIER,
+    "playbill-approval-policy-v1",
+    semantic_revision=1,
+)
 CLAIM_LAW_V2 = _artifact_law_coordinate(
     CLAIM_LAW_V2_IDENTIFIER,
     "playbill-claim-v2",
@@ -272,6 +278,11 @@ DOCUMENT_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="document",
     artifact_tag="playbill-document-v1",
 )
+APPROVAL_POLICY_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=APPROVAL_POLICY_LAW,
+    artifact_kind="approval-policy",
+    artifact_tag="playbill-approval-policy-v1",
+)
 PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PRINCIPAL_LIFECYCLE_LAW,
     artifact_kind="principal-lifecycle",
@@ -354,6 +365,7 @@ EXHAUST_PROMOTION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
 )
 PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
     (
+        APPROVAL_POLICY_ACCEPTANCE_LAW,
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
@@ -377,6 +389,9 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
 
 __all__ = [
     "AcceptanceLawRegistry",
+    "APPROVAL_POLICY_ACCEPTANCE_LAW",
+    "APPROVAL_POLICY_LAW",
+    "APPROVAL_POLICY_LAW_IDENTIFIER",
     "CLAIM_TYPE_ACCEPTANCE_LAW",
     "CLAIM_TYPE_V3_ACCEPTANCE_LAW",
     "CLAIM_TYPE_V4_ACCEPTANCE_LAW",

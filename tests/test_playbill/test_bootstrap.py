@@ -226,7 +226,11 @@ def test_bootstrap_accepts_two_ordinary_principals_and_optional_recovery(tmp_pat
     assert recovered.inspect().recovery_posture == "recovery-configured"
 
 
-def test_cloud_profile_keeps_the_same_two_ordinary_bootstrap_law(tmp_path: Path) -> None:
+@pytest.mark.parametrize("operating_profile", ["local", "cloud"])
+def test_solo_ordinary_bootstrap_is_complete(
+    tmp_path: Path,
+    operating_profile: str,
+) -> None:
     managed = tmp_path / "managed-cloud"
     owner = generate_client(
         tmp_path,
@@ -234,36 +238,70 @@ def test_cloud_profile_keeps_the_same_two_ordinary_bootstrap_law(tmp_path: Path)
         principal_id="owner",
         roles=("owner",),
     )
-    reviewer = generate_client(
-        tmp_path,
-        managed_root=managed,
-        principal_id="reviewer",
-        roles=("reviewer",),
-    )
     instance = PlaybillInstance.initialize(
         managed,
         instance_id="inst_cloud",
-        client_principals=(owner.principal, reviewer.principal),
+        client_principals=(owner.principal,),
         workspace_roots=(tmp_path / "workspace",),
-        operating_profile="cloud",
+        operating_profile=operating_profile,  # type: ignore[arg-type]
         timestamp=FIXED_TIMESTAMP,
     )
     assert instance.inspect().recovery_posture == "narrowed-no-recovery"
+    assert tuple(
+        principal.principal_id
+        for principal in instance.trust_root.principals
+        if principal.kind == "ordinary"
+    ) == ("owner",)
 
 
-def test_bootstrap_with_fewer_than_two_ordinary_principals_refuses_typed(tmp_path: Path) -> None:
+def test_bootstrap_without_an_ordinary_principal_refuses_typed(tmp_path: Path) -> None:
     managed = tmp_path / "managed-insufficient-ordinary"
-    reviewer_a = generate_client(
-        tmp_path, managed_root=managed, principal_id="reviewer-a", roles=("reviewer",)
-    )
     recovery = generate_client(
         tmp_path, managed_root=managed, principal_id="recovery", roles=("recovery",)
     )
-    with pytest.raises(PlaybillBootstrapError, match="at least two ordinary"):
+    with pytest.raises(PlaybillBootstrapError, match="at least one ordinary"):
         PlaybillInstance.initialize(
             managed,
             instance_id="inst_insufficient_ordinary",
-            client_principals=(reviewer_a.principal, recovery.principal),
+            client_principals=(recovery.principal,),
             workspace_roots=(tmp_path / "workspace",),
             timestamp=FIXED_TIMESTAMP,
         )
+
+
+def test_independent_approval_opt_in_requires_two_ordinary_principals(
+    tmp_path: Path,
+) -> None:
+    solo_root = tmp_path / "managed-solo-independent"
+    owner = generate_client(
+        tmp_path,
+        managed_root=solo_root,
+        principal_id="owner",
+        roles=("owner",),
+    )
+    with pytest.raises(PlaybillBootstrapError, match="independent approval requires at least two"):
+        PlaybillInstance.initialize(
+            solo_root,
+            instance_id="inst_solo_independent",
+            client_principals=(owner.principal,),
+            workspace_roots=(tmp_path / "workspace",),
+            require_independent_approval=True,
+            timestamp=FIXED_TIMESTAMP,
+        )
+
+    independent_root = tmp_path / "managed-independent"
+    reviewer = generate_client(
+        tmp_path,
+        managed_root=independent_root,
+        principal_id="reviewer",
+        roles=("reviewer",),
+    )
+    independent = PlaybillInstance.initialize(
+        independent_root,
+        instance_id="inst_independent",
+        client_principals=(owner.principal, reviewer.principal),
+        workspace_roots=(tmp_path / "workspace",),
+        require_independent_approval=True,
+        timestamp=FIXED_TIMESTAMP,
+    )
+    assert independent._verified_genesis.approval_policy.mode == "independent_approval_required"

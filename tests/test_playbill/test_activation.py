@@ -9,6 +9,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.attestations import (
     ApprovalAttestation,
     ApprovalStatement,
@@ -454,7 +455,12 @@ def test_qualified_git_formats_preserve_candidate_changeset_and_semantic_root(
             signing_key_path=daemon.private_key_path,
             allowed_signers_path=credentials / ALLOWED_SIGNERS_FILE,
         )
-        genesis = prepare_genesis(ledger, trust_root=trust, timestamp=FIXED_TIMESTAMP)
+        genesis = prepare_genesis(
+            ledger,
+            trust_root=trust,
+            approval_policy=ApprovalPolicyV1(mode="self_approval_allowed"),
+            timestamp=FIXED_TIMESTAMP,
+        )
         base = AcceptedProjectionCoordinate(
             instance_id=trust.instance_id,
             repository_path=str(ledger.path.resolve()),

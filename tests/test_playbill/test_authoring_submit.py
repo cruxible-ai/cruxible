@@ -4,10 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from cruxible_client.contracts.captures import foreign_source_capture_contract
-from cruxible_client.contracts.errors import ApprovalIntegrityError
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.proposals import AuthenticatedActor
@@ -15,7 +12,7 @@ from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from tests.test_playbill._support import client_material, initialize_local
+from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import (
     TIMESTAMP,
@@ -56,31 +53,17 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
         first.status.candidate_digest,
         instance.accepted_coordinate().semantic_root,
     )
-    with pytest.raises(ApprovalIntegrityError, match="creator_forbidden"):
-        service_submit_playbill_approval(
-            instance,
-            proposal_id=first.status.proposal_id,
-            attestation=creator_approval.attestation,
-            authenticated_submitter="owner",
-        )
-    assert instance.proposal_evidence().read_approvals(first.status.candidate_digest) == ()
-
-    approval = _sign(
-        client_material(tmp_path, instance),
-        first.status.candidate_digest,
-        instance.accepted_coordinate().semantic_root,
-    )
     receipt = service_submit_playbill_approval(
         instance,
         proposal_id=first.status.proposal_id,
-        attestation=approval.attestation,
-        authenticated_submitter="reviewer",
+        attestation=creator_approval.attestation,
+        authenticated_submitter="owner",
     )
     retry_receipt = service_submit_playbill_approval(
         instance,
         proposal_id=first.status.proposal_id,
-        attestation=approval.attestation,
-        authenticated_submitter="reviewer",
+        attestation=creator_approval.attestation,
+        authenticated_submitter="owner",
     )
     assert retry_receipt == receipt
     assert coordinator.status(intent.intent_id, actor=actor).state == "ready_to_activate"

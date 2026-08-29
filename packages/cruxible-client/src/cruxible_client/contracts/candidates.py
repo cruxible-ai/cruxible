@@ -30,6 +30,7 @@ from cruxible_client.contracts.governance import (
     MutationDisposition,
     PermissionTier,
     governance_identifier,
+    validate_approval_requirements,
 )
 
 
@@ -197,9 +198,7 @@ class CandidateRecord(_StrictCandidateModel):
     def _approval_requirements(
         cls, value: tuple[ApprovalRequirement, ...]
     ) -> tuple[ApprovalRequirement, ...]:
-        if value:
-            raise ValueError("approval requirements are retired and must be empty")
-        return value
+        return validate_approval_requirements(value, label="v1")
 
     @field_validator("law_digests")
     @classmethod
@@ -619,9 +618,7 @@ def _validated_multi_member_approval_requirements(
     *,
     label: str,
 ) -> tuple[ApprovalRequirement, ...]:
-    if value:
-        raise ValueError(f"{label} approval requirements are retired and must be empty")
-    return value
+    return validate_approval_requirements(value, label=label)
 
 
 def _validated_multi_member_law_digests(

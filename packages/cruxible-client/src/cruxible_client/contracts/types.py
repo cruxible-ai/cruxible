@@ -96,8 +96,8 @@ class PlaybillTrustRoot(StrictModel):
             for record in self.principals
             if record.kind == "ordinary" and record.status == "active"
         ]
-        if len(ordinary) < 2:
-            raise ValueError("trust root requires at least two active ordinary principals")
+        if len(ordinary) < 1:
+            raise ValueError("trust root requires at least one active ordinary principal")
         if any(
             record.kind == "daemon" for record in self.principals if record.principal_id != "daemon"
         ):
