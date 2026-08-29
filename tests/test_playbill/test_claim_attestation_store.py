@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -79,7 +80,7 @@ def _account(attestation: ClaimAttestationV2) -> VerifiedClaimAttestationV2:
 
 def _store(tmp_path: Path, *, crash_hook=None) -> ClaimAttestationEvidenceStore:
     exhaust = tmp_path / "exhaust"
-    exhaust.mkdir(exist_ok=True)
+    exhaust.mkdir(parents=True, exist_ok=True)
     return ClaimAttestationEvidenceStore(
         exhaust,
         instance_id="inst_test",
@@ -456,3 +457,21 @@ def test_partition_tip_removes_per_append_full_scan_and_cold_fold_loads_once(
     assert payload_loads == 300
     assert len(reopened.fold_events()) == 300
     assert payload_loads == 300
+
+
+def test_corrupt_pointer_with_two_maximal_roots_refuses_recovery_ambiguous(
+    tmp_path: Path,
+) -> None:
+    left = _store(tmp_path / "left")
+    first = _attestation()
+    left.append(attestation=first, verification_account=_account(first), note=None)
+    right = _store(tmp_path / "right")
+    second = _attestation(claim_id="CLM-1123456789abcdef0123456789abcdef")
+    right.append(attestation=second, verification_account=_account(second), note=None)
+
+    for relative in ("objects", "partitions"):
+        shutil.copytree(right.root / relative, left.root / relative, dirs_exist_ok=True)
+    (left.root / "published.json").write_bytes(b"not canonical\n")
+
+    with pytest.raises(ClaimAttestationStoreError, match="recovery_ambiguous"):
+        _store(tmp_path / "left").head()

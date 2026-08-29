@@ -69,3 +69,31 @@ def test_cli_claim_attest_requires_exactly_one_stance(flags: list[str]) -> None:
         ],
     )
     assert result.exit_code == 2
+
+
+def test_cli_claim_attestation_recover_calls_admin_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class Client:
+        def recover_playbill_claim_attestations(self, instance_id: str) -> None:
+            calls.append(instance_id)
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", Client)
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_test",
+            "playbill",
+            "claim-attestation",
+            "recover",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == ["inst_test"]
+    assert result.output == "Claim-attestation evidence ledger recovered.\n"

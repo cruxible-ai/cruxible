@@ -679,6 +679,12 @@ class CruxibleClient:
         self._check_error(response)
         return ClaimAttestationAppendResultV1.model_validate(response.json())
 
+    def recover_playbill_claim_attestations(self, instance_id: str) -> None:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claim-attestations/recover",
+        )
+        self._check_error(response)
+
     def create_playbill_authoring_intent(
         self,
         instance_id: str,

@@ -468,6 +468,18 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="claim_group",
             ),
+            "claim-attestation": _group(
+                "Operate the principal-authored Claim-attestation evidence ledger.",
+                {
+                    "recover": _command(
+                        "playbill",
+                        "recover_claim_attestations",
+                        "Roll the sole durable unpublished attestation forward.",
+                    )
+                },
+                module="playbill",
+                attr="claim_attestation_group",
+            ),
             "authoring": _group(
                 "Author, preflight, submit, and resume governed writes.",
                 {

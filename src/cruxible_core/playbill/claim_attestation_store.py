@@ -611,6 +611,7 @@ class ClaimAttestationEvidenceStore:
             self._partition_tips = {}
             self._root_children_verified = False
             self._root_children = {}
+            self._load_pointer()
             self._ensure_root_children()
             self._recover_unpublished()
             self._poisoned = False
@@ -622,6 +623,10 @@ class ClaimAttestationEvidenceStore:
                 "attestation store requires recovery; run "
                 "`cruxible playbill claim-attestation recover`",
             )
+        # Recover or refuse an unreadable pointer before the global fork check,
+        # so multiple replay-valid maximal roots retain their distinct typed
+        # recovery_ambiguous classification.
+        self._load_pointer()
         self._ensure_root_children()
         self._recover_unpublished()
         pointer = self._load_pointer()

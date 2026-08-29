@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Principal-authored Claim attestations (PC-ATT).** A signed evidence-plane
+  ledger records exact-Claim observations against accepted coordinates, exposes
+  idempotent append through SDK, HTTP, MCP, and CLI composition, and contributes
+  deterministic outstanding-evidence and attestation-threshold rows to
+  `playbill next`. An admin recovery command rolls forward the sole durable
+  unpublished event after an interrupted append without rewriting governed state.
+
 - **Scheduled 0.5.0 deprecations collected.** The already-absent legacy
   outcome-record and outcome-profile functions and the
   `ProcedureTransitionResult.warnings` string-list surface have been removed

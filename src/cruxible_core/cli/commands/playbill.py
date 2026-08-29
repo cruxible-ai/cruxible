@@ -1313,6 +1313,23 @@ def claim_group() -> None:
     """Propose, read, and explain first-class governed Claims."""
 
 
+@playbill_group.group("claim-attestation")
+def claim_attestation_group() -> None:
+    """Operate the principal-authored Claim-attestation evidence ledger."""
+
+
+@claim_attestation_group.command("recover")
+@handle_errors
+def recover_claim_attestations() -> None:
+    """Roll the sole durable unpublished attestation forward after a poison refusal."""
+
+    _server_call(
+        lambda client, instance_id: client.recover_playbill_claim_attestations(instance_id),
+        command_name="playbill claim-attestation recover",
+    )
+    click.echo("Claim-attestation evidence ledger recovered.")
+
+
 @claim_group.command("attest")
 @click.argument("claim_id")
 @click.option("--support", is_flag=True)

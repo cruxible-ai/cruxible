@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 from cruxible_client import contracts
 from cruxible_client.contracts.claim_attestations import (
@@ -575,6 +575,18 @@ async def append_claim_attestation(
         resolve_server_instance_id(instance_id),
         request=req,
     )
+
+
+@router.post(
+    "/{instance_id}/playbill/claim-attestations/recover",
+    response_model=None,
+    status_code=204,
+)
+async def recover_claim_attestations(instance_id: str) -> Response:
+    playbill_api.playbill_recover_claim_attestations(
+        resolve_server_instance_id(instance_id),
+    )
+    return Response(status_code=204)
 
 
 @router.post(

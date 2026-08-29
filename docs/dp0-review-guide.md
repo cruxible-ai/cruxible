@@ -49,6 +49,7 @@ playbill claim history
 playbill claim list
 playbill claim retire
 playbill claim attest
+playbill claim-attestation recover
 playbill claim-type get
 playbill claim-type list
 playbill claim-type migrate
@@ -191,6 +192,7 @@ POST /api/v1/{instance_id}/playbill/procedures/{name}/bind
 POST /api/v1/{instance_id}/playbill/procedures/{name}/runs
 GET  /api/v1/{instance_id}/playbill/procedure-runs/{run_id}
 POST /api/v1/{instance_id}/playbill/claim-attestations
+POST /api/v1/{instance_id}/playbill/claim-attestations/recover
 POST /api/v1/{instance_id}/playbill/discover
 POST /api/v1/{instance_id}/playbill/expand
 POST /api/v1/{instance_id}/playbill/coverage/resolve

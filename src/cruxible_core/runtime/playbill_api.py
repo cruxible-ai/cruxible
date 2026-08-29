@@ -862,6 +862,13 @@ def playbill_append_claim_attestation(
     )
 
 
+def playbill_recover_claim_attestations(instance_id: str) -> None:
+    """Synchronously restore the sole replay-valid evidence-ledger head."""
+
+    check_permission("cruxible_playbill_claim_attestation_recover", instance_id=instance_id)
+    get_playbill_manager().get(instance_id).claim_attestation_evidence_store().recover()
+
+
 def _authoring_coordinator(
     instance_id: str,
 ) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
