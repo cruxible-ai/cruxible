@@ -20,6 +20,10 @@ from pydantic import SecretStr, TypeAdapter
 
 from cruxible_client import __version__
 from cruxible_client import contracts as api
+from cruxible_client.authoring.attestations import (
+    ClaimAttestationV2Signer,
+    append_prepared_claim_attestation,
+)
 from cruxible_client.authoring.blocks import (
     assert_independent_projection_evidence,
     repin_projection_block,
@@ -102,6 +106,11 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     capture_contract_path,
     foreign_source_capture_contract,
+)
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationAppendResultV1,
+    ClaimStance,
+    PreparedClaimAttestationRequestV1,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
@@ -404,6 +413,7 @@ class NextPage:
     result_digest: str
     observed_domains: tuple[str, ...]
     unobserved_domains: tuple[str, ...]
+    attestation_head_digest: str | None = None
 
     def __iter__(self):  # type: ignore[no-untyped-def]
         return iter(self.items)
@@ -1775,6 +1785,56 @@ class Playbill:
             )
         raise ReferenceKindError("explain requires a ClaimRef or SubjectRef in G6")
 
+    def _append_attestation(
+        self,
+        *,
+        prepared: PreparedClaimAttestationRequestV1,
+        signer: ClaimAttestationV2Signer,
+    ) -> ClaimAttestationAppendResultV1:
+        return append_prepared_claim_attestation(
+            self._client,
+            self._instance_id,
+            prepared=prepared,
+            signer=signer,
+        )
+
+    def attest(
+        self,
+        claim: ClaimRef | str,
+        *,
+        stance: ClaimStance,
+        signer: ClaimAttestationV2Signer,
+        note: str | None = None,
+        valid_until: datetime | None = None,
+    ) -> ClaimAttestationAppendResultV1:
+        """Sign that the caller examined the current exact Claim and append it once."""
+
+        identity = claim.address if isinstance(claim, ClaimRef) else claim
+        return self._append_attestation(
+            prepared=PreparedClaimAttestationRequestV1(
+                claim_id=identity.removeprefix("Claim:"),
+                attestation_basis="examined_existing",
+                stance=stance,
+                referent_coordinate=claim.coordinate if isinstance(claim, ClaimRef) else None,
+                attested_at=datetime.fromisoformat(self._evaluation_time()),
+                valid_until=valid_until,
+                note=note,
+            ),
+            signer=signer,
+        )
+
+    def attest_new_capture(
+        self,
+        request: PreparedClaimAttestationRequestV1,
+        *,
+        signer: ClaimAttestationV2Signer,
+    ) -> ClaimAttestationAppendResultV1:
+        """Append a pre-staged new-Capture observation after exact client signing."""
+
+        if request.attestation_basis != "new_capture":
+            raise ValueError("attest_new_capture requires attestation_basis='new_capture'")
+        return self._append_attestation(prepared=request, signer=signer)
+
     def next(self, *, expiring_within: Duration) -> NextPage:
         requested_coordinate = _api_coordinate(self.coordinate)
         access_profile = self._access_profile.model_dump()
@@ -1801,6 +1861,7 @@ class Playbill:
             result_digest=result.result_digest,
             observed_domains=tuple(result.observed_domains),
             unobserved_domains=tuple(result.unobserved_domains),
+            attestation_head_digest=result.attestation_head_digest,
         )
 
     def since(

@@ -5,6 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from cruxible_client.authoring.attestations import (
+        ClaimAttestationV2Signer,
+        LocalEd25519ClaimAttestationSigner,
+    )
     from cruxible_client.authoring.sdk import Playbill
     from cruxible_client.authoring.sdk_types import (
         AccessProfile,
@@ -74,6 +78,7 @@ __all__ = [
     "CaptureRef",
     "ClaimObjectKind",
     "ClaimAdmissionPolicyV1",
+    "ClaimAttestationV2Signer",
     "ClaimRef",
     "ClaimRole",
     "ClaimTypeRef",
@@ -84,6 +89,7 @@ __all__ = [
     "CanonicalDurationV1",
     "ContractSchema",
     "EffectivePeriod",
+    "LocalEd25519ClaimAttestationSigner",
     "Playbill",
     "PlaybillInsertionApplication",
     "PlaybillInsertionApplyError",
@@ -124,6 +130,10 @@ def __getattr__(name: str) -> Any:
         from cruxible_client.authoring.sdk import Playbill
 
         return Playbill
+    if name in {"ClaimAttestationV2Signer", "LocalEd25519ClaimAttestationSigner"}:
+        from cruxible_client.authoring import attestations
+
+        return getattr(attestations, name)
     if name in {
         "AccessProfile",
         "ActivationPolicy",

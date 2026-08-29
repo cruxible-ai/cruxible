@@ -542,6 +542,80 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         assert result.stderr == ""
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--example", "claim-cite-supporting-evidence"],
+        [
+            "--example",
+            "claim-cite-supporting-evidence",
+            "--claim-id",
+            "CLM-" + "a" * 32,
+        ],
+        [
+            "--example",
+            "claim-cite-supporting-evidence",
+            "--capture-digest",
+            "sha256:" + "b" * 64,
+        ],
+        ["--example", "claim-flow-a", "--claim-id", "CLM-" + "a" * 32],
+        ["--example", "claim-flow-a", "--capture-digest", "sha256:" + "b" * 64],
+        [
+            "--example",
+            "claim-flow-a",
+            "--claim-id",
+            "CLM-" + "a" * 32,
+            "--capture-digest",
+            "sha256:" + "b" * 64,
+        ],
+    ],
+)
+def test_cli_attestation_door_example_options_refuse_incomplete_or_wrong_hints(
+    arguments: list[str],
+) -> None:
+    result = CliRunner().invoke(cli, ["playbill", "authoring", "create", *arguments])
+    assert result.exit_code == 2
+
+
+def test_cli_attestation_door_example_accepts_both_hints() -> None:
+    result = CliRunner().invoke(
+        cli,
+        [
+            "playbill",
+            "authoring",
+            "create",
+            "--example",
+            "claim-cite-supporting-evidence",
+            "--claim-id",
+            "CLM-" + "a" * 32,
+            "--capture-digest",
+            "sha256:" + "b" * 64,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["claim_id"] == "CLM-" + "a" * 32
+    assert payload["source"]["capture_digest"] == "sha256:" + "b" * 64
+
+
+@pytest.mark.parametrize("hint", ["--claim-id", "--capture-digest"])
+def test_cli_payload_file_refuses_attestation_example_hints(
+    tmp_path: Path,
+    hint: str,
+) -> None:
+    payload = tmp_path / "payload.json"
+    payload.write_text("{}\n", encoding="utf-8")
+    value = "CLM-" + "a" * 32 if hint == "--claim-id" else "sha256:" + "b" * 64
+
+    result = CliRunner().invoke(
+        cli,
+        ["playbill", "authoring", "create", str(payload), hint, value],
+    )
+
+    assert result.exit_code == 2
+    assert "require --example" in result.output
+
+
 def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

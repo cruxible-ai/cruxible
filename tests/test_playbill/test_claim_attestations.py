@@ -16,6 +16,7 @@ from cruxible_client.contracts.claim_attestations import (
     claim_attestation_v2_envelope_digest,
     claim_attestation_v2_statement_bytes,
     claim_attestation_v2_statement_digest,
+    verify_claim_attestation_v2_principal,
     read_claim_attestation,
     store_claim_attestation,
     verify_claim_attestation,
@@ -180,6 +181,13 @@ def test_parallel_v2_signer_commits_complete_exact_claim_context(tmp_path: Path)
             tampered,
             public_key=owner.principal.public_key,
         )
+
+    for forbidden_kind in ("recovery", "daemon"):
+        with pytest.raises(ClaimAttestationError, match="ordinary principal"):
+            verify_claim_attestation_v2_principal(
+                attestation,
+                principal=owner.principal.model_copy(update={"kind": forbidden_kind}),
+            )
 
 
 def test_wrong_instance_tamper_and_missing_capture_fail_closed(tmp_path: Path) -> None:

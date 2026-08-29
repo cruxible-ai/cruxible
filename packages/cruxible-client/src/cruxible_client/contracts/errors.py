@@ -66,6 +66,35 @@ class PlaybillSinceRequestInvalid(PlaybillFormatError):
         )
 
 
+class ClaimAttestationRequestInvalid(PlaybillFormatError):
+    """A Claim-attestation append failed its exact request model boundary."""
+
+    error_code = "playbill.claim_attestation.request_invalid"
+
+    def __init__(self, *, field_path: str, detail: str = "invalid value") -> None:
+        self.field_path = field_path
+        self.detail = detail
+        super().__init__(f"{self.error_code}: request field {field_path} is invalid: {detail}")
+
+    @classmethod
+    def from_validation_errors(
+        cls,
+        errors: Iterable[Mapping[str, Any]],
+    ) -> Self:
+        first = next(iter(errors), {})
+        location = first.get("loc", ())
+        parts = list(location) if isinstance(location, list | tuple) else []
+        if parts and parts[0] == "body":
+            parts.pop(0)
+        field_path = "$"
+        for part in parts:
+            field_path += f"[{part}]" if isinstance(part, int) else f".{part}"
+        return cls(
+            field_path=field_path,
+            detail=str(first.get("msg", "invalid value")),
+        )
+
+
 class PlaybillInstanceIncompatiblePrereleaseContent(PlaybillFormatError):
     """An accepted prerelease artifact was intentionally removed before release."""
 

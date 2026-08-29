@@ -20,6 +20,10 @@ from cruxible_client.contracts.authoring.models import (
     InsertionConfirmRequestV2,
     InsertionPrepareRequestV2,
 )
+from cruxible_client.contracts.claim_attestations import (
+    ClaimAttestationAppendRequestV1,
+    ClaimAttestationAppendResultV1,
+)
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
 from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
 from cruxible_client.errors import (
@@ -662,6 +666,19 @@ class CruxibleClient:
         self._check_error(response)
         return _CLAIM_RETIRE_RESPONSE.validate_python(response.json())
 
+    def append_playbill_claim_attestation(
+        self,
+        instance_id: str,
+        *,
+        request: ClaimAttestationAppendRequestV1,
+    ) -> ClaimAttestationAppendResultV1:
+        response = self._client.post(
+            f"/api/v1/{instance_id}/playbill/claim-attestations",
+            json=request.model_dump(mode="json"),
+        )
+        self._check_error(response)
+        return ClaimAttestationAppendResultV1.model_validate(response.json())
+
     def create_playbill_authoring_intent(
         self,
         instance_id: str,
@@ -1078,9 +1095,10 @@ class CruxibleClient:
         expiring_within: Mapping[str, Any] | None = None,
         workspace_observation: Mapping[str, Any] | None = None,
         since_result_digest: str | None = None,
+        at_attestation_head_digest: str | None = None,
     ) -> contracts.PlaybillNextResult:
         payload: dict[str, Any] = {
-            "tag": "playbill-next-request-v1",
+            "tag": "playbill-next-request-v2",
             "at": self._playbill_coordinate_body(at),
             "evaluation_time": evaluation_time,
             "access_profile": dict(access_profile),
@@ -1092,6 +1110,8 @@ class CruxibleClient:
             payload["expiring_within"] = dict(expiring_within)
         if since_result_digest is not None:
             payload["since_result_digest"] = since_result_digest
+        if at_attestation_head_digest is not None:
+            payload["at_attestation_head_digest"] = at_attestation_head_digest
         response = self._client.post(f"/api/v1/{instance_id}/playbill/next", json=payload)
         return self._parse_model(response, contracts.PlaybillNextResult)
 
