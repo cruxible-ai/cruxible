@@ -14,6 +14,7 @@ from cruxible_client.contracts.claim_attestations import (
     VerifiedClaimAttestationV2,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.temporal import ensure_utc
 
 CLAIM_ATTESTATION_EVENT_PAYLOAD_V1_DOMAIN = "playbill-claim-attestation-event-payload-v1"
 CLAIM_ATTESTATION_EVENT_V1_DOMAIN = "playbill-claim-attestation-event-v1"
@@ -46,7 +47,7 @@ class ClaimAttestationStoreManifestV1(_StrictStoreModel):
     def _time(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("attestation store time must be timezone-aware")
-        return value
+        return ensure_utc(value)
 
 
 class ClaimAttestationEventPayloadV1(_StrictStoreModel):
@@ -75,7 +76,7 @@ class ClaimAttestationEventPayloadV1(_StrictStoreModel):
     def _time(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("attestation payload time must be timezone-aware")
-        return value
+        return ensure_utc(value)
 
     @model_validator(mode="after")
     def _reproduces(self) -> "ClaimAttestationEventPayloadV1":
@@ -95,6 +96,17 @@ class ClaimAttestationEventPayloadV1(_StrictStoreModel):
             self.verification_account
         ):
             raise ValueError("attestation payload verification account digest differs")
+        if (
+            self.verification_account.statement != self.attestation.statement
+            or self.verification_account.statement_digest != self.statement_digest
+            or self.verification_account.envelope_digest != self.envelope_digest
+            or self.verification_account.attesting_principal_id != self.attesting_principal_id
+            or self.verification_account.submitted_by != self.submitted_by
+            or self.verification_account.append_coordinate != self.recorded_coordinate
+            or self.verification_account.current_at_append != self.current_at_append
+            or self.verification_account.recorded_at != self.recorded_at
+        ):
+            raise ValueError("attestation payload and verification account bindings differ")
         if self.payload_digest != claim_attestation_event_payload_digest(self):
             raise ValueError("attestation event payload digest does not reproduce")
         return self

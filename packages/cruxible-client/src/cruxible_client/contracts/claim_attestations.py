@@ -27,6 +27,7 @@ from cruxible_client.contracts.principals import PrincipalRegistrySnapshot
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.semantic import SemanticAddress
+from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_client.contracts.types import PrincipalRecord
 
 if TYPE_CHECKING:
@@ -302,7 +303,7 @@ class ClaimAttestationStatementV2(_StrictClaimAttestationModel):
     def _v2_time(cls, value: datetime | None) -> datetime | None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
             raise ValueError("V2 ClaimAttestation times must be timezone-aware")
-        return value
+        return None if value is None else ensure_utc(value)
 
     @model_validator(mode="after")
     def _v2_shape(self) -> "ClaimAttestationStatementV2":
@@ -375,7 +376,7 @@ class PreparedClaimAttestationRequestV1(_StrictClaimAttestationModel):
     def _prepared_time(cls, value: datetime | None) -> datetime | None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
             raise ValueError("prepared attestation times must be timezone-aware")
-        return value
+        return None if value is None else ensure_utc(value)
 
     @field_validator("note")
     @classmethod
@@ -392,6 +393,8 @@ class PreparedClaimAttestationRequestV1(_StrictClaimAttestationModel):
             raise ValueError("prepared attestation validity interval must be increasing")
         if self.attestation_basis == "new_capture" and not self.capture_references:
             raise ValueError("new_capture requests require Capture references")
+        if self.attestation_basis == "examined_existing" and self.capture_references:
+            raise ValueError("examined_existing derives backing and accepts no Capture references")
         return self
 
 
@@ -446,7 +449,24 @@ class VerifiedClaimAttestationV2(_StrictClaimAttestationModel):
     def _recorded_at(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("verification account recorded_at must be timezone-aware")
-        return value
+        return ensure_utc(value)
+
+    @model_validator(mode="after")
+    def _verification_shape(self) -> "VerifiedClaimAttestationV2":
+        if self.statement_digest != claim_attestation_v2_statement_digest(self.statement):
+            raise ValueError("verification account statement digest differs")
+        if self.referent_coordinate != self.statement.referent_coordinate:
+            raise ValueError("verification account referent coordinate differs")
+        if self.attesting_principal_id != self.statement.attesting_principal_id:
+            raise ValueError("verification account principal differs")
+        if not set(self.admitted_capture_digests).issubset(self.statement.cited_capture_digests):
+            raise ValueError("verification account admits an uncited Capture")
+        resolved_keys = tuple(
+            (item.identity.qualified, item.artifact_digest) for item in self.resolved_artifacts
+        )
+        if resolved_keys != tuple(sorted(set(resolved_keys))):
+            raise ValueError("verification account artifacts must be sorted and unique")
+        return self
 
 
 class ClaimAttestationAppendRequestV1(_StrictClaimAttestationModel):
@@ -484,6 +504,8 @@ class ClaimAttestationAppendRequestV1(_StrictClaimAttestationModel):
             raise ValueError("append Capture references differ from the signed statement")
         if self.attestation.statement.attestation_basis == "new_capture" and referenced != stated:
             raise ValueError("new_capture append requires every signed Capture reference")
+        if self.attestation.statement.attestation_basis == "examined_existing" and referenced:
+            raise ValueError("examined_existing append accepts no Capture references")
         return self
 
 
@@ -520,7 +542,7 @@ class ClaimAttestationAppendResultV1(_StrictClaimAttestationModel):
     def _result_time(cls, value: datetime) -> datetime:
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("append result recorded_at must be timezone-aware")
-        return value
+        return ensure_utc(value)
 
 
 def claim_attestation_v2_statement_bytes(
@@ -538,8 +560,7 @@ def claim_attestation_v2_statement_bytes(
 
 
 def claim_attestation_v2_statement_digest(statement: ClaimAttestationStatementV2) -> str:
-    payload = statement.model_dump(mode="json")
-    payload.pop("tag")
+    payload = statement.model_dump(mode="json", exclude={"tag"})
     return typed_digest(
         Sha256Value,
         CLAIM_ATTESTATION_STATEMENT_V2_DOMAIN,
@@ -548,8 +569,7 @@ def claim_attestation_v2_statement_digest(statement: ClaimAttestationStatementV2
 
 
 def claim_attestation_v2_envelope_digest(attestation: ClaimAttestationV2) -> str:
-    payload = attestation.model_dump(mode="json")
-    payload.pop("tag")
+    payload = attestation.model_dump(mode="json", exclude={"tag"})
     return typed_digest(
         Sha256Value,
         CLAIM_ATTESTATION_ENVELOPE_V2_DOMAIN,
@@ -560,8 +580,7 @@ def claim_attestation_v2_envelope_digest(attestation: ClaimAttestationV2) -> str
 def claim_attestation_verification_account_digest(
     account: VerifiedClaimAttestationV2,
 ) -> str:
-    payload = account.model_dump(mode="json")
-    payload.pop("tag")
+    payload = account.model_dump(mode="json", exclude={"tag"})
     return typed_digest(
         Sha256Value,
         CLAIM_ATTESTATION_VERIFICATION_ACCOUNT_V1_DOMAIN,
