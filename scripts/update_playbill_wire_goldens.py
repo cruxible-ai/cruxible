@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from cruxible_client.authoring.inputs import ClaimInput, ProcedureInput
+from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import ChangeSetDigest, manifest_root, typed_digest
 from cruxible_client.contracts.captures import (
@@ -181,13 +182,15 @@ def _update_semantic_genesis_golden() -> None:
         PrincipalRecord(principal_id="owner", public_key="02" * 32, kind="ordinary"),
         PrincipalRecord(principal_id="reviewer", public_key="03" * 32, kind="ordinary"),
     )
-    tree = genesis_tree(principals)
+    approval_policy = ApprovalPolicyV1(mode="self_approval_allowed")
+    tree = genesis_tree(principals, approval_policy=approval_policy)
     parent = bootstrap_root(
         instance_id=str(input_payload["instance_id"]),
         daemon_public_key=str(input_payload["daemon_public_key"]),
     )
     changeset, semantic = genesis_semantic_root(tree, parent=parent)
     input_payload["principals"] = [item.model_dump(mode="json") for item in principals]
+    input_payload["approval_policy"] = approval_policy.model_dump(mode="json")
     fixture["expected"] = {
         "canonical_tree": {
             member_path: content.decode("utf-8") for member_path, content in tree.items()

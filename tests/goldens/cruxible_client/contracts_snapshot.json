@@ -9,7 +9,8 @@
         "procedure",
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
-        "claim-adjudicate-unreviewed-evidence"
+        "claim-adjudicate-unreviewed-evidence",
+        "query-claims-by-type"
       ]
     },
     "PlaybillHostStatus": {
@@ -39,7 +40,8 @@
         "claim_new_evidence_unreviewed",
         "document_modified",
         "claim_cites_retired",
-        "retired_claim_source_stale"
+        "retired_claim_source_stale",
+        "unregistered_projection_block"
       ]
     },
     "RuntimeCredentialPermissionMode": {
@@ -2609,7 +2611,8 @@
               "procedure",
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
-              "claim-adjudicate-unreviewed-evidence"
+              "claim-adjudicate-unreviewed-evidence",
+              "query-claims-by-type"
             ],
             "title": "Name",
             "type": "string"
@@ -2654,7 +2657,8 @@
               "procedure",
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
-              "claim-adjudicate-unreviewed-evidence"
+              "claim-adjudicate-unreviewed-evidence",
+              "query-claims-by-type"
             ],
             "title": "Name",
             "type": "string"
