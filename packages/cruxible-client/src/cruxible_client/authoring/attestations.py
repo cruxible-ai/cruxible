@@ -187,8 +187,10 @@ def local_attestation_signer_from_environment(
         )
         if principal is None or principal.status != "active" or principal.kind != "ordinary":
             raise PlaybillKeyError("authenticated actor is not an active ordinary principal")
-        state_root = Path(client.server_info().state_dir)
-        roots = tuple(root for root in (workspace_root, state_root) if root is not None)
+        # Instance-scoped credentials cannot call the unscoped server-info
+        # endpoint. Local custody needs only the caller-controlled workspace
+        # boundary; daemon state is never discovered through the wire here.
+        roots = () if workspace_root is None else (workspace_root,)
         return LocalEd25519ClaimAttestationSigner.open(
             signer=whoami.actor_id,
             signing_key_id=principal.public_key_digest,

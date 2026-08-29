@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from cruxible_client.errors import InstanceScopeError
 from cruxible_core.cli.main import cli
 from tests.test_client._attestation_support import ServiceAttestationClient
 from tests.test_playbill.test_claim_type_migrations import _accepted_claim_world
@@ -18,11 +19,12 @@ def test_cli_claim_attest_uses_the_real_local_key_path(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
-    client = ServiceAttestationClient(
-        instance,
-        actor_id="owner",
-        state_dir=tmp_path / "server-state",
-    )
+
+    class InstanceScopedClient(ServiceAttestationClient):
+        def server_info(self):  # type: ignore[no-untyped-def]
+            raise InstanceScopeError("cruxible_server_info", instance.descriptor.instance_id)
+
+    client = InstanceScopedClient(instance, actor_id="owner", state_dir=tmp_path / "server-state")
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
     monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY_PATH", str(owner.private_key_path))
 
