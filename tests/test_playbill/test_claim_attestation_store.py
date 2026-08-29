@@ -434,6 +434,7 @@ def test_partition_tip_removes_per_append_full_scan_and_cold_fold_loads_once(
         return original_partition_events(partition_digest)
 
     monkeypatch.setattr(store, "_partition_events", counted_partition_events)
+    accelerator_size_at_100 = 0
     for ordinal in range(300):
         attestation = _attestation(attested_at=NOW + timedelta(seconds=ordinal))
         store.append(
@@ -441,7 +442,16 @@ def test_partition_tip_removes_per_append_full_scan_and_cold_fold_loads_once(
             verification_account=_account(attestation),
             note=None,
         )
+        if ordinal == 99:
+            accelerator_size_at_100 = sum(
+                path.stat().st_size for path in (store.root / "accelerators").glob("*.json")
+            )
     assert partition_scans == 0
+    accelerator_files = tuple((store.root / "accelerators").glob("*.json"))
+    accelerator_size_at_300 = sum(path.stat().st_size for path in accelerator_files)
+    assert [path.name for path in accelerator_files] == ["current.json"]
+    assert accelerator_size_at_100 > 0
+    assert accelerator_size_at_300 <= accelerator_size_at_100 * 4
 
     reopened = _store(tmp_path)
     payload_loads = 0
@@ -457,6 +467,18 @@ def test_partition_tip_removes_per_append_full_scan_and_cold_fold_loads_once(
     assert payload_loads == 300
     assert len(reopened.fold_events()) == 300
     assert payload_loads == 300
+
+
+def test_mutable_accelerator_collects_legacy_per_root_cache_files(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    attestation = _attestation()
+    store.append(attestation=attestation, verification_account=_account(attestation), note=None)
+    legacy = store.root / "accelerators" / f"{'9' * 64}.json"
+    legacy.write_bytes(b"rebuildable legacy cache\n")
+
+    store.fold_events()
+
+    assert [path.name for path in (store.root / "accelerators").glob("*.json")] == ["current.json"]
 
 
 def test_corrupt_pointer_with_two_maximal_roots_refuses_recovery_ambiguous(

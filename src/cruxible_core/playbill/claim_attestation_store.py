@@ -637,7 +637,25 @@ class ClaimAttestationEvidenceStore:
 
     def _accelerator_path(self, root_digest: str) -> Path:
         Sha256Value.from_tagged(root_digest)
-        return self.root / "accelerators" / f"{root_digest[7:]}.json"
+        return self.root / "accelerators" / "current.json"
+
+    def _compact_accelerators(self, current: Path) -> None:
+        """Collect legacy per-root caches; accelerator bytes are never authority."""
+
+        directory = self.root / "accelerators"
+        removed = False
+        for path in directory.glob("*.json"):
+            if path == current:
+                continue
+            try:
+                path.unlink()
+            except OSError as exc:
+                raise _error(
+                    "store_corrupt", "stale attestation cache could not be collected"
+                ) from exc
+            removed = True
+        if removed:
+            _fsync_directory(directory)
 
     def _event_pairs_for_chain(
         self,
@@ -714,11 +732,12 @@ class ClaimAttestationEvidenceStore:
         chain: tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...],
     ) -> ClaimAttestationAcceleratorV1:
         root_digest = chain[-1][0].root_digest
+        path = self._accelerator_path(root_digest)
+        self._compact_accelerators(path)
         if (
             self._accelerator_cache is not None
             and self._accelerator_cache.at_published_root_digest == root_digest
         ):
-            path = self._accelerator_path(root_digest)
             try:
                 if (
                     not path.is_symlink()
@@ -730,7 +749,6 @@ class ClaimAttestationEvidenceStore:
                 pass
         pairs = self._event_pairs_for_chain(chain)
         expected = self._build_accelerator(root_digest, pairs)
-        path = self._accelerator_path(root_digest)
         actual: ClaimAttestationAcceleratorV1 | None = None
         if path.is_file() and not path.is_symlink():
             try:
