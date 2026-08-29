@@ -229,7 +229,6 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "claim-flow-a": claim_flow_a_example,
     "claim-self-source": claim_self_source_example,
     "procedure": procedure_example,
-    "query-claims-by-type": query_claims_by_type_example,
 }
 
 _DOOR_EXAMPLES = {
@@ -284,6 +283,10 @@ def authoring_example(
     claim_id: str | None = None,
     capture_digest: str | None = None,
 ) -> AuthoringExample:
+    if name == "query-claims-by-type":
+        if claim_id is not None or capture_digest is not None:
+            raise ValueError("claim_id/capture_digest do not apply to the query example")
+        return query_claims_by_type_example()
     door = name in _DOOR_EXAMPLES
     if door:
         if claim_id is None or capture_digest is None:
