@@ -858,9 +858,7 @@ class PlaybillProcedureRunState(BaseModel):
 class PlaybillNextResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-next-result-v1", "playbill-next-result-v2"] = (
-        "playbill-next-result-v1"
-    )
+    tag: Literal["playbill-next-result-v1", "playbill-next-result-v2"] = "playbill-next-result-v1"
     coordinate: PlaybillAcceptedCoordinate
     evaluation_time: str
     observed_domains: list[Literal["accepted_state", "workspace_floor", "workspace_sources"]]
