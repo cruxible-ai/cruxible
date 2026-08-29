@@ -96,4 +96,5 @@ def test_cli_claim_attestation_recover_calls_admin_surface(
 
     assert result.exit_code == 0, result.output
     assert calls == ["inst_test"]
-    assert result.output == "Claim-attestation evidence ledger recovered.\n"
+    assert result.stdout == "Claim-attestation evidence ledger recovered.\n"
+    assert result.stderr == "target: inst_test @ https://playbill.invalid (explicit)\n"
