@@ -15,6 +15,7 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.documents import render_document
 from cruxible_client.contracts.errors import ApprovalIntegrityError
 from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMENTS
+from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -56,6 +57,33 @@ def _activate(instance, result, *, tmp_path: Path, approve: bool = False):  # ty
             proposal_id=result.admission.proposal_id,
             attestation=signed.attestation,
             authenticated_submitter="reviewer",
+        )
+    return service_activate_playbill_proposal(
+        instance,
+        proposal_id=result.admission.proposal_id,
+        activated_by="owner",
+    )
+
+
+def _activate_independent_principal_change(
+    instance,
+    result,
+    *,
+    tmp_path: Path,
+    owner,  # type: ignore[no-untyped-def]
+):
+    assert result.candidate is not None
+    for material in (owner, client_material(tmp_path, instance)):
+        signed = _sign(
+            material,
+            result.candidate.candidate_digest,
+            instance.accepted_coordinate().semantic_root,
+        )
+        service_submit_playbill_approval(
+            instance,
+            proposal_id=result.admission.proposal_id,
+            attestation=signed.attestation,
+            authenticated_submitter=material.principal.principal_id,
         )
     return service_activate_playbill_proposal(
         instance,
@@ -154,7 +182,7 @@ def test_policy_tightening_and_loosening_follow_the_parent_policy(
 
 
 def test_independent_mode_refuses_revocation_below_two_ordinaries(tmp_path: Path) -> None:
-    instance, _owner = initialize_local(tmp_path)
+    instance, owner = initialize_local(tmp_path)
     tree = instance.tree_at(instance.accepted_coordinate().git_oid)
     tightening = _submit_tree(
         instance,
@@ -181,11 +209,73 @@ def test_independent_mode_refuses_revocation_below_two_ordinaries(tmp_path: Path
     assert refused.candidate is None
     (diagnostic,) = refused.evaluation.diagnostics
     assert diagnostic.code == "playbill.principal.independent_approval_minimum"
-    assert "register a replacement ordinary in the same ChangeSet" in diagnostic.message
+    assert (
+        "register a replacement ordinary principal in its own ChangeSet first, then revoke"
+        in diagnostic.message
+    )
     assert "Policy loosening is unavailable until the coordinator convergence" in (
         diagnostic.message
     )
     assert "recovery re-keying" in diagnostic.message
+
+    replacement = generate_client_principal_key(
+        tmp_path / "replacement-keys",
+        principal_id="replacement",
+        kind="ordinary",
+        forbidden_roots=(instance.root,),
+    )
+    combined = _submit_tree(
+        instance,
+        {
+            **instance.tree_at(instance.accepted_coordinate().git_oid),
+            "principals/replacement.yaml": render_principal(replacement.principal),
+            "principals/reviewer.yaml": render_principal(
+                reviewer.model_copy(update={"status": "revoked"})
+            ),
+        },
+        name="combined-replacement-and-revocation",
+    )
+    assert combined.candidate is None
+    assert {item.code for item in combined.evaluation.diagnostics} == {
+        "playbill.proposal.unregistered_semantic_kind"
+    }
+
+    registration = service_propose_playbill_principal_change(
+        instance,
+        principal=replacement.principal,
+        actor_id="owner",
+        proposal_name="register-replacement-first",
+        timestamp="2026-08-16T17:02:00.000000Z",
+    ).proposal
+    assert registration.candidate is not None
+    assert (
+        _activate_independent_principal_change(
+            instance,
+            registration,
+            tmp_path=tmp_path,
+            owner=owner,
+        ).status
+        == "accepted"
+    )
+    instance.refresh()
+
+    revocation = service_propose_playbill_principal_change(
+        instance,
+        principal=reviewer.model_copy(update={"status": "revoked"}),
+        actor_id="owner",
+        proposal_name="revoke-after-replacement",
+        timestamp="2026-08-16T17:03:00.000000Z",
+    ).proposal
+    assert revocation.candidate is not None
+    assert (
+        _activate_independent_principal_change(
+            instance,
+            revocation,
+            tmp_path=tmp_path,
+            owner=owner,
+        ).status
+        == "accepted"
+    )
 
 
 def test_independent_principal_registration_needs_creator_binding_and_other_approver(
