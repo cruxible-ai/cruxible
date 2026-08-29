@@ -14,10 +14,12 @@ from pydantic import BaseModel, ValidationError
 
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes
 from cruxible_client.contracts.claim_attestation_store import (
+    ClaimAttestationAcceleratorV1,
     ClaimAttestationEventPayloadV1,
     ClaimAttestationEventV1,
     ClaimAttestationHeadMapEntryV1,
     ClaimAttestationHeadMapNodeV1,
+    ClaimAttestationOutstandingMembershipV1,
     ClaimAttestationPartitionGenesisV1,
     ClaimAttestationPartitionHeadV1,
     ClaimAttestationPublishedPointerV1,
@@ -494,7 +496,102 @@ class ClaimAttestationEvidenceStore:
         self._recover_unpublished()
         pointer = self._load_pointer()
         chain = self._validated_chain(pointer.root_digest)
-        return chain[-1][0]
+        current = chain[-1][0]
+        self._verified_accelerator(chain)
+        return current
+
+    def _accelerator_path(self, root_digest: str) -> Path:
+        Sha256Value.from_tagged(root_digest)
+        return self.root / "accelerators" / f"{root_digest[7:]}.json"
+
+    def _event_pairs_for_chain(
+        self,
+        chain: tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...],
+    ) -> tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...]:
+        pairs: list[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1]] = []
+        for root, _node in chain[1:]:
+            assert root.event_digest is not None
+            event = self._load_object("event", root.event_digest, ClaimAttestationEventV1)
+            assert isinstance(event, ClaimAttestationEventV1)
+            marker = self._load_marker(self._chain_marker_path(event))
+            if marker != event:
+                raise _error("store_corrupt", "attestation event object and marker differ")
+            pairs.append((event, self._payload_for_event(event)))
+        return tuple(pairs)
+
+    @staticmethod
+    def _build_accelerator(
+        root_digest: str,
+        pairs: tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...],
+    ) -> ClaimAttestationAcceleratorV1:
+        latest: dict[tuple[str, str, str], tuple[int, str]] = {}
+        idempotency: list[tuple[str, str, str, str]] = []
+        memberships: list[ClaimAttestationOutstandingMembershipV1] = []
+        for event, payload in pairs:
+            statement = payload.attestation.statement
+            latest_key = (
+                event.partition_digest,
+                statement.attestation_basis,
+                statement.attesting_principal_id,
+            )
+            previous = latest.get(latest_key)
+            if previous is None or event.sequence > previous[0]:
+                latest[latest_key] = (event.sequence, event.event_digest)
+            idempotency.append(
+                (
+                    event.partition_digest,
+                    statement.attesting_principal_id,
+                    payload.statement_digest,
+                    event.event_digest,
+                )
+            )
+            if statement.attestation_basis == "new_capture":
+                memberships.extend(
+                    ClaimAttestationOutstandingMembershipV1(
+                        claim_identity=statement.claim_identity,
+                        capture_digest=capture_digest,
+                        event_digest=event.event_digest,
+                    )
+                    for capture_digest in statement.cited_capture_digests
+                )
+        return ClaimAttestationAcceleratorV1(
+            at_published_root_digest=root_digest,
+            latest_event_by_principal=tuple(
+                sorted((*key, value[1]) for key, value in latest.items())
+            ),
+            idempotency_entries=tuple(sorted(idempotency)),
+            outstanding_memberships=tuple(
+                sorted(
+                    memberships,
+                    key=lambda item: (
+                        item.claim_identity.qualified.encode("utf-8"),
+                        item.capture_digest.encode("ascii"),
+                        item.event_digest.encode("ascii"),
+                    ),
+                )
+            ),
+        )
+
+    def _verified_accelerator(
+        self,
+        chain: tuple[tuple[ClaimAttestationPublishedRootV1, ClaimAttestationHeadMapNodeV1], ...],
+    ) -> ClaimAttestationAcceleratorV1:
+        root_digest = chain[-1][0].root_digest
+        pairs = self._event_pairs_for_chain(chain)
+        expected = self._build_accelerator(root_digest, pairs)
+        path = self._accelerator_path(root_digest)
+        actual: ClaimAttestationAcceleratorV1 | None = None
+        if path.is_file() and not path.is_symlink():
+            try:
+                raw = path.read_bytes()
+                parsed = ClaimAttestationAcceleratorV1.model_validate_json(raw)
+                if raw == _render(parsed):
+                    actual = parsed
+            except (OSError, ValidationError, ValueError):
+                actual = None
+        if actual != expected:
+            _replace_pointer(path, _render(expected))
+        return expected
 
     def _publish_event(
         self,
@@ -751,6 +848,38 @@ class ClaimAttestationEvidenceStore:
                     raise _error("store_corrupt", "attestation event object and marker differ")
                 loaded.append((event, self._payload_for_event(event)))
             return tuple(loaded)
+
+    def fold_events(
+        self, *, at_head: str | None = None
+    ) -> tuple[tuple[ClaimAttestationEventV1, ClaimAttestationEventPayloadV1], ...]:
+        """Return only events needed by the threshold and outstanding reducers."""
+
+        with self._locked():
+            if not self.root.exists():
+                if at_head is not None and at_head != self._empty_root().root_digest:
+                    raise _error("attestation_head_unknown", "attestation head is unknown")
+                return ()
+            self._load_manifest()
+            current = self._ready()
+            chain = self._validated_chain(current.root_digest)
+            target_indexes = tuple(
+                index for index, (root, _node) in enumerate(chain) if root.root_digest == at_head
+            )
+            if at_head is None:
+                target_chain = chain
+            elif len(target_indexes) == 1:
+                target_chain = chain[: target_indexes[0] + 1]
+            else:
+                raise _error(
+                    "attestation_head_unknown",
+                    "attestation head is not a replay-valid ancestor",
+                )
+            accelerator = self._verified_accelerator(target_chain)
+            selected = {entry[3] for entry in accelerator.latest_event_by_principal} | {
+                entry.event_digest for entry in accelerator.outstanding_memberships
+            }
+            pairs = self._event_pairs_for_chain(target_chain)
+            return tuple(pair for pair in pairs if pair[0].event_digest in selected)
 
 
 __all__ = [

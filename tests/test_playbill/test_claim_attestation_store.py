@@ -189,3 +189,35 @@ def test_unknown_head_and_corrupt_marker_refuse_typed(tmp_path: Path) -> None:
     marker.write_bytes(marker.read_bytes().replace(b'"sequence":1', b'"sequence":2'))
     with pytest.raises(ClaimAttestationStoreError, match="store_corrupt"):
         store.events(at_head=receipt.recorded_head)
+
+
+def test_accelerator_is_verified_rebuilt_and_selects_reducer_frontier(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    first = _attestation(stance="support")
+    first_receipt = store.append(
+        attestation=first,
+        verification_account=_account(first),
+        note=None,
+    )
+    second = _attestation(stance="contradict")
+    second_receipt = store.append(
+        attestation=second,
+        verification_account=_account(second),
+        note=None,
+    )
+
+    # Every new-capture event remains outstanding even though the same principal
+    # produced a later event; this is distinct from examined-existing latest.
+    assert [item[0].event_digest for item in store.fold_events()] == [
+        first_receipt.event_digest,
+        second_receipt.event_digest,
+    ]
+    accelerator = next((store.root / "accelerators").glob("*.json"))
+    accelerator.write_text("{}\n", encoding="utf-8")
+    assert [item[0].event_digest for item in store.fold_events()] == [
+        first_receipt.event_digest,
+        second_receipt.event_digest,
+    ]
+    assert b"playbill-claim-attestation-accelerator-v1" in accelerator.read_bytes()

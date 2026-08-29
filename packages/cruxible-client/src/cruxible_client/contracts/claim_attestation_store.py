@@ -252,11 +252,42 @@ class ClaimAttestationAcceleratorV1(_StrictStoreModel):
         "playbill-claim-attestation-accelerator-v1"
     )
     at_published_root_digest: str
-    latest_event_by_principal: tuple[tuple[str, str, str], ...] = ()
-    idempotency_entries: tuple[tuple[str, str], ...] = ()
+    # (partition_digest, basis, principal_id, event_digest)
+    latest_event_by_principal: tuple[tuple[str, str, str, str], ...] = ()
+    # (partition_digest, principal_id, statement_digest, event_digest)
+    idempotency_entries: tuple[tuple[str, str, str, str], ...] = ()
     outstanding_memberships: tuple[ClaimAttestationOutstandingMembershipV1, ...] = ()
 
     _root_digest = field_validator("at_published_root_digest")(_digest)
+
+    @model_validator(mode="after")
+    def _canonical(self) -> "ClaimAttestationAcceleratorV1":
+        latest = tuple(sorted(set(self.latest_event_by_principal)))
+        idempotency = tuple(sorted(set(self.idempotency_entries)))
+        memberships = tuple(
+            sorted(
+                set(self.outstanding_memberships),
+                key=lambda item: (
+                    item.claim_identity.qualified.encode("utf-8"),
+                    item.capture_digest.encode("ascii"),
+                    item.event_digest.encode("ascii"),
+                ),
+            )
+        )
+        if (
+            self.latest_event_by_principal != latest
+            or self.idempotency_entries != idempotency
+            or self.outstanding_memberships != memberships
+        ):
+            raise ValueError("attestation accelerator entries must be sorted and unique")
+        for partition, _basis, _principal, event in latest:
+            _digest(partition)
+            _digest(event)
+        for partition, _principal, statement, event in idempotency:
+            _digest(partition)
+            _digest(statement)
+            _digest(event)
+        return self
 
 
 def claim_attestation_partition_digest(
