@@ -18,6 +18,8 @@ from cruxible_core.deprecation import (
     emit_http_deprecations,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
 
 class _Headers:
     def __init__(self) -> None:
@@ -95,7 +97,7 @@ def test_removed_050_surfaces_are_absent_from_code_and_registry() -> None:
         "PROCEDURE_STRING_WARNINGS",
         "ProcedureTransitionResult",
     }
-    live_source = "\n".join(path.read_text() for path in sorted(Path("src").rglob("*.py")))
+    live_source = "\n".join(path.read_text() for path in sorted((REPO_ROOT / "src").rglob("*.py")))
     for marker in removed_source_markers:
         assert marker not in live_source
 

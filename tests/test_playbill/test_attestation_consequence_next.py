@@ -26,6 +26,7 @@ from cruxible_client.contracts.claim_types import (
     render_claim_type,
 )
 from cruxible_client.contracts.claims import claim_path, claim_statement_digest
+from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -433,3 +434,20 @@ def test_thresholds_zero_one_and_two_count_distinct_principals(
     assert len(rows) == expected_rows
     if rows:
         assert rows[0].detail["independent_control_component_count"] == attestation_count
+
+
+def test_threshold_fold_refuses_missing_law_evidence_as_typed_integrity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner, _claim = threshold_world(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next._claim_law_evidence_index",
+        lambda _instance, *, at: {},
+    )
+
+    with pytest.raises(
+        ProposalIntegrityError,
+        match="accepted Claim has no reproducible Claim law evidence",
+    ):
+        _rows(instance)

@@ -32,6 +32,8 @@ from cruxible_client.contracts.claim_attestations import (
     claim_attestation_v2_statement_bytes,
 )
 from cruxible_client.contracts.claims import (
+    ClaimArtifactV3,
+    ClaimRetirementAttributionV1,
     SubjectClaimObject,
     claim_artifact_digest,
     claim_path,
@@ -200,6 +202,49 @@ def test_served_append_refuses_actor_relay_before_store_disclosure(tmp_path: Pat
     assert error.value.error_code == "playbill.claim_attestation.actor_signer_mismatch"
 
 
+def test_served_append_refuses_an_invalid_signature_with_exact_code(tmp_path: Path) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    request = _request(instance, owner, claim_id, tmp_path)
+    invalid = request.model_copy(
+        update={"attestation": request.attestation.model_copy(update={"signature": "00" * 64})}
+    )
+
+    _assert_refusal(instance, invalid, "signature_invalid")
+
+
+def test_served_append_refuses_a_terminally_retired_current_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, claim_id, owner = _accepted_claim_world(tmp_path)
+    request = _request(instance, owner, claim_id, tmp_path)
+    from cruxible_core.service import playbill_claim_attestations as service_module
+
+    accepted_claim = service_module._accepted_claim
+    calls = 0
+
+    def accepted_then_retired(tree, requested_claim_id):  # type: ignore[no-untyped-def]
+        nonlocal calls
+        calls += 1
+        claim = accepted_claim(tree, requested_claim_id)
+        if calls == 1:
+            return claim
+        return ClaimArtifactV3(
+            identity=claim.identity,
+            statement=claim.statement,
+            backing=claim.backing,
+            pins=claim.pins,
+            lifecycle=ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=claim_artifact_digest(claim).tagged,
+            ),
+            retirement=ClaimRetirementAttributionV1(reason="was-rescinded"),
+        )
+
+    monkeypatch.setattr(service_module, "_accepted_claim", accepted_then_retired)
+    _assert_refusal(instance, request, "claim_terminally_retired")
+
+
 def test_service_gate_independently_refuses_nonordinary_principal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -266,11 +311,18 @@ def test_unaccepted_referent_and_missing_claim_refuse_exact_codes(tmp_path: Path
     )
 
 
-@pytest.mark.parametrize("checked_phase", ["referent", "append"])
+@pytest.mark.parametrize(
+    ("checked_phase", "expected_code"),
+    [
+        ("referent", "signing_key_invalid_at_referent"),
+        ("append", "signing_key_invalid_at_append"),
+    ],
+)
 def test_signing_key_digest_is_checked_at_each_coordinate_independently(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     checked_phase: str,
+    expected_code: str,
 ) -> None:
     instance, claim_id, owner = _accepted_claim_world(tmp_path)
     request = _resign(
@@ -299,7 +351,7 @@ def test_signing_key_digest_is_checked_at_each_coordinate_independently(
             "verify_claim_attestation_v2_principal",
             lambda *_args, **_kwargs: None,
         )
-    _assert_refusal(instance, request, f"signing_key_invalid_at_{checked_phase}")
+    _assert_refusal(instance, request, expected_code)
 
 
 def test_principal_inactive_codes_are_distinct_by_coordinate(

@@ -14,7 +14,6 @@ from cruxible_client.authoring.attestations import (
     LocalEd25519ClaimAttestationSigner,
     local_attestation_signer_from_environment,
 )
-from cruxible_client.contracts.errors import PlaybillKeyError
 from tests.test_client._attestation_support import ServiceAttestationClient
 from tests.test_playbill.test_claim_type_migrations import _accepted_claim_world
 from tests.test_server.test_playbill_sdk_demo_world import _catalog
@@ -89,11 +88,12 @@ def test_environment_key_custody_refuses_unsafe_paths(
     monkeypatch.setenv("CRUXIBLE_PRINCIPAL_KEY_PATH", configured)
 
     with pytest.raises(
-        (LocalClaimAttestationKeyUnavailable, PlaybillKeyError),
+        LocalClaimAttestationKeyUnavailable,
         match="playbill.claim_attestation.local_signing_key_unavailable|forbidden|match|absolute|permissions",
-    ):
+    ) as error:
         local_attestation_signer_from_environment(
             client,
             instance.descriptor.instance_id,
             workspace_root=workspace,
         )
+    assert error.value.error_code == "playbill.claim_attestation.local_signing_key_unavailable"

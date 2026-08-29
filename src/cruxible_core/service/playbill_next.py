@@ -63,7 +63,7 @@ from cruxible_client.contracts.declared_blocks import (
     projection_query_semantic_result_digest,
 )
 from cruxible_client.contracts.documents import document_path, parse_document
-from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.errors import PlaybillError, ProposalIntegrityError
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
@@ -762,7 +762,9 @@ def _claim_attestation_threshold_items(
         policy = claim_type.attestation_consequence_policy
         if policy is None:
             continue
-        evidence = law_evidence[claim_path(claim.identity.name)]
+        evidence = law_evidence.get(claim_path(claim.identity.name))
+        if evidence is None:
+            raise ProposalIntegrityError("accepted Claim has no reproducible Claim law evidence")
         current = current_verified_claim_attestations(
             tree,
             claim,
