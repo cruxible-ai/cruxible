@@ -5,9 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV1
+from cruxible_client.contracts.authoring.models import (
+    ProcedureAuthoringPayloadV1,
+    ProcedureAuthoringPayloadV2,
+)
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
+from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
@@ -103,6 +108,106 @@ def _payload(definition: dict[str, object]) -> ProcedureAuthoringPayloadV1:
         definition=definition,
         activation_policy="drain",
     )
+
+
+def _carried_contract(name: str, field: PropertySchema) -> ProcedureOwnedContractV1:
+    return ProcedureOwnedContractV1(
+        identity=ArtifactIdentity(kind="Contract", name=name),
+        schema=ContractSchema(fields={} if name == "empty-input" else {"rows": field}),
+    )
+
+
+def _carried_definition() -> dict[str, object]:
+    return {
+        "graph_format": 3,
+        "name": "bounded-projection",
+        "contract_in": {
+            "kind": "carried_contract",
+            "name": "empty-input",
+            "role": "contract-in",
+        },
+        "contract_out": {
+            "kind": "carried_contract",
+            "name": "rows-output",
+            "role": "contract-out",
+        },
+        "nodes": [
+            {
+                "kind": "project",
+                "node_id": "project",
+                "fields": {"rows": []},
+                "contract_out": {
+                    "kind": "carried_contract",
+                    "name": "rows-output",
+                    "role": "contract-out",
+                },
+                "as": "result",
+            }
+        ],
+        "returns": "result",
+        "budget": {
+            "wall_clock": {"microseconds": 1_000_000},
+            "max_provider_calls": 0,
+            "max_capture_bytes": 0,
+            "max_items": 10,
+        },
+        "hard_caps": {
+            "max_wall_clock": {"microseconds": 2_000_000},
+            "max_provider_calls": 0,
+            "max_capture_bytes": 0,
+            "max_items": 20,
+            "max_repeat_attempts": 1,
+        },
+        "terminal_capability": 1,
+    }
+
+
+def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    opaque = ProcedureAuthoringPayloadV2(
+        definition=_carried_definition(),
+        activation_policy="snapshot",
+        owned_contracts=(
+            _carried_contract("empty-input", PropertySchema(type="json")),
+            _carried_contract("rows-output", PropertySchema(type="json")),
+        ),
+    )
+    refused = coordinator.compile(
+        actor=actor,
+        payload=opaque,
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert refused.verdict == "refused"
+    diagnostic = refused.frontier.diagnostics[0]
+    assert diagnostic.code == (
+        "playbill.authoring.procedure_definition_invalid"
+    )
+    assert diagnostic.offending_element == "definition.budget.max_items"
+    assert "declare a list field" in diagnostic.repairs[0].description.lower()
+
+    supported = opaque.model_copy(
+        update={
+            "owned_contracts": (
+                _carried_contract("empty-input", PropertySchema(type="json")),
+                _carried_contract(
+                    "rows-output",
+                    PropertySchema(
+                        type="list",
+                        item_fields={"id": PropertySchema(type="string")},
+                    ),
+                ),
+            )
+        }
+    )
+    supported_root = tmp_path / "supported"
+    supported_root.mkdir()
+    supported_coordinator, supported_actor = _coordinator(supported_root)
+    passed = supported_coordinator.compile(
+        actor=supported_actor,
+        payload=supported,
+        canonical_timestamp="2026-08-21T12:01:00.000000Z",
+    )
+    assert passed.verdict == "passed"
 
 
 def test_pin_slot_procedure_compiles_without_writer_managed_envelope_fields(

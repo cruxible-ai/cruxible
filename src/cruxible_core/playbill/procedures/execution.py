@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime
-from typing import Literal, Protocol, cast
+from typing import Callable, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -30,6 +30,10 @@ from cruxible_client.contracts.errors import PlaybillExecutionError, PlaybillJou
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     procedure_artifact_digest,
+)
+from cruxible_client.contracts.procedures.contracts import (
+    ProcedureContractItemBudgetExceeded,
+    ValidatedProcedureContract,
 )
 from cruxible_client.contracts.procedures.graph import analyze_procedure_v3
 from cruxible_client.contracts.procedures.models import (
@@ -950,7 +954,7 @@ def prepare_direct_procedure_run(
 class _RunRefusal(Exception):
     def __init__(
         self,
-        code: ProcedureNodeRefusalCodeV1,
+        code: str,
         message: str,
         *,
         node_id: str | None = None,
@@ -1011,6 +1015,36 @@ class _RunState:
     control: frozenset[DependencyToken] = frozenset()
     provider_calls: int = 0
     capture_bytes: int = 0
+    max_items_high_water: int = 0
+    max_items_boundary: str | None = None
+    max_items_field_path: str | None = None
+    result_bytes_high_water: int = 0
+    result_bytes_boundary: str | None = None
+    result_bytes_field_path: str | None = None
+    wall_clock_microseconds: int = 0
+
+    def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
+        candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
+        current = (
+            b"" if self.max_items_boundary is None else self.max_items_boundary.encode("utf-8"),
+            b""
+            if self.max_items_field_path is None
+            else self.max_items_field_path.encode("utf-8"),
+        )
+        if observed > self.max_items_high_water or (
+            observed == self.max_items_high_water
+            and observed > 0
+            and (self.max_items_boundary is None or candidate < current)
+        ):
+            self.max_items_high_water = observed
+            self.max_items_boundary = boundary
+            self.max_items_field_path = field_path
+
+    def observe_result_bytes(self, observed: int, boundary: str, field_path: str) -> None:
+        if observed > self.result_bytes_high_water:
+            self.result_bytes_high_water = observed
+            self.result_bytes_boundary = boundary
+            self.result_bytes_field_path = field_path
 
     def alias_tokens(self, aliases: frozenset[str]) -> frozenset[DependencyToken]:
         tokens: frozenset[DependencyToken] = frozenset()
@@ -1023,6 +1057,27 @@ class _RunState:
     def item_tokens(self, alias: str, index: int) -> frozenset[DependencyToken]:
         found = self.provenance.get(alias)
         return frozenset() if found is None else found.item(index)
+
+
+def _effective_max_items(admission: ProcedureRunAdmissionV1) -> int:
+    return (
+        admission.hard_caps.max_items
+        if admission.budget.max_items is None
+        else admission.budget.max_items
+    )
+
+
+def _kernel_list_boundary(
+    validator: ContractValidatorProtocol,
+    contract: ArtifactPin,
+) -> tuple[str, str] | None:
+    resolve = getattr(validator, "unique_list_field_path", None)
+    if not callable(resolve):
+        return None
+    field_path = resolve(contract)
+    if not isinstance(field_path, str):
+        return None
+    return (f"contract-out:{contract.target.name}", field_path)
 
 
 class ProcedureExecutor:
@@ -1146,6 +1201,8 @@ class ProcedureExecutor:
                 payload=state.input_payload,
                 direction="input",
                 node_id="procedure",
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
             )
             output = self._walk(
                 accepted,
@@ -1348,7 +1405,10 @@ class ProcedureExecutor:
                 admission.budget.wall_clock.microseconds > caps.max_wall_clock.microseconds
                 or admission.budget.max_provider_calls > caps.max_provider_calls
                 or admission.budget.max_capture_bytes > caps.max_capture_bytes
-                or admission.budget.max_items > caps.max_items
+                or (
+                    admission.budget.max_items is not None
+                    and admission.budget.max_items > caps.max_items
+                )
             ):
                 raise PlaybillExecutionError("Line run budget exceeds the Procedure hard caps")
         if _node_pin_sets(accepted, self.slot_pins) != admission.node_pin_sets:
@@ -1475,6 +1535,7 @@ class ProcedureExecutor:
         node_id: str,
     ) -> None:
         elapsed_us = (self.clock.monotonic_ns() - started_ns) // 1000
+        state.wall_clock_microseconds = max(state.wall_clock_microseconds, elapsed_us)
         if elapsed_us > admission.budget.wall_clock.microseconds:
             raise _BudgetExceeded(
                 "wall_clock",
@@ -1581,10 +1642,26 @@ class ProcedureExecutor:
                     result = state.outputs[definition.returns]
                 except KeyError as exc:  # pragma: no cover - static law should prevent
                     raise PlaybillExecutionError("Procedure return alias was not produced") from exc
+                return_contract = self._pin(
+                    definition.contract_out,
+                    label="Procedure contract_out",
+                )
+                result = _validate_node_contract(
+                    self.contract_validator,
+                    contract=return_contract,
+                    payload=result,
+                    direction="output",
+                    node_id=node.node_id,
+                    max_items=_effective_max_items(admission),
+                    observe_items=state.observe_items,
+                )
                 _check_return_budget(
                     result,
-                    max_items=admission.budget.max_items,
+                    max_items=None,
                     node_id=node.node_id,
+                    observe_result_bytes=state.observe_result_bytes,
+                    boundary="procedure-return",
+                    field_path=definition.returns,
                 )
                 try:
                     return normalize_canonical(result)
@@ -1646,20 +1723,25 @@ class ProcedureExecutor:
                 payload=resolved,
                 direction="input",
                 node_id=node.node_id,
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
             )
+            contract = self._pin(node.contract_out, label=f"transform {node.node_id!r} output")
             value, lineage = _apply_node_transform(
                 node.transform_kind,
                 validated_input,
-                max_items=admission.budget.max_items,
+                max_items=_effective_max_items(admission),
                 node_id=node.node_id,
+                list_boundary=_kernel_list_boundary(self.contract_validator, contract),
             )
-            contract = self._pin(node.contract_out, label=f"transform {node.node_id!r} output")
             state.outputs[node.as_] = _validate_node_contract(
                 self.contract_validator,
                 contract=contract,
                 payload=value,
                 direction="output",
                 node_id=node.node_id,
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
             )
             state.provenance[node.as_] = _transform_provenance(
                 node,
@@ -1683,6 +1765,8 @@ class ProcedureExecutor:
                 payload=value,
                 direction="output",
                 node_id=node.node_id,
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
             )
             state.provenance[node.as_] = _projected_provenance(
                 node.fields,
@@ -2188,12 +2272,14 @@ class ProcedureExecutor:
                 outputs=state.outputs,
             )
         )
-        payload = normalize_canonical(
-            self.contract_validator.validate_contract(
-                contract=contract_in,
-                payload=resolved,
-                direction="input",
-            )
+        payload = _validate_node_contract(
+            self.contract_validator,
+            contract=contract_in,
+            payload=resolved,
+            direction="input",
+            node_id=node.node_id,
+            max_items=_effective_max_items(admission),
+            observe_items=state.observe_items,
         )
         if state.provider_calls >= admission.budget.max_provider_calls:
             raise _BudgetExceeded(
@@ -2253,12 +2339,14 @@ class ProcedureExecutor:
             payload=payload,
             actor_context=admission.actor_context,
         )
-        output = normalize_canonical(
-            self.contract_validator.validate_contract(
-                contract=contract_out,
-                payload=normalize_canonical(result.output),
-                direction="output",
-            )
+        output = _validate_node_contract(
+            self.contract_validator,
+            contract=contract_out,
+            payload=normalize_canonical(result.output),
+            direction="output",
+            node_id=node.node_id,
+            max_items=_effective_max_items(admission),
+            observe_items=state.observe_items,
         )
         state.outputs[node.as_] = output
         state.provenance[node.as_] = AliasProvenanceV1(whole=_base_tokens(node, state, node.input))
@@ -2392,12 +2480,15 @@ class ProcedureExecutor:
                 payload=spec,
                 direction="input",
                 node_id=body.node_id,
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
             )
             value, lineage = _apply_node_transform(
                 transform_kind,
                 validated,
-                max_items=admission.budget.max_items,
+                max_items=_effective_max_items(admission),
                 node_id=body.node_id,
+                list_boundary=_kernel_list_boundary(self.contract_validator, contract_out),
             )
             local_outputs[body.as_] = _validate_node_contract(
                 self.contract_validator,
@@ -2405,6 +2496,8 @@ class ProcedureExecutor:
                 payload=value,
                 direction="output",
                 node_id=body.node_id,
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
             )
             local_state = _RunState(
                 outputs=combined,
@@ -2936,8 +3029,27 @@ def _validate_node_contract(
     payload: CanonicalValue,
     direction: Literal["input", "output"],
     node_id: str,
+    max_items: int | None = None,
+    observe_items: Callable[[int, str, str], None] | None = None,
 ) -> CanonicalValue:
+    boundary = f"contract-{'in' if direction == 'input' else 'out'}:{contract.target.name}"
     try:
+        budget_validator = getattr(validator, "validate_contract_with_budget", None)
+        if max_items is not None and callable(budget_validator):
+            budget_result = budget_validator(
+                contract=contract,
+                payload=payload,
+                direction=direction,
+                max_items=max_items,
+            )
+            if not isinstance(budget_result, ValidatedProcedureContract):
+                raise PlaybillExecutionError(
+                    "Contract budget validator returned an invalid result"
+                )
+            if observe_items is not None:
+                for observation in budget_result.list_observations:
+                    observe_items(observation.observed, boundary, observation.field_path)
+            return normalize_canonical(budget_result.value)
         return normalize_canonical(
             validator.validate_contract(
                 contract=contract,
@@ -2945,12 +3057,23 @@ def _validate_node_contract(
                 direction=direction,
             )
         )
+    except ProcedureContractItemBudgetExceeded as exc:
+        if observe_items is not None and exc.field_path is not None:
+            observe_items(exc.observed, boundary, exc.field_path)
+        raise _budget_refusal(
+            budget_kind="max_items",
+            limit=exc.limit,
+            observed=exc.observed,
+            node_id=node_id,
+            boundary=boundary,
+            field_path=exc.field_path or "",
+        ) from exc
     except Exception as exc:
         code: ProcedureNodeRefusalCodeV1 = (
             "contract_input_refused" if direction == "input" else "contract_output_refused"
         )
         details: dict[str, object] = {
-            "boundary": f"contract-{direction}:{contract.target.name}",
+            "boundary": boundary,
         }
         field_path = getattr(exc, "field_path", None)
         element_index = getattr(exc, "element_index", None)
@@ -2972,9 +3095,16 @@ def _apply_node_transform(
     *,
     max_items: int,
     node_id: str,
+    list_boundary: tuple[str, str] | None = None,
 ) -> tuple[CanonicalValue, _ItemLineage | None]:
     try:
-        return _apply_transform(kind, spec, max_items=max_items, node_id=node_id)
+        return _apply_transform(
+            kind,
+            spec,
+            max_items=max_items,
+            node_id=node_id,
+            list_boundary=list_boundary,
+        )
     except _RunRefusal:
         raise
     except _TransformInputInvalid as exc:
@@ -3013,7 +3143,22 @@ def _budget_refusal(
     limit: int,
     observed: int,
     node_id: str,
+    boundary: str | None = None,
+    field_path: str | None = None,
 ) -> _RunRefusal:
+    if budget_kind == "max_items":
+        return _RunRefusal(
+            "budget_max_items_exceeded",
+            "A Procedure collection exceeded its declared item bound.",
+            node_id=node_id,
+            details={
+                "dimension": "max_items",
+                "limit": limit,
+                "observed": observed,
+                "boundary": boundary,
+                "field_path": field_path,
+            },
+        )
     return _RunRefusal(
         "budget_exhausted",
         f"Procedure {budget_kind} budget exhausted.",
@@ -3032,6 +3177,7 @@ def _extract_items(
     label: str,
     max_items: int | None = None,
     node_id: str = "transform",
+    list_boundary: tuple[str, str] | None = None,
 ) -> list[CanonicalValue]:
     if isinstance(value, list):
         if max_items is not None and len(value) > max_items:
@@ -3040,6 +3186,8 @@ def _extract_items(
                 limit=max_items,
                 observed=len(value),
                 node_id=node_id,
+                boundary=None if list_boundary is None else list_boundary[0],
+                field_path=None if list_boundary is None else list_boundary[1],
             )
         return [normalize_canonical(item) for item in value]
     if isinstance(value, dict) and isinstance(value.get("items"), list):
@@ -3049,6 +3197,8 @@ def _extract_items(
                 limit=max_items,
                 observed=len(value["items"]),
                 node_id=node_id,
+                boundary=None if list_boundary is None else list_boundary[0],
+                field_path=None if list_boundary is None else list_boundary[1],
             )
         return [normalize_canonical(item) for item in value["items"]]
     slot = "right_items" if label == "join_items right_items" else "left_items"
@@ -3067,6 +3217,7 @@ def _apply_transform(
     *,
     max_items: int | None = None,
     node_id: str = "transform",
+    list_boundary: tuple[str, str] | None = None,
 ) -> tuple[CanonicalValue, _ItemLineage | None]:
     """Apply one deterministic transform and report which input item fed each output."""
 
@@ -3075,7 +3226,13 @@ def _apply_transform(
     if not isinstance(spec, dict):
         raise PlaybillExecutionError(f"transform {kind!r} requires an object spec")
     if kind == "shape_items":
-        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
+        items = _extract_items(
+            spec.get("items"),
+            label=kind,
+            max_items=max_items,
+            node_id=node_id,
+            list_boundary=list_boundary,
+        )
         fields = spec.get("fields", {})
         if not isinstance(fields, dict):
             raise PlaybillExecutionError("shape_items fields must be an object")
@@ -3097,6 +3254,8 @@ def _apply_transform(
                     limit=max_items,
                     observed=len(shaped) + 1,
                     node_id=node_id,
+                    boundary=None if list_boundary is None else list_boundary[0],
+                    field_path=None if list_boundary is None else list_boundary[1],
                 )
             shaped.append(normalize_canonical(base))
         return (
@@ -3104,7 +3263,13 @@ def _apply_transform(
             tuple((("items", index),) for index in range(len(shaped))),
         )
     if kind == "filter_items":
-        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
+        items = _extract_items(
+            spec.get("items"),
+            label=kind,
+            max_items=max_items,
+            node_id=node_id,
+            list_boundary=list_boundary,
+        )
         where = spec.get("where", {})
         if not isinstance(where, dict):
             raise PlaybillExecutionError("filter_items where must be an object")
@@ -3120,6 +3285,8 @@ def _apply_transform(
                     limit=max_items,
                     observed=len(kept_indices) + 1,
                     node_id=node_id,
+                    boundary=None if list_boundary is None else list_boundary[0],
+                    field_path=None if list_boundary is None else list_boundary[1],
                 )
             kept_indices.append(index)
         kept = [items[index] for index in kept_indices]
@@ -3130,7 +3297,13 @@ def _apply_transform(
             tuple((("items", index),) for index in kept_indices),
         )
     if kind == "dedupe_items":
-        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
+        items = _extract_items(
+            spec.get("items"),
+            label=kind,
+            max_items=max_items,
+            node_id=node_id,
+            list_boundary=list_boundary,
+        )
         keys = spec.get("keys", [])
         if not isinstance(keys, list) or not all(isinstance(item, str) for item in keys):
             raise PlaybillExecutionError("dedupe_items keys must be a string list")
@@ -3150,6 +3323,8 @@ def _apply_transform(
                     limit=max_items,
                     observed=len(output) + 1,
                     node_id=node_id,
+                    boundary=None if list_boundary is None else list_boundary[0],
+                    field_path=None if list_boundary is None else list_boundary[1],
                 )
             seen.add(identity)
             output.append(item)
@@ -3166,12 +3341,14 @@ def _apply_transform(
             label="join_items left_items",
             max_items=max_items,
             node_id=node_id,
+            list_boundary=list_boundary,
         )
         right = _extract_items(
             spec.get("right_items"),
             label="join_items right_items",
             max_items=max_items,
             node_id=node_id,
+            list_boundary=list_boundary,
         )
         left_key = spec.get("left_key")
         right_key = spec.get("right_key")
@@ -3196,6 +3373,8 @@ def _apply_transform(
                         limit=max_items,
                         observed=len(joined_output) + 1,
                         node_id=node_id,
+                        boundary=None if list_boundary is None else list_boundary[0],
+                        field_path=None if list_boundary is None else list_boundary[1],
                     )
                 joined = {"left": left_item, "right": right_item}
                 joined_output.append(
@@ -3215,14 +3394,28 @@ def _apply_transform(
             tuple(joined_lineage),
         )
     if kind == "aggregate_items":
-        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
+        items = _extract_items(
+            spec.get("items"),
+            label=kind,
+            max_items=max_items,
+            node_id=node_id,
+            list_boundary=list_boundary,
+        )
         return normalize_canonical({"count": len(items)}), None
     raise PlaybillExecutionError(f"unsupported deterministic transform {kind!r}")
 
 
-def _check_return_budget(value: CanonicalValue, *, max_items: int, node_id: str) -> None:
+def _check_return_budget(
+    value: CanonicalValue,
+    *,
+    max_items: int | None,
+    node_id: str,
+    observe_result_bytes: Callable[[int, str, str], None] | None = None,
+    boundary: str = "procedure-return",
+    field_path: str = "result",
+) -> None:
     count = _item_count(value, extractable_only=True)
-    if count is not None and count > max_items:
+    if max_items is not None and count is not None and count > max_items:
         raise _budget_refusal(
             budget_kind="max_items",
             limit=max_items,
@@ -3230,6 +3423,8 @@ def _check_return_budget(value: CanonicalValue, *, max_items: int, node_id: str)
             node_id=node_id,
         )
     size = len(canonical_bytes(value))
+    if observe_result_bytes is not None:
+        observe_result_bytes(size, boundary, field_path)
     if size > PROCEDURE_RESULT_MAX_BYTES:
         raise _budget_refusal(
             budget_kind="result_bytes",

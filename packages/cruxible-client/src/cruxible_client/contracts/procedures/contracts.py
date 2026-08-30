@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
 
@@ -34,11 +35,37 @@ class ProcedureContractValidationError(ValueError):
         self.element_index = element_index
 
 
+class ProcedureContractItemBudgetExceeded(ProcedureContractValidationError):
+    """A list field crossed a Contract boundary above its effective bound."""
+
+    def __init__(self, *, field_path: str, limit: int, observed: int) -> None:
+        super().__init__(
+            "list field exceeds its effective item bound",
+            field_path=field_path,
+        )
+        self.limit = limit
+        self.observed = observed
+
+
+@dataclass(frozen=True)
+class ProcedureContractListObservation:
+    field_path: str
+    observed: int
+
+
+@dataclass(frozen=True)
+class ValidatedProcedureContract:
+    value: CanonicalValue
+    list_observations: tuple[ProcedureContractListObservation, ...]
+
+
 def _normalize_value(
     value: object,
     schema: PropertySchema,
     *,
     field_path: str,
+    max_items: int | None = None,
+    observations: list[ProcedureContractListObservation] | None = None,
 ) -> object:
     if value is None:
         if schema.optional:
@@ -101,6 +128,19 @@ def _normalize_value(
                 field_path=field_path,
             )
         assert schema.item_fields is not None
+        if observations is not None:
+            observations.append(
+                ProcedureContractListObservation(
+                    field_path=field_path,
+                    observed=len(value),
+                )
+            )
+        if max_items is not None and len(value) > max_items:
+            raise ProcedureContractItemBudgetExceeded(
+                field_path=field_path,
+                limit=max_items,
+                observed=len(value),
+            )
         normalized_items: list[object] = []
         for index, item in enumerate(value):
             item_path = f"{field_path}[{index}]"
@@ -117,6 +157,8 @@ def _normalize_value(
                         fields=schema.item_fields,
                         allow_extra=False,
                         path_prefix=item_path,
+                        max_items=max_items,
+                        observations=observations,
                     )
                 )
             except ProcedureContractValidationError as exc:
@@ -128,11 +170,13 @@ def _normalize_value(
 
 
 def _normalize_fields(
-    source: dict[str, object],
+    source: Mapping[str, object],
     *,
     fields: Mapping[str, PropertySchema],
     allow_extra: bool,
     path_prefix: str,
+    max_items: int | None = None,
+    observations: list[ProcedureContractListObservation] | None = None,
 ) -> dict[str, object]:
     extras = sorted(set(source) - set(fields), key=lambda item: item.encode("utf-8"))
     if extras and not allow_extra:
@@ -152,6 +196,8 @@ def _normalize_fields(
                     field.default,
                     field,
                     field_path=field_path,
+                    max_items=max_items,
+                    observations=observations,
                 )
             elif not field.optional:
                 raise ProcedureContractValidationError(
@@ -164,6 +210,8 @@ def _normalize_fields(
                 source[name],
                 field,
                 field_path=field_path,
+                max_items=max_items,
+                observations=observations,
             )
         except ProcedureContractValidationError as exc:
             if exc.field_path is None:
@@ -187,6 +235,29 @@ def _validate_payload(
         path_prefix="",
     )
     return normalize_canonical(normalized)
+
+
+def _validate_payload_with_budget(
+    contract: ProcedureOwnedContractV1,
+    payload: CanonicalValue,
+    *,
+    max_items: int,
+) -> ValidatedProcedureContract:
+    if not isinstance(payload, Mapping):
+        raise ProcedureContractValidationError("Contract payload must be an object")
+    observations: list[ProcedureContractListObservation] = []
+    normalized = _normalize_fields(
+        dict(payload),
+        fields=contract.contract_schema.fields,
+        allow_extra=contract.contract_schema.allow_extra,
+        path_prefix="",
+        max_items=max_items,
+        observations=observations,
+    )
+    return ValidatedProcedureContract(
+        value=normalize_canonical(normalized),
+        list_observations=tuple(observations),
+    )
 
 
 class OwnedProcedureContractValidator:
@@ -220,8 +291,52 @@ class OwnedProcedureContractValidator:
             )
         return _validate_payload(owned, payload)
 
+    def validate_contract_with_budget(
+        self,
+        *,
+        contract: ArtifactPin,
+        payload: CanonicalValue,
+        direction: Literal["input", "output"],
+        max_items: int,
+    ) -> ValidatedProcedureContract:
+        if contract.target.kind != "Contract":
+            raise ProcedureContractValidationError(
+                f"{direction} contract pin does not target Contract"
+            )
+        owned = self._contracts.get(contract.artifact_digest)
+        if owned is None or owned.identity != contract.target:
+            raise ProcedureContractValidationError(
+                f"{direction} contract pin is outside the Procedure owner closure"
+            )
+        return _validate_payload_with_budget(
+            owned,
+            payload,
+            max_items=max_items,
+        )
+
+    def unique_list_field_path(self, contract: ArtifactPin) -> str | None:
+        owned = self._contracts.get(contract.artifact_digest)
+        if owned is None or owned.identity != contract.target:
+            return None
+        paths: list[str] = []
+
+        def visit(fields: Mapping[str, PropertySchema], prefix: str) -> None:
+            for name in sorted(fields, key=lambda item: item.encode("utf-8")):
+                field = fields[name]
+                path = f"{prefix}.{name}" if prefix else name
+                if field.type == "list":
+                    paths.append(path)
+                    if field.item_fields is not None:
+                        visit(field.item_fields, f"{path}[*]")
+
+        visit(owned.contract_schema.fields, "")
+        return paths[0] if len(paths) == 1 else None
+
 
 __all__ = [
     "OwnedProcedureContractValidator",
+    "ProcedureContractItemBudgetExceeded",
+    "ProcedureContractListObservation",
     "ProcedureContractValidationError",
+    "ValidatedProcedureContract",
 ]

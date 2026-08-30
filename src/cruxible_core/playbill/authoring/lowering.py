@@ -1066,6 +1066,36 @@ def _lower_procedure(
             ),
         )
     )
+    if isinstance(payload, ProcedureAuthoringPayloadV2) and definition.budget.max_items is not None:
+        referenced_contract_digests = {
+            pin.artifact_digest for pin in pins if pin.target.kind == "Contract"
+        }
+
+        def carries_list(contract: ProcedureOwnedContractV1) -> bool:
+            pending = list(contract.contract_schema.fields.values())
+            while pending:
+                field = pending.pop()
+                if field.type == "list":
+                    return True
+                if field.item_fields is not None:
+                    pending.extend(field.item_fields.values())
+            return False
+
+        if not any(
+            procedure_owned_contract_digest(contract).tagged in referenced_contract_digests
+            and carries_list(contract)
+            for contract in payload.owned_contracts
+        ):
+            _refuse(
+                "playbill.authoring.procedure_definition_invalid",
+                "definition.budget.max_items",
+                "The lowered graph-v3 Procedure definition declares max_items but none of "
+                "its pinned Contracts declares a list field.",
+                repair_kind="replace_definition",
+                repair_description=(
+                    "Declare a list field on a pinned Contract or remove budget.max_items."
+                ),
+            )
     lifecycle = ArtifactLifecycle(
         state="retired" if payload.retire else "live",
         predecessor_digest=(

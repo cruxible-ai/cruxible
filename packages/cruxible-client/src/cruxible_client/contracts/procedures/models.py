@@ -89,7 +89,12 @@ class ProcedureBudgetV3(_StrictProcedureModel):
     wall_clock: CanonicalDurationV1
     max_provider_calls: int = Field(ge=0, le=1_000_000)
     max_capture_bytes: int = Field(ge=0, le=2**63 - 1)
-    max_items: int = Field(ge=1, le=2**31 - 1)
+    max_items: int | None = Field(
+        default=None,
+        ge=1,
+        le=2**31 - 1,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def _nonzero_wall_clock(self) -> "ProcedureBudgetV3":
@@ -647,7 +652,10 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
             raise ValueError("Procedure budget exceeds its provider-call hard cap")
         if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
             raise ValueError("Procedure budget exceeds its capture-byte hard cap")
-        if self.budget.max_items > self.hard_caps.max_items:
+        if (
+            self.budget.max_items is not None
+            and self.budget.max_items > self.hard_caps.max_items
+        ):
             raise ValueError("Procedure budget exceeds its item hard cap")
         if any(
             isinstance(node, RepeatNodeV3)

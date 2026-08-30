@@ -782,9 +782,8 @@ def test_repeat_body_enforces_the_per_attempt_item_ceiling(tmp_path) -> None:
     assert result.status == "refused"
     assert result.refusal is not None
     assert result.refusal.node_id == "shape-body"
-    assert result.refusal.budget is not None
-    assert result.refusal.budget.budget_kind == "max_items"
-    assert result.refusal.budget.limit == 1
+    assert result.refusal.code == "budget_max_items_exceeded"
+    assert result.refusal.details["limit"] == 1  # type: ignore[index]
 
 
 @pytest.mark.parametrize(
@@ -888,12 +887,12 @@ def test_join_refuses_at_the_n_plus_one_emission(monkeypatch) -> None:
         _apply_transform("join_items", spec, max_items=2, node_id="join")
 
     refusal = raised.value.refusal
-    assert refusal.code == "budget_exhausted"
+    assert refusal.code == "budget_max_items_exceeded"
     assert refusal.node_id == "join"
-    assert refusal.budget is not None
-    assert refusal.budget.model_dump(mode="json") == {
-        "tag": "playbill-procedure-budget-refusal-detail-v1",
-        "budget_kind": "max_items",
+    assert refusal.details == {
+        "boundary": None,
+        "dimension": "max_items",
+        "field_path": None,
         "limit": 2,
         "observed": 3,
     }
@@ -936,10 +935,9 @@ def test_each_item_emitting_kernel_enforces_its_own_ceiling(
     with pytest.raises(_RunRefusal) as raised:
         _apply_transform(kind, spec, max_items=1, node_id=kind)
 
-    assert raised.value.refusal.code == "budget_exhausted"
+    assert raised.value.refusal.code == "budget_max_items_exceeded"
     assert raised.value.refusal.node_id == kind
-    assert raised.value.refusal.budget is not None
-    assert raised.value.refusal.budget.observed == 2
+    assert raised.value.refusal.details["observed"] == 2  # type: ignore[index]
 
 
 def test_aggregate_kernel_enforces_its_extraction_ceiling() -> None:
@@ -951,7 +949,7 @@ def test_aggregate_kernel_enforces_its_extraction_ceiling() -> None:
             node_id="aggregate",
         )
 
-    assert raised.value.refusal.code == "budget_exhausted"
+    assert raised.value.refusal.code == "budget_max_items_exceeded"
     assert raised.value.refusal.node_id == "aggregate"
 
 
@@ -963,9 +961,8 @@ def test_extract_items_enforces_both_collection_shapes(value: object) -> None:
     with pytest.raises(_RunRefusal) as raised:
         _extract_items(value, label="items", max_items=1, node_id="extract")
 
-    assert raised.value.refusal.code == "budget_exhausted"
-    assert raised.value.refusal.budget is not None
-    assert raised.value.refusal.budget.observed == 2
+    assert raised.value.refusal.code == "budget_max_items_exceeded"
+    assert raised.value.refusal.details["observed"] == 2  # type: ignore[index]
 
 
 def test_max_items_is_rechecked_not_consumed_across_fanout() -> None:
@@ -981,8 +978,7 @@ def test_max_items_is_rechecked_not_consumed_across_fanout() -> None:
 def test_return_seam_counts_extractable_values_and_caps_all_result_bytes() -> None:
     with pytest.raises(_RunRefusal) as item_refusal:
         _check_return_budget({"items": [1, 2]}, max_items=1, node_id="return")
-    assert item_refusal.value.refusal.budget is not None
-    assert item_refusal.value.refusal.budget.budget_kind == "max_items"
+    assert item_refusal.value.refusal.code == "budget_max_items_exceeded"
 
     with pytest.raises(_RunRefusal) as byte_refusal:
         _check_return_budget(
@@ -1266,7 +1262,7 @@ def test_epoch_check_refuses_superseded_effect_before_intent(tmp_path) -> None:
     }
 
 
-def test_item_budget_exhaustion_is_finalized_without_output(tmp_path) -> None:
+def test_json_escape_hatch_is_not_charged_as_a_typed_collection(tmp_path) -> None:
     fixture = _fixture(tmp_path)
     accepted = _state_procedure(max_items=1)
     prepared = _prepare(
@@ -1282,12 +1278,12 @@ def test_item_budget_exhaustion_is_finalized_without_output(tmp_path) -> None:
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
     ).execute(prepared, accepted)
-    assert result.status == "refused"
-    assert result.refusal is not None
-    assert result.refusal.code == "budget_exhausted"
-    assert result.refusal.budget is not None
-    assert result.refusal.budget.budget_kind == "max_items"
-    assert result.output is None
+    assert result.status == "succeeded"
+    assert result.refusal is None
+    assert result.output == {
+        "items": [{"id": "one"}, {"id": "two"}],
+        "status": "ok",
+    }
 
 
 def test_noncurrent_procedure_refuses_before_any_journal_record(tmp_path) -> None:
