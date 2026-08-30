@@ -12588,8 +12588,16 @@
             "additionalProperties": false,
             "properties": {
               "boundary": {
-                "title": "Boundary",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Boundary"
               },
               "dimension": {
                 "const": "max_items",
@@ -12598,8 +12606,16 @@
                 "type": "string"
               },
               "field_path": {
-                "title": "Field Path",
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field Path"
               },
               "limit": {
                 "minimum": 1,
@@ -12620,9 +12636,7 @@
             },
             "required": [
               "limit",
-              "observed",
-              "boundary",
-              "field_path"
+              "observed"
             ],
             "title": "ProcedureBudgetExceededDetailV1",
             "type": "object"

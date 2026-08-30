@@ -262,8 +262,8 @@ class ProcedureBudgetExceededDetailV1(_StrictResultModel):
     dimension: Literal["max_items"] = "max_items"
     limit: int = Field(ge=1)
     observed: int = Field(ge=1)
-    boundary: str
-    field_path: str
+    boundary: str | None = None
+    field_path: str | None = None
 
 
 class ProcedureBudgetExhaustedV1(_StrictResultModel):
