@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -25,6 +27,12 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.contracts import (
+    ProcedureContractItemBudgetExceeded,
+    ProcedureContractValidationError,
+    _validate_payload,
+    _validate_payload_with_budget,
+)
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
@@ -42,6 +50,9 @@ from cruxible_core.playbill.exhaust import (
     LocalJournalBackend,
 )
 from cruxible_core.playbill.procedures.execution import (
+    _RunRefusal,
+    _RunState,
+    _validate_node_contract,
     prepare_direct_procedure_run,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -65,6 +76,124 @@ from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 
 READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
+
+
+def test_list_contract_schema_is_recursive_without_changing_scalar_bytes() -> None:
+    scalar = PropertySchema(type="string")
+    assert "item_fields" not in scalar.model_dump(mode="json")
+
+    schema = PropertySchema(
+        type="list",
+        item_fields={
+            "id": PropertySchema(type="string"),
+            "parts": PropertySchema(
+                type="list",
+                item_fields={"value": PropertySchema(type="int")},
+            ),
+        },
+    )
+    assert schema.item_fields is not None
+    assert schema.item_fields["parts"].item_fields is not None
+    with pytest.raises(ValueError, match="require item_fields"):
+        PropertySchema(type="list")
+    with pytest.raises(ValueError, match="only allowed"):
+        PropertySchema(type="string", item_fields={})
+    with pytest.raises(ValueError, match="may not be primary_key"):
+        PropertySchema(type="list", item_fields={}, primary_key=True)
+
+
+def test_list_contract_validation_names_nested_element_and_path() -> None:
+    contract = _contract(
+        "rows",
+        {
+            "rows": PropertySchema(
+                type="list",
+                item_fields={
+                    "parts": PropertySchema(
+                        type="list",
+                        item_fields={"value": PropertySchema(type="int")},
+                    )
+                },
+            )
+        },
+    )
+
+    assert _validate_payload(
+        contract,
+        {"rows": [{"parts": [{"value": 3}]}]},
+    ) == {"rows": [{"parts": [{"value": 3}]}]}
+    with pytest.raises(ProcedureContractValidationError) as caught:
+        _validate_payload(
+            contract,
+            {"rows": [{"parts": [{"value": "not-an-int"}]}]},
+        )
+    assert caught.value.field_path == "rows[0].parts[0].value"
+    assert caught.value.element_index == 0
+
+
+def test_list_contract_budget_refuses_at_the_typed_boundary_without_clipping() -> None:
+    contract = _contract(
+        "rows",
+        {
+            "rows": PropertySchema(
+                type="list",
+                item_fields={"id": PropertySchema(type="string")},
+            )
+        },
+    )
+    payload = {"rows": [{"id": "a"}, {"id": "b"}]}
+
+    with pytest.raises(ProcedureContractItemBudgetExceeded) as caught:
+        _validate_payload_with_budget(contract, payload, max_items=1)
+    assert caught.value.field_path == "rows"
+    assert caught.value.limit == 1
+    assert caught.value.observed == 2
+    assert payload["rows"] == [{"id": "a"}, {"id": "b"}]
+
+
+def test_boundary_budget_refusal_and_high_water_tie_are_deterministic() -> None:
+    class _BudgetValidator:
+        def validate_contract_with_budget(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise ProcedureContractItemBudgetExceeded(
+                field_path="rows",
+                limit=1,
+                observed=2,
+            )
+
+    state = _RunState(outputs={}, input_payload={}, parameters={})
+    pin = ArtifactPin(
+        role="contract-out",
+        target=ArtifactIdentity(kind="Contract", name="rows"),
+        artifact_digest=typed_digest(
+            ArtifactDigest,
+            "playbill-list-boundary-test-v1",
+            {"contract": "rows"},
+        ).tagged,
+    )
+    with pytest.raises(_RunRefusal) as caught:
+        _validate_node_contract(
+            _BudgetValidator(),  # type: ignore[arg-type]
+            contract=pin,
+            payload={"rows": [{"id": "a"}, {"id": "b"}]},
+            direction="output",
+            node_id="shape",
+            max_items=1,
+            observe_items=state.observe_items,
+        )
+    assert caught.value.refusal.code == "budget_max_items_exceeded"
+    assert caught.value.refusal.details == {
+        "boundary": "contract-out:rows",
+        "dimension": "max_items",
+        "field_path": "rows",
+        "limit": 1,
+        "observed": 2,
+    }
+
+    state.observe_items(2, "contract-out:z", "rows")
+    state.observe_items(2, "contract-out:a", "rows")
+    assert state.max_items_high_water == 2
+    assert state.max_items_boundary == "contract-out:a"
+    assert state.max_items_field_path == "rows"
 
 
 class _Authority:

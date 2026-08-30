@@ -89,7 +89,12 @@ class ProcedureBudgetV3(_StrictProcedureModel):
     wall_clock: CanonicalDurationV1
     max_provider_calls: int = Field(ge=0, le=1_000_000)
     max_capture_bytes: int = Field(ge=0, le=2**63 - 1)
-    max_items: int = Field(ge=1, le=2**31 - 1)
+    max_items: int | None = Field(
+        default=None,
+        ge=1,
+        le=2**31 - 1,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def _nonzero_wall_clock(self) -> "ProcedureBudgetV3":
@@ -546,6 +551,14 @@ class MandateSettlementNodeV3(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
+class HaltNodeV3(_StrictProcedureModel):
+    """A successful graph leaf that deliberately produces no result."""
+
+    kind: Literal["halt"] = "halt"
+    node_id: str
+    reason: str | None = None
+
+
 ProcedureNodeV3 = Annotated[
     StateTapNodeV3
     | SourceNodeV3
@@ -558,7 +571,8 @@ ProcedureNodeV3 = Annotated[
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
-    | MandateSettlementNodeV3,
+    | MandateSettlementNodeV3
+    | HaltNodeV3,
     Field(discriminator="kind"),
 ]
 
@@ -568,7 +582,7 @@ TERMINAL_REQUIRED_RUNGS = {
     "propose_change_set": 2,
     "mandate_settlement": 3,
 }
-TERMINAL_NODE_KINDS = frozenset(TERMINAL_REQUIRED_RUNGS)
+TERMINAL_NODE_KINDS = frozenset((*TERMINAL_REQUIRED_RUNGS, "halt"))
 
 
 class ProcedureDefinitionV3(_StrictProcedureModel):
@@ -647,7 +661,7 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
             raise ValueError("Procedure budget exceeds its provider-call hard cap")
         if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
             raise ValueError("Procedure budget exceeds its capture-byte hard cap")
-        if self.budget.max_items > self.hard_caps.max_items:
+        if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
             raise ValueError("Procedure budget exceeds its item hard cap")
         if any(
             isinstance(node, RepeatNodeV3)
@@ -720,6 +734,7 @@ __all__ = [
     "ExhaustTapNodeV3",
     "GuardNodeV3",
     "GuardPredicateV1",
+    "HaltNodeV3",
     "InboxEgressNodeV3",
     "MandateSettlementNodeV3",
     "PredicateOperandV1",

@@ -198,12 +198,12 @@ STANDING_MANDATE_LAW = _artifact_law_coordinate(
 PROCEDURE_LAW = _artifact_law_coordinate(
     PROCEDURE_LAW_IDENTIFIER,
     "playbill-procedure-v1",
-    semantic_revision=4,
+    semantic_revision=5,
 )
 PROCEDURE_LAW_V2 = _artifact_law_coordinate(
     PROCEDURE_LAW_V2_IDENTIFIER,
     "playbill-procedure-v2",
-    semantic_revision=4,
+    semantic_revision=5,
 )
 LINE_LAW = _artifact_law_coordinate(
     LINE_LAW_IDENTIFIER,

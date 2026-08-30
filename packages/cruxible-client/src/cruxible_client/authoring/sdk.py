@@ -1569,13 +1569,16 @@ class Playbill:
     ) -> ProcedureDraft:
         sites = capture_keyword_sites("procedure", stacklevel=1)
         policy = _enum(activation_policy, ActivationPolicy, label="procedure activation policy")
-        allowed = {"state_tap", "transform", "project"}
+        allowed = {"state_tap", "transform", "project", "guard", "repeat", "halt"}
         unsupported = tuple(node.node_id for node in definition.nodes if node.kind not in allowed)
         if unsupported:
             raise CapabilityNotServed(
                 code="playbill.sdk.procedure_capability_not_served",
                 capability=f"procedure nodes {unsupported}",
-                repair="Use only state_tap, transform, and project nodes in the G6 SDK.",
+                repair=(
+                    "Use only state_tap, transform, project, guard, repeat, and halt nodes "
+                    "on the served SDK lane."
+                ),
             )
         payload = ProcedureAuthoringPayloadV2(
             definition=definition.model_dump(mode="json", by_alias=True),

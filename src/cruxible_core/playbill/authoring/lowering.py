@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import NoReturn
 
+from pydantic import ValidationError
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     AuthoringArtifactReferenceV1,
@@ -920,6 +922,21 @@ def _lower_claim(
     )
 
 
+def _validation_error_lines(exc: ValidationError, *, root: str) -> tuple[str, ...]:
+    lines: list[str] = []
+    for error in exc.errors(include_url=False, include_context=False):
+        location = root + "".join(
+            f"[{member}]" if isinstance(member, int) else f".{member}" for member in error["loc"]
+        )
+        offending = error.get("input")
+        try:
+            rendered = canonical_bytes(offending).decode("utf-8")
+        except (TypeError, ValueError):
+            rendered = f"<{type(offending).__name__}>"
+        lines.append(f"{location}: {error['msg']}; offending element: {rendered}")
+    return tuple(lines)
+
+
 def _resolve_authoring_references(
     value: object,
     *,
@@ -931,11 +948,12 @@ def _resolve_authoring_references(
         if value.get("tag") == "playbill-authoring-artifact-reference-v1":
             try:
                 reference = AuthoringArtifactReferenceV1.model_validate(value)
-            except ValueError as exc:
+            except ValidationError as exc:
                 _refuse(
                     "playbill.authoring.artifact_reference_invalid",
                     location,
-                    f"The procedure authoring reference is invalid: {exc}",
+                    "The procedure authoring reference is invalid: "
+                    + " | ".join(_validation_error_lines(exc, root=location)),
                     repair_kind="replace_reference",
                     repair_description="Use a valid accepted-at-intent-base artifact reference.",
                 )
@@ -1039,11 +1057,12 @@ def _lower_procedure(
     )
     try:
         definition = ProcedureDefinitionV3.model_validate(resolved_definition)
-    except ValueError as exc:
+    except ValidationError as exc:
         _refuse(
             "playbill.authoring.procedure_definition_invalid",
             "definition",
-            f"The lowered graph-v3 Procedure definition is invalid: {exc}",
+            "The lowered graph-v3 Procedure definition is invalid: "
+            + " | ".join(_validation_error_lines(exc, root="definition")),
             repair_kind="replace_definition",
             repair_description="Repair the indicated graph-v3 definition field.",
         )
@@ -1066,6 +1085,36 @@ def _lower_procedure(
             ),
         )
     )
+    if isinstance(payload, ProcedureAuthoringPayloadV2) and definition.budget.max_items is not None:
+        referenced_contract_digests = {
+            pin.artifact_digest for pin in pins if pin.target.kind == "Contract"
+        }
+
+        def carries_list(contract: ProcedureOwnedContractV1) -> bool:
+            pending = list(contract.contract_schema.fields.values())
+            while pending:
+                field = pending.pop()
+                if field.type == "list":
+                    return True
+                if field.item_fields is not None:
+                    pending.extend(field.item_fields.values())
+            return False
+
+        if not any(
+            procedure_owned_contract_digest(contract).tagged in referenced_contract_digests
+            and carries_list(contract)
+            for contract in payload.owned_contracts
+        ):
+            _refuse(
+                "playbill.authoring.procedure_definition_invalid",
+                "definition.budget.max_items",
+                "The lowered graph-v3 Procedure definition declares max_items but none of "
+                "its pinned Contracts declares a list field.",
+                repair_kind="replace_definition",
+                repair_description=(
+                    "Declare a list field on a pinned Contract or remove budget.max_items."
+                ),
+            )
     lifecycle = ArtifactLifecycle(
         state="retired" if payload.retire else "live",
         predecessor_digest=(

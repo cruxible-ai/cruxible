@@ -301,8 +301,8 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
         alias = _node_alias(node)
         if node.kind not in TERMINAL_NODE_KINDS and alias != definition.returns:
             raise ProcedureGraphFormatError(
-                f"Procedure leaf {node.node_id!r} neither emits typed egress nor returns "
-                f"the declared output alias {definition.returns!r}"
+                f"Procedure leaf {node.node_id!r} neither halts, emits typed egress, nor "
+                f"returns the declared output alias {definition.returns!r}"
             )
 
     return ProcedureGraphV3(

@@ -41,14 +41,19 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalV1,
+    ProcedureBudgetExceededDetailV1,
+    ProcedureBudgetExhaustedV1,
     ProcedureBudgetRefusalDetailV1,
+    ProcedureHaltTerminalV1,
     ProcedureInternalFailureV1,
     ProcedureJournalCoordinateV1,
     ProcedureNodeRefusalV1,
     ProcedureOperationalFailureV1,
     ProcedurePendingSuccessorV1,
     ProcedureRunAttributionV1,
+    ProcedureRunBudgetV1,
     ProcedureRunReceiptV2,
+    ProcedureRunReceiptV3,
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -65,6 +70,7 @@ from cruxible_core.playbill.exhaust.records import parse_journal_payload
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RUN_RECEIPT_V2_DOMAIN,
+    PROCEDURE_RUN_RECEIPT_V3_DOMAIN,
     ProcedureAdmissionBoundPayloadV2,
     ProcedureClockProtocol,
     ProcedureRunAdmissionV2,
@@ -84,7 +90,7 @@ PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_PARTITION_ID = "direct-runs"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
 DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
-SERVED_NODE_KINDS = frozenset({"state_tap", "transform", "project", "guard", "repeat"})
+SERVED_NODE_KINDS = frozenset({"state_tap", "transform", "project", "guard", "repeat", "halt"})
 
 
 class _StrictProcedureSurfaceModel(BaseModel):
@@ -268,6 +274,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
         "node_refused",
         "operational_failed",
         "internal_failed",
+        "halted",
     ]
     pending_inputs: tuple[str, ...]
     outcomes: tuple[ProcedureRunOutcomeV1, ...]
@@ -276,7 +283,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     attribution: ProcedureRunAttributionV1 | None = None
     semantic_replay_key_digest: str | None = None
     semantic_result_digest: str | None = None
-    receipt: ProcedureRunReceiptV2 | None = None
+    receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | None = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
 
@@ -704,19 +711,28 @@ def _state_from_records(
         "node_refused",
         "operational_failed",
         "internal_failed",
+        "halted",
     ] = "running"
     result = None
     terminal: ProcedureTerminalV1 | None = None
     semantic_result_digest = None
     if isinstance(final, dict):
         raw_status = final.get("status")
-        if raw_status not in {"succeeded", "refused", "failed", "budget_exhausted"}:
+        if raw_status not in {
+            "succeeded",
+            "refused",
+            "failed",
+            "budget_exhausted",
+            "halted",
+        }:
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: final status is invalid"
             )
         status = (
             "succeeded"
             if raw_status == "succeeded"
+            else "halted"
+            if raw_status == "halted"
             else "node_refused"
             if raw_status in {"refused", "budget_exhausted"}
             else "internal_failed"
@@ -741,18 +757,39 @@ def _state_from_records(
                 )
                 refusal_code = str(refusal.get("code", "guard_refused"))
                 raw_detail_code = refusal.get("detail_code")
-                terminal = ProcedureNodeRefusalV1.model_validate(
-                    {
-                        "code": refusal_code,
-                        "message": str(refusal.get("message", "Procedure node refused execution.")),
-                        "node_id": str(refusal.get("node_id") or last_node_id),
-                        "journal_coordinate": _journal_coordinate(final_record),
-                        "detail_code": (
-                            raw_detail_code if isinstance(raw_detail_code, str) else None
+                if refusal_code == "budget_max_items_exceeded":
+                    terminal = ProcedureBudgetExhaustedV1(
+                        node_id=str(refusal.get("node_id") or last_node_id),
+                        journal_coordinate=_journal_coordinate(final_record),
+                        details=ProcedureBudgetExceededDetailV1.model_validate(
+                            refusal.get("details", {})
                         ),
-                        "details": refusal.get("details", {}),
-                        "budget": budget,
-                    }
+                    )
+                else:
+                    terminal = ProcedureNodeRefusalV1.model_validate(
+                        {
+                            "code": refusal_code,
+                            "message": str(
+                                refusal.get("message", "Procedure node refused execution.")
+                            ),
+                            "node_id": str(refusal.get("node_id") or last_node_id),
+                            "journal_coordinate": _journal_coordinate(final_record),
+                            "detail_code": (
+                                raw_detail_code if isinstance(raw_detail_code, str) else None
+                            ),
+                            "details": refusal.get("details", {}),
+                            "budget": budget,
+                        }
+                    )
+            elif raw_status == "halted":
+                raw_halt = final.get("halt")
+                if not isinstance(raw_halt, dict):
+                    raise ValueError("halted run lacks typed halt material")
+                raw_reason = raw_halt.get("reason")
+                terminal = ProcedureHaltTerminalV1(
+                    node_id=str(raw_halt.get("node_id") or last_node_id),
+                    reason=raw_reason if isinstance(raw_reason, str) else None,
+                    journal_coordinate=_journal_coordinate(final_record),
                 )
             elif raw_status == "failed":
                 failure_code = final.get("failure_code")
@@ -805,37 +842,58 @@ def _state_from_records(
         request_id=admission.actor_context.request_id,
         recorded_time=admission.actor_context.timestamp,
     )
-    public_receipt = None
+    public_receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | None = None
     receipt_digest = None
     if final is not None:
         stream = records[0].record.stream
-        public_receipt = ProcedureRunReceiptV2(
-            run_id=run_id,
-            admission_binding_digest=admission.admission_binding_digest,
-            semantic_replay_key_digest=admission.semantic_replay_key_digest,
-            semantic_result_digest=semantic_result_digest,
-            bound_coordinate=admission.bound_coordinate,
-            head_at_admission=admission.head_at_admission,
-            lane=admission.lane,
-            evaluation_time=admission.admitted_at,
-            validated_pins=admission.full_pins,
-            admitted_inputs=tuple(
+        receipt_fields = {
+            "run_id": run_id,
+            "admission_binding_digest": admission.admission_binding_digest,
+            "semantic_replay_key_digest": admission.semantic_replay_key_digest,
+            "semantic_result_digest": semantic_result_digest,
+            "bound_coordinate": admission.bound_coordinate,
+            "head_at_admission": admission.head_at_admission,
+            "lane": admission.lane,
+            "evaluation_time": admission.admitted_at,
+            "validated_pins": admission.full_pins,
+            "admitted_inputs": tuple(
                 cast(dict[str, object], item.model_dump(mode="json"))
                 for item in admission.accepted_state_inputs
             ),
-            attribution=attribution,
-            stream_instance_id=stream.instance_id,
-            journal_family=stream.journal_family,
-            stream_id=stream.stream_id,
-            partition_id=records[0].record.partition_id,
-            first_sequence=records[0].record.sequence,
-            last_sequence=records[-1].record.sequence,
-            record_digests=tuple(item.record_digest for item in records),
-            chain_head_digest=records[-1].record_digest,
-        )
+            "attribution": attribution,
+            "stream_instance_id": stream.instance_id,
+            "journal_family": stream.journal_family,
+            "stream_id": stream.stream_id,
+            "partition_id": records[0].record.partition_id,
+            "first_sequence": records[0].record.sequence,
+            "last_sequence": records[-1].record.sequence,
+            "record_digests": tuple(item.record_digest for item in records),
+            "chain_head_digest": records[-1].record_digest,
+        }
+        raw_budget_block = final.get("budget") if isinstance(final, dict) else None
+        if isinstance(raw_budget_block, dict):
+            public_receipt = ProcedureRunReceiptV3(
+                **receipt_fields,
+                status=cast(
+                    Literal[
+                        "succeeded",
+                        "node_refused",
+                        "operational_failed",
+                        "internal_failed",
+                        "halted",
+                    ],
+                    status,
+                ),
+                terminal=terminal,
+                budget=ProcedureRunBudgetV1.model_validate(raw_budget_block),
+            )
+            receipt_domain = PROCEDURE_RUN_RECEIPT_V3_DOMAIN
+        else:
+            public_receipt = ProcedureRunReceiptV2(**receipt_fields)
+            receipt_domain = PROCEDURE_RUN_RECEIPT_V2_DOMAIN
         receipt_digest = typed_digest(
             Sha256Value,
-            PROCEDURE_RUN_RECEIPT_V2_DOMAIN,
+            receipt_domain,
             {"receipt": public_receipt.model_dump(mode="json")},
         ).tagged
     next_kind: Literal["retry", "done", "terminal"] = (

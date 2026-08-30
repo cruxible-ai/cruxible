@@ -25,8 +25,16 @@ from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactV1,
+    ProcedureArtifactV2,
+    ProcedureOwnedContractV1,
     procedure_artifact_digest,
+    procedure_owned_contract_digest,
     procedure_path,
+)
+from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.contracts import (
+    OwnedProcedureContractValidator,
+    ValidatedProcedureContract,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import (
@@ -209,6 +217,113 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
 
+def _owned_contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedContractV1:
+    return ProcedureOwnedContractV1(
+        identity=ArtifactIdentity(kind="Contract", name=name),
+        schema=ContractSchema(fields=fields),
+    )
+
+
+def _owned_pin(role: str, contract: ProcedureOwnedContractV1) -> ArtifactPin:
+    return ArtifactPin(
+        role=role,
+        target=contract.identity,
+        artifact_digest=procedure_owned_contract_digest(contract).tagged,
+    )
+
+
+def _owned_accepted(
+    definition: ProcedureDefinitionV3,
+    *,
+    contracts: tuple[ProcedureOwnedContractV1, ...],
+    pins: tuple[ArtifactPin, ...],
+) -> AcceptedProcedureV1:
+    unique_pins = {(pin.role, pin.target.qualified, pin.artifact_digest): pin for pin in pins}
+    procedure = ProcedureArtifactV2(
+        identity=ArtifactIdentity(kind="Procedure", name=definition.name),
+        definition=definition,
+        definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+        pins=tuple(
+            unique_pins[key]
+            for key in sorted(
+                unique_pins,
+                key=lambda item: tuple(member.encode("utf-8") for member in item),
+            )
+        ),
+        owned_contracts=tuple(
+            sorted(
+                contracts,
+                key=lambda contract: canonical_bytes(contract.model_dump(mode="json")),
+            )
+        ),
+        activation_policy="abort",
+    )
+    return AcceptedProcedureV1(
+        path=procedure_path(definition.name),
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+
+
+def _owned_boundary_procedure(boundary: str) -> AcceptedProcedureV1:
+    empty = _owned_contract("empty-input", {})
+    opaque = _owned_contract("opaque-output", {"items": PropertySchema(type="json")})
+    typed = _owned_contract(
+        f"list-{boundary}",
+        {
+            "items": PropertySchema(
+                type="list",
+                item_fields={"id": PropertySchema(type="string")},
+            )
+        },
+    )
+    entry_pin = _owned_pin("contract-in", empty)
+    opaque_out = _owned_pin("contract-out", opaque)
+    typed_in = _owned_pin("contract-in", typed)
+    typed_out = _owned_pin("contract-out", typed)
+    query = _pin("query", "QueryDefinition", f"accepted-items-{boundary}")
+    read = StateTapNodeV3(
+        node_id="read",
+        query=query,
+        parameters={},
+        as_="rows",
+        next="compute",
+    )
+    if boundary == "contract-in":
+        compute = TransformNodeV3(
+            node_id="compute",
+            transform_kind="adapter",
+            contract_in=typed_in,
+            contract_out=opaque_out,
+            spec={"tag": "playbill-transform-adapter-spec-v1", "value": "$steps.rows"},
+            as_="result",
+        )
+        return_pin = opaque_out
+        contracts = (empty, opaque, typed)
+        pins = (entry_pin, typed_in, opaque_out, query)
+    else:
+        compute = ProjectNodeV3(
+            node_id="compute",
+            fields={"items": "$steps.rows.items"},
+            contract_out=typed_out if boundary == "contract-out" else opaque_out,
+            as_="result",
+        )
+        return_pin = typed_out
+        contracts = (empty, typed) if boundary == "contract-out" else (empty, opaque, typed)
+        pins = (entry_pin, compute.contract_out, return_pin, query)
+    definition = ProcedureDefinitionV3(
+        name=f"owned-{boundary}",
+        contract_in=entry_pin,
+        contract_out=return_pin,
+        nodes=(read, compute),
+        returns="result",
+        budget=_budget(items=1),
+        hard_caps=_hard_caps(items=1),
+        terminal_capability=1,
+    )
+    return _owned_accepted(definition, contracts=contracts, pins=pins)
+
+
 def _transform_spec(kind: str, spec: object) -> ProcedureTransformSpecV1:
     if kind != "adapter":
         assert isinstance(spec, dict)
@@ -351,6 +466,13 @@ class _Contracts:
         assert contract.target.kind == "Contract"
         assert direction in {"input", "output"}
         return payload
+
+    def validate_contract_with_budget(self, *, contract, payload, direction, max_items):
+        assert max_items >= 1
+        return ValidatedProcedureContract(value=payload, list_observations=())
+
+    def unique_list_field_path(self, contract):  # type: ignore[no-untyped-def]
+        return None
 
 
 class _Authority:
@@ -767,7 +889,7 @@ def test_repeat_body_dispatches_through_kernel_with_attempt_lineage(
     assert branch["body_lineage"]["shaped"]["items"] == [[], []]  # type: ignore[index]
 
 
-def test_repeat_body_enforces_the_per_attempt_item_ceiling(tmp_path) -> None:
+def test_repeat_body_does_not_charge_without_a_list_contract_path(tmp_path) -> None:
     accepted = _repeat_transform_procedure(max_items=1)
     fixture = _fixture(tmp_path)
     result = ProcedureExecutor(
@@ -779,12 +901,53 @@ def test_repeat_body_enforces_the_per_attempt_item_ceiling(tmp_path) -> None:
         contract_validator=_Contracts(),
     ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
 
+    assert result.status == "succeeded"
+    assert result.refusal is None
+    assert result.output is not None
+
+
+@pytest.mark.parametrize(
+    ("boundary", "expected_boundary"),
+    (
+        ("contract-in", "contract-in:list-contract-in"),
+        ("contract-out", "contract-out:list-contract-out"),
+        ("return", "contract-out:list-return"),
+    ),
+)
+def test_production_validator_enforces_every_list_boundary(
+    tmp_path,
+    boundary: str,
+    expected_boundary: str,
+) -> None:
+    accepted = _owned_boundary_procedure(boundary)
+    fixture = _fixture(tmp_path)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=OwnedProcedureContractValidator(accepted),
+    ).execute(
+        _prepare(
+            accepted,
+            fixture,
+            _StateReader({"items": [{"id": "one"}, {"id": "two"}]}),
+            invocation_input={},
+        ),
+        accepted,
+    )
+
     assert result.status == "refused"
     assert result.refusal is not None
-    assert result.refusal.node_id == "shape-body"
-    assert result.refusal.budget is not None
-    assert result.refusal.budget.budget_kind == "max_items"
-    assert result.refusal.budget.limit == 1
+    assert result.refusal.code == "budget_max_items_exceeded"
+    assert result.refusal.details == {
+        "boundary": expected_boundary,
+        "dimension": "max_items",
+        "field_path": "items",
+        "limit": 1,
+        "observed": 2,
+    }
 
 
 @pytest.mark.parametrize(
@@ -885,15 +1048,21 @@ def test_join_refuses_at_the_n_plus_one_emission(monkeypatch) -> None:
 
     monkeypatch.setattr(execution_module, "_resolve_template", count_resolutions)
     with pytest.raises(_RunRefusal) as raised:
-        _apply_transform("join_items", spec, max_items=2, node_id="join")
+        _apply_transform(
+            "join_items",
+            spec,
+            max_items=2,
+            node_id="join",
+            list_boundary=("contract-out:joined", "items"),
+        )
 
     refusal = raised.value.refusal
-    assert refusal.code == "budget_exhausted"
+    assert refusal.code == "budget_max_items_exceeded"
     assert refusal.node_id == "join"
-    assert refusal.budget is not None
-    assert refusal.budget.model_dump(mode="json") == {
-        "tag": "playbill-procedure-budget-refusal-detail-v1",
-        "budget_kind": "max_items",
+    assert refusal.details == {
+        "boundary": "contract-out:joined",
+        "dimension": "max_items",
+        "field_path": "items",
         "limit": 2,
         "observed": 3,
     }
@@ -934,25 +1103,26 @@ def test_each_item_emitting_kernel_enforces_its_own_ceiling(
 
     monkeypatch.setattr(execution_module, "_extract_items", extraction_without_ceiling)
     with pytest.raises(_RunRefusal) as raised:
-        _apply_transform(kind, spec, max_items=1, node_id=kind)
-
-    assert raised.value.refusal.code == "budget_exhausted"
-    assert raised.value.refusal.node_id == kind
-    assert raised.value.refusal.budget is not None
-    assert raised.value.refusal.budget.observed == 2
-
-
-def test_aggregate_kernel_enforces_its_extraction_ceiling() -> None:
-    with pytest.raises(_RunRefusal) as raised:
         _apply_transform(
-            "aggregate_items",
-            {"items": [{"id": "a"}, {"id": "b"}]},
+            kind,
+            spec,
             max_items=1,
-            node_id="aggregate",
+            node_id=kind,
+            list_boundary=(f"contract-out:{kind}", "items"),
         )
 
-    assert raised.value.refusal.code == "budget_exhausted"
-    assert raised.value.refusal.node_id == "aggregate"
+    assert raised.value.refusal.code == "budget_max_items_exceeded"
+    assert raised.value.refusal.node_id == kind
+    assert raised.value.refusal.details["observed"] == 2  # type: ignore[index]
+
+
+def test_aggregate_kernel_does_not_charge_an_opaque_input_collection() -> None:
+    assert _apply_transform(
+        "aggregate_items",
+        {"items": [{"id": "a"}, {"id": "b"}]},
+        max_items=1,
+        node_id="aggregate",
+    ) == ({"count": 2}, None)
 
 
 @pytest.mark.parametrize(
@@ -961,11 +1131,16 @@ def test_aggregate_kernel_enforces_its_extraction_ceiling() -> None:
 )
 def test_extract_items_enforces_both_collection_shapes(value: object) -> None:
     with pytest.raises(_RunRefusal) as raised:
-        _extract_items(value, label="items", max_items=1, node_id="extract")
+        _extract_items(
+            value,
+            label="items",
+            max_items=1,
+            node_id="extract",
+            list_boundary=("contract-out:items", "items"),
+        )
 
-    assert raised.value.refusal.code == "budget_exhausted"
-    assert raised.value.refusal.budget is not None
-    assert raised.value.refusal.budget.observed == 2
+    assert raised.value.refusal.code == "budget_max_items_exceeded"
+    assert raised.value.refusal.details["observed"] == 2  # type: ignore[index]
 
 
 def test_max_items_is_rechecked_not_consumed_across_fanout() -> None:
@@ -981,8 +1156,7 @@ def test_max_items_is_rechecked_not_consumed_across_fanout() -> None:
 def test_return_seam_counts_extractable_values_and_caps_all_result_bytes() -> None:
     with pytest.raises(_RunRefusal) as item_refusal:
         _check_return_budget({"items": [1, 2]}, max_items=1, node_id="return")
-    assert item_refusal.value.refusal.budget is not None
-    assert item_refusal.value.refusal.budget.budget_kind == "max_items"
+    assert item_refusal.value.refusal.code == "budget_max_items_exceeded"
 
     with pytest.raises(_RunRefusal) as byte_refusal:
         _check_return_budget(
@@ -1266,13 +1440,53 @@ def test_epoch_check_refuses_superseded_effect_before_intent(tmp_path) -> None:
     }
 
 
-def test_item_budget_exhaustion_is_finalized_without_output(tmp_path) -> None:
+def test_json_escape_hatch_is_not_charged_as_a_typed_collection(tmp_path) -> None:
     fixture = _fixture(tmp_path)
-    accepted = _state_procedure(max_items=1)
+    empty = _owned_contract("json-empty-input", {})
+    opaque = _owned_contract(
+        "json-output",
+        {
+            "items": PropertySchema(type="json"),
+            "status": PropertySchema(type="string"),
+        },
+    )
+    entry_pin = _owned_pin("contract-in", empty)
+    output_pin = _owned_pin("contract-out", opaque)
+    query = _pin("query", "QueryDefinition", "json-accepted-items")
+    definition = ProcedureDefinitionV3(
+        name="json-escape-hatch",
+        contract_in=entry_pin,
+        contract_out=output_pin,
+        nodes=(
+            StateTapNodeV3(
+                node_id="read",
+                query=query,
+                parameters={},
+                as_="rows",
+                next="project",
+            ),
+            ProjectNodeV3(
+                node_id="project",
+                fields={"items": "$steps.rows.items", "status": "ok"},
+                contract_out=output_pin,
+                as_="result",
+            ),
+        ),
+        returns="result",
+        budget=_budget(items=1),
+        hard_caps=_hard_caps(items=1),
+        terminal_capability=1,
+    )
+    accepted = _owned_accepted(
+        definition,
+        contracts=(empty, opaque),
+        pins=(entry_pin, output_pin, query),
+    )
     prepared = _prepare(
         accepted,
         fixture,
         _StateReader({"items": [{"id": "one"}, {"id": "two"}]}),
+        invocation_input={},
     )
     result = ProcedureExecutor(
         journal=fixture.journal,
@@ -1280,14 +1494,14 @@ def test_item_budget_exhaustion_is_finalized_without_output(tmp_path) -> None:
         run_index=fixture.run_index,
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=_Contracts(),
+        contract_validator=OwnedProcedureContractValidator(accepted),
     ).execute(prepared, accepted)
-    assert result.status == "refused"
-    assert result.refusal is not None
-    assert result.refusal.code == "budget_exhausted"
-    assert result.refusal.budget is not None
-    assert result.refusal.budget.budget_kind == "max_items"
-    assert result.output is None
+    assert result.status == "succeeded"
+    assert result.refusal is None
+    assert result.output == {
+        "items": [{"id": "one"}, {"id": "two"}],
+        "status": "ok",
+    }
 
 
 def test_noncurrent_procedure_refuses_before_any_journal_record(tmp_path) -> None:

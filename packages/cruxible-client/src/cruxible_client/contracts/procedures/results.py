@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical
+from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.temporal import ensure_utc
 
@@ -254,19 +255,115 @@ class ProcedureRunReceiptV2(_StrictResultModel):
         return ensure_utc(value)
 
 
+class ProcedureBudgetExceededDetailV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-budget-exceeded-detail-v1"] = (
+        "playbill-procedure-budget-exceeded-detail-v1"
+    )
+    dimension: Literal["max_items"] = "max_items"
+    limit: int = Field(ge=1)
+    observed: int = Field(ge=1)
+    boundary: str | None = None
+    field_path: str | None = None
+
+
+class ProcedureBudgetExhaustedV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-budget-exhausted-v1"] = (
+        "playbill-procedure-budget-exhausted-v1"
+    )
+    classification: Literal["budget_exhausted"] = "budget_exhausted"
+    code: Literal["budget_max_items_exceeded"] = "budget_max_items_exceeded"
+    message: Literal["A Procedure collection exceeded its declared item bound."] = (
+        "A Procedure collection exceeded its declared item bound."
+    )
+    node_id: str
+    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+    details: ProcedureBudgetExceededDetailV1
+    retryable: Literal[False] = False
+
+
+class ProcedureHaltTerminalV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-halt-terminal-v1"] = "playbill-procedure-halt-terminal-v1"
+    classification: Literal["halted"] = "halted"
+    node_id: str
+    reason: str | None = None
+    journal_coordinate: ProcedureJournalCoordinateV1 | None = None
+
+
 ProcedureTerminalV1: TypeAlias = Annotated[
     ProcedureAdmissionRefusalV1
     | ProcedureNodeRefusalV1
     | ProcedureOperationalFailureV1
-    | ProcedureInternalFailureV1,
+    | ProcedureInternalFailureV1
+    | ProcedureBudgetExhaustedV1
+    | ProcedureHaltTerminalV1,
     Field(discriminator="tag"),
 ]
+
+
+class ProcedureBudgetBoundaryObservationV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-budget-boundary-observation-v1"] = (
+        "playbill-procedure-budget-boundary-observation-v1"
+    )
+    high_water: int = Field(ge=0)
+    boundary: str | None = None
+    field_path: str | None = None
+
+    @model_validator(mode="after")
+    def _zero_location(self) -> "ProcedureBudgetBoundaryObservationV1":
+        if self.high_water == 0 and (self.boundary is not None or self.field_path is not None):
+            raise ValueError("a zero boundary observation has no location")
+        if self.high_water > 0 and (self.boundary is None or self.field_path is None):
+            raise ValueError("a nonzero boundary observation requires its location")
+        return self
+
+
+class ProcedureRunBudgetDeclaredV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-run-budget-declared-v1"] = (
+        "playbill-procedure-run-budget-declared-v1"
+    )
+    budget: ProcedureBudgetV3
+    hard_caps: ProcedureHardCapsV3
+    result_bytes_cap: Literal[1_048_576] = 1_048_576
+
+
+class ProcedureRunBudgetObservedV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-run-budget-observed-v1"] = (
+        "playbill-procedure-run-budget-observed-v1"
+    )
+    max_items: ProcedureBudgetBoundaryObservationV1
+    result_bytes: ProcedureBudgetBoundaryObservationV1
+    provider_calls: int = Field(ge=0)
+    capture_bytes: int = Field(ge=0)
+    wall_clock_microseconds: int = Field(ge=0)
+
+
+class ProcedureRunBudgetV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-run-budget-v1"] = "playbill-procedure-run-budget-v1"
+    declared: ProcedureRunBudgetDeclaredV1
+    observed: ProcedureRunBudgetObservedV1
+
+
+class ProcedureRunReceiptV3(ProcedureRunReceiptV2):
+    tag: Literal["playbill-procedure-run-receipt-v3"] = "playbill-procedure-run-receipt-v3"  # type: ignore[assignment]
+    status: Literal[
+        "succeeded",
+        "node_refused",
+        "operational_failed",
+        "internal_failed",
+        "halted",
+    ]
+    terminal: ProcedureTerminalV1 | None
+    budget: ProcedureRunBudgetV1
 
 
 __all__ = [
     "ProcedureAdmissionRefusalCodeV1",
     "ProcedureAdmissionRefusalV1",
+    "ProcedureBudgetBoundaryObservationV1",
+    "ProcedureBudgetExceededDetailV1",
+    "ProcedureBudgetExhaustedV1",
     "ProcedureBudgetRefusalDetailV1",
+    "ProcedureHaltTerminalV1",
     "ProcedureInternalFailureCodeV1",
     "ProcedureInternalFailureV1",
     "ProcedureJournalCoordinateV1",
@@ -276,6 +373,10 @@ __all__ = [
     "ProcedureOperationalFailureV1",
     "ProcedurePendingSuccessorV1",
     "ProcedureRunAttributionV1",
+    "ProcedureRunBudgetDeclaredV1",
+    "ProcedureRunBudgetObservedV1",
+    "ProcedureRunBudgetV1",
     "ProcedureRunReceiptV2",
+    "ProcedureRunReceiptV3",
     "ProcedureTerminalV1",
 ]
