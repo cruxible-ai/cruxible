@@ -119,6 +119,28 @@ def _result(item_ids: tuple[str, ...], *, digest_hex: str = "9"):  # type: ignor
     )
 
 
+def _v2_result(item_ids: tuple[str, ...]):  # type: ignore[no-untyped-def]
+    from cruxible_core.service.playbill_next import (
+        PlaybillNextResultV2,
+        playbill_next_result_digest,
+    )
+
+    base = _result(item_ids)
+    values = {
+        name: getattr(base, name)
+        for name in type(base).model_fields
+        if name not in {"tag", "result_digest"}
+    }
+    provisional = PlaybillNextResultV2.model_construct(
+        **values,
+        result_digest="sha256:" + "0" * 64,
+        attestation_head_digest="sha256:" + "7" * 64,
+    )
+    return provisional.model_copy(
+        update={"result_digest": playbill_next_result_digest(provisional)}
+    )
+
+
 def test_a_delta_against_an_unknown_digest_returns_the_whole_queue() -> None:
     """The server forgot; the safe answer is everything, not nothing."""
     from cruxible_core.service.playbill_next import _delta_of
@@ -163,27 +185,10 @@ def test_v2_delta_reuses_the_real_whole_queue_cursor_without_memo_collision() ->
         PlaybillNextResultV2,
         _delta_of,
         _remember_queue,
-        playbill_next_result_digest,
     )
 
-    def v2(item_ids: tuple[str, ...]) -> PlaybillNextResultV2:
-        base = _result(item_ids)
-        values = {
-            name: getattr(base, name)
-            for name in type(base).model_fields
-            if name not in {"tag", "result_digest"}
-        }
-        provisional = PlaybillNextResultV2.model_construct(
-            **values,
-            result_digest="sha256:" + "0" * 64,
-            attestation_head_digest="sha256:" + "7" * 64,
-        )
-        return provisional.model_copy(
-            update={"result_digest": playbill_next_result_digest(provisional)}
-        )
-
-    first = v2(("one", "removed"))
-    second = v2(("one", "two"))
+    first = _v2_result(("one", "removed"))
+    second = _v2_result(("one", "two"))
     assert first.result_digest != second.result_digest
     _remember_queue(first.result_digest, first.items)
     _remember_queue(second.result_digest, second.items)
@@ -204,9 +209,30 @@ def test_v2_delta_reuses_the_real_whole_queue_cursor_without_memo_collision() ->
     assert PlaybillNextResultV2.model_validate_json(first_delta.model_dump_json()) == first_delta
 
 
+def test_v2_delta_reports_every_removal_in_ascii_order() -> None:
+    from cruxible_core.service.playbill_next import _delta_of, _remember_queue
+
+    first = _v2_result(("kept", "removed-z", "removed-a", "removed-m"))
+    second = _v2_result(("kept",))
+    _remember_queue(first.result_digest, first.items)
+
+    delta = _delta_of(second, since=first.result_digest)
+    expected = tuple(
+        sorted(
+            (item.item_id for item in first.items if item.subject_identity != "Claim:kept"),
+            key=lambda value: value.encode("ascii"),
+        )
+    )
+
+    assert len(expected) == 3
+    assert delta.removed_item_ids == expected
+    assert len(delta.removed_item_ids) == len(set(delta.removed_item_ids))
+
+
 def test_v2_removed_item_ids_are_presentation_only_and_shape_checked() -> None:
     from pydantic import ValidationError
 
+    from cruxible_client import contracts
     from cruxible_core.service.playbill_next import (
         PlaybillNextResultV2,
         playbill_next_result_digest,
@@ -240,6 +266,25 @@ def test_v2_removed_item_ids_are_presentation_only_and_shape_checked() -> None:
         PlaybillNextResultV2.model_validate(
             delta.model_dump(mode="json") | {"removed_item_ids": ["sha256:" + "f" * 64]}
         )
+
+    reversed_ids = ["sha256:" + "f" * 64, "sha256:" + "e" * 64]
+    with pytest.raises(ValidationError, match="ASCII byte-sorted and unique"):
+        PlaybillNextResultV2.model_validate(
+            delta.model_dump(mode="json") | {"removed_item_ids": reversed_ids, "items": []}
+        )
+    with pytest.raises(ValidationError, match="ASCII byte-sorted and unique"):
+        PlaybillNextResultV2.model_validate(
+            delta.model_dump(mode="json") | {"removed_item_ids": [item_id, item_id]}
+        )
+
+    without_removed = delta.model_copy(update={"removed_item_ids": ()})
+    assert playbill_next_result_digest(delta) == playbill_next_result_digest(without_removed)
+
+    full = _v2_result(("one",))
+    internal_dump = full.model_dump(mode="json")
+    assert "removed_item_ids" not in internal_dump
+    public = contracts.PlaybillNextResult.model_validate(internal_dump)
+    assert "removed_item_ids" not in public.model_dump(mode="json")
 
 
 @pytest.mark.parametrize(
