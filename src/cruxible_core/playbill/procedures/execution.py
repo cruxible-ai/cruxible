@@ -669,6 +669,17 @@ class ContractValidatorProtocol(Protocol):
         direction: Literal["input", "output"],
     ) -> object: ...
 
+    def validate_contract_with_budget(
+        self,
+        *,
+        contract: ArtifactPin,
+        payload: CanonicalValue,
+        direction: Literal["input", "output"],
+        max_items: int,
+    ) -> ValidatedProcedureContract: ...
+
+    def unique_list_field_path(self, contract: ArtifactPin) -> str | None: ...
+
 
 class ProcedureActivationAuthorityProtocol(Protocol):
     def current_procedure_digest(
@@ -1103,10 +1114,7 @@ def _kernel_list_boundary(
     validator: ContractValidatorProtocol,
     contract: ArtifactPin,
 ) -> tuple[str, str] | None:
-    resolve = getattr(validator, "unique_list_field_path", None)
-    if not callable(resolve):
-        return None
-    field_path = resolve(contract)
+    field_path = validator.unique_list_field_path(contract)
     if not isinstance(field_path, str):
         return None
     return (f"contract-out:{contract.target.name}", field_path)
@@ -3108,9 +3116,8 @@ def _validate_node_contract(
 ) -> CanonicalValue:
     boundary = f"contract-{'in' if direction == 'input' else 'out'}:{contract.target.name}"
     try:
-        budget_validator = getattr(validator, "validate_contract_with_budget", None)
-        if max_items is not None and callable(budget_validator):
-            budget_result = budget_validator(
+        if max_items is not None:
+            budget_result = validator.validate_contract_with_budget(
                 contract=contract,
                 payload=payload,
                 direction=direction,
@@ -3169,11 +3176,15 @@ def _apply_node_transform(
     node_id: str,
     list_boundary: tuple[str, str] | None = None,
 ) -> tuple[CanonicalValue, _ItemLineage | None]:
+    # Kernel checks are only an early-abort optimization for an exact list-typed
+    # output boundary. Opaque or ambiguous collections remain unmetered here and
+    # are governed solely by the contract seams, result-byte cap, and wall clock.
+    kernel_max_items = max_items if list_boundary is not None else None
     try:
         return _apply_transform(
             kind,
             spec,
-            max_items=max_items,
+            max_items=kernel_max_items,
             node_id=node_id,
             list_boundary=list_boundary,
         )
@@ -3252,7 +3263,7 @@ def _extract_items(
     list_boundary: tuple[str, str] | None = None,
 ) -> list[CanonicalValue]:
     if isinstance(value, list):
-        if max_items is not None and len(value) > max_items:
+        if max_items is not None and list_boundary is not None and len(value) > max_items:
             raise _budget_refusal(
                 budget_kind="max_items",
                 limit=max_items,
@@ -3263,7 +3274,7 @@ def _extract_items(
             )
         return [normalize_canonical(item) for item in value]
     if isinstance(value, dict) and isinstance(value.get("items"), list):
-        if max_items is not None and len(value["items"]) > max_items:
+        if max_items is not None and list_boundary is not None and len(value["items"]) > max_items:
             raise _budget_refusal(
                 budget_kind="max_items",
                 limit=max_items,
@@ -3295,13 +3306,15 @@ def _apply_transform(
 
     if kind == "adapter":
         return spec, None
+    if list_boundary is None:
+        max_items = None
     if not isinstance(spec, dict):
         raise PlaybillExecutionError(f"transform {kind!r} requires an object spec")
     if kind == "shape_items":
         items = _extract_items(
             spec.get("items"),
             label=kind,
-            max_items=max_items,
+            max_items=None,
             node_id=node_id,
             list_boundary=list_boundary,
         )
@@ -3338,7 +3351,7 @@ def _apply_transform(
         items = _extract_items(
             spec.get("items"),
             label=kind,
-            max_items=max_items,
+            max_items=None,
             node_id=node_id,
             list_boundary=list_boundary,
         )
@@ -3372,7 +3385,7 @@ def _apply_transform(
         items = _extract_items(
             spec.get("items"),
             label=kind,
-            max_items=max_items,
+            max_items=None,
             node_id=node_id,
             list_boundary=list_boundary,
         )
@@ -3411,14 +3424,14 @@ def _apply_transform(
         left = _extract_items(
             spec.get("left_items"),
             label="join_items left_items",
-            max_items=max_items,
+            max_items=None,
             node_id=node_id,
             list_boundary=list_boundary,
         )
         right = _extract_items(
             spec.get("right_items"),
             label="join_items right_items",
-            max_items=max_items,
+            max_items=None,
             node_id=node_id,
             list_boundary=list_boundary,
         )
@@ -3469,7 +3482,7 @@ def _apply_transform(
         items = _extract_items(
             spec.get("items"),
             label=kind,
-            max_items=max_items,
+            max_items=None,
             node_id=node_id,
             list_boundary=list_boundary,
         )

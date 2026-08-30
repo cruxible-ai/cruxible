@@ -32,13 +32,17 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalV1,
+    ProcedureBudgetExhaustedV1,
     ProcedureHaltTerminalV1,
     ProcedureNodeRefusalV1,
     ProcedureOperationalFailureV1,
+    ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.exhaust import ProcedureExhaustWriter, parse_journal_payload
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.query_definitions import (
@@ -111,6 +115,74 @@ def _actor(instance) -> GovernedActorContext:  # type: ignore[no-untyped-def]
         org_id=instance.descriptor.instance_id,
         operation_id="served-procedure-test",
         timestamp=READ_TIME,
+    )
+
+
+def _list_output_successor(procedure, *, max_items: int):  # type: ignore[no-untyped-def]
+    old_output_pin = procedure.definition.contract_out
+    assert isinstance(old_output_pin, ArtifactPin)
+    project = procedure.definition.nodes[-1]
+    list_output = _contract(
+        "query-rows-list",
+        {
+            "rows": PropertySchema(
+                type="list",
+                item_fields={
+                    "bindings": PropertySchema(type="json"),
+                    "conflicts": PropertySchema(type="json"),
+                    "fields": PropertySchema(type="json"),
+                    "includes": PropertySchema(type="json"),
+                    "path": PropertySchema(type="json"),
+                    "read_claims": PropertySchema(type="json"),
+                    "relation_claim": PropertySchema(type="json", optional=True),
+                    "result_subject_identity": PropertySchema(type="string"),
+                    "tag": PropertySchema(type="string"),
+                },
+            )
+        },
+    )
+    list_output_pin = ArtifactPin(
+        role="contract-out",
+        target=list_output.identity,
+        artifact_digest=procedure_owned_contract_digest(list_output).tagged,
+    )
+    definition = procedure.definition.model_copy(
+        update={
+            "contract_out": list_output_pin,
+            "nodes": (
+                *procedure.definition.nodes[:-1],
+                project.model_copy(update={"contract_out": list_output_pin}),
+            ),
+            "budget": procedure.definition.budget.model_copy(update={"max_items": max_items}),
+        }
+    )
+    return procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
+            "pins": tuple(
+                sorted(
+                    (list_output_pin if pin == old_output_pin else pin for pin in procedure.pins),
+                    key=lambda pin: (
+                        pin.role.encode(),
+                        pin.target.qualified.encode(),
+                        pin.artifact_digest.encode(),
+                    ),
+                )
+            ),
+            "owned_contracts": tuple(
+                sorted(
+                    (
+                        list_output if contract.identity == old_output_pin.target else contract
+                        for contract in procedure.owned_contracts
+                    ),
+                    key=lambda contract: canonical_bytes(contract.model_dump(mode="json")),
+                )
+            ),
+            "lifecycle": procedure.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
+            ),
+        }
     )
 
 
@@ -357,7 +429,12 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
         ),
         project.model_copy(update={"fields": {"rows": "$steps.filtered.items"}}),
     )
-    definition = procedure.definition.model_copy(update={"nodes": nodes})
+    definition = procedure.definition.model_copy(
+        update={
+            "nodes": nodes,
+            "budget": procedure.definition.budget.model_copy(update={"max_items": 1}),
+        }
+    )
     added_pins = (filter_in_pin, filter_out_pin, aggregate_in_pin, aggregate_out_pin)
     added_contracts = (filter_in, filter_out, aggregate_in, aggregate_out)
     pipeline = procedure.model_copy(
@@ -413,7 +490,106 @@ def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
 
     assert first.status == "succeeded"
     assert first.result is not None and len(first.result["rows"]) == 2  # type: ignore[index]
+    assert isinstance(first.receipt, ProcedureRunReceiptV3)
+    assert first.receipt.budget.observed.max_items.high_water == 0
+    assert first.receipt.budget.observed.max_items.boundary is None
     assert first.model_dump_json() == second.model_dump_json()
+
+
+def test_served_list_boundary_records_nonzero_v3_receipt_high_water(tmp_path: Path) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    bounded = _list_output_successor(procedure, max_items=3)
+    _activate_procedure(
+        instance,
+        owner,
+        bounded,
+        sequence=5,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=bounded.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "succeeded", run
+    assert isinstance(run.receipt, ProcedureRunReceiptV3)
+    assert run.receipt.budget.observed.max_items.high_water == 2
+    assert run.receipt.budget.observed.max_items.boundary == ("contract-out:query-rows-list")
+    assert run.receipt.budget.observed.max_items.field_path == "rows"
+
+
+def test_served_list_boundary_refusal_remains_typed(tmp_path: Path) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    bounded = _list_output_successor(procedure, max_items=1)
+    _activate_procedure(
+        instance,
+        owner,
+        bounded,
+        sequence=5,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=bounded.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "node_refused"
+    assert isinstance(run.terminal, ProcedureBudgetExhaustedV1)
+    assert run.terminal.details.boundary == "contract-out:query-rows-list"
+    assert run.terminal.details.field_path == "rows"
+
+
+def test_old_final_payload_without_budget_reconstructs_a_v2_receipt(tmp_path: Path) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert run.run_id is not None
+    assert run.receipt is not None
+    journal, _root = procedure_run_service._journal(instance)
+    stream = procedure_run_service._stream(instance)
+    records = journal.all_records(stream, run.receipt.partition_id)
+    final_record = records[-1].record
+    old_payload = parse_journal_payload(
+        instance.body_store().read(
+            final_record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert isinstance(old_payload, dict)
+    assert old_payload.pop("budget")["tag"] == "playbill-procedure-run-budget-v1"
+    ProcedureExhaustWriter(
+        journal=journal,
+        bodies=instance.body_store(),
+        fencing_token=procedure_run_service.PROCEDURE_RUN_FENCING_TOKEN,
+    ).append(
+        stream=final_record.stream,
+        partition_id=final_record.partition_id,
+        event_kind="attempt_finalized",
+        accepted_coordinate=final_record.accepted_coordinate,
+        definition_digest=final_record.definition_digest,
+        actor_context=final_record.actor_context,
+        recorded_at=final_record.recorded_at,
+        payload=old_payload,
+        procedure_artifact_digest=final_record.procedure_artifact_digest,
+        run_id=final_record.run_id,
+        admission_binding_digest=final_record.admission_binding_digest,
+        attempt=final_record.attempt,
+    )
+
+    reconstructed = service_get_playbill_procedure_run(instance, run_id=run.run_id)
+    assert reconstructed.status == "succeeded"
+    assert isinstance(reconstructed.receipt, ProcedureRunReceiptV2)
+    assert not isinstance(reconstructed.receipt, ProcedureRunReceiptV3)
 
 
 def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path: Path) -> None:
