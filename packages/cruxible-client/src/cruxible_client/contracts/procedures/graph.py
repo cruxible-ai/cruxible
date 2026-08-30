@@ -222,6 +222,13 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
     kinds: dict[str, str] = {node.node_id: node.kind for node in definition.nodes}
     edges: dict[str, dict[str, str]] = {}
     declared_slots = {slot.slot_name for slot in definition.pin_slots}
+    guard_halt_targets = frozenset(
+        target
+        for node in definition.nodes
+        if isinstance(node, GuardNodeV3)
+        for target in (node.on_true, node.on_false)
+        if target is not None and target != "$abort" and kinds.get(target) == "halt"
+    )
 
     for index, node in enumerate(definition.nodes):
         declared = _declared_edges(node)
@@ -233,6 +240,7 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
             and not isinstance(node, GuardNodeV3)
             and "next" not in declared
             and fallthrough
+            and fallthrough not in guard_halt_targets
         ):
             declared["next"] = fallthrough
         if node.kind in TERMINAL_NODE_KINDS and declared:

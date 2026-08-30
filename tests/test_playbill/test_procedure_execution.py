@@ -411,7 +411,11 @@ def _typed_transform_node(**values: object) -> TransformNodeV3:
     return TransformNodeV3.model_validate(values)
 
 
-def _guarded_filter_procedure(*, operator: str) -> AcceptedProcedureV1:
+def _guarded_filter_procedure(
+    *,
+    operator: str,
+    result_next: str | None = None,
+) -> AcceptedProcedureV1:
     item_fields = {
         "id": PropertySchema(type="string"),
         "keep": PropertySchema(type="bool"),
@@ -446,7 +450,7 @@ def _guarded_filter_procedure(*, operator: str) -> AcceptedProcedureV1:
     aggregate_in = _owned_pin("contract-in", aggregate_spec)
     result_pin = _owned_pin("contract-out", count_result)
     definition = ProcedureDefinitionV3(
-        name=f"guarded-filter-{operator}",
+        name=f"guarded-filter-{operator}{'-explicit-next' if result_next else ''}",
         contract_in=entry_pin,
         contract_out=result_pin,
         nodes=(
@@ -488,6 +492,7 @@ def _guarded_filter_procedure(*, operator: str) -> AcceptedProcedureV1:
                     "items": "$steps.filtered.items",
                 },
                 as_="result",
+                next=result_next,
             ),
             HaltNodeV3(node_id="stop", reason="No filtered items."),
         ),
@@ -1570,6 +1575,28 @@ def test_scalar_step_guard_returns_through_true_arm_with_production_validator(
     assert result.status == "succeeded"
     assert result.refusal is None
     assert result.output == {"count": 1}
+
+
+def test_explicit_next_into_guard_arm_halt_remains_authoritative(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _guarded_filter_procedure(operator="gt", result_next="stop")
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=OwnedProcedureContractValidator(accepted),
+    ).execute(
+        _prepare(accepted, fixture, _StateReader(), invocation_input={}),
+        accepted,
+    )
+
+    assert result.status == "halted"
+    assert result.output is None
+    assert result.refusal is None
 
 
 def test_unresolved_step_guard_operand_is_typed_refusal_not_false_branch(

@@ -1646,13 +1646,6 @@ class ProcedureExecutor:
         definition = accepted.procedure.definition
         graph = analyze_procedure_v3(definition)
         nodes = {node.node_id: node for node in definition.nodes}
-        guard_halt_targets = frozenset(
-            target
-            for candidate in definition.nodes
-            if isinstance(candidate, GuardNodeV3)
-            for target in (candidate.on_true, candidate.on_false)
-            if target is not None and target != "$abort" and isinstance(nodes[target], HaltNodeV3)
-        )
         current = definition.nodes[0].node_id
         while True:
             node = nodes[current]
@@ -1710,14 +1703,6 @@ class ProcedureExecutor:
                 target = edges[branch or "on_false"]
             else:
                 target = edges.get("next")
-                if (
-                    target in guard_halt_targets
-                    and graph.produced_alias[node.node_id] == definition.returns
-                    and getattr(node, "next", None) is None
-                ):
-                    # A trailing Halt used as one guard arm is a sibling terminal,
-                    # not an implicit continuation after the other arm returns.
-                    target = None
             if target == "$abort":
                 if isinstance(node, GuardNodeV3):
                     raise _RunRefusal(
