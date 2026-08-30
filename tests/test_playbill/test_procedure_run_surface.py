@@ -46,12 +46,21 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.test_playbill._support import FIXED_TIMESTAMP, initialize_local
 from tests.test_playbill.test_procedure_owned_contracts import (
     _accepted_query_procedure,
     _activate_procedure,
 )
 
 READ_TIME = datetime(2026, 8, 24, 16, 0, tzinfo=UTC)
+
+
+def test_genesis_evaluation_time_comes_from_the_signed_commit(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    assert instance.accepted_evaluation_time(instance.accepted_coordinate().git_oid) == (
+        datetime.fromisoformat(FIXED_TIMESTAMP)
+    )
 
 
 def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -160,7 +169,6 @@ def test_explicit_historical_coordinate_uses_read_only_replay_lane(tmp_path: Pat
         name=procedure.identity.name,
         request=ProcedureRunRequestV2(
             at=AcceptedCoordinate.from_internal(historical),
-            evaluation_time=READ_TIME,
             input={},
         ),
         actor_context=_actor(instance),
@@ -170,7 +178,7 @@ def test_explicit_historical_coordinate_uses_read_only_replay_lane(tmp_path: Pat
     assert run.lane == "replay"
     assert run.bound_coordinate.git_oid == historical.git_oid
     assert run.head_at_admission.git_oid == instance.accepted_coordinate().git_oid
-    assert run.evaluation_time == READ_TIME
+    assert run.evaluation_time.isoformat() == "2026-08-24T15:00:00+00:00"
 
 
 def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path: Path) -> None:

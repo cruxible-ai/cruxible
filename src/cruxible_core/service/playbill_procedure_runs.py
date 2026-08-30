@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -578,14 +579,12 @@ class _CurrentProcedureAuthority:
 @dataclass
 class _DeterministicClock(ProcedureClockProtocol):
     evaluation_time: datetime
-    ticks: int = 0
 
     def now(self) -> datetime:
         return self.evaluation_time
 
     def monotonic_ns(self) -> int:
-        self.ticks += 1
-        return self.ticks
+        return time.monotonic_ns()
 
 
 def _journal(instance: PlaybillInstance) -> tuple[LocalJournalBackend, Path]:
@@ -856,12 +855,10 @@ def service_run_playbill_procedure(
     request: ProcedureRunRequestV2,
     actor_context: GovernedActorContext,
 ) -> ProcedureRunStateV2:
-    if request.evaluation_time is None:
-        raise ProcedureSurfaceError(
-            f"{ProcedureSurfaceError.code}: evaluation_time default is not installed"
-        )
-    evaluation_time = request.evaluation_time
     coordinate = _resolve_coordinate(instance, request.at)
+    evaluation_time = request.evaluation_time or instance.accepted_evaluation_time(
+        coordinate.git_oid
+    )
     head_at_admission = instance.accepted_coordinate()
     lane: Literal["current", "replay"] = "replay" if request.at is not None else "current"
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)

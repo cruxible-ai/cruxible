@@ -8,6 +8,7 @@ import secrets
 import shutil
 import stat
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -593,6 +594,26 @@ class PlaybillInstance:
         """Return the genesis-rooted, replay-verified accepted history."""
 
         return self._recovered.history
+
+    def accepted_evaluation_time(self, oid: str) -> datetime:
+        """Resolve the immutable acceptance instant for one replayed generation."""
+
+        matches = tuple(item for item in self._recovered.history if item.oid == oid)
+        if len(matches) != 1:
+            raise PlaybillFormatError("evaluation coordinate is outside accepted history")
+        generation = matches[0]
+        if generation.record is not None:
+            try:
+                return datetime.strptime(
+                    generation.record.candidate.timestamp,
+                    "%Y-%m-%dT%H:%M:%S.%fZ",
+                ).replace(tzinfo=timezone.utc)
+            except ValueError as exc:
+                raise PlaybillFormatError("accepted candidate timestamp is malformed") from exc
+        author_time, committer_time = self._ledger.commit_timestamps(oid)
+        if author_time != committer_time:
+            raise PlaybillFormatError("genesis author and committer timestamps disagree")
+        return author_time
 
     def coordinate_for_oid(self, oid: str) -> AcceptedProjectionCoordinate:
         """Resolve one accepted historical OID to its complete verified coordinate."""
