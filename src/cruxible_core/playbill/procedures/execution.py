@@ -59,8 +59,12 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
+    ProcedureBudgetBoundaryObservationV1,
     ProcedureBudgetRefusalDetailV1,
     ProcedureNodeRefusalCodeV1,
+    ProcedureRunBudgetDeclaredV1,
+    ProcedureRunBudgetObservedV1,
+    ProcedureRunBudgetV1,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
@@ -133,6 +137,7 @@ PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
 PROCEDURE_ADMISSION_BINDING_V2_DOMAIN = "playbill-procedure-run-admission-v2"
 PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
 PROCEDURE_RUN_RECEIPT_V2_DOMAIN = "playbill-procedure-run-receipt-v2"
+PROCEDURE_RUN_RECEIPT_V3_DOMAIN = "playbill-procedure-run-receipt-v3"
 
 
 class _StrictExecutionModel(BaseModel):
@@ -1267,6 +1272,27 @@ class ProcedureExecutor:
             "semantic_result_digest": semantic_result_digest,
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
+            "budget": ProcedureRunBudgetV1(
+                declared=ProcedureRunBudgetDeclaredV1(
+                    budget=admission.budget,
+                    hard_caps=admission.hard_caps,
+                ),
+                observed=ProcedureRunBudgetObservedV1(
+                    max_items=ProcedureBudgetBoundaryObservationV1(
+                        high_water=state.max_items_high_water,
+                        boundary=state.max_items_boundary,
+                        field_path=state.max_items_field_path,
+                    ),
+                    result_bytes=ProcedureBudgetBoundaryObservationV1(
+                        high_water=state.result_bytes_high_water,
+                        boundary=state.result_bytes_boundary,
+                        field_path=state.result_bytes_field_path,
+                    ),
+                    provider_calls=state.provider_calls,
+                    capture_bytes=state.capture_bytes,
+                    wall_clock_microseconds=state.wall_clock_microseconds,
+                ),
+            ).model_dump(mode="json"),
         }
         self._append_event(
             admission,

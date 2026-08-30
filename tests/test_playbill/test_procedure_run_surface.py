@@ -33,6 +33,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalV1,
     ProcedureNodeRefusalV1,
     ProcedureOperationalFailureV1,
+    ProcedureRunReceiptV3,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.playbill.actor_context import GovernedActorContext
@@ -146,6 +147,15 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     assert first.result is not None
     assert len(first.result["rows"]) == 2  # type: ignore[index]
     assert first.receipt_digest is not None
+    assert isinstance(first.receipt, ProcedureRunReceiptV3)
+    assert first.receipt.status == "succeeded"
+    assert first.receipt.terminal is None
+    assert first.receipt.budget.declared.budget == procedure.definition.budget
+    assert first.receipt.budget.declared.hard_caps == procedure.definition.hard_caps
+    assert first.receipt.budget.observed.max_items.high_water == 0
+    assert first.receipt.budget.observed.max_items.boundary is None
+    assert first.receipt.budget.observed.result_bytes.high_water > 0
+    assert first.receipt.budget.observed.result_bytes.boundary == "procedure-return"
     assert first.attribution is not None
     assert first.attribution.operation_id == "served-procedure-test"
     assert first.semantic_replay_key_digest is not None
@@ -591,6 +601,10 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     assert refused.terminal.detail_code == "query.empty"
     assert refused.terminal.node_id == "gate"
     assert refused.terminal.journal_coordinate is not None
+    assert isinstance(refused.receipt, ProcedureRunReceiptV3)
+    assert refused.receipt.status == "node_refused"
+    assert refused.receipt.terminal == refused.terminal
+    assert refused.receipt.budget.observed.result_bytes.high_water == 0
 
 
 def test_unsupported_source_refuses_before_opening_a_journal(
