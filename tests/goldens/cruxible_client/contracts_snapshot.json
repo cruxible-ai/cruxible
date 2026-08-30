@@ -11250,6 +11250,19 @@
             "type": "array"
           }
         },
+        "removed_item_ids": {
+          "has_default": false,
+          "has_default_factory": true,
+          "json_name": "removed_item_ids",
+          "required": false,
+          "schema": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed Item Ids",
+            "type": "array"
+          }
+        },
         "result_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -11389,6 +11402,13 @@
               "type": "string"
             },
             "title": "Observed Domains",
+            "type": "array"
+          },
+          "removed_item_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed Item Ids",
             "type": "array"
           },
           "result_digest": {

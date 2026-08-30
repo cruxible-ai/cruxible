@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
 from cruxible_client import (
@@ -32,7 +34,13 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.authoring.models import PreflightResultV1
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import (
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    CanonicalDurationV1,
+    capture_contract_digest,
+    capture_contract_path,
+    render_capture_contract,
+)
 from cruxible_client.contracts.claim_types import claim_type_digest
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
@@ -60,8 +68,14 @@ from cruxible_client.contracts.query.grammar import (
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
-from cruxible_core.playbill.claim_type_inputs import defaulted_claim_type_input_example
+from cruxible_core.cli.main import cli
+from cruxible_core.playbill.claim_type_inputs import (
+    claim_type_input_example,
+    defaulted_claim_type_input_example,
+)
+from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
 
 
 def _digest(label: str) -> str:
@@ -152,6 +166,144 @@ def _approve_and_activate(
     activated = client.post(f"/api/v1/{instance_id}/playbill/proposals/{proposal_id}/activate")
     assert activated.status_code == 200, activated.text
     assert activated.json()["status"] == "accepted"
+
+
+def _install_direct_capture_contract(
+    client: TestClient,
+    instance_id: str,
+    private_key_path: Path,
+) -> str:
+    """Accept the built-in direct contract so lint has a real replacement target."""
+
+    instance = get_playbill_manager().get(instance_id)
+    base = instance.accepted_coordinate()
+    tree = instance.tree_at(base.git_oid)
+    contract = DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+    tree[capture_contract_path(contract.identity.name)] = render_capture_contract(contract)
+    submitted = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="operator"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/operator/install-direct-capture-contract",
+            proposed_base_oid=base.git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-29T12:00:00.000000Z",
+    )
+    assert submitted.candidate is not None
+    _approve_and_activate(
+        client,
+        instance_id,
+        private_key_path,
+        submitted.admission.proposal_id,
+    )
+    instance.refresh()
+    return capture_contract_digest(contract).tagged
+
+
+def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http, instance_id, private_key_path = playbill_http
+    _install_direct_capture_contract(http, instance_id, private_key_path)
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    input_value = claim_type_input_example()
+    input_path = tmp_path / "claim-type-input.json"
+    input_path.write_text(json.dumps(input_value.model_dump(mode="json")), encoding="utf-8")
+
+    cli_result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "http://cruxible",
+            "--instance-id",
+            instance_id,
+            "playbill",
+            "claim-type",
+            "propose",
+            "--input",
+            str(input_path),
+            "--name",
+            "empty-policy-cli",
+            "--json",
+        ],
+    )
+    assert cli_result.exit_code == 0, cli_result.output
+    cli_proposal = json.loads(cli_result.stdout)
+    assert cli_proposal["proposal"]["proposal"]["evaluation"]["verdict"] == "candidate"
+
+    workspace = tmp_path / "sdk-workspace"
+    workspace.mkdir()
+    _catalog(workspace)
+    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
+    sdk_proposal = pb.claim_type(
+        predicate=input_value.predicate,
+        subject_kinds=input_value.allowed_subject_kinds,
+        object_kind=input_value.object_kind,
+        value_schema=input_value.literal_schema,
+        object_subject_kinds=input_value.allowed_object_subject_kinds,
+        cardinality=input_value.cardinality,
+        permitted_roles=input_value.permitted_roles,
+        referent_sensitivity=input_value.referent_sensitivity,
+        sources=(),
+        admission_policy=ClaimAdmissionPolicyV1.model_validate(input_value.admission_policy),
+        resolution_policy=ClaimResolutionPolicyV1.model_validate(input_value.resolution_policy),
+        pins=(),
+        evidence_freshness=None,
+    ).propose(proposal_name="empty-policy-sdk")
+
+    assert sdk_proposal.status().verdict == "candidate"
+    assert cli_proposal["lint"]["warnings"]
+    assert {warning["code"] for warning in cli_proposal["lint"]["warnings"]} == {
+        "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+    }
+    assert list(sdk_proposal.warnings) == cli_proposal["lint"]["warnings"]
+
+
+def test_cli_claim_type_example_is_accepted_in_a_fresh_world(
+    playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    http, instance_id, private_key_path = playbill_http
+    accepted_contract_digest = _install_direct_capture_contract(http, instance_id, private_key_path)
+    transport = CruxibleClient(base_url="http://cruxible")
+    transport._client = http  # type: ignore[assignment]
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
+    runner = CliRunner()
+    example = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
+    assert example.exit_code == 0, example.output
+    example_payload = json.loads(example.stdout)
+    assert (
+        accepted_contract_digest
+        in example_payload["evidence_admission_policy"]["rules"][0]["capture_contract_digests"]
+    )
+    input_path = tmp_path / "printed-claim-type-example.json"
+    input_path.write_text(example.stdout, encoding="utf-8")
+
+    proposed = runner.invoke(
+        cli,
+        [
+            "--server-url",
+            "http://cruxible",
+            "--instance-id",
+            instance_id,
+            "playbill",
+            "claim-type",
+            "propose",
+            "--input",
+            str(input_path),
+            "--json",
+        ],
+    )
+
+    assert proposed.exit_code == 0, proposed.output
+    payload = json.loads(proposed.stdout)
+    assert payload["proposal"]["proposal"]["evaluation"]["verdict"] == "candidate"
+    assert payload["lint"]["warnings"] == []
 
 
 def _abstract_assess_procedure() -> ProcedureDefinitionV3:

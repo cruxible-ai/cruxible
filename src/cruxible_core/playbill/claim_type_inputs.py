@@ -12,6 +12,7 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
     foreign_source_capture_contract,
     parse_capture_contract,
@@ -169,7 +170,12 @@ def defaulted_claim_type_input_example() -> ClaimTypeInputV1:
 
     example = claim_type_input_example()
     source_id = "repo.replace-me"
-    contract_digest = capture_contract_digest(foreign_source_capture_contract(source_id)).tagged
+    contract_digests = sorted(
+        {
+            capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged,
+            capture_contract_digest(foreign_source_capture_contract(source_id)).tagged,
+        }
+    )
     return example.model_copy(
         update={
             "predicate": "project.work_item.status",
@@ -179,7 +185,7 @@ def defaulted_claim_type_input_example() -> ClaimTypeInputV1:
                     {
                         "rule_id": f"source-{source_id}",
                         "claim_roles": sorted(example.permitted_roles),
-                        "capture_contract_digests": [contract_digest],
+                        "capture_contract_digests": contract_digests,
                         "evidence_kinds": ["self_asserted"],
                         "admission": "direct",
                         "subject_binding": "exact_claim_subject",

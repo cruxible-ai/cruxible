@@ -1786,6 +1786,7 @@ def submit_authoring_intent(
                 ),
                 "receipt": activation.tag if activation is not None else None,
             },
+            reason=_submit_refusal_reason(submitted),
             next_command=_submit_next_command(submitted, activated=activation is not None),
         )
         return
@@ -1801,6 +1802,46 @@ def _not_activated_note(state: str) -> str:
             "Collect it with `cruxible playbill proposal approve`, then activate."
         )
     return f"not activated: the candidate is {state}, not ready_to_activate"
+
+
+def _submit_refusal_reason(submitted: Any) -> str | None:
+    """Render the complete typed preflight refusal on one transcript line."""
+
+    if submitted.status.state != "preflight_refused" or not isinstance(submitted.intent, Mapping):
+        return None
+    preflight = submitted.intent.get("last_preflight")
+    frontier = preflight.get("frontier") if isinstance(preflight, Mapping) else None
+    diagnostics = frontier.get("diagnostics") if isinstance(frontier, Mapping) else None
+    blocked_checks = frontier.get("blocked_checks") if isinstance(frontier, Mapping) else None
+    if not isinstance(diagnostics, list | tuple) and not isinstance(blocked_checks, list | tuple):
+        return "preflight refused without a delivered diagnostic"
+    rendered: list[str] = []
+    for diagnostic in diagnostics if isinstance(diagnostics, list | tuple) else ():
+        if not isinstance(diagnostic, Mapping):
+            continue
+        code = diagnostic.get("code")
+        message = diagnostic.get("message")
+        if not isinstance(code, str) or not isinstance(message, str):
+            continue
+        one_line_message = " ".join(message.split())
+        rendered.append(f"{code}: {one_line_message}")
+    for blocked in blocked_checks if isinstance(blocked_checks, list | tuple) else ():
+        if not isinstance(blocked, Mapping):
+            continue
+        check = blocked.get("check")
+        reason = blocked.get("reason")
+        blocked_by = blocked.get("blocked_by")
+        if (
+            not isinstance(check, str)
+            or not isinstance(reason, str)
+            or not isinstance(blocked_by, list | tuple)
+            or not all(isinstance(dependency, str) for dependency in blocked_by)
+        ):
+            continue
+        dependencies = ", ".join(blocked_by)
+        one_line_reason = " ".join(reason.split())
+        rendered.append(f"blocked {check} by {dependencies}: {one_line_reason}")
+    return "; ".join(rendered) or "preflight refused without a delivered diagnostic"
 
 
 def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
@@ -2336,7 +2377,7 @@ def next_work(
 
     def _next_at_scanned_coordinate(
         client: CruxibleClient, instance_id: str
-    ) -> tuple[contracts.PlaybillNextResult, contracts.PlaybillNextResult | None]:
+    ) -> contracts.PlaybillNextResult:
         observed, coordinate = observe_playbill_next_workspace_with_coverage(
             client,
             instance_id,
@@ -2344,7 +2385,7 @@ def next_work(
             observation=workspace_observation,
             access_profile=profile,
         )
-        result = client.next_playbill(
+        return client.next_playbill(
             instance_id,
             evaluation_time=stamped_evaluation_time,
             access_profile=profile,
@@ -2353,19 +2394,8 @@ def next_work(
             workspace_observation=observed,
             since_result_digest=since_result_digest,
         )
-        if since_result_digest is None:
-            return result, None
-        full = client.next_playbill(
-            instance_id,
-            evaluation_time=stamped_evaluation_time,
-            access_profile=profile,
-            at=coordinate,
-            expiring_within={"microseconds": expiring_within},
-            workspace_observation=observed,
-        )
-        return result, full
 
-    result, full = _server_call(
+    result = _server_call(
         _next_at_scanned_coordinate,
         command_name="playbill next",
     )
@@ -2378,16 +2408,14 @@ def next_work(
             if result.delta_since is not None
             else "No repair work in the observed domains."
         )
-    current_ids = frozenset(item["item_id"] for item in full.items) if full is not None else None
+    removed_ids = frozenset(result.removed_item_ids)
     for item in result.items:
         repair = item["repair"]
         change = (
             "removed  "
-            if result.delta_since is not None
-            and current_ids is not None
-            and item["item_id"] not in current_ids
+            if result.delta_since is not None and item["item_id"] in removed_ids
             else "added  "
-            if result.delta_since is not None and current_ids is not None
+            if result.delta_since is not None
             else ""
         )
         click.echo(

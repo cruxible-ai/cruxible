@@ -58,6 +58,7 @@ def _emit_brief(
     outcome: str,
     ids: Mapping[str, str | None],
     next_command: str | None,
+    reason: str | None = None,
 ) -> None:
     """Render the three things a caller acts on: what happened, what to name, what to run.
 
@@ -68,6 +69,8 @@ def _emit_brief(
     for label, value in ids.items():
         if value:
             click.echo(f"{label}: {value}")
+    if reason:
+        click.echo(f"reason: {reason}")
     click.echo(f"next: {next_command}" if next_command else "next: nothing to run")
 
 

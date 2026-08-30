@@ -549,6 +549,10 @@ class PlaybillNextResultV1(_StrictNextModel):
 class PlaybillNextResultV2(PlaybillNextResultV1):
     tag: Literal["playbill-next-result-v2"] = "playbill-next-result-v2"  # type: ignore[assignment]
     attestation_head_digest: str
+    removed_item_ids: tuple[str, ...] = Field(
+        default_factory=tuple,
+        exclude_if=lambda value: not value,
+    )
 
     @field_validator("attestation_head_digest")
     @classmethod
@@ -556,8 +560,22 @@ class PlaybillNextResultV2(PlaybillNextResultV1):
         Sha256Value.from_tagged(value)
         return value
 
+    @field_validator("removed_item_ids")
+    @classmethod
+    def _removed_item_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for item_id in value:
+            Sha256Value.from_tagged(item_id)
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("removed next item IDs must be ASCII byte-sorted and unique")
+        return value
+
     @model_validator(mode="after")
     def _v2_digest(self) -> "PlaybillNextResultV2":
+        if self.removed_item_ids and self.delta_since is None:
+            raise ValueError("removed next item IDs are valid only on a delta")
+        carried_ids = frozenset(item.item_id for item in self.items)
+        if not set(self.removed_item_ids).issubset(carried_ids):
+            raise ValueError("removed next item IDs must name carried delta rows")
         if self.delta_since is None and self.result_digest != playbill_next_result_digest(self):
             raise ValueError("next v2 result digest does not reproduce")
         return self
@@ -720,6 +738,7 @@ def playbill_next_result_digest(result: PlaybillNextResultV1 | PlaybillNextResul
     )
     if isinstance(result, PlaybillNextResultV2):
         payload.pop("delta_since")
+        payload.pop("removed_item_ids", None)
     return typed_digest(Sha256Value, domain, payload).tagged
 
 
@@ -3141,7 +3160,12 @@ def _delta_of(
     # request idempotent and prevents a subset from overwriting the full queue
     # in the per-process memo (delta_since is intentionally outside v2's
     # accepted-state digest preimage).
-    return full.model_copy(update={"items": changed, "delta_since": since})
+    update: dict[str, object] = {"items": changed, "delta_since": since}
+    if isinstance(full, PlaybillNextResultV2):
+        update["removed_item_ids"] = tuple(
+            sorted(previous_ids - current_ids, key=lambda item: item.encode("ascii"))
+        )
+    return full.model_copy(update=update)
 
 
 __all__ = [

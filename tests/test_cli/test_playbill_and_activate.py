@@ -47,8 +47,27 @@ class _SubmitClient:
     def submit_playbill_authoring_intent(
         self, instance_id: str, intent_id: str
     ) -> contracts.PlaybillAuthoringSubmitResult:
+        intent: dict[str, object] = {"intent_id": intent_id}
+        if self.state == "preflight_refused":
+            intent["last_preflight"] = {
+                "frontier": {
+                    "diagnostics": [
+                        {
+                            "code": "playbill.claim.subject_unresolved",
+                            "message": "The requested Subject\n does not exist.",
+                        }
+                    ],
+                    "blocked_checks": [
+                        {
+                            "check": "claim_acceptance",
+                            "blocked_by": ["subject_resolution"],
+                            "reason": "The claim cannot be checked\n until its subject resolves.",
+                        }
+                    ],
+                }
+            }
         return contracts.PlaybillAuthoringSubmitResult(
-            intent={"intent_id": intent_id},
+            intent=intent,
             status=contracts.PlaybillCandidateStatus(
                 state=self.state,
                 proposal_id=PROPOSAL_ID,
@@ -100,6 +119,26 @@ def test_and_activate_names_the_approve_command_in_brief_when_it_stops(
     assert result.exit_code == 0, result.output
     assert client.activations == []
     assert f"cruxible playbill proposal approve {PROPOSAL_ID}" in result.output
+
+
+def test_refused_brief_prints_the_typed_reason_on_one_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _SubmitClient("preflight_refused")
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: client)
+
+    result = CliRunner().invoke(cli, [*COMMON, "submit", INTENT_ID, "--brief"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        "reason: playbill.claim.subject_unresolved: The requested Subject does not exist."
+        in result.output
+    )
+    assert (
+        "blocked claim_acceptance by subject_resolution: "
+        "The claim cannot be checked until its subject resolves."
+    ) in result.output
+    assert result.output.count("reason:") == 1
 
 
 def test_and_activate_brief_prints_the_accepted_coordinate_and_receipt(

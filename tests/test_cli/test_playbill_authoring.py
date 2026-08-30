@@ -14,6 +14,10 @@ from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.blocks import render_projection_opening
 from cruxible_client.authoring.examples import claim_flow_a_example, claim_self_source_example
 from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import (
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    capture_contract_digest,
+)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -170,7 +174,10 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     claim_type_payload = json.loads(claim_type.stdout)
     (rule,) = claim_type_payload["evidence_admission_policy"]["rules"]
     assert rule["evidence_kinds"] == ["self_asserted"]
-    assert rule["capture_contract_digests"][0].startswith("sha256:")
+    assert (
+        capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+        in rule["capture_contract_digests"]
+    )
     assert claim_type_payload["predicate"] == "project.work_item.status"
     assert claim_type_payload["anticipated_source_ids"] == ["repo.replace-me"]
     assert "evidence_admission_policy.rules" in claim_type.stderr
