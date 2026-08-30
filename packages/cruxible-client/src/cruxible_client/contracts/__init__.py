@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.procedures.results import ProcedureTerminalV1
 
 RuntimeCredentialPermissionMode = Literal[
     "read_only",
@@ -857,6 +858,7 @@ class PlaybillProcedureRunState(BaseModel):
     next_operation: dict[str, Any]
     result: Any = None
     receipt_digest: str | None = None
+    terminal: ProcedureTerminalV1 | None = None
 
 
 class PlaybillNextResult(BaseModel):

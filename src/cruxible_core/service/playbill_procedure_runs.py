@@ -37,6 +37,13 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotRefV1,
     iter_pin_bindings,
 )
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusalV1,
+    ProcedureInternalFailureV1,
+    ProcedureJournalCoordinateV1,
+    ProcedureNodeRefusalV1,
+    ProcedureTerminalV1,
+)
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext
@@ -242,6 +249,7 @@ class ProcedureRunStateV1(_StrictProcedureSurfaceModel):
     next_operation: ProcedureNextOperationV1
     result: object | None = None
     receipt_digest: str | None = None
+    terminal: ProcedureTerminalV1 | None = None
 
 
 def _resolve_coordinate(
@@ -599,6 +607,18 @@ def _records_for_run(instance: PlaybillInstance, run_id: str):  # type: ignore[n
     )
 
 
+def _journal_coordinate(stored) -> ProcedureJournalCoordinateV1:  # type: ignore[no-untyped-def]
+    record = stored.record
+    return ProcedureJournalCoordinateV1(
+        stream_instance_id=record.stream.instance_id,
+        journal_family=record.stream.journal_family,
+        stream_id=record.stream.stream_id,
+        partition_id=record.partition_id,
+        sequence=record.sequence,
+        record_digest=stored.record_digest,
+    )
+
+
 def _state_from_records(
     instance: PlaybillInstance,
     *,
@@ -635,6 +655,7 @@ def _state_from_records(
         )
     status: Literal["running", "succeeded", "refused", "failed", "budget_exhausted"] = "running"
     result = None
+    terminal: ProcedureTerminalV1 | None = None
     if isinstance(final, dict):
         raw_status = final.get("status")
         if raw_status not in {"succeeded", "refused", "failed", "budget_exhausted"}:
@@ -646,6 +667,35 @@ def _state_from_records(
             raw_status,
         )
         result = final.get("output") if status == "succeeded" else None
+        final_record = records[-1]
+        last_node_id = next(
+            (item.node_id for item in reversed(outcomes) if item.node_id is not None),
+            "procedure",
+        )
+        if status == "refused":
+            raw_refusal = final.get("refusal")
+            refusal = raw_refusal if isinstance(raw_refusal, dict) else {}
+            terminal = ProcedureNodeRefusalV1(
+                code="guard_refused",
+                message=str(refusal.get("message", "Procedure node refused execution.")),
+                node_id=str(refusal.get("node_id") or last_node_id),
+                journal_coordinate=_journal_coordinate(final_record),
+                detail_code=str(refusal.get("code", "refused")),
+            )
+        elif status == "budget_exhausted":
+            terminal = ProcedureNodeRefusalV1(
+                code="budget_exhausted",
+                message="Procedure execution exhausted its declared budget.",
+                node_id=last_node_id,
+                journal_coordinate=_journal_coordinate(final_record),
+            )
+        elif status == "failed":
+            terminal = ProcedureInternalFailureV1(
+                code="unexpected_exception",
+                message="Procedure execution failed unexpectedly; inspect daemon logs.",
+                correlation_id=run_id,
+                journal_coordinate=_journal_coordinate(final_record),
+            )
     if receipt is None and final is not None:
         receipt = ProcedureRunReceiptV1(
             run_id=run_id,
@@ -672,6 +722,7 @@ def _state_from_records(
         next_operation=ProcedureNextOperationV1(kind=next_kind),
         result=result,
         receipt_digest=None if receipt is None else procedure_run_receipt_digest(receipt),
+        terminal=terminal,
     )
 
 
@@ -707,6 +758,11 @@ def service_run_playbill_procedure(
             pending_inputs=readiness.required_slots,
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="bind"),
+            terminal=ProcedureAdmissionRefusalV1(
+                code="binding_required",
+                message="Procedure accepted bindings are incomplete.",
+                details={"required_slots": list(readiness.required_slots)},
+            ),
         )
     if readiness.state == "unsupported":
         return ProcedureRunStateV1(
@@ -719,6 +775,15 @@ def service_run_playbill_procedure(
             pending_inputs=(),
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="terminal"),
+            terminal=ProcedureAdmissionRefusalV1(
+                code="unsupported_node",
+                message="Procedure contains node kinds unavailable on the served run lane.",
+                details={
+                    "unsupported_nodes": [
+                        item.model_dump(mode="json") for item in readiness.unsupported_nodes
+                    ]
+                },
+            ),
         )
     stream = _stream(instance)
     journal, root = _journal(instance)

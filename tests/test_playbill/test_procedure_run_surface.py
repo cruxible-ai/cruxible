@@ -19,6 +19,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotV1,
     StateTapNodeV3,
 )
+from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalV1
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.proposals import AuthenticatedActor
@@ -71,6 +72,7 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
         sequence=4,
         timestamp="2026-08-24T15:00:00.000000Z",
     )
+
     return instance, owner, procedure
 
 
@@ -175,6 +177,16 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
         timestamp="2026-08-24T15:00:00.000000Z",
     )
 
+    blocked = service_run_playbill_procedure(
+        instance,
+        name=abstract.identity.name,
+        request=ProcedureRunRequestV1(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert blocked.status == "binding_required"
+    assert isinstance(blocked.terminal, ProcedureAdmissionRefusalV1)
+    assert blocked.terminal.code == "binding_required"
+
     result = service_bind_playbill_procedure(
         instance,
         name=abstract.identity.name,
@@ -262,5 +274,7 @@ def test_effectful_profile_refuses_before_opening_a_journal(tmp_path: Path) -> N
         ("gate", "guard")
     ]
     assert run.status == "unsupported"
+    assert isinstance(run.terminal, ProcedureAdmissionRefusalV1)
+    assert run.terminal.code == "unsupported_node"
     assert run.next_operation.kind == "terminal"
     assert not journal_root.exists()
