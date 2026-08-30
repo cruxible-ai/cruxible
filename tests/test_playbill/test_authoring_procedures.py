@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from cruxible_client.authoring.examples import procedure_example
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
@@ -208,6 +210,51 @@ def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
         canonical_timestamp="2026-08-21T12:01:00.000000Z",
     )
     assert passed.verdict == "passed"
+
+
+def test_served_procedure_example_reaches_all_six_typed_specs(tmp_path: Path) -> None:
+    example = procedure_example()
+    tags = {
+        node["spec"]["tag"]
+        for node in example.definition["nodes"]
+        if isinstance(node, dict) and isinstance(node.get("spec"), dict)
+    }
+    assert tags == {
+        "playbill-transform-adapter-spec-v1",
+        "playbill-transform-aggregate-items-spec-v1",
+        "playbill-transform-dedupe-items-spec-v1",
+        "playbill-transform-filter-items-spec-v1",
+        "playbill-transform-join-items-spec-v1",
+        "playbill-transform-shape-items-spec-v1",
+    }
+
+    coordinator, actor = _coordinator(tmp_path)
+    result = coordinator.compile(
+        actor=actor,
+        payload=lower_authoring_input(example, tree={}),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert result.verdict == "passed"
+
+
+def test_invalid_definition_message_excludes_pydantic_metadata(tmp_path: Path) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+    definition["nodes"][0]["kind"] = "not-a-node-kind"  # type: ignore[index]
+
+    result = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert result.verdict == "refused"
+    message = result.frontier.diagnostics[0].message
+    assert "definition.nodes[0]" in message
+    assert "not-a-node-kind" in message
+    assert "Input tag 'not-a-node-kind'" in message
+    assert "input_value=" not in message
+    assert "input_type=" not in message
+    assert "errors.pydantic.dev" not in message
 
 
 def test_pin_slot_procedure_compiles_without_writer_managed_envelope_fields(

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import NoReturn
 
+from pydantic import ValidationError
+
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
     AuthoringArtifactReferenceV1,
@@ -1039,11 +1041,23 @@ def _lower_procedure(
     )
     try:
         definition = ProcedureDefinitionV3.model_validate(resolved_definition)
-    except ValueError as exc:
+    except ValidationError as exc:
+        lines: list[str] = []
+        for error in exc.errors(include_url=False, include_context=False):
+            location = "definition" + "".join(
+                f"[{member}]" if isinstance(member, int) else f".{member}"
+                for member in error["loc"]
+            )
+            offending = error.get("input")
+            try:
+                rendered = canonical_bytes(offending).decode("utf-8")
+            except (TypeError, ValueError):
+                rendered = f"<{type(offending).__name__}>"
+            lines.append(f"{location}: {error['msg']}; offending element: {rendered}")
         _refuse(
             "playbill.authoring.procedure_definition_invalid",
             "definition",
-            f"The lowered graph-v3 Procedure definition is invalid: {exc}",
+            "The lowered graph-v3 Procedure definition is invalid: " + " | ".join(lines),
             repair_kind="replace_definition",
             repair_description="Repair the indicated graph-v3 definition field.",
         )
