@@ -860,6 +860,7 @@ class PlaybillProcedureRunState(BaseModel):
         "node_refused",
         "operational_failed",
         "internal_failed",
+        "halted",
     ]
     pending_inputs: list[str]
     outcomes: list[dict[str, Any]]

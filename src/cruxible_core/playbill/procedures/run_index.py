@@ -22,6 +22,7 @@ IndexedProcedureRunStatusV1 = Literal[
     "refused",
     "failed",
     "budget_exhausted",
+    "halted",
 ]
 
 
@@ -149,6 +150,7 @@ class ProcedureRunIndex:
                 "refused",
                 "failed",
                 "budget_exhausted",
+                "halted",
             }:
                 raise PlaybillExecutionError("attempt-finalized payload has no valid status")
             self._conn.execute(

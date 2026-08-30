@@ -42,6 +42,7 @@ from cruxible_client.contracts.procedures.models import (
     ExhaustTapNodeV3,
     GuardNodeV3,
     GuardPredicateV1,
+    HaltNodeV3,
     InboxEgressNodeV3,
     MandateSettlementNodeV3,
     PredicateOperandV1,
@@ -130,7 +131,13 @@ from cruxible_core.playbill.procedures.terminal_dependencies import (
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
-ProcedureRunStatusV1 = Literal["succeeded", "refused", "failed", "budget_exhausted"]
+ProcedureRunStatusV1 = Literal[
+    "succeeded",
+    "refused",
+    "failed",
+    "budget_exhausted",
+    "halted",
+]
 
 PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN = "playbill-procedure-semantic-replay-key-v1"
 PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
@@ -571,14 +578,29 @@ def _semantic_refusal_payload(refusal: ProcedureRunRefusalV1) -> CanonicalValue:
 def procedure_semantic_result_digest(
     *,
     semantic_replay_key_digest: str,
-    status: Literal["succeeded", "refused"],
+    status: Literal["succeeded", "refused", "halted"],
     output: CanonicalValue | None,
     refusal: ProcedureRunRefusalV1 | None,
+    halt: CanonicalValue | None = None,
 ) -> str:
     """Commit only replay-stable output or refusal material."""
 
     if (status == "refused") != (refusal is not None):
         raise ValueError("semantic Procedure refusal shape is inconsistent")
+    if status == "halted":
+        if halt is None or output is not None or refusal is not None:
+            raise ValueError("semantic Procedure halt shape is inconsistent")
+        return typed_digest(
+            Sha256Value,
+            PROCEDURE_SEMANTIC_RESULT_DOMAIN,
+            {
+                "semantic_replay_key_digest": semantic_replay_key_digest,
+                "status": "halted",
+                "halt": halt,
+            },
+        ).tagged
+    if halt is not None:
+        raise ValueError("only a halted Procedure semantic result carries halt material")
     return typed_digest(
         Sha256Value,
         PROCEDURE_SEMANTIC_RESULT_DOMAIN,
@@ -1003,6 +1025,13 @@ class _OperationalFailure(Exception):
         self.code = code
 
 
+class _Halted(Exception):
+    def __init__(self, *, node_id: str, reason: str | None) -> None:
+        super().__init__("Procedure halted")
+        self.node_id = node_id
+        self.reason = reason
+
+
 class _TransformInputInvalid(PlaybillExecutionError):
     def __init__(self, message: str, *, slot: str) -> None:
         super().__init__(message)
@@ -1194,6 +1223,7 @@ class ProcedureExecutor:
         refusal: ProcedureRunRefusalV1 | None = None
         failure_message: str | None = None
         failure_code: str | None = None
+        halt: CanonicalValue | None = None
         try:
             state = self._seed_state(prepared)
             input_contract = self._pin(
@@ -1220,6 +1250,14 @@ class ProcedureExecutor:
         except _RunRefusal as exc:
             status = "refused"
             refusal = exc.refusal
+        except _Halted as exc:
+            status = "halted"
+            halt = normalize_canonical(
+                {
+                    "node_id": exc.node_id,
+                    "reason": exc.reason,
+                }
+            )
         except _BudgetExceeded as exc:
             if isinstance(admission, ProcedureRunAdmissionV2) and exc.budget_kind == "wall_clock":
                 status = "failed"
@@ -1256,12 +1294,17 @@ class ProcedureExecutor:
             failure_code = "unexpected_exception"
 
         semantic_result_digest = None
-        if isinstance(admission, ProcedureRunAdmissionV2) and status in {"succeeded", "refused"}:
+        if isinstance(admission, ProcedureRunAdmissionV2) and status in {
+            "succeeded",
+            "refused",
+            "halted",
+        }:
             semantic_result_digest = procedure_semantic_result_digest(
                 semantic_replay_key_digest=admission.semantic_replay_key_digest,
-                status=cast(Literal["succeeded", "refused"], status),
+                status=cast(Literal["succeeded", "refused", "halted"], status),
                 output=output,
                 refusal=refusal,
+                halt=halt,
             )
         final_payload = {
             "status": status,
@@ -1269,6 +1312,7 @@ class ProcedureExecutor:
             "refusal": None if refusal is None else refusal.model_dump(mode="json"),
             "failure": failure_message,
             "failure_code": failure_code,
+            "halt": halt,
             "semantic_result_digest": semantic_result_digest,
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
@@ -1626,6 +1670,8 @@ class ProcedureExecutor:
                     "node_fired",
                     {"node_id": node.node_id, "kind": node.kind, "verdict": "succeeded"},
                 )
+                if isinstance(node, HaltNodeV3):
+                    raise _Halted(node_id=node.node_id, reason=node.reason)
             except _RunRefusal:
                 self._append_event(
                     admission,
@@ -1633,6 +1679,8 @@ class ProcedureExecutor:
                     "node_fired",
                     {"node_id": node.node_id, "kind": node.kind, "verdict": "refused"},
                 )
+                raise
+            except _Halted:
                 raise
             except Exception:
                 self._append_event(
@@ -1724,6 +1772,8 @@ class ProcedureExecutor:
                     node_id=node.node_id,
                 )
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
+            return None
+        if isinstance(node, HaltNodeV3):
             return None
         if isinstance(node, ProviderNodeV3):
             self._run_provider(

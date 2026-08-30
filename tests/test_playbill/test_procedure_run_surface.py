@@ -22,6 +22,7 @@ from cruxible_client.contracts.procedures.graph import compute_procedure_definit
 from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     GuardPredicateV1,
+    HaltNodeV3,
     PredicateOperandV1,
     ProcedurePinSlotRefV1,
     ProcedurePinSlotV1,
@@ -31,6 +32,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalV1,
+    ProcedureHaltTerminalV1,
     ProcedureNodeRefusalV1,
     ProcedureOperationalFailureV1,
     ProcedureRunReceiptV3,
@@ -605,6 +607,58 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     assert refused.receipt.status == "node_refused"
     assert refused.receipt.terminal == refused.terminal
     assert refused.receipt.budget.observed.result_bytes.high_water == 0
+
+    halting_nodes = list(unsupported.definition.nodes)
+    halting_gate = halting_nodes[1]
+    assert isinstance(halting_gate, GuardNodeV3)
+    assert halting_gate.predicate.right is not None
+    halting_nodes[1] = halting_gate.model_copy(
+        update={
+            "predicate": halting_gate.predicate.model_copy(
+                update={
+                    "right": halting_gate.predicate.right.model_copy(update={"value": False})
+                }
+            ),
+            "on_false": "stop",
+        }
+    )
+    halting_nodes.insert(2, HaltNodeV3(node_id="stop", reason="No matching rows."))
+    halting_definition = unsupported.definition.model_copy(update={"nodes": tuple(halting_nodes)})
+    halting = unsupported.model_copy(
+        update={
+            "definition": halting_definition,
+            "definition_digest": compute_procedure_definition_digest_v3(
+                halting_definition
+            ).tagged,
+            "lifecycle": refusing.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(refusing).tagged}
+            ),
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        halting,
+        sequence=7,
+        timestamp="2026-08-24T18:00:00.000000Z",
+    )
+
+    halted = service_run_playbill_procedure(
+        instance,
+        name=halting.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance).model_copy(update={"operation_id": "guard-halt"}),
+    )
+
+    assert halted.status == "halted"
+    assert halted.result is None
+    assert halted.next_operation.kind == "terminal"
+    assert isinstance(halted.terminal, ProcedureHaltTerminalV1)
+    assert halted.terminal.node_id == "stop"
+    assert halted.terminal.reason == "No matching rows."
+    assert isinstance(halted.receipt, ProcedureRunReceiptV3)
+    assert halted.receipt.status == "halted"
+    assert halted.receipt.terminal == halted.terminal
 
 
 def test_unsupported_source_refuses_before_opening_a_journal(

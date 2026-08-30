@@ -44,6 +44,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureBudgetExceededDetailV1,
     ProcedureBudgetExhaustedV1,
     ProcedureBudgetRefusalDetailV1,
+    ProcedureHaltTerminalV1,
     ProcedureInternalFailureV1,
     ProcedureJournalCoordinateV1,
     ProcedureNodeRefusalV1,
@@ -89,7 +90,9 @@ PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_PARTITION_ID = "direct-runs"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
 DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
-SERVED_NODE_KINDS = frozenset({"state_tap", "transform", "project", "guard", "repeat"})
+SERVED_NODE_KINDS = frozenset(
+    {"state_tap", "transform", "project", "guard", "repeat", "halt"}
+)
 
 
 class _StrictProcedureSurfaceModel(BaseModel):
@@ -273,6 +276,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
         "node_refused",
         "operational_failed",
         "internal_failed",
+        "halted",
     ]
     pending_inputs: tuple[str, ...]
     outcomes: tuple[ProcedureRunOutcomeV1, ...]
@@ -709,19 +713,28 @@ def _state_from_records(
         "node_refused",
         "operational_failed",
         "internal_failed",
+        "halted",
     ] = "running"
     result = None
     terminal: ProcedureTerminalV1 | None = None
     semantic_result_digest = None
     if isinstance(final, dict):
         raw_status = final.get("status")
-        if raw_status not in {"succeeded", "refused", "failed", "budget_exhausted"}:
+        if raw_status not in {
+            "succeeded",
+            "refused",
+            "failed",
+            "budget_exhausted",
+            "halted",
+        }:
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: final status is invalid"
             )
         status = (
             "succeeded"
             if raw_status == "succeeded"
+            else "halted"
+            if raw_status == "halted"
             else "node_refused"
             if raw_status in {"refused", "budget_exhausted"}
             else "internal_failed"
@@ -770,6 +783,16 @@ def _state_from_records(
                             "budget": budget,
                         }
                     )
+            elif raw_status == "halted":
+                raw_halt = final.get("halt")
+                if not isinstance(raw_halt, dict):
+                    raise ValueError("halted run lacks typed halt material")
+                raw_reason = raw_halt.get("reason")
+                terminal = ProcedureHaltTerminalV1(
+                    node_id=str(raw_halt.get("node_id") or last_node_id),
+                    reason=raw_reason if isinstance(raw_reason, str) else None,
+                    journal_coordinate=_journal_coordinate(final_record),
+                )
             elif raw_status == "failed":
                 failure_code = final.get("failure_code")
                 if failure_code in {

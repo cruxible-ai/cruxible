@@ -551,6 +551,14 @@ class MandateSettlementNodeV3(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
+class HaltNodeV3(_StrictProcedureModel):
+    """A successful graph leaf that deliberately produces no result."""
+
+    kind: Literal["halt"] = "halt"
+    node_id: str
+    reason: str | None = None
+
+
 ProcedureNodeV3 = Annotated[
     StateTapNodeV3
     | SourceNodeV3
@@ -563,7 +571,8 @@ ProcedureNodeV3 = Annotated[
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
-    | MandateSettlementNodeV3,
+    | MandateSettlementNodeV3
+    | HaltNodeV3,
     Field(discriminator="kind"),
 ]
 
@@ -573,7 +582,7 @@ TERMINAL_REQUIRED_RUNGS = {
     "propose_change_set": 2,
     "mandate_settlement": 3,
 }
-TERMINAL_NODE_KINDS = frozenset(TERMINAL_REQUIRED_RUNGS)
+TERMINAL_NODE_KINDS = frozenset((*TERMINAL_REQUIRED_RUNGS, "halt"))
 
 
 class ProcedureDefinitionV3(_StrictProcedureModel):
@@ -728,6 +737,7 @@ __all__ = [
     "ExhaustTapNodeV3",
     "GuardNodeV3",
     "GuardPredicateV1",
+    "HaltNodeV3",
     "InboxEgressNodeV3",
     "MandateSettlementNodeV3",
     "PredicateOperandV1",
