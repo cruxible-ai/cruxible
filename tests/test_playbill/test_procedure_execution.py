@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import pytest
+from pydantic import TypeAdapter
 
 import cruxible_core.playbill.procedures.execution as execution_module
 from cruxible_client.contracts.artifacts import (
@@ -34,6 +35,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureHardCapsV3,
+    ProcedureTransformSpecV1,
     ProjectNodeV3,
     ProviderNodeV3,
     SourceNodeV3,
@@ -200,6 +202,17 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
 
+def _transform_spec(kind: str, spec: object) -> ProcedureTransformSpecV1:
+    if kind != "adapter":
+        assert isinstance(spec, dict)
+    payload = (
+        {"tag": "playbill-transform-adapter-spec-v1", "value": spec}
+        if kind == "adapter"
+        else {"tag": f"playbill-transform-{kind.replace('_', '-')}-spec-v1", **spec}
+    )
+    return TypeAdapter(ProcedureTransformSpecV1).validate_python(payload)
+
+
 def _transform_procedure(kind: str, spec: object) -> AcceptedProcedureV1:
     contract_in = _pin("contract-in", "Contract", "input")
     contract_out = _pin("contract-out", "Contract", "output")
@@ -213,7 +226,7 @@ def _transform_procedure(kind: str, spec: object) -> AcceptedProcedureV1:
                 transform_kind=kind,  # type: ignore[arg-type]
                 contract_in=contract_in,
                 contract_out=contract_out,
-                spec=spec,
+                spec=_transform_spec(kind, spec),
                 as_="result",
             ),
         ),
@@ -675,7 +688,8 @@ def test_false_guard_is_a_typed_refusal_with_complete_finalize(tmp_path) -> None
         contract_validator=_Contracts(),
     ).execute(prepared, accepted)
     assert result.status == "refused"
-    assert result.refusal is not None and result.refusal.code == "no-items"
+    assert result.refusal is not None and result.refusal.code == "guard_refused"
+    assert result.refusal.detail_code == "no-items"
     assert fixture.journal.all_records(fixture.stream, "runs")[-1].record.event_kind == (
         "attempt_finalized"
     )

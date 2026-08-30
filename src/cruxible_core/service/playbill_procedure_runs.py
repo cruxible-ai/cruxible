@@ -46,6 +46,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureJournalCoordinateV1,
     ProcedureNodeRefusalV1,
     ProcedureOperationalFailureV1,
+    ProcedurePendingSuccessorV1,
     ProcedureRunAttributionV1,
     ProcedureRunReceiptV2,
     ProcedureTerminalV1,
@@ -202,14 +203,6 @@ class ProcedureBindRequestV1(_StrictProcedureSurfaceModel):
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("Procedure bindings must be byte-sorted and unique")
         return value
-
-
-class ProcedurePendingSuccessorV1(_StrictProcedureSurfaceModel):
-    tag: Literal["playbill-procedure-pending-successor-v1"] = (
-        "playbill-procedure-pending-successor-v1"
-    )
-    proposal_id: str
-    pending_successor_digest: str
 
 
 class ProcedureBindResultV2(_StrictProcedureSurfaceModel):
@@ -745,15 +738,18 @@ def _state_from_records(
                 if isinstance(raw_budget, dict)
                 else None
             )
-            detail_code = str(refusal.get("code", "refused"))
-            terminal = ProcedureNodeRefusalV1(
-                code=("budget_exhausted" if detail_code == "budget_exhausted" else "guard_refused"),
-                message=str(refusal.get("message", "Procedure node refused execution.")),
-                node_id=str(refusal.get("node_id") or last_node_id),
-                journal_coordinate=_journal_coordinate(final_record),
-                detail_code=None if detail_code == "budget_exhausted" else detail_code,
-                details=refusal.get("details", {}),
-                budget=budget,
+            refusal_code = str(refusal.get("code", "guard_refused"))
+            raw_detail_code = refusal.get("detail_code")
+            terminal = ProcedureNodeRefusalV1.model_validate(
+                {
+                    "code": refusal_code,
+                    "message": str(refusal.get("message", "Procedure node refused execution.")),
+                    "node_id": str(refusal.get("node_id") or last_node_id),
+                    "journal_coordinate": _journal_coordinate(final_record),
+                    "detail_code": (raw_detail_code if isinstance(raw_detail_code, str) else None),
+                    "details": refusal.get("details", {}),
+                    "budget": budget,
+                }
             )
         elif raw_status == "budget_exhausted":
             terminal = ProcedureNodeRefusalV1(
@@ -764,12 +760,18 @@ def _state_from_records(
             )
         elif raw_status == "failed":
             failure_code = final.get("failure_code")
-            if failure_code == "cas_unavailable_at_replay":
+            if failure_code in {"cas_unavailable_at_replay", "wall_clock_exhausted"}:
                 status = "operational_failed"
-                terminal = ProcedureOperationalFailureV1(
-                    code="cas_unavailable_at_replay",
-                    message="Admitted Procedure replay material is unavailable.",
-                    journal_coordinate=_journal_coordinate(final_record),
+                terminal = ProcedureOperationalFailureV1.model_validate(
+                    {
+                        "code": failure_code,
+                        "message": (
+                            "Admitted Procedure replay material is unavailable."
+                            if failure_code == "cas_unavailable_at_replay"
+                            else "Procedure execution exceeded its wall-clock budget."
+                        ),
+                        "journal_coordinate": _journal_coordinate(final_record),
+                    }
                 )
             else:
                 terminal = ProcedureInternalFailureV1(

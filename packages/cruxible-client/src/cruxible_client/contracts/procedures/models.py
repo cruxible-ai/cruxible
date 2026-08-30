@@ -291,22 +291,127 @@ class ProviderNodeV3(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
+TransformKindV1 = Literal[
+    "shape_items",
+    "join_items",
+    "filter_items",
+    "aggregate_items",
+    "dedupe_items",
+    "adapter",
+]
+
+
+class TransformAdapterSpecV1(_StrictProcedureModel):
+    tag: Literal["playbill-transform-adapter-spec-v1"] = "playbill-transform-adapter-spec-v1"
+    value: object
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class TransformShapeItemsSpecV1(_StrictProcedureModel):
+    tag: Literal["playbill-transform-shape-items-spec-v1"] = (
+        "playbill-transform-shape-items-spec-v1"
+    )
+    items: object
+    fields: dict[str, object]
+    include_input: bool = False
+
+    @field_validator("items", "fields", mode="before")
+    @classmethod
+    def _canonical(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class TransformFilterItemsSpecV1(_StrictProcedureModel):
+    tag: Literal["playbill-transform-filter-items-spec-v1"] = (
+        "playbill-transform-filter-items-spec-v1"
+    )
+    items: object
+    where: dict[str, object]
+
+    @field_validator("items", "where", mode="before")
+    @classmethod
+    def _canonical(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class TransformDedupeItemsSpecV1(_StrictProcedureModel):
+    tag: Literal["playbill-transform-dedupe-items-spec-v1"] = (
+        "playbill-transform-dedupe-items-spec-v1"
+    )
+    items: object
+    keys: tuple[str, ...]
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def _items(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class TransformJoinItemsSpecV1(_StrictProcedureModel):
+    tag: Literal["playbill-transform-join-items-spec-v1"] = "playbill-transform-join-items-spec-v1"
+    left_items: object
+    right_items: object
+    left_key: str
+    right_key: str
+    fields: dict[str, object]
+
+    @field_validator("left_items", "right_items", "fields", mode="before")
+    @classmethod
+    def _canonical(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+class TransformAggregateItemsSpecV1(_StrictProcedureModel):
+    tag: Literal["playbill-transform-aggregate-items-spec-v1"] = (
+        "playbill-transform-aggregate-items-spec-v1"
+    )
+    items: object
+
+    @field_validator("items", mode="before")
+    @classmethod
+    def _items(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
+ProcedureTransformSpecV1 = Annotated[
+    TransformAdapterSpecV1
+    | TransformShapeItemsSpecV1
+    | TransformFilterItemsSpecV1
+    | TransformDedupeItemsSpecV1
+    | TransformJoinItemsSpecV1
+    | TransformAggregateItemsSpecV1,
+    Field(discriminator="tag"),
+]
+
+_TRANSFORM_SPEC_TAGS: dict[TransformKindV1, str] = {
+    "adapter": "playbill-transform-adapter-spec-v1",
+    "shape_items": "playbill-transform-shape-items-spec-v1",
+    "filter_items": "playbill-transform-filter-items-spec-v1",
+    "dedupe_items": "playbill-transform-dedupe-items-spec-v1",
+    "join_items": "playbill-transform-join-items-spec-v1",
+    "aggregate_items": "playbill-transform-aggregate-items-spec-v1",
+}
+
+
 class TransformNodeV3(_StrictProcedureModel):
     kind: Literal["transform"] = "transform"
     node_id: str
-    transform_kind: Literal[
-        "shape_items", "join_items", "filter_items", "aggregate_items", "dedupe_items", "adapter"
-    ]
+    transform_kind: TransformKindV1
     contract_in: ProcedurePinBindingV1
     contract_out: ProcedurePinBindingV1
-    spec: object
+    spec: ProcedureTransformSpecV1
     as_: str = Field(alias="as")
     next: str | None = None
 
-    @field_validator("spec", mode="before")
-    @classmethod
-    def _spec(cls, value: object) -> object:
-        return normalize_canonical(value)
+    @model_validator(mode="after")
+    def _spec_matches_kind(self) -> "TransformNodeV3":
+        if self.spec.tag != _TRANSFORM_SPEC_TAGS[self.transform_kind]:
+            raise ValueError("transform spec tag does not match transform_kind")
+        return self
 
 
 class GuardNodeV3(_StrictProcedureModel):
@@ -343,11 +448,12 @@ class RepeatBodyNodeV3(_StrictProcedureModel):
 
     node_id: str
     operation: Literal["provider", "transform"]
+    transform_kind: TransformKindV1 | None = None
     provider: ProcedurePinBindingV1 | None = None
     contract_in: ProcedurePinBindingV1
     contract_out: ProcedurePinBindingV1
     environment: ProcedurePinBindingV1 | None = None
-    spec: object
+    spec: ProcedureTransformSpecV1 | object
     as_: str = Field(alias="as")
 
     @field_validator("spec", mode="before")
@@ -360,6 +466,13 @@ class RepeatBodyNodeV3(_StrictProcedureModel):
         provider_fields = self.provider is not None and self.environment is not None
         if (self.operation == "provider") != provider_fields:
             raise ValueError("repeat provider operations require provider and environment pins")
+        if self.operation == "transform":
+            if self.transform_kind is None or not isinstance(self.spec, BaseModel):
+                raise ValueError("repeat transform operations require a typed transform spec")
+            if getattr(self.spec, "tag", None) != _TRANSFORM_SPEC_TAGS[self.transform_kind]:
+                raise ValueError("repeat transform spec tag does not match transform_kind")
+        elif self.transform_kind is not None:
+            raise ValueError("repeat provider operations cannot declare transform_kind")
         return self
 
 
@@ -628,5 +741,13 @@ __all__ = [
     "TERMINAL_NODE_KINDS",
     "TERMINAL_REQUIRED_RUNGS",
     "TransformNodeV3",
+    "ProcedureTransformSpecV1",
+    "TransformAdapterSpecV1",
+    "TransformAggregateItemsSpecV1",
+    "TransformDedupeItemsSpecV1",
+    "TransformFilterItemsSpecV1",
+    "TransformJoinItemsSpecV1",
+    "TransformKindV1",
+    "TransformShapeItemsSpecV1",
     "iter_pin_bindings",
 ]

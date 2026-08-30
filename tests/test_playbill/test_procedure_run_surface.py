@@ -19,7 +19,10 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotV1,
     StateTapNodeV3,
 )
-from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalV1
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusalV1,
+    ProcedureNodeRefusalV1,
+)
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -325,3 +328,46 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     assert run.terminal is None
     assert run.next_operation.kind == "done"
     assert journal_root.exists()
+
+    refusing_nodes = list(unsupported.definition.nodes)
+    gate = refusing_nodes[1]
+    assert isinstance(gate, GuardNodeV3)
+    assert gate.predicate.right is not None
+    refusing_nodes[1] = gate.model_copy(
+        update={
+            "predicate": gate.predicate.model_copy(
+                update={"right": gate.predicate.right.model_copy(update={"value": False})}
+            )
+        }
+    )
+    refusing_definition = unsupported.definition.model_copy(update={"nodes": tuple(refusing_nodes)})
+    refusing = unsupported.model_copy(
+        update={
+            "definition": refusing_definition,
+            "definition_digest": compute_procedure_definition_digest_v3(refusing_definition).tagged,
+            "lifecycle": unsupported.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(unsupported).tagged}
+            ),
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        refusing,
+        sequence=6,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+
+    refused = service_run_playbill_procedure(
+        instance,
+        name=refusing.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance).model_copy(update={"operation_id": "guard-refusal"}),
+    )
+
+    assert refused.status == "node_refused"
+    assert isinstance(refused.terminal, ProcedureNodeRefusalV1)
+    assert refused.terminal.code == "guard_refused"
+    assert refused.terminal.detail_code == "query.empty"
+    assert refused.terminal.node_id == "gate"
+    assert refused.terminal.journal_coordinate is not None

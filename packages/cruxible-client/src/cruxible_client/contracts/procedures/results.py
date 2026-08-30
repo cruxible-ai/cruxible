@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical
@@ -122,6 +122,18 @@ class ProcedureNodeRefusalV1(_StrictResultModel):
     def _details(cls, value: object) -> object:
         return normalize_canonical(value)
 
+    @model_validator(mode="after")
+    def _typed_detail(self) -> "ProcedureNodeRefusalV1":
+        if self.code == "guard_refused" and self.detail_code is None:
+            raise ValueError("guard refusal requires the Procedure-authored detail code")
+        if self.code == "budget_exhausted" and self.budget is None:
+            raise ValueError("budget refusal requires typed budget detail")
+        if self.code != "guard_refused" and self.detail_code is not None:
+            raise ValueError("only a guard refusal carries a Procedure-authored detail code")
+        if self.code != "budget_exhausted" and self.budget is not None:
+            raise ValueError("only a budget refusal carries typed budget detail")
+        return self
+
 
 class ProcedureOperationalFailureV1(_StrictResultModel):
     tag: Literal["playbill-procedure-operational-failure-v1"] = (
@@ -165,6 +177,14 @@ class ProcedureRunAttributionV1(_StrictResultModel):
     @classmethod
     def _recorded_time(cls, value: datetime) -> datetime:
         return ensure_utc(value)
+
+
+class ProcedurePendingSuccessorV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-pending-successor-v1"] = (
+        "playbill-procedure-pending-successor-v1"
+    )
+    proposal_id: str
+    pending_successor_digest: str
 
 
 class ProcedureRunReceiptV2(_StrictResultModel):
@@ -229,6 +249,7 @@ __all__ = [
     "ProcedureNodeRefusalV1",
     "ProcedureOperationalFailureCodeV1",
     "ProcedureOperationalFailureV1",
+    "ProcedurePendingSuccessorV1",
     "ProcedureRunAttributionV1",
     "ProcedureRunReceiptV2",
     "ProcedureTerminalV1",

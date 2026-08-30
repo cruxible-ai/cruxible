@@ -12,6 +12,7 @@ from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.results import (
+    ProcedurePendingSuccessorV1,
     ProcedureRunAttributionV1,
     ProcedureRunReceiptV2,
     ProcedureTerminalV1,
@@ -838,16 +839,6 @@ class PlaybillProcedureBindResult(BaseModel):
     accepted_digest: str
     accepted_readiness: PlaybillProcedureReadiness
     pending: "ProcedurePendingSuccessorV1 | None" = None
-
-
-class ProcedurePendingSuccessorV1(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tag: Literal["playbill-procedure-pending-successor-v1"] = (
-        "playbill-procedure-pending-successor-v1"
-    )
-    proposal_id: str
-    pending_successor_digest: str
 
 
 class PlaybillProcedureRunState(BaseModel):
