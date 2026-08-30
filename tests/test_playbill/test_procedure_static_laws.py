@@ -19,6 +19,7 @@ from cruxible_client.contracts.procedures.models import (
     ExhaustTapNodeV3,
     GuardNodeV3,
     GuardPredicateV1,
+    HaltNodeV3,
     InboxEgressNodeV3,
     MandateSettlementNodeV3,
     PredicateOperandV1,
@@ -363,6 +364,26 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
             ),
             returns="result",
         )
+
+
+def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
+    definition = _definition(
+        (
+            StateTapNodeV3(
+                node_id="read",
+                query=_pin("query", "QueryDefinition", "halt-input"),
+                as_="rows",
+            ),
+            HaltNodeV3(node_id="stop", reason="No work remains."),
+        ),
+        returns="rows",
+        terminal_capability=1,
+    )
+
+    graph = analyze_procedure_v3(definition)
+
+    assert graph.edges["read"] == {"next": "stop"}
+    assert graph.edges["stop"] == {}
 
 
 @pytest.mark.parametrize(

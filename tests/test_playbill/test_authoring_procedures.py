@@ -255,6 +255,33 @@ def test_invalid_definition_message_excludes_pydantic_metadata(tmp_path: Path) -
     assert "errors.pydantic.dev" not in message
 
 
+def test_invalid_artifact_reference_message_excludes_pydantic_metadata(
+    tmp_path: Path,
+) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+    definition["contract_in"] = {
+        "tag": "playbill-authoring-artifact-reference-v1",
+        "target": {"kind": "Contract"},
+    }
+
+    result = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "refused"
+    diagnostic = result.frontier.diagnostics[0]
+    assert diagnostic.code == "playbill.authoring.artifact_reference_invalid"
+    assert "definition.contract_in.role" in diagnostic.message
+    assert "definition.contract_in.target.name" in diagnostic.message
+    assert "offending element" in diagnostic.message
+    assert "input_value=" not in diagnostic.message
+    assert "input_type=" not in diagnostic.message
+    assert "errors.pydantic.dev" not in diagnostic.message
+
+
 def test_pin_slot_procedure_compiles_without_writer_managed_envelope_fields(
     tmp_path: Path,
 ) -> None:

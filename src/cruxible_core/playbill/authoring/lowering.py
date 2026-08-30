@@ -922,6 +922,21 @@ def _lower_claim(
     )
 
 
+def _validation_error_lines(exc: ValidationError, *, root: str) -> tuple[str, ...]:
+    lines: list[str] = []
+    for error in exc.errors(include_url=False, include_context=False):
+        location = root + "".join(
+            f"[{member}]" if isinstance(member, int) else f".{member}" for member in error["loc"]
+        )
+        offending = error.get("input")
+        try:
+            rendered = canonical_bytes(offending).decode("utf-8")
+        except (TypeError, ValueError):
+            rendered = f"<{type(offending).__name__}>"
+        lines.append(f"{location}: {error['msg']}; offending element: {rendered}")
+    return tuple(lines)
+
+
 def _resolve_authoring_references(
     value: object,
     *,
@@ -933,11 +948,12 @@ def _resolve_authoring_references(
         if value.get("tag") == "playbill-authoring-artifact-reference-v1":
             try:
                 reference = AuthoringArtifactReferenceV1.model_validate(value)
-            except ValueError as exc:
+            except ValidationError as exc:
                 _refuse(
                     "playbill.authoring.artifact_reference_invalid",
                     location,
-                    f"The procedure authoring reference is invalid: {exc}",
+                    "The procedure authoring reference is invalid: "
+                    + " | ".join(_validation_error_lines(exc, root=location)),
                     repair_kind="replace_reference",
                     repair_description="Use a valid accepted-at-intent-base artifact reference.",
                 )
@@ -1042,22 +1058,11 @@ def _lower_procedure(
     try:
         definition = ProcedureDefinitionV3.model_validate(resolved_definition)
     except ValidationError as exc:
-        lines: list[str] = []
-        for error in exc.errors(include_url=False, include_context=False):
-            location = "definition" + "".join(
-                f"[{member}]" if isinstance(member, int) else f".{member}"
-                for member in error["loc"]
-            )
-            offending = error.get("input")
-            try:
-                rendered = canonical_bytes(offending).decode("utf-8")
-            except (TypeError, ValueError):
-                rendered = f"<{type(offending).__name__}>"
-            lines.append(f"{location}: {error['msg']}; offending element: {rendered}")
         _refuse(
             "playbill.authoring.procedure_definition_invalid",
             "definition",
-            "The lowered graph-v3 Procedure definition is invalid: " + " | ".join(lines),
+            "The lowered graph-v3 Procedure definition is invalid: "
+            + " | ".join(_validation_error_lines(exc, root="definition")),
             repair_kind="replace_definition",
             repair_description="Repair the indicated graph-v3 definition field.",
         )
