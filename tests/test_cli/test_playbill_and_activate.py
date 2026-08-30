@@ -56,7 +56,14 @@ class _SubmitClient:
                             "code": "playbill.claim.subject_unresolved",
                             "message": "The requested Subject\n does not exist.",
                         }
-                    ]
+                    ],
+                    "blocked_checks": [
+                        {
+                            "check": "claim_acceptance",
+                            "blocked_by": ["subject_resolution"],
+                            "reason": "The claim cannot be checked\n until its subject resolves.",
+                        }
+                    ],
                 }
             }
         return contracts.PlaybillAuthoringSubmitResult(
@@ -127,6 +134,10 @@ def test_refused_brief_prints_the_typed_reason_on_one_line(
         "reason: playbill.claim.subject_unresolved: The requested Subject does not exist."
         in result.output
     )
+    assert (
+        "blocked claim_acceptance by subject_resolution: "
+        "The claim cannot be checked until its subject resolves."
+    ) in result.output
     assert result.output.count("reason:") == 1
 
 

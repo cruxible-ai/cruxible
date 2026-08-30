@@ -1812,10 +1812,11 @@ def _submit_refusal_reason(submitted: Any) -> str | None:
     preflight = submitted.intent.get("last_preflight")
     frontier = preflight.get("frontier") if isinstance(preflight, Mapping) else None
     diagnostics = frontier.get("diagnostics") if isinstance(frontier, Mapping) else None
-    if not isinstance(diagnostics, list | tuple):
+    blocked_checks = frontier.get("blocked_checks") if isinstance(frontier, Mapping) else None
+    if not isinstance(diagnostics, list | tuple) and not isinstance(blocked_checks, list | tuple):
         return "preflight refused without a delivered diagnostic"
     rendered: list[str] = []
-    for diagnostic in diagnostics:
+    for diagnostic in diagnostics if isinstance(diagnostics, list | tuple) else ():
         if not isinstance(diagnostic, Mapping):
             continue
         code = diagnostic.get("code")
@@ -1824,6 +1825,22 @@ def _submit_refusal_reason(submitted: Any) -> str | None:
             continue
         one_line_message = " ".join(message.split())
         rendered.append(f"{code}: {one_line_message}")
+    for blocked in blocked_checks if isinstance(blocked_checks, list | tuple) else ():
+        if not isinstance(blocked, Mapping):
+            continue
+        check = blocked.get("check")
+        reason = blocked.get("reason")
+        blocked_by = blocked.get("blocked_by")
+        if (
+            not isinstance(check, str)
+            or not isinstance(reason, str)
+            or not isinstance(blocked_by, list | tuple)
+            or not all(isinstance(dependency, str) for dependency in blocked_by)
+        ):
+            continue
+        dependencies = ", ".join(blocked_by)
+        one_line_reason = " ".join(reason.split())
+        rendered.append(f"blocked {check} by {dependencies}: {one_line_reason}")
     return "; ".join(rendered) or "preflight refused without a delivered diagnostic"
 
 
