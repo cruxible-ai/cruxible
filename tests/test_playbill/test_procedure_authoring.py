@@ -91,7 +91,7 @@ def test_accepted_claim_builder_expands_to_complete_expert_graph_golden() -> Non
 
     assert first == second
     assert first.expanded_output_digest == (
-        "sha256:a23184e22f351fc1203aff1bb82300ceacfb465708b421deb2ce920a22a503a8"
+        "sha256:5a4547cf1bd358a2d4dd71308b9f8b5ee01ef3f8dac8bf2fbe7176895b39a676"
     )
     assert [node.kind for node in first.definition.nodes] == ["state_tap", "guard", "project"]
     assert isinstance(first.definition.nodes[0], StateTapNodeV3)
