@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Procedure compute-interior journals take a pre-release clean cut (PC-P2A).**
+  Direct runs now bind replay-stable accepted-state material and semantic run
+  identity in the v2 admission payload. Run journals written before this batch
+  do not carry that payload and are intentionally unreadable by the new served
+  reader; rebuild pre-release worlds rather than treating those journals as
+  recoverable v2 runs. SDK runs use the current lane by default and select the
+  read-only replay lane only when the caller explicitly supplies `at=`.
+
 - **Claim admission now separates corroboration scope from freeze scope (PC-C4).**
   Corroboration requirements apply only to Claims authored under their own
   ClaimType, while freeze requirements continue to protect every applicable

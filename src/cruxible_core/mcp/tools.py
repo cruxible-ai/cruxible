@@ -611,14 +611,16 @@ def register_tools(
     def cruxible_playbill_procedure_run(
         instance_id: str,
         name: str,
-        evaluation_time: str,
         input: Any,
+        evaluation_time: str | None = None,
+        at: dict[str, Any] | None = None,
     ) -> contracts.PlaybillProcedureRunState:
         """Run one accepted query-only Procedure deterministically."""
         return handlers.handle_playbill_procedure_run(
             instance_id,
             name,
             evaluation_time=evaluation_time,
+            at=at,
             input=input,
         )
 

@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterator
 
+from pydantic import BaseModel
+
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedures.models import (
@@ -119,6 +121,15 @@ def _step_alias_references(value: object, *, location: str) -> Iterator[str]:
                     f"{location} contains malformed step reference {value!r}"
                 )
             yield alias
+        return
+    if isinstance(value, BaseModel):
+        for field_name in value.__class__.model_fields:
+            if field_name == "tag":
+                continue
+            yield from _step_alias_references(
+                getattr(value, field_name),
+                location=location,
+            )
         return
     if isinstance(value, dict):
         for item in value.values():

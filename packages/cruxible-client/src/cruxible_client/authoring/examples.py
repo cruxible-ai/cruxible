@@ -129,7 +129,10 @@ def procedure_example() -> ProcedureInput:
                         "name": "query-result",
                         "role": "contract-out",
                     },
-                    "spec": "$steps.query_rows",
+                    "spec": {
+                        "tag": "playbill-transform-adapter-spec-v1",
+                        "value": "$steps.query_rows",
+                    },
                     "as": "normalized",
                     "next": "project",
                 },

@@ -328,7 +328,10 @@ def _abstract_assess_procedure() -> ProcedureDefinitionV3:
                 transform_kind="adapter",
                 contract_in=contract_in,
                 contract_out=contract_out,
-                spec={"input": "$steps.policy_rows"},
+                spec={
+                    "tag": "playbill-transform-adapter-spec-v1",
+                    "value": {"input": "$steps.policy_rows"},
+                },
                 as_="decision",
                 next="result",
             ),

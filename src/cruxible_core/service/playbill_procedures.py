@@ -32,6 +32,7 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureRunResultV1,
     ProviderExecutorProtocol,
     StateTapReaderProtocol,
+    StateTapReadResultV1,
 )
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -124,7 +125,7 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         query: ArtifactPin,
         parameters: CanonicalValue,
         coordinate: AcceptedCoordinate,
-    ) -> object:
+    ) -> StateTapReadResultV1:
         if query.target.kind != "QueryDefinition":
             raise PlaybillExecutionError("state tap pin must target QueryDefinition")
         if not isinstance(parameters, Mapping):
@@ -155,7 +156,10 @@ class PlaybillProcedureStateTapReader(StateTapReaderProtocol):
         if run.result.verdict != "completed":
             code = None if run.result.refusal is None else run.result.refusal.code
             raise PlaybillExecutionError(f"state tap query refused: {code or 'unknown'}")
-        return state_tap_value(run.result)
+        return StateTapReadResultV1(
+            value=state_tap_value(run.result),
+            effective_budgets=run.result.budgets,
+        )
 
 
 def state_tap_value(result: ClaimQueryResultV1) -> dict[str, object]:

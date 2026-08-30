@@ -67,7 +67,7 @@ from cruxible_core.server.routes import resolve_server_instance_id
 from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
-    ProcedureRunRequestV1,
+    ProcedureRunRequestV2,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["playbill"])
@@ -992,7 +992,7 @@ async def bind_procedure(
 async def run_procedure(
     instance_id: str,
     name: str,
-    req: ProcedureRunRequestV1,
+    req: ProcedureRunRequestV2,
 ) -> contracts.PlaybillProcedureRunState:
     return playbill_api.playbill_procedure_run(
         resolve_server_instance_id(instance_id),

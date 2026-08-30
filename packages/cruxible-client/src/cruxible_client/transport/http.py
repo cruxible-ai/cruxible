@@ -1072,13 +1072,15 @@ class CruxibleClient:
         instance_id: str,
         name: str,
         *,
-        evaluation_time: str,
+        evaluation_time: str | None,
+        at: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
         input: Any,
     ) -> contracts.PlaybillProcedureRunState:
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/procedures/{name}/runs",
             json={
-                "tag": "playbill-procedure-run-request-v1",
+                "tag": "playbill-procedure-run-request-v2",
+                "at": self._playbill_coordinate_body(at),
                 "evaluation_time": evaluation_time,
                 "input": input,
             },

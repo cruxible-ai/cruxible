@@ -132,7 +132,12 @@ def _kitchen_sink_definition() -> ProcedureDefinitionV3:
                 transform_kind="shape_items",
                 contract_in=contract_in,
                 contract_out=contract_out,
-                spec={"input": "$steps.provider_rows"},
+                spec={
+                    "tag": "playbill-transform-shape-items-spec-v1",
+                    "items": "$steps.provider_rows",
+                    "fields": {},
+                    "include_input": True,
+                },
                 as_="transformed_rows",
             ),
             ProjectNodeV3(
@@ -148,9 +153,13 @@ def _kitchen_sink_definition() -> ProcedureDefinitionV3:
                     RepeatBodyNodeV3(
                         node_id="body-transform",
                         operation="transform",
+                        transform_kind="adapter",
                         contract_in=contract_in,
                         contract_out=contract_out,
-                        spec={"rows": "$steps.projected_rows"},
+                        spec={
+                            "tag": "playbill-transform-adapter-spec-v1",
+                            "value": {"rows": "$steps.projected_rows"},
+                        },
                         as_="body_rows",
                     ),
                     RepeatBodyNodeV3(
@@ -362,9 +371,9 @@ def test_guard_at_a_join_cannot_read_an_alias_from_only_one_branch() -> None:
         ("nodes", 0, "parameters"),
         ("nodes", 1, "request"),
         ("nodes", 3, "input"),
-        ("nodes", 4, "spec"),
+        ("nodes", 4, "spec", "items"),
         ("nodes", 5, "fields"),
-        ("nodes", 6, "body", 0, "spec"),
+        ("nodes", 6, "body", 0, "spec", "value"),
         ("nodes", 7, "input"),
     ),
 )
@@ -375,6 +384,29 @@ def test_structured_step_references_are_checked_in_every_runtime_template(
     _replace_path(payload, path, {"missing": "$steps.missing"})
     with pytest.raises(ProcedureGraphFormatError, match="missing"):
         ProcedureDefinitionV3.model_validate(payload)
+
+
+def test_transform_specs_are_tagged_closed_and_kind_matched() -> None:
+    definition = _kitchen_sink_definition()
+    transform = definition.nodes[4]
+    assert isinstance(transform, TransformNodeV3)
+    raw = transform.model_dump(mode="json", by_alias=True)
+
+    untagged = {**raw, "spec": {"items": [], "fields": {}}}
+    with pytest.raises(ValueError, match="tag"):
+        TransformNodeV3.model_validate(untagged)
+
+    mismatched = {
+        **raw,
+        "spec": {"tag": "playbill-transform-aggregate-items-spec-v1", "items": []},
+    }
+    with pytest.raises(ValueError, match="does not match"):
+        TransformNodeV3.model_validate(mismatched)
+
+    extra = raw.copy()
+    extra["spec"] = {**raw["spec"], "undeclared": True}
+    with pytest.raises(ValueError, match="Extra inputs"):
+        TransformNodeV3.model_validate(extra)
 
 
 @pytest.mark.parametrize(

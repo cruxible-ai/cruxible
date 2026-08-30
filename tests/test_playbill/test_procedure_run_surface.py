@@ -5,11 +5,19 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
+import cruxible_core.service.playbill_procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedureV1,
     ProcedureArtifactV2,
     procedure_artifact_digest,
+    procedure_owned_contract_digest,
+    procedure_path,
 )
+from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
@@ -17,10 +25,18 @@ from cruxible_client.contracts.procedures.models import (
     PredicateOperandV1,
     ProcedurePinSlotRefV1,
     ProcedurePinSlotV1,
+    SourceNodeV3,
     StateTapNodeV3,
+    TransformNodeV3,
+)
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusalV1,
+    ProcedureNodeRefusalV1,
+    ProcedureOperationalFailureV1,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
@@ -30,7 +46,7 @@ from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindingTargetV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
-    ProcedureRunRequestV1,
+    ProcedureRunRequestV2,
     ProcedureSlotBindingRequestV1,
     service_bind_playbill_procedure,
     service_get_playbill_procedure_run,
@@ -44,12 +60,22 @@ from tests.test_playbill._knowledge_loop_support import (
     seed_claims,
     work_item_query,
 )
+from tests.test_playbill._support import FIXED_TIMESTAMP, initialize_local
 from tests.test_playbill.test_procedure_owned_contracts import (
     _accepted_query_procedure,
     _activate_procedure,
+    _contract,
 )
 
 READ_TIME = datetime(2026, 8, 24, 16, 0, tzinfo=UTC)
+
+
+def test_genesis_evaluation_time_comes_from_the_signed_commit(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    assert instance.accepted_evaluation_time(instance.accepted_coordinate().git_oid) == (
+        datetime.fromisoformat(FIXED_TIMESTAMP)
+    )
 
 
 def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
@@ -71,6 +97,7 @@ def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
         sequence=4,
         timestamp="2026-08-24T15:00:00.000000Z",
     )
+
     return instance, owner, procedure
 
 
@@ -96,7 +123,7 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     assert readiness.next_operation.kind == "run"
     assert readiness.required_slots == ()
     assert readiness.unsupported_nodes == ()
-    request = ProcedureRunRequestV1(evaluation_time=READ_TIME, input={})
+    request = ProcedureRunRequestV2(evaluation_time=READ_TIME, input={})
     first = service_run_playbill_procedure(
         instance,
         name=procedure.identity.name,
@@ -107,7 +134,9 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
         instance,
         name=procedure.identity.name,
         request=request,
-        actor_context=_actor(instance),
+        actor_context=_actor(instance).model_copy(
+            update={"operation_id": "random-retry-operation"}
+        ),
     )
 
     assert first == second
@@ -117,6 +146,10 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     assert first.result is not None
     assert len(first.result["rows"]) == 2  # type: ignore[index]
     assert first.receipt_digest is not None
+    assert first.attribution is not None
+    assert first.attribution.operation_id == "served-procedure-test"
+    assert first.semantic_replay_key_digest is not None
+    assert first.semantic_result_digest is not None
     assert service_get_playbill_procedure_run(instance, run_id=first.run_id) == first
 
 
@@ -126,6 +159,249 @@ def test_direct_receipt_reducer_identity_is_stable() -> None:
 
     assert first.reducer_digest == second.reducer_digest
     assert QUERY_NAME
+
+
+def test_explicit_historical_coordinate_uses_read_only_replay_lane(tmp_path: Path) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    historical = instance.accepted_coordinate()
+    successor = procedure.model_copy(
+        update={
+            "lifecycle": procedure.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
+            )
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        successor,
+        sequence=5,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(
+            at=AcceptedCoordinate.from_internal(historical),
+            input={},
+        ),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "succeeded"
+    assert run.lane == "replay"
+    assert run.bound_coordinate.git_oid == historical.git_oid
+    assert run.head_at_admission.git_oid == instance.accepted_coordinate().git_oid
+    assert run.evaluation_time.isoformat() == "2026-08-24T15:00:00+00:00"
+
+
+def test_explicit_at_equal_to_head_still_selects_replay_lane(tmp_path: Path) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    head = instance.accepted_coordinate()
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(
+            at=AcceptedCoordinate.from_internal(head),
+            input={},
+        ),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "succeeded"
+    assert run.lane == "replay"
+    assert run.bound_coordinate.git_oid == head.git_oid
+    assert run.head_at_admission.git_oid == head.git_oid
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    ("cas_unavailable_at_replay", "replay_material_mismatch"),
+)
+def test_retained_material_failures_reach_the_served_typed_terminal(
+    tmp_path: Path,
+    monkeypatch,
+    failure_code: str,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    original_prepare = procedure_run_service.prepare_direct_procedure_run
+
+    def break_retained_material(*args, **kwargs):  # type: ignore[no-untyped-def]
+        prepared = original_prepare(*args, **kwargs)
+        material = prepared.accepted_state_materials[0]
+        bodies = kwargs["bodies"]
+        if failure_code == "cas_unavailable_at_replay":
+            assert bodies.erase(material.input.material_body_digest)
+            return prepared
+        other = bodies.store(canonical_bytes({"different": True}))
+        mismatched_input = material.input.model_copy(update={"material_body_digest": other.digest})
+        return prepared.model_copy(
+            update={
+                "admission": prepared.admission.model_copy(
+                    update={"accepted_state_inputs": (mismatched_input,)}
+                ),
+                "accepted_state_materials": (
+                    material.model_copy(update={"input": mismatched_input}),
+                ),
+            }
+        )
+
+    monkeypatch.setattr(
+        procedure_run_service,
+        "prepare_direct_procedure_run",
+        break_retained_material,
+    )
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "operational_failed"
+    assert isinstance(run.terminal, ProcedureOperationalFailureV1)
+    assert run.terminal.code == failure_code
+
+
+def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
+    tmp_path: Path,
+) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    read = procedure.definition.nodes[0]
+    project = procedure.definition.nodes[-1]
+    assert isinstance(read, StateTapNodeV3)
+    filter_in = _contract(
+        "pipeline-filter-in",
+        {"items": PropertySchema(type="json"), "where": PropertySchema(type="json")},
+    )
+    filter_out = _contract(
+        "pipeline-filter-out",
+        {
+            "items": PropertySchema(type="json"),
+            "input_count": PropertySchema(type="int"),
+            "output_count": PropertySchema(type="int"),
+        },
+    )
+    aggregate_in = _contract(
+        "pipeline-aggregate-in",
+        {"items": PropertySchema(type="json")},
+    )
+    aggregate_out = _contract(
+        "pipeline-aggregate-out",
+        {"count": PropertySchema(type="int")},
+    )
+
+    def owned_pin(role: str, contract):  # type: ignore[no-untyped-def]
+        return ArtifactPin(
+            role=role,
+            target=contract.identity,
+            artifact_digest=procedure_owned_contract_digest(contract).tagged,
+        )
+
+    filter_in_pin = owned_pin("contract-in", filter_in)
+    filter_out_pin = owned_pin("contract-out", filter_out)
+    aggregate_in_pin = owned_pin("contract-in", aggregate_in)
+    aggregate_out_pin = owned_pin("contract-out", aggregate_out)
+    nodes = (
+        read.model_copy(update={"next": "filter"}),
+        TransformNodeV3(
+            node_id="filter",
+            transform_kind="filter_items",
+            contract_in=filter_in_pin,
+            contract_out=filter_out_pin,
+            spec={
+                "tag": "playbill-transform-filter-items-spec-v1",
+                "items": "$steps.query.rows",
+                "where": {},
+            },
+            as_="filtered",
+            next="aggregate",
+        ),
+        TransformNodeV3(
+            node_id="aggregate",
+            transform_kind="aggregate_items",
+            contract_in=aggregate_in_pin,
+            contract_out=aggregate_out_pin,
+            spec={
+                "tag": "playbill-transform-aggregate-items-spec-v1",
+                "items": "$steps.filtered.items",
+            },
+            as_="counted",
+            next="gate",
+        ),
+        GuardNodeV3(
+            node_id="gate",
+            predicate=GuardPredicateV1(
+                left=PredicateOperandV1(kind="step", alias="counted", path=("count",)),
+                operator="gt",
+                right=PredicateOperandV1(kind="literal", value=0),
+            ),
+            on_true="project",
+            refusal_code="query.empty",
+            message="The query returned no rows.",
+        ),
+        project.model_copy(update={"fields": {"rows": "$steps.filtered.items"}}),
+    )
+    definition = procedure.definition.model_copy(update={"nodes": nodes})
+    added_pins = (filter_in_pin, filter_out_pin, aggregate_in_pin, aggregate_out_pin)
+    added_contracts = (filter_in, filter_out, aggregate_in, aggregate_out)
+    pipeline = procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
+            "pins": tuple(
+                sorted(
+                    (*procedure.pins, *added_pins),
+                    key=lambda pin: (
+                        pin.role.encode(),
+                        pin.target.qualified.encode(),
+                        pin.artifact_digest.encode(),
+                    ),
+                )
+            ),
+            "owned_contracts": tuple(
+                sorted(
+                    (*procedure.owned_contracts, *added_contracts),
+                    key=lambda contract: canonical_bytes(contract.model_dump(mode="json")),
+                )
+            ),
+            "lifecycle": procedure.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
+            ),
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        pipeline,
+        sequence=5,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+    pinned = instance.accepted_coordinate()
+    request = ProcedureRunRequestV2(
+        at=AcceptedCoordinate.from_internal(pinned),
+        input={},
+    )
+
+    first = service_run_playbill_procedure(
+        instance,
+        name=pipeline.identity.name,
+        request=request,
+        actor_context=_actor(instance),
+    )
+    second = service_run_playbill_procedure(
+        instance,
+        name=pipeline.identity.name,
+        request=request,
+        actor_context=_actor(instance).model_copy(update={"operation_id": "pipeline-replay"}),
+    )
+
+    assert first.status == "succeeded"
+    assert first.result is not None and len(first.result["rows"]) == 2  # type: ignore[index]
+    assert first.model_dump_json() == second.model_dump_json()
 
 
 def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path: Path) -> None:
@@ -175,6 +451,16 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
         timestamp="2026-08-24T15:00:00.000000Z",
     )
 
+    blocked = service_run_playbill_procedure(
+        instance,
+        name=abstract.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert blocked.status == "admission_refused"
+    assert isinstance(blocked.terminal, ProcedureAdmissionRefusalV1)
+    assert blocked.terminal.code == "binding_required"
+
     result = service_bind_playbill_procedure(
         instance,
         name=abstract.identity.name,
@@ -193,19 +479,18 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
         timestamp="2026-08-24T16:00:00.000000Z",
     )
 
-    assert result.readiness.state == "ready"
-    assert result.readiness.procedure_identity == ArtifactIdentity(
+    assert result.accepted_digest == procedure_artifact_digest(abstract).tagged
+    assert result.accepted_readiness.state == "binding_required"
+    assert result.accepted_readiness.procedure_identity == ArtifactIdentity(
         kind="Procedure", name=abstract.identity.name
     )
-    assert result.proposal.proposal.candidate is not None
-    assert result.proposal.proposal.candidate.members[0].artifact_kind == "procedure"
-    successor = result.proposal.proposal.candidate.members[0]
-    assert successor.disposition == "replace"
-    assert successor.candidate_artifact_digest != procedure_artifact_digest(abstract).tagged
+    assert result.pending is not None
+    assert result.pending.proposal_id.startswith("sha256:")
+    assert result.pending.pending_successor_digest != procedure_artifact_digest(abstract).tagged
     assert isinstance(query_pin, ArtifactPin)
 
 
-def test_effectful_profile_refuses_before_opening_a_journal(tmp_path: Path) -> None:
+def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None:
     instance, owner, procedure = _world(tmp_path)
     nodes = list(procedure.definition.nodes)
     read = nodes[0]
@@ -253,14 +538,127 @@ def test_effectful_profile_refuses_before_opening_a_journal(tmp_path: Path) -> N
     run = service_run_playbill_procedure(
         instance,
         name=unsupported.identity.name,
-        request=ProcedureRunRequestV1(evaluation_time=READ_TIME, input={}),
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
         actor_context=_actor(instance),
     )
 
-    assert readiness.state == "unsupported"
-    assert [(item.node_id, item.kind) for item in readiness.unsupported_nodes] == [
-        ("gate", "guard")
-    ]
-    assert run.status == "unsupported"
-    assert run.next_operation.kind == "terminal"
+    assert readiness.state == "ready"
+    assert readiness.unsupported_nodes == ()
+    assert run.status == "succeeded"
+    assert run.terminal is None
+    assert run.next_operation.kind == "done"
+    assert journal_root.exists()
+
+    refusing_nodes = list(unsupported.definition.nodes)
+    gate = refusing_nodes[1]
+    assert isinstance(gate, GuardNodeV3)
+    assert gate.predicate.right is not None
+    refusing_nodes[1] = gate.model_copy(
+        update={
+            "predicate": gate.predicate.model_copy(
+                update={"right": gate.predicate.right.model_copy(update={"value": False})}
+            )
+        }
+    )
+    refusing_definition = unsupported.definition.model_copy(update={"nodes": tuple(refusing_nodes)})
+    refusing = unsupported.model_copy(
+        update={
+            "definition": refusing_definition,
+            "definition_digest": compute_procedure_definition_digest_v3(refusing_definition).tagged,
+            "lifecycle": unsupported.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(unsupported).tagged}
+            ),
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        refusing,
+        sequence=6,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+
+    refused = service_run_playbill_procedure(
+        instance,
+        name=refusing.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance).model_copy(update={"operation_id": "guard-refusal"}),
+    )
+
+    assert refused.status == "node_refused"
+    assert isinstance(refused.terminal, ProcedureNodeRefusalV1)
+    assert refused.terminal.code == "guard_refused"
+    assert refused.terminal.detail_code == "query.empty"
+    assert refused.terminal.node_id == "gate"
+    assert refused.terminal.journal_coordinate is not None
+
+
+def test_unsupported_source_refuses_before_opening_a_journal(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    capture = ArtifactPin(
+        role="capture-contract",
+        target=ArtifactIdentity(kind="CaptureContract", name="unsupported-source"),
+        artifact_digest="sha256:" + "7" * 64,
+    )
+    provider = ArtifactPin(
+        role="provider",
+        target=ArtifactIdentity(kind="Provider", name="unsupported-source"),
+        artifact_digest="sha256:" + "8" * 64,
+    )
+    definition = procedure.definition.model_copy(
+        update={
+            "nodes": (
+                SourceNodeV3(
+                    node_id="source",
+                    capture_contract=capture,
+                    provider=provider,
+                    request={},
+                    as_="result",
+                ),
+            ),
+            "returns": "result",
+        }
+    )
+    unsupported = procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest_v3(definition).tagged,
+            "pins": tuple(
+                sorted(
+                    (*procedure.pins, capture, provider),
+                    key=lambda pin: (
+                        pin.role.encode(),
+                        pin.target.qualified.encode(),
+                        pin.artifact_digest.encode(),
+                    ),
+                )
+            ),
+        }
+    )
+    accepted = AcceptedProcedureV1(
+        path=procedure_path(unsupported.identity.name),
+        procedure=unsupported,
+        artifact_digest=procedure_artifact_digest(unsupported).tagged,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    assert not journal_root.exists()
+
+    result = service_run_playbill_procedure(
+        instance,
+        name=unsupported.identity.name,
+        request=ProcedureRunRequestV2(input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusalV1)
+    assert result.terminal.code == "unsupported_node"
     assert not journal_root.exists()

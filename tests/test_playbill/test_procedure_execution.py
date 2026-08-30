@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import TypeAdapter
 
+import cruxible_core.playbill.procedures.execution as execution_module
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactPin,
@@ -15,6 +17,7 @@ from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     GenerationRoot,
     SemanticRoot,
+    canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.captures import CanonicalDurationV1
@@ -33,22 +36,37 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureHardCapsV3,
+    ProcedureTransformSpecV1,
     ProjectNodeV3,
     ProviderNodeV3,
+    RepeatBodyNodeV3,
+    RepeatNodeV3,
     SourceNodeV3,
     StateTapNodeV3,
+    TransformNodeV3,
 )
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.cas import ContentAddressedBodyStore
+from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
     LocalJournalBackend,
+    parse_journal_payload,
 )
 from cruxible_core.playbill.procedures.execution import (
+    PROCEDURE_RESULT_MAX_BYTES,
     ProcedureExecutor,
+    ProcedureRunRefusalV1,
     ProviderInvocationResultV1,
+    StateTapReadResultV1,
+    _apply_transform,
+    _check_return_budget,
+    _extract_items,
+    _RunRefusal,
     prepare_direct_procedure_run,
+    procedure_semantic_replay_key_digest,
+    procedure_semantic_result_digest,
 )
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -191,6 +209,84 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
 
+def _transform_spec(kind: str, spec: object) -> ProcedureTransformSpecV1:
+    if kind != "adapter":
+        assert isinstance(spec, dict)
+    payload = (
+        {"tag": "playbill-transform-adapter-spec-v1", "value": spec}
+        if kind == "adapter"
+        else {"tag": f"playbill-transform-{kind.replace('_', '-')}-spec-v1", **spec}
+    )
+    return TypeAdapter(ProcedureTransformSpecV1).validate_python(payload)
+
+
+def _transform_procedure(kind: str, spec: object) -> AcceptedProcedureV1:
+    contract_in = _pin("contract-in", "Contract", "input")
+    contract_out = _pin("contract-out", "Contract", "output")
+    definition = ProcedureDefinitionV3(
+        name=f"{kind.replace('_', '-')}-procedure",
+        contract_in=contract_in,
+        contract_out=contract_out,
+        nodes=(
+            TransformNodeV3(
+                node_id="transform",
+                transform_kind=kind,  # type: ignore[arg-type]
+                contract_in=contract_in,
+                contract_out=contract_out,
+                spec=_transform_spec(kind, spec),
+                as_="result",
+            ),
+        ),
+        returns="result",
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+        terminal_capability=1,
+    )
+    return _accepted(definition, pins=(contract_in, contract_out))
+
+
+def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedureV1:
+    contract_in = _pin("contract-in", "Contract", "input")
+    contract_out = _pin("contract-out", "Contract", "output")
+    definition = ProcedureDefinitionV3(
+        name="repeat-transform-procedure",
+        contract_in=contract_in,
+        contract_out=contract_out,
+        nodes=(
+            RepeatNodeV3(
+                node_id="repeat",
+                max_attempts=2,
+                body=(
+                    RepeatBodyNodeV3(
+                        node_id="shape-body",
+                        operation="transform",
+                        transform_kind="shape_items",
+                        contract_in=contract_in,
+                        contract_out=contract_out,
+                        spec={
+                            "tag": "playbill-transform-shape-items-spec-v1",
+                            "items": [{"id": "a"}, {"id": "b"}],
+                            "fields": {"identifier": "$item.id"},
+                        },
+                        as_="shaped",
+                    ),
+                ),
+                until=GuardPredicateV1(
+                    left=PredicateOperandV1(kind="exists", alias="shaped"),
+                    operator="eq",
+                    right=PredicateOperandV1(kind="literal", value=True),
+                ),
+                as_="repeated",
+            ),
+        ),
+        returns="repeated",
+        budget=_budget(items=max_items),
+        hard_caps=_hard_caps(items=max_items),
+        terminal_capability=1,
+    )
+    return _accepted(definition, pins=(contract_in, contract_out))
+
+
 def _provider_procedure(
     *,
     effectful: bool,
@@ -241,7 +337,13 @@ class _StateReader:
 
     def read_accepted_state(self, *, query, parameters, coordinate):
         self.calls.append((query, parameters, coordinate))
-        return self.value
+        return StateTapReadResultV1(
+            value=self.value,
+            effective_budgets=QueryBudgetsV1(
+                max_results=100,
+                max_traversal_depth=0,
+            ),
+        )
 
 
 class _Contracts:
@@ -319,12 +421,580 @@ def _prepare(accepted: AcceptedProcedureV1, fixture: _Fixture, reader: _StateRea
         run_id=kwargs.get("run_id", "run-a"),
         accepted_coordinate=_coordinate(),
         invocation_input=kwargs.get("invocation_input", {"value": 7}),
-        actor_context=_actor(),
+        actor_context=kwargs.get("actor_context", _actor()),
         state_reader=reader,
+        bodies=fixture.bodies,
         journal_stream=fixture.stream,
-        journal_partition_id="runs",
+        journal_partition_id=kwargs.get("journal_partition_id", "runs"),
         admitted_at=NOW,
     )
+
+
+def test_independent_execution_commits_one_semantic_result_across_partitions(tmp_path) -> None:
+    accepted = _state_procedure()
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    first_fixture = _fixture(first_root)
+    second_fixture = _fixture(second_root)
+    second_fixture.journal.activate_writer(
+        second_fixture.stream,
+        "other-runs",
+        fencing_token="writer",
+        expected_head=second_fixture.journal.read_head(
+            second_fixture.stream,
+            "other-runs",
+        ),
+    )
+    first = _prepare(accepted, first_fixture, _StateReader())
+    second = _prepare(
+        accepted,
+        second_fixture,
+        _StateReader(),
+        journal_partition_id="other-runs",
+        actor_context=_actor().model_copy(update={"operation_id": "another-request"}),
+    )
+    assert first.admission.semantic_replay_key_digest == second.admission.semantic_replay_key_digest
+    assert first.admission.admission_binding_digest == second.admission.admission_binding_digest
+
+    results = []
+    for fixture, prepared in ((first_fixture, first), (second_fixture, second)):
+        result = ProcedureExecutor(
+            journal=fixture.journal,
+            bodies=fixture.bodies,
+            run_index=fixture.run_index,
+            fencing_token="writer",
+            activation_authority=_Authority(accepted.artifact_digest),
+            contract_validator=_Contracts(),
+        ).execute(prepared, accepted)
+        stored = fixture.journal.all_records(
+            fixture.stream,
+            prepared.admission.journal_partition_id,
+        )[-1]
+        payload = parse_journal_payload(
+            fixture.bodies.read(
+                stored.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+        assert isinstance(payload, dict)
+        results.append((payload["semantic_result_digest"], result.receipt))
+
+    assert results[0][0] == results[1][0]
+    assert results[0][1] != results[1][1]
+
+
+@pytest.mark.parametrize(
+    "changed_input",
+    (
+        "invocation_input",
+        "validated_pins",
+        "state_result_digest",
+        "effective_query_budgets",
+        "evaluation_time",
+        "bound_coordinate",
+        "procedure_budgets",
+    ),
+)
+def test_each_semantic_run_input_discriminates_the_replay_key(
+    tmp_path,
+    changed_input: str,
+) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    first = _prepare(accepted, fixture, _StateReader()).admission
+    update: dict[str, object]
+    if changed_input == "invocation_input":
+        update = {"invocation_input": {"value": 8}}
+    elif changed_input == "validated_pins":
+        pin = first.full_pins[0]
+        update = {
+            "full_pins": (
+                pin.model_copy(update={"artifact_digest": _digest("different-pin")}),
+                *first.full_pins[1:],
+            )
+        }
+    elif changed_input == "state_result_digest":
+        admitted = first.accepted_state_inputs[0]
+        update = {
+            "accepted_state_inputs": (
+                admitted.model_copy(update={"result_digest": _digest("different-result")}),
+            )
+        }
+    elif changed_input == "effective_query_budgets":
+        admitted = first.accepted_state_inputs[0]
+        update = {
+            "accepted_state_inputs": (
+                admitted.model_copy(
+                    update={
+                        "effective_query_budgets": admitted.effective_query_budgets.model_copy(
+                            update={"max_results": 101}
+                        )
+                    }
+                ),
+            )
+        }
+    elif changed_input == "evaluation_time":
+        update = {"admitted_at": first.admitted_at + timedelta(microseconds=1)}
+    elif changed_input == "bound_coordinate":
+        update = {
+            "bound_coordinate": first.bound_coordinate.model_copy(update={"git_oid": "b" * 40})
+        }
+    else:
+        update = {
+            "budget": first.budget.model_copy(update={"max_items": first.budget.max_items + 1}),
+            "hard_caps": first.hard_caps.model_copy(
+                update={"max_items": first.hard_caps.max_items + 1}
+            ),
+        }
+    second = first.model_copy(update=update)
+
+    assert procedure_semantic_replay_key_digest(first) != (
+        procedure_semantic_replay_key_digest(second)
+    )
+
+
+def test_distinct_semantic_refusals_have_distinct_result_digests(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    replay_key = _prepare(accepted, fixture, _StateReader()).admission.semantic_replay_key_digest
+    first = ProcedureRunRefusalV1(
+        code="guard_refused",
+        message="first wording",
+        node_id="gate",
+        detail_code="first.code",
+    )
+    second = ProcedureRunRefusalV1(
+        code="repeat_exhausted",
+        message="second wording",
+        node_id="repeat",
+    )
+
+    assert procedure_semantic_result_digest(
+        semantic_replay_key_digest=replay_key,
+        status="refused",
+        output=None,
+        refusal=first,
+    ) != procedure_semantic_result_digest(
+        semantic_replay_key_digest=replay_key,
+        status="refused",
+        output=None,
+        refusal=second,
+    )
+
+
+_TRANSFORM_CASES = [
+    (
+        "adapter",
+        {"arbitrary": ["bridge", {"value": 2}]},
+        {"arbitrary": ["bridge", {"value": 2}]},
+        None,
+    ),
+    (
+        "shape_items",
+        {
+            "items": [{"id": "a", "keep": True}, {"id": "b", "keep": False}],
+            "fields": {"identifier": "$item.id"},
+            "include_input": True,
+        },
+        {
+            "items": [
+                {"id": "a", "identifier": "a", "keep": True},
+                {"id": "b", "identifier": "b", "keep": False},
+            ],
+            "input_count": 2,
+            "output_count": 2,
+        },
+        ((("items", 0),), (("items", 1),)),
+    ),
+    (
+        "filter_items",
+        {
+            "items": [{"id": "a", "keep": True}, {"id": "b", "keep": False}],
+            "where": {"keep": True},
+        },
+        {
+            "items": [{"id": "a", "keep": True}],
+            "input_count": 2,
+            "output_count": 1,
+        },
+        ((("items", 0),),),
+    ),
+    (
+        "dedupe_items",
+        {
+            "items": [{"id": "a", "v": 1}, {"id": "a", "v": 2}, {"id": "b"}],
+            "keys": ["id"],
+        },
+        {
+            "items": [{"id": "a", "v": 1}, {"id": "b"}],
+            "input_count": 3,
+            "output_count": 2,
+        },
+        ((("items", 0),), (("items", 2),)),
+    ),
+    (
+        "join_items",
+        {
+            "left_items": [{"id": "a", "left": 1}, {"id": "b", "left": 2}],
+            "right_items": [{"key": "b", "right": 3}, {"key": "a", "right": 4}],
+            "left_key": "id",
+            "right_key": "key",
+            "fields": {"id": "$item.left.id", "value": "$item.right.right"},
+        },
+        {"items": [{"id": "a", "value": 4}, {"id": "b", "value": 3}], "output_count": 2},
+        (
+            (("left_items", 0), ("right_items", 1)),
+            (("left_items", 1), ("right_items", 0)),
+        ),
+    ),
+    (
+        "aggregate_items",
+        {"items": [{"id": "a"}, {"id": "b"}]},
+        {"count": 2},
+        None,
+    ),
+]
+
+
+@pytest.mark.parametrize(("kind", "spec", "expected", "lineage"), _TRANSFORM_CASES)
+def test_existing_transform_kernel_matrix_preserves_output_and_lineage(
+    kind: str,
+    spec: object,
+    expected: object,
+    lineage: object,
+) -> None:
+    assert _apply_transform(kind, spec) == (expected, lineage)
+
+
+@pytest.mark.parametrize(("kind", "spec", "expected", "lineage"), _TRANSFORM_CASES)
+def test_existing_transform_kernel_matrix_runs_through_procedure_executor(
+    tmp_path,
+    monkeypatch,
+    kind: str,
+    spec: object,
+    expected: object,
+    lineage: object,
+) -> None:
+    accepted = _transform_procedure(kind, spec)
+    fixture = _fixture(tmp_path)
+    prepared = _prepare(accepted, fixture, _StateReader())
+    observed_lineage: list[object] = []
+    existing_kernel = execution_module._apply_transform
+
+    def record_kernel(*args, **kwargs):  # type: ignore[no-untyped-def]
+        value, actual_lineage = existing_kernel(*args, **kwargs)
+        observed_lineage.append(actual_lineage)
+        return value, actual_lineage
+
+    monkeypatch.setattr(execution_module, "_apply_transform", record_kernel)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(prepared, accepted)
+
+    assert result.status == "succeeded"
+    assert result.output == expected
+    assert observed_lineage == [lineage]
+
+
+def test_repeat_body_dispatches_through_kernel_with_attempt_lineage(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    accepted = _repeat_transform_procedure()
+    fixture = _fixture(tmp_path)
+    calls: list[str] = []
+    existing_kernel = execution_module._apply_transform
+
+    def record_kernel(kind, *args, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append(kind)
+        return existing_kernel(kind, *args, **kwargs)
+
+    monkeypatch.setattr(execution_module, "_apply_transform", record_kernel)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
+
+    assert calls == ["shape_items"]
+    assert result.status == "succeeded"
+    assert result.output == {
+        "attempts": [
+            {
+                "attempt": 1,
+                "outputs": {
+                    "shaped": {
+                        "items": [{"identifier": "a"}, {"identifier": "b"}],
+                        "input_count": 2,
+                        "output_count": 2,
+                    }
+                },
+                "until": True,
+            }
+        ],
+        "final": {
+            "shaped": {
+                "items": [{"identifier": "a"}, {"identifier": "b"}],
+                "input_count": 2,
+                "output_count": 2,
+            }
+        },
+    }
+    branch_payloads = [
+        parse_journal_payload(
+            fixture.bodies.read(
+                stored.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+        for stored in fixture.journal.all_records(fixture.stream, "runs")
+        if stored.record.event_kind == "branch_evaluated"
+    ]
+    assert len(branch_payloads) == 1
+    branch = branch_payloads[0]
+    assert isinstance(branch, dict)
+    assert branch["repeat_attempt"] == 1
+    assert branch["body_lineage"]["shaped"]["items"] == [[], []]  # type: ignore[index]
+
+
+def test_repeat_body_enforces_the_per_attempt_item_ceiling(tmp_path) -> None:
+    accepted = _repeat_transform_procedure(max_items=1)
+    fixture = _fixture(tmp_path)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
+
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.node_id == "shape-body"
+    assert result.refusal.budget is not None
+    assert result.refusal.budget.budget_kind == "max_items"
+    assert result.refusal.budget.limit == 1
+
+
+@pytest.mark.parametrize(
+    ("kind", "spec", "message"),
+    [
+        ("shape_items", {"items": "not-a-list", "fields": {}}, "requires a list"),
+        ("filter_items", {"items": "not-a-list", "where": {}}, "requires a list"),
+        ("dedupe_items", {"items": [], "keys": "id"}, "keys must be a string list"),
+        (
+            "join_items",
+            {
+                "left_items": [],
+                "right_items": "not-a-list",
+                "left_key": "id",
+                "right_key": "id",
+                "fields": {},
+            },
+            "requires a list",
+        ),
+        ("aggregate_items", {"items": "not-a-list"}, "requires a list"),
+    ],
+)
+def test_existing_transform_kernel_matrix_refuses_malformed_inputs(
+    kind: str,
+    spec: object,
+    message: str,
+) -> None:
+    with pytest.raises(PlaybillExecutionError, match=message):
+        _apply_transform(kind, spec)
+
+
+def test_existing_adapter_kernel_accepts_every_canonical_shape() -> None:
+    for value in (None, True, 3, "text", [1, 2], {"items": [1, 2]}):
+        assert _apply_transform("adapter", value) == (value, None)
+
+
+@pytest.mark.parametrize(
+    ("kind", "spec"),
+    [
+        ("adapter", "$item.id"),
+        ("shape_items", {"items": "$item.rows", "fields": {}}),
+        (
+            "filter_items",
+            {"items": [{"id": "a"}], "where": {"id": "$item.id"}},
+        ),
+        ("dedupe_items", {"items": "$item.rows", "keys": ["id"]}),
+        (
+            "join_items",
+            {
+                "left_items": "$item.left",
+                "right_items": [],
+                "left_key": "id",
+                "right_key": "id",
+                "fields": {},
+            },
+        ),
+        ("aggregate_items", {"items": "$item.rows"}),
+    ],
+)
+def test_item_references_outside_per_item_field_templates_fail_closed(
+    tmp_path,
+    kind: str,
+    spec: object,
+) -> None:
+    accepted = _transform_procedure(kind, spec)
+    fixture = _fixture(tmp_path)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
+
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "runtime_reference_unresolved"
+
+
+def test_join_refuses_at_the_n_plus_one_emission(monkeypatch) -> None:
+    spec = {
+        "left_items": [{"id": "same", "left": index} for index in range(2)],
+        "right_items": [{"id": "same", "right": index} for index in range(2)],
+        "left_key": "id",
+        "right_key": "id",
+        "fields": {"left": "$item.left.left", "right": "$item.right.right"},
+    }
+
+    resolutions = 0
+    existing_resolver = execution_module._resolve_template
+
+    def count_resolutions(*args, **kwargs):  # type: ignore[no-untyped-def]
+        nonlocal resolutions
+        if kwargs.get("item") is not None:
+            resolutions += 1
+        return existing_resolver(*args, **kwargs)
+
+    monkeypatch.setattr(execution_module, "_resolve_template", count_resolutions)
+    with pytest.raises(_RunRefusal) as raised:
+        _apply_transform("join_items", spec, max_items=2, node_id="join")
+
+    refusal = raised.value.refusal
+    assert refusal.code == "budget_exhausted"
+    assert refusal.node_id == "join"
+    assert refusal.budget is not None
+    assert refusal.budget.model_dump(mode="json") == {
+        "tag": "playbill-procedure-budget-refusal-detail-v1",
+        "budget_kind": "max_items",
+        "limit": 2,
+        "observed": 3,
+    }
+    assert resolutions == 4
+
+
+@pytest.mark.parametrize(
+    ("kind", "spec"),
+    [
+        (
+            "shape_items",
+            {"items": [{"id": "a"}, {"id": "b"}], "fields": {"id": "$item.id"}},
+        ),
+        (
+            "filter_items",
+            {"items": [{"id": "a"}, {"id": "b"}], "where": {}},
+        ),
+        (
+            "dedupe_items",
+            {"items": [{"id": "a"}, {"id": "b"}], "keys": ["id"]},
+        ),
+    ],
+)
+def test_each_item_emitting_kernel_enforces_its_own_ceiling(
+    monkeypatch,
+    kind: str,
+    spec: object,
+) -> None:
+    existing_extractor = execution_module._extract_items
+
+    def extraction_without_ceiling(value, **kwargs):  # type: ignore[no-untyped-def]
+        return existing_extractor(
+            value,
+            label=kwargs["label"],
+            max_items=None,
+            node_id=kwargs["node_id"],
+        )
+
+    monkeypatch.setattr(execution_module, "_extract_items", extraction_without_ceiling)
+    with pytest.raises(_RunRefusal) as raised:
+        _apply_transform(kind, spec, max_items=1, node_id=kind)
+
+    assert raised.value.refusal.code == "budget_exhausted"
+    assert raised.value.refusal.node_id == kind
+    assert raised.value.refusal.budget is not None
+    assert raised.value.refusal.budget.observed == 2
+
+
+def test_aggregate_kernel_enforces_its_extraction_ceiling() -> None:
+    with pytest.raises(_RunRefusal) as raised:
+        _apply_transform(
+            "aggregate_items",
+            {"items": [{"id": "a"}, {"id": "b"}]},
+            max_items=1,
+            node_id="aggregate",
+        )
+
+    assert raised.value.refusal.code == "budget_exhausted"
+    assert raised.value.refusal.node_id == "aggregate"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ([{"id": "a"}, {"id": "b"}], {"items": [{"id": "a"}, {"id": "b"}]}),
+)
+def test_extract_items_enforces_both_collection_shapes(value: object) -> None:
+    with pytest.raises(_RunRefusal) as raised:
+        _extract_items(value, label="items", max_items=1, node_id="extract")
+
+    assert raised.value.refusal.code == "budget_exhausted"
+    assert raised.value.refusal.budget is not None
+    assert raised.value.refusal.budget.observed == 2
+
+
+def test_max_items_is_rechecked_not_consumed_across_fanout() -> None:
+    spec = {"items": [{"id": index} for index in range(80)], "where": {}}
+
+    first, _lineage = _apply_transform("filter_items", spec, max_items=100, node_id="one")
+    second, _lineage = _apply_transform("filter_items", spec, max_items=100, node_id="two")
+
+    assert len(first["items"]) == 80  # type: ignore[index]
+    assert second == first
+
+
+def test_return_seam_counts_extractable_values_and_caps_all_result_bytes() -> None:
+    with pytest.raises(_RunRefusal) as item_refusal:
+        _check_return_budget({"items": [1, 2]}, max_items=1, node_id="return")
+    assert item_refusal.value.refusal.budget is not None
+    assert item_refusal.value.refusal.budget.budget_kind == "max_items"
+
+    with pytest.raises(_RunRefusal) as byte_refusal:
+        _check_return_budget(
+            "x" * PROCEDURE_RESULT_MAX_BYTES,
+            max_items=1,
+            node_id="return",
+        )
+    assert byte_refusal.value.refusal.budget is not None
+    assert byte_refusal.value.refusal.budget.budget_kind == "result_bytes"
+
+    _check_return_budget({"nested": {"items": list(range(200))}}, max_items=1, node_id="return")
+    _check_return_budget({"nested": {"items": [1]}}, max_items=0, node_id="return")
 
 
 def test_successful_state_run_binds_inputs_and_logs_every_path(tmp_path) -> None:
@@ -361,6 +1031,115 @@ def test_successful_state_run_binds_inputs_and_logs_every_path(tmp_path) -> None
     assert result.receipt.record_digests == tuple(item.record_digest for item in records)
 
 
+def _final_payload(fixture: _Fixture, partition_id: str = "runs") -> dict[str, object]:
+    stored = fixture.journal.all_records(fixture.stream, partition_id)[-1]
+    payload = parse_journal_payload(
+        fixture.bodies.read(
+            stored.record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert isinstance(payload, dict)
+    return payload
+
+
+def test_v2_execution_reads_retained_state_from_an_independent_handle(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    prepared = _prepare(accepted, fixture, _StateReader())
+    independent_bodies = ContentAddressedBodyStore(fixture.bodies.root)
+    assert independent_bodies is not fixture.bodies
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=independent_bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(prepared, accepted)
+
+    assert result.status == "succeeded"
+    assert result.output == {"items": [{"id": "one"}], "status": "ok"}
+
+
+def test_missing_retained_state_is_a_typed_operational_failure(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    prepared = _prepare(accepted, fixture, _StateReader())
+    assert fixture.bodies.erase(prepared.accepted_state_materials[0].input.material_body_digest)
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(prepared, accepted)
+
+    assert result.status == "failed"
+    assert _final_payload(fixture)["failure_code"] == "cas_unavailable_at_replay"
+
+
+def test_retained_state_result_mismatch_is_typed(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    prepared = _prepare(accepted, fixture, _StateReader())
+    material = prepared.accepted_state_materials[0]
+    other = fixture.bodies.store(canonical_bytes({"items": [{"id": "other"}]}))
+    mismatched_input = material.input.model_copy(update={"material_body_digest": other.digest})
+    mismatched = prepared.model_copy(
+        update={
+            "admission": prepared.admission.model_copy(
+                update={"accepted_state_inputs": (mismatched_input,)}
+            ),
+            "accepted_state_materials": (material.model_copy(update={"input": mismatched_input}),),
+        }
+    )
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(mismatched, accepted)
+
+    assert result.status == "failed"
+    assert _final_payload(fixture)["failure_code"] == "replay_material_mismatch"
+
+
+class _ExpiredBudgetClock:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def now(self):
+        return NOW
+
+    def monotonic_ns(self):
+        self.calls += 1
+        return 0 if self.calls == 1 else 2_000_000_000
+
+
+def test_wall_clock_exhaustion_uses_typed_classification(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        clock=_ExpiredBudgetClock(),
+    ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
+
+    assert result.status == "failed"
+    assert _final_payload(fixture)["failure_code"] == "wall_clock_exhausted"
+
+
 def test_false_guard_is_a_typed_refusal_with_complete_finalize(tmp_path) -> None:
     fixture = _fixture(tmp_path)
     accepted = _state_procedure(false_branch=True)
@@ -374,7 +1153,8 @@ def test_false_guard_is_a_typed_refusal_with_complete_finalize(tmp_path) -> None
         contract_validator=_Contracts(),
     ).execute(prepared, accepted)
     assert result.status == "refused"
-    assert result.refusal is not None and result.refusal.code == "no-items"
+    assert result.refusal is not None and result.refusal.code == "guard_refused"
+    assert result.refusal.detail_code == "no-items"
     assert fixture.journal.all_records(fixture.stream, "runs")[-1].record.event_kind == (
         "attempt_finalized"
     )
@@ -450,7 +1230,16 @@ def test_provider_budget_refuses_before_effect_intent_or_dispatch(tmp_path) -> N
         provider_executor=provider,
     ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
 
-    assert result.status == "budget_exhausted"
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "budget_exhausted"
+    assert result.refusal.budget is not None
+    assert result.refusal.budget.model_dump(mode="json") == {
+        "tag": "playbill-procedure-budget-refusal-detail-v1",
+        "budget_kind": "max_provider_calls",
+        "limit": 0,
+        "observed": 1,
+    }
     assert provider.calls == 0
     assert "effect_intent" not in {
         item.record.event_kind for item in fixture.journal.all_records(fixture.stream, "runs")
@@ -493,7 +1282,11 @@ def test_item_budget_exhaustion_is_finalized_without_output(tmp_path) -> None:
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
     ).execute(prepared, accepted)
-    assert result.status == "budget_exhausted"
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "budget_exhausted"
+    assert result.refusal.budget is not None
+    assert result.refusal.budget.budget_kind == "max_items"
     assert result.output is None
 
 

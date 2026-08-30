@@ -2062,7 +2062,9 @@ class Procedure:
             at=_api_coordinate(self._coordinate),
         )
 
-    def bind(self, *, bindings: Mapping[str | SlotRef, TypedRef]) -> Proposal:
+    def bind(
+        self, *, bindings: Mapping[str | SlotRef, TypedRef]
+    ) -> api.PlaybillProcedureBindResult:
         self._playbill._assert_coordinate(self._coordinate)
         rows: list[dict[str, object]] = []
         for key, value in bindings.items():
@@ -2083,15 +2085,21 @@ class Procedure:
         result = self._playbill._client.bind_playbill_procedure(
             self._playbill._instance_id, self._name, bindings=rows
         )
-        return Proposal.from_inspection(self._playbill, result.proposal)
+        return result
 
-    def run(self, **inputs: CanonicalValue) -> ProcedureRun:
+    def run(
+        self,
+        *,
+        at: AcceptedCoordinate | None = None,
+        **inputs: CanonicalValue,
+    ) -> ProcedureRun:
         self._playbill._assert_coordinate(self._coordinate)
         normalized = normalize_canonical(inputs)
         result = self._playbill._client.run_playbill_procedure(
             self._playbill._instance_id,
             self._name,
             evaluation_time=self._playbill._evaluation_time(),
+            at=None if at is None else _api_coordinate(at),
             input=normalized,
         )
         return ProcedureRun(self._playbill, result)
@@ -2103,7 +2111,7 @@ class ProcedureRun:
         self._raw = raw
 
     @property
-    def run_id(self) -> str:
+    def run_id(self) -> str | None:
         return self._raw.run_id
 
     @property
@@ -2142,6 +2150,8 @@ class ProcedureRun:
         return matches[0].get("track_record") if len(matches) == 1 else None
 
     def refresh(self) -> ProcedureRun:
+        if self.run_id is None:
+            return self
         self._raw = self._playbill._client.get_playbill_procedure_run(
             self._playbill._instance_id, self.run_id
         )

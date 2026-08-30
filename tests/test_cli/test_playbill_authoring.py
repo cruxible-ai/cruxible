@@ -545,7 +545,11 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert payload["kind"] in {"claim", "procedure"}
-        assert "tag" not in result.output
+        assert "tag" not in payload
+        if name == "procedure":
+            assert payload["definition"]["nodes"][1]["spec"]["tag"] == (
+                "playbill-transform-adapter-spec-v1"
+            )
         assert result.stderr == ""
 
 

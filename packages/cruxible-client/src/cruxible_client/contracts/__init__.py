@@ -11,6 +11,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.procedures.results import (
+    ProcedurePendingSuccessorV1,
+    ProcedureRunAttributionV1,
+    ProcedureRunReceiptV2,
+    ProcedureTerminalV1,
+)
 
 RuntimeCredentialPermissionMode = Literal[
     "read_only",
@@ -829,34 +835,45 @@ class PlaybillProcedureReadiness(BaseModel):
 class PlaybillProcedureBindResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-procedure-bind-result-v1"] = "playbill-procedure-bind-result-v1"
-    proposal: PlaybillProposalInspection
-    readiness: PlaybillProcedureReadiness
+    tag: Literal["playbill-procedure-bind-result-v2"] = "playbill-procedure-bind-result-v2"
+    accepted_digest: str
+    accepted_readiness: PlaybillProcedureReadiness
+    pending: "ProcedurePendingSuccessorV1 | None" = None
 
 
 class PlaybillProcedureRunState(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tag: Literal["playbill-procedure-run-state-v1"] = "playbill-procedure-run-state-v1"
-    run_id: str
+    tag: Literal["playbill-procedure-run-state-v2"] = "playbill-procedure-run-state-v2"
+    run_id: str | None
     procedure_identity: dict[str, Any]
     procedure_artifact_digest: str
-    coordinate: PlaybillAcceptedCoordinate
+    bound_coordinate: PlaybillAcceptedCoordinate
+    head_at_admission: PlaybillAcceptedCoordinate
+    lane: Literal["current", "replay"]
     evaluation_time: str
     status: Literal[
-        "binding_required",
-        "unsupported",
         "running",
         "succeeded",
-        "refused",
-        "failed",
-        "budget_exhausted",
+        "admission_refused",
+        "node_refused",
+        "operational_failed",
+        "internal_failed",
     ]
     pending_inputs: list[str]
     outcomes: list[dict[str, Any]]
     next_operation: dict[str, Any]
     result: Any = None
+    attribution: ProcedureRunAttributionV1 | None = None
+    semantic_replay_key_digest: str | None = None
+    semantic_result_digest: str | None = None
+    receipt: ProcedureRunReceiptV2 | None = None
     receipt_digest: str | None = None
+    terminal: ProcedureTerminalV1 | None = None
+
+    @property
+    def coordinate(self) -> PlaybillAcceptedCoordinate:
+        return self.bound_coordinate
 
 
 class PlaybillNextResult(BaseModel):

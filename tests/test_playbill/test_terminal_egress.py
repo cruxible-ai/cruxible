@@ -18,7 +18,7 @@ from cruxible_core.playbill.procedures.egress import (
 from cruxible_core.playbill.procedures.execution import (
     PreparedProcedureRunV1,
     ProcedureExecutor,
-    ProcedureRunAdmissionV1,
+    ProcedureRunAdmissionV2,
     procedure_admission_digest,
 )
 from tests.test_playbill.test_procedure_execution import (
@@ -79,7 +79,7 @@ def _line_bound(prepared: PreparedProcedureRunV1) -> PreparedProcedureRunV1:
     bound = provisional.model_copy(
         update={"admission_binding_digest": procedure_admission_digest(provisional)}
     )
-    admission = ProcedureRunAdmissionV1.model_validate(bound.model_dump(mode="python"))
+    admission = ProcedureRunAdmissionV2.model_validate(bound.model_dump(mode="python"))
     return prepared.model_copy(update={"admission": admission})
 
 

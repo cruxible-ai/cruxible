@@ -11,6 +11,7 @@ import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
@@ -857,6 +858,38 @@ class GitLedger:
                     raise PlaybillGitError("Playbill main history is not a single parent chain")
             history.append(oid)
         return tuple(history)
+
+    def commit_timestamps(self, oid: str) -> tuple[datetime, datetime]:
+        """Return one commit's embedded author and committer instants in UTC."""
+
+        self._validate_oid(oid)
+        content = self._git(["cat-file", "commit", oid]).decode("utf-8")
+        timestamps: dict[str, datetime] = {}
+        for line in content.splitlines():
+            kind = (
+                "author"
+                if line.startswith("author ")
+                else ("committer" if line.startswith("committer ") else None)
+            )
+            if kind is None:
+                continue
+            fields = line.rsplit(" ", 2)
+            if len(fields) != 3:
+                raise PlaybillGitError("Git commit identity timestamp is malformed")
+            try:
+                seconds = int(fields[-2])
+                zone = fields[-1]
+                if not re.fullmatch(r"[+-][0-9]{4}", zone):
+                    raise ValueError
+            except (ValueError, IndexError) as exc:
+                raise PlaybillGitError("Git commit identity timestamp is malformed") from exc
+            timestamps[kind] = datetime.fromtimestamp(
+                seconds,
+                tz=timezone.utc,
+            )
+        if set(timestamps) != {"author", "committer"}:
+            raise PlaybillGitError("Git commit omits an identity timestamp")
+        return timestamps["author"], timestamps["committer"]
 
     def is_ancestor(self, ancestor_oid: str, descendant_oid: str) -> bool:
         self._validate_oid(ancestor_oid)

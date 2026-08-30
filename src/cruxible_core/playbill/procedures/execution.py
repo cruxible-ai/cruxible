@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -53,6 +54,11 @@ from cruxible_client.contracts.procedures.models import (
     TransformNodeV3,
     iter_pin_bindings,
 )
+from cruxible_client.contracts.procedures.results import (
+    ProcedureBudgetRefusalDetailV1,
+    ProcedureNodeRefusalCodeV1,
+)
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
@@ -83,6 +89,7 @@ from cruxible_core.playbill.procedures.egress import (
 )
 from cruxible_core.playbill.procedures.input_planes import (
     AcceptedStateRunInputV1,
+    AcceptedStateRunInputV2,
     ExhaustRunInputV1,
     LandedCaptureRunInputV1,
     ProcedureRunInputV1,
@@ -116,6 +123,12 @@ from cruxible_core.playbill.procedures.terminal_dependencies import (
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
 ProcedureRunStatusV1 = Literal["succeeded", "refused", "failed", "budget_exhausted"]
+
+PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN = "playbill-procedure-semantic-replay-key-v1"
+PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
+PROCEDURE_ADMISSION_BINDING_V2_DOMAIN = "playbill-procedure-run-admission-v2"
+PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
+PROCEDURE_RUN_RECEIPT_V2_DOMAIN = "playbill-procedure-run-receipt-v2"
 
 
 class _StrictExecutionModel(BaseModel):
@@ -176,6 +189,25 @@ class AcceptedStateRunMaterialV1(_StrictExecutionModel):
 
     @model_validator(mode="after")
     def _digest(self) -> "AcceptedStateRunMaterialV1":
+        if self.input.result_digest != run_value_digest("state-result", self.value):
+            raise ValueError("accepted-state material does not reproduce its result digest")
+        return self
+
+
+class AcceptedStateRunMaterialV2(_StrictExecutionModel):
+    tag: Literal["playbill-accepted-state-run-material-v2"] = (
+        "playbill-accepted-state-run-material-v2"
+    )
+    input: AcceptedStateRunInputV2
+    value: object
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _digest(self) -> "AcceptedStateRunMaterialV2":
         if self.input.result_digest != run_value_digest("state-result", self.value):
             raise ValueError("accepted-state material does not reproduce its result digest")
         return self
@@ -337,6 +369,28 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
         return self
 
 
+class ProcedureRunAdmissionV2(ProcedureRunAdmissionV1):
+    tag: Literal["playbill-procedure-run-admission-v2"] = "playbill-procedure-run-admission-v2"  # type: ignore[assignment]
+    accepted_state_inputs: tuple[AcceptedStateRunInputV2, ...]  # type: ignore[assignment]
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
+    lane: Literal["current", "replay"]
+    semantic_replay_key_digest: str
+
+    @field_validator("semantic_replay_key_digest")
+    @classmethod
+    def _semantic_replay_key(cls, value: str) -> str:
+        return _sha256(value, label="semantic_replay_key_digest")
+
+    @model_validator(mode="after")
+    def _v2_shape(self) -> "ProcedureRunAdmissionV2":
+        if self.accepted_coordinate != self.bound_coordinate:
+            raise ValueError("v2 admission bound and accepted coordinates differ")
+        if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
+            raise ValueError("semantic replay key does not reproduce")
+        return self
+
+
 class LandedCaptureRunMaterialV1(_StrictExecutionModel):
     """One admitted landed Capture and the exact envelope its digest reproduces."""
 
@@ -400,11 +454,33 @@ class PreparedProcedureRunV1(_StrictExecutionModel):
         return self
 
 
+class PreparedProcedureRunV2(PreparedProcedureRunV1):
+    tag: Literal["playbill-prepared-procedure-run-v2"] = "playbill-prepared-procedure-run-v2"  # type: ignore[assignment]
+    admission: ProcedureRunAdmissionV2
+    accepted_state_materials: tuple[AcceptedStateRunMaterialV2, ...]  # type: ignore[assignment]
+
+
+class ProcedureAdmissionBoundPayloadV2(_StrictExecutionModel):
+    tag: Literal["playbill-procedure-admission-bound-payload-v2"] = (
+        "playbill-procedure-admission-bound-payload-v2"
+    )
+    admission: ProcedureRunAdmissionV2
+    accepted_state_materials: tuple[AcceptedStateRunMaterialV2, ...]
+
+
 class ProcedureRunRefusalV1(_StrictExecutionModel):
     tag: Literal["playbill-procedure-run-refusal-v1"] = "playbill-procedure-run-refusal-v1"
     code: str
     message: str
     node_id: str | None = None
+    detail_code: str | None = None
+    details: object = Field(default_factory=dict)
+    budget: ProcedureBudgetRefusalDetailV1 | None = None
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def _details(cls, value: object) -> object:
+        return normalize_canonical(value)
 
 
 class ProcedureRunReceiptV1(_StrictExecutionModel):
@@ -471,6 +547,41 @@ def procedure_run_receipt_digest(receipt: ProcedureRunReceiptV1) -> str:
     ).tagged
 
 
+def _semantic_refusal_payload(refusal: ProcedureRunRefusalV1) -> CanonicalValue:
+    return normalize_canonical(
+        {
+            "code": refusal.code,
+            "node_id": refusal.node_id,
+            "detail_code": refusal.detail_code,
+            "details": refusal.details,
+            "budget": None if refusal.budget is None else refusal.budget.model_dump(mode="json"),
+        }
+    )
+
+
+def procedure_semantic_result_digest(
+    *,
+    semantic_replay_key_digest: str,
+    status: Literal["succeeded", "refused"],
+    output: CanonicalValue | None,
+    refusal: ProcedureRunRefusalV1 | None,
+) -> str:
+    """Commit only replay-stable output or refusal material."""
+
+    if (status == "refused") != (refusal is not None):
+        raise ValueError("semantic Procedure refusal shape is inconsistent")
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_SEMANTIC_RESULT_DOMAIN,
+        {
+            "semantic_replay_key_digest": semantic_replay_key_digest,
+            "status": status,
+            "output": output if status == "succeeded" else None,
+            "refusal": None if refusal is None else _semantic_refusal_payload(refusal),
+        },
+    ).tagged
+
+
 class ProviderInvocationResultV1(_StrictExecutionModel):
     tag: Literal["playbill-provider-invocation-result-v1"] = (
         "playbill-provider-invocation-result-v1"
@@ -484,6 +595,17 @@ class ProviderInvocationResultV1(_StrictExecutionModel):
         return normalize_canonical(value)
 
 
+class StateTapReadResultV1(_StrictExecutionModel):
+    tag: Literal["playbill-state-tap-read-result-v1"] = "playbill-state-tap-read-result-v1"
+    value: object
+    effective_budgets: QueryBudgetsV1
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
 class StateTapReaderProtocol(Protocol):
     def read_accepted_state(
         self,
@@ -491,7 +613,7 @@ class StateTapReaderProtocol(Protocol):
         query: ArtifactPin,
         parameters: CanonicalValue,
         coordinate: AcceptedCoordinate,
-    ) -> object: ...
+    ) -> StateTapReadResultV1: ...
 
 
 class ProviderExecutorProtocol(Protocol):
@@ -555,7 +677,52 @@ def procedure_pin_set_digest(
     ).tagged
 
 
+def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:
+    pins = [
+        {
+            "role": pin.role,
+            "target": pin.target.model_dump(mode="json"),
+            "artifact_digest": pin.artifact_digest,
+        }
+        for pin in admission.full_pins
+    ]
+    pins.sort(key=canonical_bytes)
+    admitted_inputs = [
+        {
+            "input_name": item.input_name,
+            "read_coordinate": item.read_coordinate.model_dump(mode="json"),
+            "query_definition_digest": item.query_definition_digest,
+            "parameters_digest": item.parameters_digest,
+            "result_digest": item.result_digest,
+            "effective_query_budgets": item.effective_query_budgets.model_dump(mode="json"),
+        }
+        for item in admission.accepted_state_inputs
+    ]
+    admitted_inputs.sort(key=lambda item: str(item["input_name"]).encode("utf-8"))
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN,
+        {
+            "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
+            "procedure_artifact_digest": admission.procedure_artifact_digest,
+            "invocation_input": admission.invocation_input,
+            "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
+            "evaluation_time": format_datetime(admission.admitted_at),
+            "validated_pins": pins,
+            "admitted_inputs": admitted_inputs,
+            "budget": admission.budget.model_dump(mode="json"),
+            "hard_caps": admission.hard_caps.model_dump(mode="json"),
+        },
+    ).tagged
+
+
 def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
+    if isinstance(admission, ProcedureRunAdmissionV2):
+        return typed_digest(
+            ArtifactDigest,
+            PROCEDURE_ADMISSION_BINDING_V2_DOMAIN,
+            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
+        ).tagged
     payload = admission.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("admission_binding_digest")
@@ -645,16 +812,19 @@ def prepare_direct_procedure_run(
     accepted: AcceptedProcedureV1,
     *,
     instance_id: str,
-    run_id: str,
+    run_id: str | None,
     accepted_coordinate: AcceptedCoordinate,
     invocation_input: object,
     actor_context: GovernedActorContext,
     state_reader: StateTapReaderProtocol,
+    bodies: ContentAddressedBodyStore,
     journal_stream: JournalStreamIdentityV1,
-    journal_partition_id: str,
+    journal_partition_id: str | None,
+    head_at_admission: AcceptedCoordinate | None = None,
+    lane: Literal["current", "replay"] = "current",
     admitted_at: datetime,
     attempt: int = 1,
-) -> PreparedProcedureRunV1:
+) -> PreparedProcedureRunV2:
     """Bind exact accepted state and all pins for an actor-authenticated direct run."""
 
     procedure = accepted.procedure
@@ -663,36 +833,40 @@ def prepare_direct_procedure_run(
     if procedure_artifact_digest(procedure).tagged != accepted.artifact_digest:
         raise PlaybillExecutionError("accepted Procedure artifact digest does not reproduce")
 
-    materials: list[AcceptedStateRunMaterialV1] = []
+    materials: list[AcceptedStateRunMaterialV2] = []
     for node in procedure.definition.nodes:
         if not isinstance(node, StateTapNodeV3):
             continue
         query = _exact_pin(node.query, label=f"state_tap {node.node_id!r}")
         parameters = normalize_canonical(node.parameters)
-        value = normalize_canonical(
-            state_reader.read_accepted_state(
-                query=query,
-                parameters=parameters,
-                coordinate=accepted_coordinate,
-            )
+        read = state_reader.read_accepted_state(
+            query=query,
+            parameters=parameters,
+            coordinate=accepted_coordinate,
         )
-        run_input = AcceptedStateRunInputV1(
+        value = normalize_canonical(read.value)
+        retained = bodies.store(canonical_bytes(value))
+        run_input = AcceptedStateRunInputV2(
             input_name=node.as_,
             read_coordinate=accepted_coordinate,
             query_definition_digest=query.artifact_digest,
             parameters_digest=run_value_digest("state-parameters", parameters),
             result_digest=run_value_digest("state-result", value),
+            effective_query_budgets=read.effective_budgets,
+            material_body_digest=retained.digest,
         )
-        materials.append(AcceptedStateRunMaterialV1(input=run_input, value=value))
+        materials.append(AcceptedStateRunMaterialV2(input=run_input, value=value))
     materials.sort(key=lambda item: item.input.input_name.encode("utf-8"))
 
     node_pin_sets = _node_pin_sets(accepted)
     full_pins = procedure.pins
     pin_digest = procedure_pin_set_digest(full_pins, node_pin_sets)
-    provisional = ProcedureRunAdmissionV1.model_construct(
+    placeholder_run_id = run_id or "RUN-" + "0" * 64
+    placeholder_partition = journal_partition_id or "direct:" + "0" * 64
+    provisional = ProcedureRunAdmissionV2.model_construct(
         _fields_set=None,
         instance_id=instance_id,
-        run_id=run_id,
+        run_id=placeholder_run_id,
         attempt=attempt,
         accepted_coordinate=accepted_coordinate,
         procedure_identity=procedure.identity,
@@ -710,7 +884,7 @@ def prepare_direct_procedure_run(
         actor_context=actor_context,
         invocation_origin="actor",
         journal_stream=journal_stream,
-        journal_partition_id=journal_partition_id,
+        journal_partition_id=placeholder_partition,
         line_spec_digest=None,
         occurrence_id=None,
         deployment_snapshot_digest=None,
@@ -720,10 +894,28 @@ def prepare_direct_procedure_run(
         epsilon_member=False,
         admitted_at=ensure_utc(admitted_at),
         admission_binding_digest="sha256:" + "0" * 64,
+        bound_coordinate=accepted_coordinate,
+        head_at_admission=head_at_admission or accepted_coordinate,
+        lane=lane,
+        semantic_replay_key_digest="sha256:" + "0" * 64,
     )
-    admission = ProcedureRunAdmissionV1(
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    semantic_run_id = "RUN-" + typed_digest(
+        Sha256Value,
+        PROCEDURE_RUN_ID_V2_DOMAIN,
+        {"semantic_replay_key_digest": replay_key},
+    ).tagged.removeprefix("sha256:")
+    semantic_partition = "direct:" + replay_key.removeprefix("sha256:")
+    provisional = provisional.model_copy(
+        update={
+            "run_id": semantic_run_id,
+            "journal_partition_id": journal_partition_id or semantic_partition,
+            "semantic_replay_key_digest": replay_key,
+        }
+    )
+    admission = ProcedureRunAdmissionV2(
         instance_id=instance_id,
-        run_id=run_id,
+        run_id=semantic_run_id,
         attempt=attempt,
         accepted_coordinate=accepted_coordinate,
         procedure_identity=procedure.identity,
@@ -741,24 +933,71 @@ def prepare_direct_procedure_run(
         actor_context=actor_context,
         invocation_origin="actor",
         journal_stream=journal_stream,
-        journal_partition_id=journal_partition_id,
+        journal_partition_id=journal_partition_id or semantic_partition,
         admitted_at=ensure_utc(admitted_at),
+        bound_coordinate=accepted_coordinate,
+        head_at_admission=head_at_admission or accepted_coordinate,
+        lane=lane,
+        semantic_replay_key_digest=replay_key,
         admission_binding_digest=procedure_admission_digest(provisional),
     )
-    return PreparedProcedureRunV1(
+    return PreparedProcedureRunV2(
         admission=admission,
         accepted_state_materials=tuple(materials),
     )
 
 
 class _RunRefusal(Exception):
-    def __init__(self, code: str, message: str, *, node_id: str | None = None) -> None:
+    def __init__(
+        self,
+        code: ProcedureNodeRefusalCodeV1,
+        message: str,
+        *,
+        node_id: str | None = None,
+        detail_code: str | None = None,
+        details: object | None = None,
+        budget: ProcedureBudgetRefusalDetailV1 | None = None,
+    ) -> None:
         super().__init__(message)
-        self.refusal = ProcedureRunRefusalV1(code=code, message=message, node_id=node_id)
+        self.refusal = ProcedureRunRefusalV1(
+            code=code,
+            message=message,
+            node_id=node_id,
+            detail_code=detail_code,
+            details={} if details is None else details,
+            budget=budget,
+        )
 
 
 class _BudgetExceeded(Exception):
-    pass
+    def __init__(
+        self,
+        budget_kind: Literal["wall_clock", "max_provider_calls", "max_capture_bytes"],
+        *,
+        limit: int,
+        observed: int,
+        node_id: str,
+    ) -> None:
+        super().__init__(f"Procedure {budget_kind} budget exhausted")
+        self.budget_kind = budget_kind
+        self.limit = limit
+        self.observed = observed
+        self.node_id = node_id
+
+
+class _OperationalFailure(Exception):
+    def __init__(
+        self,
+        code: Literal["cas_unavailable_at_replay", "replay_material_mismatch"],
+    ) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class _TransformInputInvalid(PlaybillExecutionError):
+    def __init__(self, message: str, *, slot: str) -> None:
+        super().__init__(message)
+        self.slot = slot
 
 
 @dataclass
@@ -874,25 +1113,39 @@ class ProcedureExecutor:
             admission,
             records,
             "admission_bound",
-            admission.model_dump(mode="json"),
+            (
+                ProcedureAdmissionBoundPayloadV2(
+                    admission=admission,
+                    accepted_state_materials=prepared.accepted_state_materials,
+                ).model_dump(mode="json")
+                if isinstance(admission, ProcedureRunAdmissionV2)
+                and isinstance(prepared, PreparedProcedureRunV2)
+                else admission.model_dump(mode="json")
+            ),
         )
 
-        state = self._seed_state(prepared)
+        state = _RunState(
+            outputs={},
+            input_payload=normalize_canonical(admission.invocation_input),
+            parameters={},
+        )
         status: ProcedureRunStatusV1
         output: CanonicalValue | None = None
         refusal: ProcedureRunRefusalV1 | None = None
         failure_message: str | None = None
+        failure_code: str | None = None
         try:
+            state = self._seed_state(prepared)
             input_contract = self._pin(
                 accepted.procedure.definition.contract_in,
                 label="Procedure contract_in",
             )
-            state.input_payload = normalize_canonical(
-                self.contract_validator.validate_contract(
-                    contract=input_contract,
-                    payload=state.input_payload,
-                    direction="input",
-                )
+            state.input_payload = _validate_node_contract(
+                self.contract_validator,
+                contract=input_contract,
+                payload=state.input_payload,
+                direction="input",
+                node_id="procedure",
             )
             output = self._walk(
                 accepted,
@@ -906,17 +1159,55 @@ class ProcedureExecutor:
             status = "refused"
             refusal = exc.refusal
         except _BudgetExceeded as exc:
-            status = "budget_exhausted"
-            failure_message = str(exc)
+            if isinstance(admission, ProcedureRunAdmissionV2) and exc.budget_kind == "wall_clock":
+                status = "failed"
+                failure_code = "wall_clock_exhausted"
+                failure_message = "Procedure execution exceeded its operational budget."
+            else:
+                status = (
+                    "refused"
+                    if isinstance(admission, ProcedureRunAdmissionV2)
+                    else "budget_exhausted"
+                )
+                failure_message = "Procedure execution exhausted its declared budget."
+                refusal = ProcedureRunRefusalV1(
+                    code="budget_exhausted",
+                    message=failure_message,
+                    node_id=exc.node_id,
+                    budget=ProcedureBudgetRefusalDetailV1(
+                        budget_kind=exc.budget_kind,
+                        limit=exc.limit,
+                        observed=exc.observed,
+                    ),
+                )
+        except _OperationalFailure as exc:
+            status = "failed"
+            failure_code = exc.code
+            failure_message = "Procedure execution failed."
+        except PlaybillExecutionError:
+            status = "failed"
+            failure_code = "unexpected_exception"
+            failure_message = "Procedure execution failed."
         except Exception as exc:
             status = "failed"
             failure_message = f"{type(exc).__name__}: {exc}"
+            failure_code = "unexpected_exception"
 
+        semantic_result_digest = None
+        if isinstance(admission, ProcedureRunAdmissionV2) and status in {"succeeded", "refused"}:
+            semantic_result_digest = procedure_semantic_result_digest(
+                semantic_replay_key_digest=admission.semantic_replay_key_digest,
+                status=cast(Literal["succeeded", "refused"], status),
+                output=output,
+                refusal=refusal,
+            )
         final_payload = {
             "status": status,
             "output": output,
             "refusal": None if refusal is None else refusal.model_dump(mode="json"),
             "failure": failure_message,
+            "failure_code": failure_code,
+            "semantic_result_digest": semantic_result_digest,
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
         }
@@ -946,9 +1237,34 @@ class ProcedureExecutor:
             outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
         )
         for accepted_state in prepared.accepted_state_materials:
+            if isinstance(accepted_state, AcceptedStateRunMaterialV2):
+                access = BodyAccessContext(
+                    principal_id="procedure-runtime",
+                    can_read_body=True,
+                )
+                try:
+                    retained = self.bodies.read(
+                        accepted_state.input.material_body_digest,
+                        access=access,
+                    )
+                except Exception as exc:
+                    raise _OperationalFailure("cas_unavailable_at_replay") from exc
+                try:
+                    retained_value = normalize_canonical(json.loads(retained))
+                except Exception as exc:
+                    raise _OperationalFailure("replay_material_mismatch") from exc
+                if (
+                    canonical_bytes(retained_value) != retained
+                    or run_value_digest("state-result", retained_value)
+                    != accepted_state.input.result_digest
+                ):
+                    raise _OperationalFailure("replay_material_mismatch")
+                value = retained_value
+            else:
+                value = accepted_state.value
             digest = run_input_digest(accepted_state.input)
             name = accepted_state.input.input_name
-            state.outputs[name] = normalize_canonical(accepted_state.value)
+            state.outputs[name] = normalize_canonical(value)
             state.provenance[name] = AliasProvenanceV1(
                 whole=frozenset(
                     {
@@ -1135,6 +1451,8 @@ class ProcedureExecutor:
                 )
 
     def _require_current(self, admission: ProcedureRunAdmissionV1) -> None:
+        if isinstance(admission, ProcedureRunAdmissionV2) and admission.lane == "replay":
+            return
         current = self.activation_authority.current_procedure_digest(
             admission.procedure_identity,
             coordinate=admission.accepted_coordinate,
@@ -1154,18 +1472,30 @@ class ProcedureExecutor:
         state: _RunState,
         *,
         started_ns: int,
+        node_id: str,
     ) -> None:
         elapsed_us = (self.clock.monotonic_ns() - started_ns) // 1000
         if elapsed_us > admission.budget.wall_clock.microseconds:
-            raise _BudgetExceeded("Procedure wall-clock budget exhausted")
+            raise _BudgetExceeded(
+                "wall_clock",
+                limit=admission.budget.wall_clock.microseconds,
+                observed=elapsed_us,
+                node_id=node_id,
+            )
         if state.provider_calls > admission.budget.max_provider_calls:
-            raise _BudgetExceeded("Procedure provider-call budget exhausted")
+            raise _BudgetExceeded(
+                "max_provider_calls",
+                limit=admission.budget.max_provider_calls,
+                observed=state.provider_calls,
+                node_id=node_id,
+            )
         if state.capture_bytes > admission.budget.max_capture_bytes:
-            raise _BudgetExceeded("Procedure capture-byte budget exhausted")
-        for value in state.outputs.values():
-            count = _item_count(value)
-            if count > admission.budget.max_items:
-                raise _BudgetExceeded("Procedure item budget exhausted")
+            raise _BudgetExceeded(
+                "max_capture_bytes",
+                limit=admission.budget.max_capture_bytes,
+                observed=state.capture_bytes,
+                node_id=node_id,
+            )
 
     def _walk(
         self,
@@ -1181,9 +1511,14 @@ class ProcedureExecutor:
         nodes = {node.node_id: node for node in definition.nodes}
         current = definition.nodes[0].node_id
         while True:
-            self._checkpoint_current(admission, effect=False)
-            self._check_budget(admission, state, started_ns=started_ns)
             node = nodes[current]
+            self._checkpoint_current(admission, effect=False)
+            self._check_budget(
+                admission,
+                state,
+                started_ns=started_ns,
+                node_id=node.node_id,
+            )
             try:
                 branch = self._execute_node(
                     node,
@@ -1192,7 +1527,12 @@ class ProcedureExecutor:
                     records=records,
                     started_ns=started_ns,
                 )
-                self._check_budget(admission, state, started_ns=started_ns)
+                self._check_budget(
+                    admission,
+                    state,
+                    started_ns=started_ns,
+                    node_id=node.node_id,
+                )
                 self._append_event(
                     admission,
                     records,
@@ -1225,20 +1565,35 @@ class ProcedureExecutor:
             if target == "$abort":
                 if isinstance(node, GuardNodeV3):
                     raise _RunRefusal(
-                        node.refusal_code,
+                        "guard_refused",
                         node.message,
                         node_id=node.node_id,
+                        detail_code=node.refusal_code,
                     )
                 raise _RunRefusal(
-                    "procedure.abort",
+                    "guard_refused",
                     "Procedure reached an explicit abort edge.",
                     node_id=node.node_id,
+                    detail_code="procedure.abort",
                 )
             if target is None:
                 try:
-                    return state.outputs[definition.returns]
+                    result = state.outputs[definition.returns]
                 except KeyError as exc:  # pragma: no cover - static law should prevent
                     raise PlaybillExecutionError("Procedure return alias was not produced") from exc
+                _check_return_budget(
+                    result,
+                    max_items=admission.budget.max_items,
+                    node_id=node.node_id,
+                )
+                try:
+                    return normalize_canonical(result)
+                except Exception as exc:
+                    raise _RunRefusal(
+                        "result_not_canonical",
+                        "The Procedure result is not canonical.",
+                        node_id=node.node_id,
+                    ) from exc
             current = target
 
     def _execute_node(
@@ -1276,48 +1631,58 @@ class ProcedureExecutor:
             )
             return None
         if isinstance(node, TransformNodeV3):
-            resolved = _resolve_template(
-                node.spec,
+            declared_spec = _declared_transform_spec(node.transform_kind, node.spec)
+            resolved = _resolve_node_template(
+                declared_spec,
+                node_id=node.node_id,
+                transform_kind=node.transform_kind,
                 input_payload=state.input_payload,
                 outputs=state.outputs,
             )
             contract_in = self._pin(node.contract_in, label=f"transform {node.node_id!r} input")
-            validated_input = normalize_canonical(
-                self.contract_validator.validate_contract(
-                    contract=contract_in,
-                    payload=resolved,
-                    direction="input",
-                )
+            validated_input = _validate_node_contract(
+                self.contract_validator,
+                contract=contract_in,
+                payload=resolved,
+                direction="input",
+                node_id=node.node_id,
             )
-            value, lineage = _apply_transform(node.transform_kind, validated_input)
+            value, lineage = _apply_node_transform(
+                node.transform_kind,
+                validated_input,
+                max_items=admission.budget.max_items,
+                node_id=node.node_id,
+            )
             contract = self._pin(node.contract_out, label=f"transform {node.node_id!r} output")
-            state.outputs[node.as_] = normalize_canonical(
-                self.contract_validator.validate_contract(
-                    contract=contract,
-                    payload=value,
-                    direction="output",
-                )
+            state.outputs[node.as_] = _validate_node_contract(
+                self.contract_validator,
+                contract=contract,
+                payload=value,
+                direction="output",
+                node_id=node.node_id,
             )
             state.provenance[node.as_] = _transform_provenance(
                 node,
                 state=state,
                 lineage=lineage,
-                base=_base_tokens(node, state, node.spec),
+                base=_base_tokens(node, state, declared_spec),
             )
             return None
         if isinstance(node, ProjectNodeV3):
-            value = _resolve_template(
+            value = _resolve_node_template(
                 node.fields,
+                node_id=node.node_id,
+                transform_kind=None,
                 input_payload=state.input_payload,
                 outputs=state.outputs,
             )
             contract = self._pin(node.contract_out, label=f"project {node.node_id!r} output")
-            state.outputs[node.as_] = normalize_canonical(
-                self.contract_validator.validate_contract(
-                    contract=contract,
-                    payload=value,
-                    direction="output",
-                )
+            state.outputs[node.as_] = _validate_node_contract(
+                self.contract_validator,
+                contract=contract,
+                payload=value,
+                direction="output",
+                node_id=node.node_id,
             )
             state.provenance[node.as_] = _projected_provenance(
                 node.fields,
@@ -1327,12 +1692,19 @@ class ProcedureExecutor:
             )
             return None
         if isinstance(node, GuardNodeV3):
-            verdict, trace = _evaluate_predicate(
-                node.predicate,
-                input_payload=state.input_payload,
-                outputs=state.outputs,
-                parameters=state.parameters,
-            )
+            try:
+                verdict, trace = _evaluate_predicate(
+                    node.predicate,
+                    input_payload=state.input_payload,
+                    outputs=state.outputs,
+                    parameters=state.parameters,
+                )
+            except PlaybillExecutionError as exc:
+                raise _RunRefusal(
+                    "runtime_reference_unresolved",
+                    "A guard runtime reference did not resolve.",
+                    node_id=node.node_id,
+                ) from exc
             state.control = (
                 state.control
                 | _node_policy_tokens(node)
@@ -1357,9 +1729,6 @@ class ProcedureExecutor:
                 state=state,
                 records=records,
                 started_ns=started_ns,
-            )
-            state.provenance[node.as_] = AliasProvenanceV1(
-                whole=_base_tokens(node, state, tuple(body.spec for body in node.body))
             )
             return None
         if isinstance(
@@ -1486,9 +1855,12 @@ class ProcedureExecutor:
                 disposition="refused",
             )
             raise _RunRefusal(
-                decision.reason_codes[0]
-                if decision.reason_codes
-                else "playbill.acquisition.refused",
+                cast(
+                    ProcedureNodeRefusalCodeV1,
+                    decision.reason_codes[0]
+                    if decision.reason_codes
+                    else "playbill.acquisition.refused",
+                ),
                 "The declared acquisition rule refuses this typed source result.",
                 node_id=node.node_id,
             )
@@ -1632,7 +2004,7 @@ class ProcedureExecutor:
                 {**payload, "verdict": "refused_effective_rung"},
             )
             raise _RunRefusal(
-                rung.refusal_code,
+                cast(ProcedureNodeRefusalCodeV1, rung.refusal_code),
                 f"Terminal {node.kind!r} requires rung {required}; the "
                 f"{rung.limiting_term} term capped this run at {rung.effective_rung}. "
                 f"{rung.term(rung.limiting_term).reason}",
@@ -1824,7 +2196,12 @@ class ProcedureExecutor:
             )
         )
         if state.provider_calls >= admission.budget.max_provider_calls:
-            raise _BudgetExceeded("Procedure provider-call budget exhausted")
+            raise _BudgetExceeded(
+                "max_provider_calls",
+                limit=admission.budget.max_provider_calls,
+                observed=state.provider_calls + 1,
+                node_id=node.node_id,
+            )
         state.provider_calls += 1
         effect_policy = node.effect_policy
         effectful = effect_policy is not None
@@ -1863,7 +2240,11 @@ class ProcedureExecutor:
                 declared_effect_grants=self.declared_effect_grants,
             )
             if refusal is not None:
-                raise _RunRefusal(*refusal, node_id=node.node_id)
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCodeV1, refusal[0]),
+                    refusal[1],
+                    node_id=node.node_id,
+                )
         result = self.provider_executor.execute_provider(
             provider=provider,
             environment=environment,
@@ -1906,21 +2287,35 @@ class ProcedureExecutor:
         attempts: list[CanonicalValue] = []
         for attempt in range(1, node.max_attempts + 1):
             local_outputs: dict[str, CanonicalValue] = {}
+            local_provenance: dict[str, AliasProvenanceV1] = {}
             for body in node.body:
                 self._run_repeat_body(
                     body,
                     admission=admission,
                     state=state,
                     local_outputs=local_outputs,
+                    local_provenance=local_provenance,
                     records=records,
                 )
-                self._check_budget(admission, state, started_ns=started_ns)
-            verdict, trace = _evaluate_predicate(
-                node.until,
-                input_payload=state.input_payload,
-                outputs=local_outputs,
-                parameters=state.parameters,
-            )
+                self._check_budget(
+                    admission,
+                    state,
+                    started_ns=started_ns,
+                    node_id=body.node_id,
+                )
+            try:
+                verdict, trace = _evaluate_predicate(
+                    node.until,
+                    input_payload=state.input_payload,
+                    outputs=local_outputs,
+                    parameters=state.parameters,
+                )
+            except PlaybillExecutionError as exc:
+                raise _RunRefusal(
+                    "runtime_reference_unresolved",
+                    "A repeat-until runtime reference did not resolve.",
+                    node_id=node.node_id,
+                ) from exc
             attempt_value = normalize_canonical(
                 {"attempt": attempt, "outputs": local_outputs, "until": verdict}
             )
@@ -1934,11 +2329,22 @@ class ProcedureExecutor:
                     "repeat_attempt": attempt,
                     "verdict": verdict,
                     "operands": trace,
+                    "body_lineage": {
+                        alias: _alias_provenance_payload(provenance)
+                        for alias, provenance in sorted(local_provenance.items())
+                    },
                 },
             )
             if verdict:
                 state.outputs[node.as_] = normalize_canonical(
                     {"attempts": attempts, "final": local_outputs}
+                )
+                repeated_tokens = frozenset(
+                    token for provenance in local_provenance.values() for token in provenance.whole
+                )
+                state.provenance[node.as_] = AliasProvenanceV1(
+                    whole=_base_tokens(node, state, tuple(body.spec for body in node.body))
+                    | repeated_tokens
                 )
                 return
         raise _RunRefusal(
@@ -1954,28 +2360,68 @@ class ProcedureExecutor:
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         local_outputs: dict[str, CanonicalValue],
+        local_provenance: dict[str, AliasProvenanceV1],
         records: list[StoredProcedureJournalRecordV1],
     ) -> None:
         combined = {**state.outputs, **local_outputs}
-        spec = normalize_canonical(
-            _resolve_template(body.spec, input_payload=state.input_payload, outputs=combined)
+        declared_spec = (
+            _declared_transform_spec(body.transform_kind, body.spec)
+            if body.operation == "transform" and body.transform_kind is not None
+            else body.spec
+        )
+        spec = _resolve_node_template(
+            declared_spec,
+            node_id=body.node_id,
+            transform_kind=(body.transform_kind if body.operation == "transform" else None),
+            input_payload=state.input_payload,
+            outputs=combined,
         )
         if body.operation == "transform":
+            transform_kind = getattr(body, "transform_kind", None)
+            if not isinstance(transform_kind, str):
+                raise _RunRefusal(
+                    "runtime_reference_unresolved",
+                    "Repeat transform body has no declared transform kind.",
+                    node_id=body.node_id,
+                )
             contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
             contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
-            validated = normalize_canonical(
-                self.contract_validator.validate_contract(
-                    contract=contract_in,
-                    payload=spec,
-                    direction="input",
-                )
+            validated = _validate_node_contract(
+                self.contract_validator,
+                contract=contract_in,
+                payload=spec,
+                direction="input",
+                node_id=body.node_id,
             )
-            local_outputs[body.as_] = normalize_canonical(
-                self.contract_validator.validate_contract(
-                    contract=contract_out,
-                    payload=validated,
-                    direction="output",
-                )
+            value, lineage = _apply_node_transform(
+                transform_kind,
+                validated,
+                max_items=admission.budget.max_items,
+                node_id=body.node_id,
+            )
+            local_outputs[body.as_] = _validate_node_contract(
+                self.contract_validator,
+                contract=contract_out,
+                payload=value,
+                direction="output",
+                node_id=body.node_id,
+            )
+            local_state = _RunState(
+                outputs=combined,
+                input_payload=state.input_payload,
+                parameters=state.parameters,
+                provenance={**state.provenance, **local_provenance},
+                facts=state.facts,
+                outcomes=state.outcomes,
+                control=state.control,
+                provider_calls=state.provider_calls,
+                capture_bytes=state.capture_bytes,
+            )
+            local_provenance[body.as_] = _transform_provenance(
+                body,
+                state=local_state,
+                lineage=lineage,
+                base=_base_tokens(body, local_state, declared_spec),
             )
             return
         if self.provider_executor is None or body.provider is None or body.environment is None:
@@ -1989,7 +2435,12 @@ class ProcedureExecutor:
         contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
         contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
         if state.provider_calls >= admission.budget.max_provider_calls:
-            raise _BudgetExceeded("Procedure provider-call budget exhausted")
+            raise _BudgetExceeded(
+                "max_provider_calls",
+                limit=admission.budget.max_provider_calls,
+                observed=state.provider_calls + 1,
+                node_id=body.node_id,
+            )
         state.provider_calls += 1
         validated_input = normalize_canonical(
             self.contract_validator.validate_contract(
@@ -2141,6 +2592,9 @@ def _referenced_aliases(value: object) -> frozenset[str]:
         if isinstance(item, dict):
             for member in item.values():
                 visit(member)
+            return
+        if isinstance(item, BaseModel):
+            visit(item.model_dump(mode="python", exclude={"tag"}))
 
     visit(value)
     return frozenset(found)
@@ -2165,7 +2619,7 @@ def _base_tokens(
 
 
 def _transform_provenance(
-    node: TransformNodeV3,
+    node: TransformNodeV3 | RepeatBodyNodeV3,
     *,
     state: _RunState,
     lineage: tuple[tuple[tuple[str, int], ...], ...] | None,
@@ -2173,7 +2627,11 @@ def _transform_provenance(
 ) -> AliasProvenanceV1:
     if lineage is None:
         return AliasProvenanceV1(whole=base)
-    spec = node.spec if isinstance(node.spec, dict) else {}
+    spec = (
+        node.spec
+        if isinstance(node.spec, dict)
+        else cast(BaseModel, node.spec).model_dump(mode="python", exclude={"tag"})
+    )
     slot_aliases = {slot: _template_alias(spec.get(slot)) for slot in _ITEM_SLOTS}
     items: list[frozenset[DependencyToken]] = []
     for refs in lineage:
@@ -2184,6 +2642,19 @@ def _transform_provenance(
                 tokens = tokens | state.item_tokens(alias, index)
         items.append(tokens)
     return AliasProvenanceV1(whole=base, items=tuple(items))
+
+
+def _alias_provenance_payload(provenance: AliasProvenanceV1) -> CanonicalValue:
+    def tokens(values: frozenset[DependencyToken]) -> list[CanonicalValue]:
+        return [
+            {"slot": token.slot, "digest": token.digest}
+            for token in sorted(values, key=lambda item: (item.slot, item.digest))
+        ]
+
+    return {
+        "whole": tokens(provenance.whole),
+        "items": None if provenance.items is None else [tokens(item) for item in provenance.items],
+    }
 
 
 def _projected_provenance(
@@ -2315,8 +2786,11 @@ def _resolve_template(
     input_payload: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     item: CanonicalValue | None = None,
+    preserve_item_references: bool = False,
 ) -> CanonicalValue:
     if isinstance(value, str):
+        if preserve_item_references and (value == "$item" or value.startswith("$item.")):
+            return value
         return normalize_canonical(
             _resolve_reference(
                 value,
@@ -2332,6 +2806,7 @@ def _resolve_template(
                 input_payload=input_payload,
                 outputs=outputs,
                 item=item,
+                preserve_item_references=preserve_item_references,
             )
             for member in value
         ]
@@ -2342,34 +2817,247 @@ def _resolve_template(
                 input_payload=input_payload,
                 outputs=outputs,
                 item=item,
+                preserve_item_references=preserve_item_references,
             )
             for key, member in value.items()
         }
     return normalize_canonical(value)
 
 
-def _item_count(value: CanonicalValue) -> int:
+def _contains_item_reference(value: object) -> bool:
+    if isinstance(value, str):
+        return value == "$item" or value.startswith("$item.")
+    if isinstance(value, list | tuple):
+        return any(_contains_item_reference(member) for member in value)
+    if isinstance(value, dict):
+        return any(_contains_item_reference(member) for member in value.values())
+    return False
+
+
+def _resolve_transform_template(
+    value: object,
+    *,
+    transform_kind: str,
+    input_payload: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+) -> CanonicalValue:
+    """Resolve a transform spec while leaving only per-item field templates deferred."""
+
+    if not isinstance(value, dict):
+        return _resolve_template(
+            value,
+            input_payload=input_payload,
+            outputs=outputs,
+        )
+    deferred_fields = transform_kind in {"shape_items", "join_items"}
+    for key, member in value.items():
+        if key == "fields" and deferred_fields:
+            continue
+        if _contains_item_reference(member):
+            raise PlaybillExecutionError(
+                f"$item is unavailable in {transform_kind}.{key} outside an item field template"
+            )
+    return {
+        key: _resolve_template(
+            member,
+            input_payload=input_payload,
+            outputs=outputs,
+            preserve_item_references=key == "fields" and deferred_fields,
+        )
+        for key, member in value.items()
+    }
+
+
+def _declared_transform_spec(kind: str, spec: object) -> CanonicalValue:
+    if not isinstance(spec, BaseModel):
+        raise PlaybillExecutionError("typed transform spec is absent")
+    payload = spec.model_dump(mode="json", exclude={"tag"})
+    if kind == "adapter":
+        return normalize_canonical(payload["value"])
+    return normalize_canonical(payload)
+
+
+_TRANSFORM_INPUT_REFUSAL_CODES: dict[str, ProcedureNodeRefusalCodeV1] = {
+    "adapter": "adapter_value_invalid",
+    "shape_items": "shape_items_input_invalid",
+    "filter_items": "filter_items_input_invalid",
+    "dedupe_items": "dedupe_items_input_invalid",
+    "join_items": "join_items_left_input_invalid",
+    "aggregate_items": "aggregate_items_input_invalid",
+}
+
+
+def _resolve_node_template(
+    value: object,
+    *,
+    node_id: str,
+    transform_kind: str | None,
+    input_payload: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+) -> CanonicalValue:
+    try:
+        return (
+            _resolve_template(
+                value,
+                input_payload=input_payload,
+                outputs=outputs,
+            )
+            if transform_kind is None
+            else _resolve_transform_template(
+                value,
+                transform_kind=transform_kind,
+                input_payload=input_payload,
+                outputs=outputs,
+            )
+        )
+    except PlaybillExecutionError as exc:
+        raise _RunRefusal(
+            "runtime_reference_unresolved",
+            "A Procedure runtime reference did not resolve.",
+            node_id=node_id,
+        ) from exc
+    except Exception as exc:
+        code: ProcedureNodeRefusalCodeV1 = (
+            "result_not_canonical"
+            if transform_kind is None
+            else _TRANSFORM_INPUT_REFUSAL_CODES[transform_kind]
+        )
+        raise _RunRefusal(
+            code,
+            "A resolved Procedure value is not canonical for this node.",
+            node_id=node_id,
+        ) from exc
+
+
+def _validate_node_contract(
+    validator: ContractValidatorProtocol,
+    *,
+    contract: ArtifactPin,
+    payload: CanonicalValue,
+    direction: Literal["input", "output"],
+    node_id: str,
+) -> CanonicalValue:
+    try:
+        return normalize_canonical(
+            validator.validate_contract(
+                contract=contract,
+                payload=payload,
+                direction=direction,
+            )
+        )
+    except Exception as exc:
+        code: ProcedureNodeRefusalCodeV1 = (
+            "contract_input_refused" if direction == "input" else "contract_output_refused"
+        )
+        raise _RunRefusal(
+            code,
+            f"The Procedure node {direction} contract refused its value.",
+            node_id=node_id,
+        ) from exc
+
+
+def _apply_node_transform(
+    kind: str,
+    spec: CanonicalValue,
+    *,
+    max_items: int,
+    node_id: str,
+) -> tuple[CanonicalValue, _ItemLineage | None]:
+    try:
+        return _apply_transform(kind, spec, max_items=max_items, node_id=node_id)
+    except _RunRefusal:
+        raise
+    except _TransformInputInvalid as exc:
+        code = _TRANSFORM_INPUT_REFUSAL_CODES[kind]
+        if kind == "join_items" and exc.slot == "right_items":
+            code = "join_items_right_input_invalid"
+        raise _RunRefusal(
+            code,
+            f"The {kind} transform input is invalid.",
+            node_id=node_id,
+        ) from exc
+    except PlaybillExecutionError as exc:
+        raise _RunRefusal(
+            _TRANSFORM_INPUT_REFUSAL_CODES[kind],
+            f"The {kind} transform input is invalid.",
+            node_id=node_id,
+        ) from exc
+
+
+PROCEDURE_RESULT_MAX_BYTES = 1_048_576
+
+
+def _item_count(value: CanonicalValue, *, extractable_only: bool = False) -> int | None:
     if isinstance(value, list):
         return len(value)
     if isinstance(value, dict):
         items = value.get("items")
         if isinstance(items, list):
             return len(items)
-    return 1
+    return None if extractable_only else 1
 
 
-def _extract_items(value: object, *, label: str) -> list[CanonicalValue]:
+def _budget_refusal(
+    *,
+    budget_kind: Literal["max_items", "result_bytes"],
+    limit: int,
+    observed: int,
+    node_id: str,
+) -> _RunRefusal:
+    return _RunRefusal(
+        "budget_exhausted",
+        f"Procedure {budget_kind} budget exhausted.",
+        node_id=node_id,
+        budget=ProcedureBudgetRefusalDetailV1(
+            budget_kind=budget_kind,
+            limit=limit,
+            observed=observed,
+        ),
+    )
+
+
+def _extract_items(
+    value: object,
+    *,
+    label: str,
+    max_items: int | None = None,
+    node_id: str = "transform",
+) -> list[CanonicalValue]:
     if isinstance(value, list):
+        if max_items is not None and len(value) > max_items:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=max_items,
+                observed=len(value),
+                node_id=node_id,
+            )
         return [normalize_canonical(item) for item in value]
     if isinstance(value, dict) and isinstance(value.get("items"), list):
+        if max_items is not None and len(value["items"]) > max_items:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=max_items,
+                observed=len(value["items"]),
+                node_id=node_id,
+            )
         return [normalize_canonical(item) for item in value["items"]]
-    raise PlaybillExecutionError(f"{label} requires a list or object with an items list")
+    slot = "right_items" if label == "join_items right_items" else "left_items"
+    raise _TransformInputInvalid(
+        f"{label} requires a list or object with an items list",
+        slot=slot,
+    )
 
 
 _ItemLineage = tuple[tuple[tuple[str, int], ...], ...]
 
 
-def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _ItemLineage | None]:
+def _apply_transform(
+    kind: str,
+    spec: CanonicalValue,
+    *,
+    max_items: int | None = None,
+    node_id: str = "transform",
+) -> tuple[CanonicalValue, _ItemLineage | None]:
     """Apply one deterministic transform and report which input item fed each output."""
 
     if kind == "adapter":
@@ -2377,7 +3065,7 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
     if not isinstance(spec, dict):
         raise PlaybillExecutionError(f"transform {kind!r} requires an object spec")
     if kind == "shape_items":
-        items = _extract_items(spec.get("items"), label=kind)
+        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
         fields = spec.get("fields", {})
         if not isinstance(fields, dict):
             raise PlaybillExecutionError("shape_items fields must be an object")
@@ -2393,22 +3081,37 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
                     outputs={},
                     item=item,
                 )
+            if max_items is not None and len(shaped) >= max_items:
+                raise _budget_refusal(
+                    budget_kind="max_items",
+                    limit=max_items,
+                    observed=len(shaped) + 1,
+                    node_id=node_id,
+                )
             shaped.append(normalize_canonical(base))
         return (
             {"items": shaped, "input_count": len(items), "output_count": len(shaped)},
             tuple((("items", index),) for index in range(len(shaped))),
         )
     if kind == "filter_items":
-        items = _extract_items(spec.get("items"), label=kind)
+        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
         where = spec.get("where", {})
         if not isinstance(where, dict):
             raise PlaybillExecutionError("filter_items where must be an object")
-        kept_indices = [
-            index
-            for index, item in enumerate(items)
-            if isinstance(item, dict)
-            and all(item.get(key) == value for key, value in where.items())
-        ]
+        kept_indices: list[int] = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict) or not all(
+                item.get(key) == value for key, value in where.items()
+            ):
+                continue
+            if max_items is not None and len(kept_indices) >= max_items:
+                raise _budget_refusal(
+                    budget_kind="max_items",
+                    limit=max_items,
+                    observed=len(kept_indices) + 1,
+                    node_id=node_id,
+                )
+            kept_indices.append(index)
         kept = [items[index] for index in kept_indices]
         return (
             normalize_canonical(
@@ -2417,7 +3120,7 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
             tuple((("items", index),) for index in kept_indices),
         )
     if kind == "dedupe_items":
-        items = _extract_items(spec.get("items"), label=kind)
+        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
         keys = spec.get("keys", [])
         if not isinstance(keys, list) or not all(isinstance(item, str) for item in keys):
             raise PlaybillExecutionError("dedupe_items keys must be a string list")
@@ -2431,6 +3134,13 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
             )
             if identity in seen:
                 continue
+            if max_items is not None and len(output) >= max_items:
+                raise _budget_refusal(
+                    budget_kind="max_items",
+                    limit=max_items,
+                    observed=len(output) + 1,
+                    node_id=node_id,
+                )
             seen.add(identity)
             output.append(item)
             deduped_indices.append(index)
@@ -2441,8 +3151,18 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
             tuple((("items", index),) for index in deduped_indices),
         )
     if kind == "join_items":
-        left = _extract_items(spec.get("left_items"), label=kind)
-        right = _extract_items(spec.get("right_items"), label=kind)
+        left = _extract_items(
+            spec.get("left_items"),
+            label="join_items left_items",
+            max_items=max_items,
+            node_id=node_id,
+        )
+        right = _extract_items(
+            spec.get("right_items"),
+            label="join_items right_items",
+            max_items=max_items,
+            node_id=node_id,
+        )
         left_key = spec.get("left_key")
         right_key = spec.get("right_key")
         fields = spec.get("fields", {})
@@ -2460,6 +3180,13 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
                     continue
                 if left_item.get(left_key) != right_item.get(right_key):
                     continue
+                if max_items is not None and len(joined_output) >= max_items:
+                    raise _budget_refusal(
+                        budget_kind="max_items",
+                        limit=max_items,
+                        observed=len(joined_output) + 1,
+                        node_id=node_id,
+                    )
                 joined = {"left": left_item, "right": right_item}
                 joined_output.append(
                     {
@@ -2478,9 +3205,28 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
             tuple(joined_lineage),
         )
     if kind == "aggregate_items":
-        items = _extract_items(spec.get("items"), label=kind)
+        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
         return normalize_canonical({"count": len(items)}), None
     raise PlaybillExecutionError(f"unsupported deterministic transform {kind!r}")
+
+
+def _check_return_budget(value: CanonicalValue, *, max_items: int, node_id: str) -> None:
+    count = _item_count(value, extractable_only=True)
+    if count is not None and count > max_items:
+        raise _budget_refusal(
+            budget_kind="max_items",
+            limit=max_items,
+            observed=count,
+            node_id=node_id,
+        )
+    size = len(canonical_bytes(value))
+    if size > PROCEDURE_RESULT_MAX_BYTES:
+        raise _budget_refusal(
+            budget_kind="result_bytes",
+            limit=PROCEDURE_RESULT_MAX_BYTES,
+            observed=size,
+            node_id=node_id,
+        )
 
 
 def _operand_value(

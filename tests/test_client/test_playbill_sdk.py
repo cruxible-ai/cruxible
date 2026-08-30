@@ -440,6 +440,53 @@ def test_sdk_retirement_owns_claim_ref_and_coordinate_plumbing(tmp_path: Path) -
     }
 
 
+def test_sdk_procedure_run_sends_at_only_for_an_explicit_replay(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+
+    class ProcedureClient(_Client):
+        def __init__(self) -> None:
+            super().__init__()
+            self.runs: list[dict[str, object]] = []
+
+        def run_playbill_procedure(
+            self,
+            _instance_id: str,
+            name: str,
+            **values: object,
+        ) -> api.PlaybillProcedureRunState:
+            self.runs.append(values)
+            lane = "replay" if values["at"] is not None else "current"
+            return api.PlaybillProcedureRunState(
+                run_id="RUN-" + "a" * 64,
+                procedure_identity={"kind": "Procedure", "name": name},
+                procedure_artifact_digest=_DIGEST,
+                bound_coordinate=_COORDINATE,
+                head_at_admission=_COORDINATE,
+                lane=lane,
+                evaluation_time=str(values["evaluation_time"]),
+                status="succeeded",
+                pending_inputs=[],
+                outcomes=[],
+                next_operation={"kind": "done"},
+                result={"ok": True},
+            )
+
+    client = ProcedureClient()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+    procedure = pb.accepted_procedure("daily-summary")
+
+    assert procedure.run(account="one").status == "succeeded"
+    assert procedure.run(at=pb.coordinate, account="one").status == "succeeded"
+    assert client.runs[0]["at"] is None
+    assert client.runs[0]["input"] == {"account": "one"}
+    assert client.runs[1]["at"] == _COORDINATE
+
+
 def test_sdk_plain_retirement_replay_uses_accepted_operation_coordinate(
     tmp_path: Path,
 ) -> None:

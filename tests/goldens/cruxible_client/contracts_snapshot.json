@@ -11573,34 +11573,54 @@
     },
     "PlaybillProcedureBindResult": {
       "fields": {
-        "proposal": {
+        "accepted_digest": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "proposal",
+          "json_name": "accepted_digest",
           "required": true,
           "schema": {
-            "$ref": "#/$defs/PlaybillProposalInspection"
+            "title": "Accepted Digest",
+            "type": "string"
           }
         },
-        "readiness": {
+        "accepted_readiness": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "readiness",
+          "json_name": "accepted_readiness",
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillProcedureReadiness"
           }
         },
+        "pending": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "pending",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedurePendingSuccessorV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "tag": {
-          "default": "playbill-procedure-bind-result-v1",
+          "default": "playbill-procedure-bind-result-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-procedure-bind-result-v1",
-            "default": "playbill-procedure-bind-result-v1",
+            "const": "playbill-procedure-bind-result-v2",
+            "default": "playbill-procedure-bind-result-v2",
             "title": "Tag",
             "type": "string"
           }
@@ -11645,30 +11665,6 @@
               "compiler_digest"
             ],
             "title": "PlaybillAcceptedCoordinate",
-            "type": "object"
-          },
-          "PlaybillClaimTypeProposalLint": {
-            "additionalProperties": false,
-            "properties": {
-              "tag": {
-                "const": "playbill-claim-type-proposal-lint-v1",
-                "default": "playbill-claim-type-proposal-lint-v1",
-                "title": "Tag",
-                "type": "string"
-              },
-              "warnings": {
-                "items": {
-                  "additionalProperties": true,
-                  "type": "object"
-                },
-                "title": "Warnings",
-                "type": "array"
-              }
-            },
-            "required": [
-              "warnings"
-            ],
-            "title": "PlaybillClaimTypeProposalLint",
             "type": "object"
           },
           "PlaybillProcedureReadiness": {
@@ -11739,68 +11735,69 @@
             "title": "PlaybillProcedureReadiness",
             "type": "object"
           },
-          "PlaybillProposalInspection": {
+          "ProcedurePendingSuccessorV1": {
             "additionalProperties": false,
             "properties": {
-              "accepted_coordinate": {
-                "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+              "pending_successor_digest": {
+                "title": "Pending Successor Digest",
+                "type": "string"
               },
-              "lint": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/PlaybillClaimTypeProposalLint"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null
-              },
-              "proposal": {
-                "additionalProperties": true,
-                "title": "Proposal",
-                "type": "object"
+              "proposal_id": {
+                "title": "Proposal Id",
+                "type": "string"
               },
               "tag": {
-                "const": "playbill-proposal-inspection-v1",
-                "default": "playbill-proposal-inspection-v1",
+                "const": "playbill-procedure-pending-successor-v1",
+                "default": "playbill-procedure-pending-successor-v1",
                 "title": "Tag",
                 "type": "string"
               }
             },
             "required": [
-              "proposal",
-              "accepted_coordinate"
+              "proposal_id",
+              "pending_successor_digest"
             ],
-            "title": "PlaybillProposalInspection",
+            "title": "ProcedurePendingSuccessorV1",
             "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
-          "proposal": {
-            "$ref": "#/$defs/PlaybillProposalInspection"
+          "accepted_digest": {
+            "title": "Accepted Digest",
+            "type": "string"
           },
-          "readiness": {
+          "accepted_readiness": {
             "$ref": "#/$defs/PlaybillProcedureReadiness"
           },
+          "pending": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedurePendingSuccessorV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "tag": {
-            "const": "playbill-procedure-bind-result-v1",
-            "default": "playbill-procedure-bind-result-v1",
+            "const": "playbill-procedure-bind-result-v2",
+            "default": "playbill-procedure-bind-result-v2",
             "title": "Tag",
             "type": "string"
           }
         },
         "required": [
-          "proposal",
-          "readiness"
+          "accepted_digest",
+          "accepted_readiness"
         ],
         "title": "PlaybillProcedureBindResult",
         "type": "object"
       },
       "required_fields": [
-        "proposal",
-        "readiness"
+        "accepted_digest",
+        "accepted_readiness"
       ]
     },
     "PlaybillProcedureReadiness": {
@@ -12035,10 +12032,29 @@
     },
     "PlaybillProcedureRunState": {
       "fields": {
-        "coordinate": {
+        "attribution": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "attribution",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureRunAttributionV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "bound_coordinate": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "coordinate",
+          "json_name": "bound_coordinate",
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
@@ -12051,6 +12067,29 @@
           "required": true,
           "schema": {
             "title": "Evaluation Time",
+            "type": "string"
+          }
+        },
+        "head_at_admission": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "head_at_admission",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "lane": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "lane",
+          "required": true,
+          "schema": {
+            "enum": [
+              "current",
+              "replay"
+            ],
+            "title": "Lane",
             "type": "string"
           }
         },
@@ -12113,6 +12152,25 @@
             "type": "object"
           }
         },
+        "receipt": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "receipt",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureRunReceiptV2"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
         "receipt_digest": {
           "default": null,
           "default_json_serializable": true,
@@ -12151,8 +12209,55 @@
           "json_name": "run_id",
           "required": true,
           "schema": {
-            "title": "Run Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          }
+        },
+        "semantic_replay_key_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "semantic_replay_key_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Semantic Replay Key Digest"
+          }
+        },
+        "semantic_result_digest": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "semantic_result_digest",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Semantic Result Digest"
           }
         },
         "status": {
@@ -12162,35 +12267,155 @@
           "required": true,
           "schema": {
             "enum": [
-              "binding_required",
-              "unsupported",
               "running",
               "succeeded",
-              "refused",
-              "failed",
-              "budget_exhausted"
+              "admission_refused",
+              "node_refused",
+              "operational_failed",
+              "internal_failed"
             ],
             "title": "Status",
             "type": "string"
           }
         },
         "tag": {
-          "default": "playbill-procedure-run-state-v1",
+          "default": "playbill-procedure-run-state-v2",
           "default_json_serializable": true,
           "has_default": true,
           "has_default_factory": false,
           "json_name": "tag",
           "required": false,
           "schema": {
-            "const": "playbill-procedure-run-state-v1",
-            "default": "playbill-procedure-run-state-v1",
+            "const": "playbill-procedure-run-state-v2",
+            "default": "playbill-procedure-run-state-v2",
             "title": "Tag",
             "type": "string"
+          }
+        },
+        "terminal": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "terminal",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusalV1",
+                    "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
+                    "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureAdmissionRefusalV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureNodeRefusalV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureOperationalFailureV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureInternalFailureV1"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Terminal"
           }
         }
       },
       "json_schema": {
         "$defs": {
+          "AcceptedCoordinate": {
+            "additionalProperties": false,
+            "description": "Path-free public handle for one fully verified accepted generation.",
+            "properties": {
+              "compiler_digest": {
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "AcceptedCoordinate",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -12229,15 +12454,592 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "ProcedureAdmissionRefusalV1": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "admission_refusal",
+                "default": "admission_refusal",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "binding_required",
+                  "unsupported_node",
+                  "effectful_unsupported",
+                  "not_current",
+                  "artifact_binding_mismatch",
+                  "pin_binding_mismatch",
+                  "input_material_mismatch",
+                  "state_tap_refused",
+                  "replay_material_mismatch"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "retryable": {
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-admission-refusal-v1",
+                "default": "playbill-procedure-admission-refusal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "title": "ProcedureAdmissionRefusalV1",
+            "type": "object"
+          },
+          "ProcedureBudgetRefusalDetailV1": {
+            "additionalProperties": false,
+            "properties": {
+              "budget_kind": {
+                "enum": [
+                  "max_items",
+                  "result_bytes",
+                  "wall_clock",
+                  "max_provider_calls",
+                  "max_capture_bytes"
+                ],
+                "title": "Budget Kind",
+                "type": "string"
+              },
+              "limit": {
+                "minimum": 0,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "observed": {
+                "minimum": 1,
+                "title": "Observed",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-refusal-detail-v1",
+                "default": "playbill-procedure-budget-refusal-detail-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "budget_kind",
+              "limit",
+              "observed"
+            ],
+            "title": "ProcedureBudgetRefusalDetailV1",
+            "type": "object"
+          },
+          "ProcedureInternalFailureV1": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "internal_failure",
+                "default": "internal_failure",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "unexpected_exception",
+                  "journal_integrity_error",
+                  "run_record_invalid",
+                  "compiler_invariant_broken"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "correlation_id": {
+                "title": "Correlation Id",
+                "type": "string"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-internal-failure-v1",
+                "default": "playbill-procedure-internal-failure-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "correlation_id"
+            ],
+            "title": "ProcedureInternalFailureV1",
+            "type": "object"
+          },
+          "ProcedureJournalCoordinateV1": {
+            "additionalProperties": false,
+            "properties": {
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digest": {
+                "title": "Record Digest",
+                "type": "string"
+              },
+              "sequence": {
+                "minimum": 1,
+                "title": "Sequence",
+                "type": "integer"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-journal-coordinate-v1",
+                "default": "playbill-procedure-journal-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "sequence",
+              "record_digest"
+            ],
+            "title": "ProcedureJournalCoordinateV1",
+            "type": "object"
+          },
+          "ProcedureNodeRefusalV1": {
+            "additionalProperties": false,
+            "properties": {
+              "budget": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureBudgetRefusalDetailV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "classification": {
+                "const": "node_refusal",
+                "default": "node_refusal",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "guard_refused",
+                  "repeat_exhausted",
+                  "budget_exhausted",
+                  "runtime_reference_unresolved",
+                  "contract_input_refused",
+                  "contract_output_refused",
+                  "adapter_value_invalid",
+                  "shape_items_input_invalid",
+                  "filter_items_input_invalid",
+                  "dedupe_items_input_invalid",
+                  "join_items_left_input_invalid",
+                  "join_items_right_input_invalid",
+                  "aggregate_items_input_invalid",
+                  "result_not_canonical",
+                  "line_binding_required",
+                  "source_acquisition_unavailable",
+                  "source_material_unavailable",
+                  "terminal_not_available",
+                  "terminal_egress_unverified",
+                  "provider_unavailable",
+                  "playbill.acquisition.unavailable",
+                  "playbill.acquisition.stale",
+                  "playbill.acquisition.oversized",
+                  "playbill.acquisition.refused",
+                  "effect_grant_unrecognized",
+                  "effect_dispatch_requires_actor",
+                  "effect_dispatch_requires_authenticated_actor",
+                  "terminal_rung_capped_by_procedure_terminal_capability",
+                  "terminal_rung_capped_by_line_requested_rung",
+                  "terminal_rung_capped_by_propagated_sensitivity",
+                  "terminal_rung_capped_by_mandate_grant",
+                  "terminal_rung_capped_by_calibration"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "detail_code": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Detail Code"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "retryable": {
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-node-refusal-v1",
+                "default": "playbill-procedure-node-refusal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "node_id"
+            ],
+            "title": "ProcedureNodeRefusalV1",
+            "type": "object"
+          },
+          "ProcedureOperationalFailureV1": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "operational_failure",
+                "default": "operational_failure",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "enum": [
+                  "wall_clock_exhausted",
+                  "cas_unavailable_at_replay",
+                  "replay_material_mismatch",
+                  "journal_append_failed",
+                  "journal_read_failed",
+                  "journal_conflict",
+                  "run_recovery_required"
+                ],
+                "title": "Code",
+                "type": "string"
+              },
+              "details": {
+                "title": "Details"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "last_node_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Node Id"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "retryable": {
+                "default": true,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-operational-failure-v1",
+                "default": "playbill-procedure-operational-failure-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "title": "ProcedureOperationalFailureV1",
+            "type": "object"
+          },
+          "ProcedureRunAttributionV1": {
+            "additionalProperties": false,
+            "properties": {
+              "actor_id": {
+                "title": "Actor Id",
+                "type": "string"
+              },
+              "actor_type": {
+                "title": "Actor Type",
+                "type": "string"
+              },
+              "operation_id": {
+                "title": "Operation Id",
+                "type": "string"
+              },
+              "org_id": {
+                "title": "Org Id",
+                "type": "string"
+              },
+              "recorded_time": {
+                "format": "date-time",
+                "title": "Recorded Time",
+                "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-attribution-v1",
+                "default": "playbill-procedure-run-attribution-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "actor_type",
+              "actor_id",
+              "org_id",
+              "operation_id",
+              "recorded_time"
+            ],
+            "title": "ProcedureRunAttributionV1",
+            "type": "object"
+          },
+          "ProcedureRunReceiptV2": {
+            "additionalProperties": false,
+            "properties": {
+              "admission_binding_digest": {
+                "title": "Admission Binding Digest",
+                "type": "string"
+              },
+              "admitted_inputs": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Admitted Inputs",
+                "type": "array"
+              },
+              "attribution": {
+                "$ref": "#/$defs/ProcedureRunAttributionV1"
+              },
+              "bound_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "chain_head_digest": {
+                "title": "Chain Head Digest",
+                "type": "string"
+              },
+              "evaluation_time": {
+                "format": "date-time",
+                "title": "Evaluation Time",
+                "type": "string"
+              },
+              "first_sequence": {
+                "minimum": 1,
+                "title": "First Sequence",
+                "type": "integer"
+              },
+              "head_at_admission": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "lane": {
+                "enum": [
+                  "current",
+                  "replay"
+                ],
+                "title": "Lane",
+                "type": "string"
+              },
+              "last_sequence": {
+                "minimum": 1,
+                "title": "Last Sequence",
+                "type": "integer"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Record Digests",
+                "type": "array"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "semantic_replay_key_digest": {
+                "title": "Semantic Replay Key Digest",
+                "type": "string"
+              },
+              "semantic_result_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Semantic Result Digest"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-receipt-v2",
+                "default": "playbill-procedure-run-receipt-v2",
+                "title": "Tag",
+                "type": "string"
+              },
+              "validated_pins": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Validated Pins",
+                "type": "array"
+              }
+            },
+            "required": [
+              "run_id",
+              "admission_binding_digest",
+              "semantic_replay_key_digest",
+              "semantic_result_digest",
+              "bound_coordinate",
+              "head_at_admission",
+              "lane",
+              "evaluation_time",
+              "validated_pins",
+              "admitted_inputs",
+              "attribution",
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "first_sequence",
+              "last_sequence",
+              "record_digests",
+              "chain_head_digest"
+            ],
+            "title": "ProcedureRunReceiptV2",
+            "type": "object"
           }
         },
         "additionalProperties": false,
         "properties": {
-          "coordinate": {
+          "attribution": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureRunAttributionV1"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "bound_coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
           "evaluation_time": {
             "title": "Evaluation Time",
+            "type": "string"
+          },
+          "head_at_admission": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "lane": {
+            "enum": [
+              "current",
+              "replay"
+            ],
+            "title": "Lane",
             "type": "string"
           },
           "next_operation": {
@@ -12269,6 +13071,17 @@
             "title": "Procedure Identity",
             "type": "object"
           },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ProcedureRunReceiptV2"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
           "receipt_digest": {
             "anyOf": [
               {
@@ -12286,34 +13099,100 @@
             "title": "Result"
           },
           "run_id": {
-            "title": "Run Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "semantic_replay_key_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Semantic Replay Key Digest"
+          },
+          "semantic_result_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Semantic Result Digest"
           },
           "status": {
             "enum": [
-              "binding_required",
-              "unsupported",
               "running",
               "succeeded",
-              "refused",
-              "failed",
-              "budget_exhausted"
+              "admission_refused",
+              "node_refused",
+              "operational_failed",
+              "internal_failed"
             ],
             "title": "Status",
             "type": "string"
           },
           "tag": {
-            "const": "playbill-procedure-run-state-v1",
-            "default": "playbill-procedure-run-state-v1",
+            "const": "playbill-procedure-run-state-v2",
+            "default": "playbill-procedure-run-state-v2",
             "title": "Tag",
             "type": "string"
+          },
+          "terminal": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusalV1",
+                    "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
+                    "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
+                    "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                  },
+                  "propertyName": "tag"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureAdmissionRefusalV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureNodeRefusalV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureOperationalFailureV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureInternalFailureV1"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Terminal"
           }
         },
         "required": [
           "run_id",
           "procedure_identity",
           "procedure_artifact_digest",
-          "coordinate",
+          "bound_coordinate",
+          "head_at_admission",
+          "lane",
           "evaluation_time",
           "status",
           "pending_inputs",
@@ -12324,8 +13203,10 @@
         "type": "object"
       },
       "required_fields": [
-        "coordinate",
+        "bound_coordinate",
         "evaluation_time",
+        "head_at_admission",
+        "lane",
         "next_operation",
         "outcomes",
         "pending_inputs",
