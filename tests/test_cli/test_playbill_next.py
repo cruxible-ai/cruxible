@@ -143,15 +143,18 @@ def test_cli_next_delta_labels_additions_and_removals(
         def next_playbill(self, instance_id: str, **values: object) -> contracts.PlaybillNextResult:
             assert instance_id == "inst_next"
             self.calls += 1
-            items = [removed, added] if values.get("since_result_digest") else [added]
+            assert values.get("since_result_digest") == "sha256:" + "0" * 64
             return contracts.PlaybillNextResult(
+                tag="playbill-next-result-v2",
                 coordinate=COORDINATE,
                 evaluation_time="2026-08-24T18:00:00Z",
                 observed_domains=["accepted_state", "workspace_floor", "workspace_sources"],
                 unobserved_domains=[],
-                items=items,
+                items=[removed, added],
                 result_digest="sha256:" + str(self.calls) * 64,
-                delta_since="sha256:" + "0" * 64 if self.calls == 1 else None,
+                delta_since="sha256:" + "0" * 64,
+                attestation_head_digest="sha256:" + "9" * 64,
+                removed_item_ids=[removed["item_id"]],
             )
 
     client = StubClient()
@@ -184,7 +187,7 @@ def test_cli_next_delta_labels_additions_and_removals(
     assert result.exit_code == 0, result.output
     assert "removed  warning  claim_conflicted  Claim:removed" in result.output
     assert "added  repair  claim_uncovered  Claim:added" in result.output
-    assert client.calls == 2
+    assert client.calls == 1
 
 
 def test_cli_next_delta_memo_miss_renders_the_full_queue_without_change_labels(

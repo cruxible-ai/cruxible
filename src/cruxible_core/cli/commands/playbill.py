@@ -2360,7 +2360,7 @@ def next_work(
 
     def _next_at_scanned_coordinate(
         client: CruxibleClient, instance_id: str
-    ) -> tuple[contracts.PlaybillNextResult, contracts.PlaybillNextResult | None]:
+    ) -> contracts.PlaybillNextResult:
         observed, coordinate = observe_playbill_next_workspace_with_coverage(
             client,
             instance_id,
@@ -2368,7 +2368,7 @@ def next_work(
             observation=workspace_observation,
             access_profile=profile,
         )
-        result = client.next_playbill(
+        return client.next_playbill(
             instance_id,
             evaluation_time=stamped_evaluation_time,
             access_profile=profile,
@@ -2377,19 +2377,8 @@ def next_work(
             workspace_observation=observed,
             since_result_digest=since_result_digest,
         )
-        if since_result_digest is None:
-            return result, None
-        full = client.next_playbill(
-            instance_id,
-            evaluation_time=stamped_evaluation_time,
-            access_profile=profile,
-            at=coordinate,
-            expiring_within={"microseconds": expiring_within},
-            workspace_observation=observed,
-        )
-        return result, full
 
-    result, full = _server_call(
+    result = _server_call(
         _next_at_scanned_coordinate,
         command_name="playbill next",
     )
@@ -2402,16 +2391,14 @@ def next_work(
             if result.delta_since is not None
             else "No repair work in the observed domains."
         )
-    current_ids = frozenset(item["item_id"] for item in full.items) if full is not None else None
+    removed_ids = frozenset(result.removed_item_ids)
     for item in result.items:
         repair = item["repair"]
         change = (
             "removed  "
-            if result.delta_since is not None
-            and current_ids is not None
-            and item["item_id"] not in current_ids
+            if result.delta_since is not None and item["item_id"] in removed_ids
             else "added  "
-            if result.delta_since is not None and current_ids is not None
+            if result.delta_since is not None
             else ""
         )
         click.echo(

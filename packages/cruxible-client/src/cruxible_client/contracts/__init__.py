@@ -873,6 +873,19 @@ class PlaybillNextResult(BaseModel):
     # the complete current queue, so callers may echo it as the next cursor.
     delta_since: str | None = None
     attestation_head_digest: str | None = None
+    removed_item_ids: list[str] = Field(
+        default_factory=list,
+        exclude_if=lambda value: not value,
+    )
+
+    @field_validator("removed_item_ids")
+    @classmethod
+    def _removed_item_ids(cls, value: list[str]) -> list[str]:
+        for item_id in value:
+            Sha256Value.from_tagged(item_id)
+        if value != sorted(set(value), key=lambda item: item.encode("ascii")):
+            raise ValueError("removed next item IDs must be ASCII byte-sorted and unique")
+        return value
 
     @model_validator(mode="after")
     def _attestation_coordinate(self) -> "PlaybillNextResult":
@@ -880,6 +893,15 @@ class PlaybillNextResult(BaseModel):
             raise ValueError("Next v2 alone requires an attestation evidence head")
         if self.attestation_head_digest is not None:
             Sha256Value.from_tagged(self.attestation_head_digest)
+        if self.removed_item_ids and (
+            self.tag != "playbill-next-result-v2" or not self.delta_since
+        ):
+            raise ValueError("removed next item IDs are valid only on a v2 delta")
+        carried_ids = {
+            item.get("item_id") for item in self.items if isinstance(item.get("item_id"), str)
+        }
+        if not set(self.removed_item_ids).issubset(carried_ids):
+            raise ValueError("removed next item IDs must name carried delta rows")
         return self
 
 

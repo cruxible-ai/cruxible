@@ -195,9 +195,51 @@ def test_v2_delta_reuses_the_real_whole_queue_cursor_without_memo_collision() ->
     assert first_delta.model_dump_json() == repeated_delta.model_dump_json()
     assert first_delta.result_digest == second.result_digest
     assert first_delta.delta_since == first.result_digest
+    assert first_delta.removed_item_ids == tuple(
+        item.item_id for item in first.items if item.subject_identity == "Claim:removed"
+    )
     assert unchanged.items == ()
     assert unchanged.result_digest == second.result_digest
+    assert unchanged.removed_item_ids == ()
     assert PlaybillNextResultV2.model_validate_json(first_delta.model_dump_json()) == first_delta
+
+
+def test_v2_removed_item_ids_are_presentation_only_and_shape_checked() -> None:
+    from pydantic import ValidationError
+
+    from cruxible_core.service.playbill_next import (
+        PlaybillNextResultV2,
+        playbill_next_result_digest,
+    )
+
+    base = _result(("removed",))
+    item_id = base.items[0].item_id
+    values = {
+        name: getattr(base, name)
+        for name in type(base).model_fields
+        if name not in {"tag", "result_digest"}
+    }
+    delta = PlaybillNextResultV2.model_validate(
+        {
+            **values,
+            "result_digest": "sha256:" + "9" * 64,
+            "attestation_head_digest": "sha256:" + "7" * 64,
+            "delta_since": "sha256:" + "8" * 64,
+            "removed_item_ids": [item_id],
+        }
+    )
+
+    assert "removed_item_ids" in delta.model_dump(mode="json")
+    invalid_full = delta.model_copy(update={"delta_since": None})
+    invalid_full = invalid_full.model_copy(
+        update={"result_digest": playbill_next_result_digest(invalid_full)}
+    )
+    with pytest.raises(ValidationError, match="only on a delta"):
+        PlaybillNextResultV2.model_validate(invalid_full.model_dump(mode="json"))
+    with pytest.raises(ValidationError, match="must name carried"):
+        PlaybillNextResultV2.model_validate(
+            delta.model_dump(mode="json") | {"removed_item_ids": ["sha256:" + "f" * 64]}
+        )
 
 
 @pytest.mark.parametrize(

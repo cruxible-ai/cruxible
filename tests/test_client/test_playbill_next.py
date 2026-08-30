@@ -65,3 +65,45 @@ def test_client_sends_explicit_time_access_and_workspace_observation() -> None:
     assert payload["evaluation_time"] == "2026-08-24T18:00:00Z"
     assert payload["workspace_observation"]["floor_status"] == "missing"
     assert "result_digest" not in payload
+
+
+def test_client_parses_v2_delta_removal_classification() -> None:
+    removed_id = "sha256:" + "6" * 64
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["since_result_digest"] == "sha256:" + "5" * 64
+        return httpx.Response(
+            200,
+            json={
+                "tag": "playbill-next-result-v2",
+                "coordinate": COORDINATE,
+                "evaluation_time": "2026-08-24T18:00:00.000000Z",
+                "observed_domains": ["accepted_state", "workspace_floor"],
+                "unobserved_domains": ["workspace_sources"],
+                "items": [{"item_id": removed_id}],
+                "result_digest": "sha256:" + "7" * 64,
+                "delta_since": "sha256:" + "5" * 64,
+                "attestation_head_digest": "sha256:" + "8" * 64,
+                "removed_item_ids": [removed_id],
+            },
+        )
+
+    client = CruxibleClient(base_url="http://cruxible")
+    client._client = httpx.Client(  # type: ignore[attr-defined]
+        base_url="http://cruxible", transport=httpx.MockTransport(handler)
+    )
+
+    result = client.next_playbill(
+        "inst",
+        evaluation_time="2026-08-24T18:00:00Z",
+        access_profile={
+            "tag": "playbill-coverage-access-profile-v1",
+            "profile_id": "client-next",
+            "permitted_access_classes": ["instance", "public"],
+            "disclose_restricted_existence": True,
+        },
+        since_result_digest="sha256:" + "5" * 64,
+    )
+
+    assert result.removed_item_ids == [removed_id]
