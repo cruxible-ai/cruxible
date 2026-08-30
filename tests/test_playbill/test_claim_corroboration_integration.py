@@ -25,6 +25,7 @@ from cruxible_client.contracts.errors import ProposalIntegrityError
 from cruxible_client.contracts.policies import (
     ClaimAdmissionPolicyV1,
     CorroborationRequirementV1,
+    FreezeRequirementV1,
 )
 from cruxible_client.contracts.proposal_models import ProposalResult
 from cruxible_client.contracts.query.definitions import (
@@ -143,12 +144,13 @@ def _claim_for_type(
     claim_type: ClaimType,
     *,
     claim_id: str,
+    value: str = "ready",
 ) -> ClaimArtifactV2:
     capture = build_direct_claim_capture(
         store=instance.body_store(),
         actor_id="owner",
         claim_id=claim_id,
-        value="ready",
+        value=value,
         rationale="The governed work item is ready.",
         observed_at=OBSERVED_AT,
         accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
@@ -169,6 +171,7 @@ def _claim_for_type(
                     "claim_type": claim_type.identity,
                     "claim_type_digest": type_digest,
                     "predicate": claim_type.predicate,
+                    "object": claim.statement.object.model_copy(update={"value": value}),
                 }
             ),
             "pins": tuple(
@@ -189,6 +192,7 @@ def _submit_claim(
     *,
     proposal_name: str,
     extra_tree: dict[str, bytes] | None = None,
+    timestamp: str = PROPOSAL_TIMESTAMP,
 ) -> tuple[ProposalResult, dict[str, bytes]]:
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
@@ -201,7 +205,7 @@ def _submit_claim(
             proposed_base_oid=base.git_oid,
         ),
         candidate_tree=tree,
-        timestamp=PROPOSAL_TIMESTAMP,
+        timestamp=timestamp,
     )
     return result, tree
 
@@ -273,6 +277,42 @@ def test_proposal_pass_persists_only_the_authored_type_account_and_replays(
     assert calls == [instance.accepted_history()[-2].oid]
 
 
+def test_corroboration_runs_once_per_subject_and_claim_type(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    query = _query()
+    claim_type = _corroborated_type(query_definition_digest(query).tagged)
+    _seed_vocabulary(instance, owner, claim_types=(claim_type,), query=query)
+    first = _claim_for_type(instance, claim_type, claim_id="CLM-" + "c1" * 16)
+    second = _claim_for_type(instance, claim_type, claim_id="CLM-" + "c2" * 16)
+
+    import cruxible_core.playbill.proposals as proposals
+
+    original = proposals._run_corroboration_requirements
+    calls: list[str] = []
+
+    def counted(**kwargs):  # type: ignore[no-untyped-def]
+        calls.append(kwargs["accepted_type"].claim_type.identity.qualified)
+        return original(**kwargs)
+
+    monkeypatch.setattr(proposals, "_run_corroboration_requirements", counted)
+    result, _tree = _submit_claim(
+        instance,
+        first,
+        proposal_name="corroboration-dedup",
+        extra_tree={claim_path(second.identity.name): render_claim(second)},
+    )
+
+    assert result.evaluation.verdict == "candidate"
+    assert calls == [claim_type.identity.qualified]
+    assert {item.claim_path for item in result.evaluation.claim_admission_accounts} == {
+        claim_path(first.identity.name),
+        claim_path(second.identity.name),
+    }
+
+
 def test_unsatisfiable_type_does_not_gate_another_type_and_can_retire(
     tmp_path: Path,
 ) -> None:
@@ -311,6 +351,82 @@ def test_unsatisfiable_type_does_not_gate_another_type_and_can_retire(
     assert result.evaluation.verdict == "candidate"
     assert result.evaluation.diagnostics == ()
     assert result.evaluation.claim_admission_accounts == ()
+
+
+@pytest.mark.parametrize(
+    ("status_value", "expected_verdict", "expected_codes"),
+    [
+        pytest.param(
+            "done",
+            "refused",
+            ["playbill.claim_policy.freeze_active"],
+            id="active-freeze-refuses",
+        ),
+        pytest.param("ready", "candidate", [], id="inactive-freeze-admits"),
+    ],
+)
+def test_cross_type_freeze_is_subject_scoped_through_the_proposal_path(
+    tmp_path: Path,
+    status_value: str,
+    expected_verdict: str,
+    expected_codes: list[str],
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    status_type = _claim_type().model_copy(
+        update={
+            "admission_policy": ClaimAdmissionPolicyV1(
+                freeze_requirements=(
+                    FreezeRequirementV1(
+                        requirement_id="done-freezes-summary",
+                        while_predicate="project.work_item.status",
+                        while_values=("done",),
+                        frozen_predicates=("project.work_item.summary",),
+                    ),
+                )
+            )
+        }
+    )
+    summary_type = _claim_type().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name="project.work_item.summary"),
+            "predicate": "project.work_item.summary",
+        }
+    )
+    _seed_vocabulary(
+        instance,
+        owner,
+        claim_types=(status_type, summary_type),
+        query=None,
+    )
+    status_claim = _claim_for_type(
+        instance,
+        status_type,
+        claim_id="CLM-" + "f1" * 16,
+        value=status_value,
+    )
+    status_result, status_tree = _submit_claim(
+        instance,
+        status_claim,
+        proposal_name=f"freeze-status-{status_value}",
+    )
+    assert status_result.evaluation.verdict == "candidate"
+    _activate(instance, status_result, status_tree)
+    instance.refresh()
+
+    summary_claim = _claim_for_type(
+        instance,
+        summary_type,
+        claim_id="CLM-" + "f2" * 16,
+    )
+    result, _tree = _submit_claim(
+        instance,
+        summary_claim,
+        proposal_name=f"freeze-summary-{status_value}",
+        timestamp="2026-08-28T12:02:00.000000Z",
+    )
+
+    assert result.evaluation.verdict == expected_verdict
+    assert [item.code for item in result.evaluation.diagnostics] == expected_codes
 
 
 def test_insufficient_refusal_persists_its_account(tmp_path: Path) -> None:
