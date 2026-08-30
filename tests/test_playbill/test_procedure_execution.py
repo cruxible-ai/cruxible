@@ -40,17 +40,20 @@ from cruxible_client.contracts.procedures.models import (
     StateTapNodeV3,
     TransformNodeV3,
 )
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.actor_context import GovernedActorContext
-from cruxible_core.playbill.cas import ContentAddressedBodyStore
+from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
     LocalJournalBackend,
+    parse_journal_payload,
 )
 from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RESULT_MAX_BYTES,
     ProcedureExecutor,
     ProviderInvocationResultV1,
+    StateTapReadResultV1,
     _apply_transform,
     _check_return_budget,
     _RunRefusal,
@@ -272,7 +275,13 @@ class _StateReader:
 
     def read_accepted_state(self, *, query, parameters, coordinate):
         self.calls.append((query, parameters, coordinate))
-        return self.value
+        return StateTapReadResultV1(
+            value=self.value,
+            effective_budgets=QueryBudgetsV1(
+                max_results=100,
+                max_traversal_depth=0,
+            ),
+        )
 
 
 class _Contracts:
@@ -350,12 +359,68 @@ def _prepare(accepted: AcceptedProcedureV1, fixture: _Fixture, reader: _StateRea
         run_id=kwargs.get("run_id", "run-a"),
         accepted_coordinate=_coordinate(),
         invocation_input=kwargs.get("invocation_input", {"value": 7}),
-        actor_context=_actor(),
+        actor_context=kwargs.get("actor_context", _actor()),
         state_reader=reader,
+        bodies=fixture.bodies,
         journal_stream=fixture.stream,
-        journal_partition_id="runs",
+        journal_partition_id=kwargs.get("journal_partition_id", "runs"),
         admitted_at=NOW,
     )
+
+
+def test_independent_execution_commits_one_semantic_result_across_partitions(tmp_path) -> None:
+    accepted = _state_procedure()
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir()
+    second_root.mkdir()
+    first_fixture = _fixture(first_root)
+    second_fixture = _fixture(second_root)
+    second_fixture.journal.activate_writer(
+        second_fixture.stream,
+        "other-runs",
+        fencing_token="writer",
+        expected_head=second_fixture.journal.read_head(
+            second_fixture.stream,
+            "other-runs",
+        ),
+    )
+    first = _prepare(accepted, first_fixture, _StateReader())
+    second = _prepare(
+        accepted,
+        second_fixture,
+        _StateReader(),
+        journal_partition_id="other-runs",
+        actor_context=_actor().model_copy(update={"operation_id": "another-request"}),
+    )
+    assert first.admission.semantic_replay_key_digest == second.admission.semantic_replay_key_digest
+    assert first.admission.admission_binding_digest == second.admission.admission_binding_digest
+
+    results = []
+    for fixture, prepared in ((first_fixture, first), (second_fixture, second)):
+        result = ProcedureExecutor(
+            journal=fixture.journal,
+            bodies=fixture.bodies,
+            run_index=fixture.run_index,
+            fencing_token="writer",
+            activation_authority=_Authority(accepted.artifact_digest),
+            contract_validator=_Contracts(),
+        ).execute(prepared, accepted)
+        stored = fixture.journal.all_records(
+            fixture.stream,
+            prepared.admission.journal_partition_id,
+        )[-1]
+        payload = parse_journal_payload(
+            fixture.bodies.read(
+                stored.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+        assert isinstance(payload, dict)
+        results.append((payload["semantic_result_digest"], result.receipt))
+
+    assert results[0][0] == results[1][0]
+    assert results[0][1] != results[1][1]
 
 
 _TRANSFORM_CASES = [

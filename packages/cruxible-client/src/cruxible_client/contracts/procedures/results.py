@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical
+from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.temporal import ensure_utc
 
 ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "binding_required",
@@ -55,7 +59,9 @@ class _StrictResultModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
-def _digest(value: str) -> str:
+def _digest(value: str | None) -> str | None:
+    if value is None:
+        return None
     Sha256Value.from_tagged(value)
     return value
 
@@ -146,6 +152,63 @@ class ProcedureInternalFailureV1(_StrictResultModel):
     journal_coordinate: ProcedureJournalCoordinateV1 | None = None
 
 
+class ProcedureRunAttributionV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-run-attribution-v1"] = "playbill-procedure-run-attribution-v1"
+    actor_type: str
+    actor_id: str
+    org_id: str
+    operation_id: str
+    request_id: str | None = None
+    recorded_time: datetime
+
+    @field_validator("recorded_time")
+    @classmethod
+    def _recorded_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+
+class ProcedureRunReceiptV2(_StrictResultModel):
+    tag: Literal["playbill-procedure-run-receipt-v2"] = "playbill-procedure-run-receipt-v2"
+    run_id: str
+    admission_binding_digest: str
+    semantic_replay_key_digest: str
+    semantic_result_digest: str | None
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
+    lane: Literal["current", "replay"]
+    evaluation_time: datetime
+    validated_pins: tuple[ArtifactPin, ...]
+    admitted_inputs: tuple[dict[str, object], ...]
+    attribution: ProcedureRunAttributionV1
+    stream_instance_id: str
+    journal_family: str
+    stream_id: str
+    partition_id: str
+    first_sequence: int = Field(ge=1)
+    last_sequence: int = Field(ge=1)
+    record_digests: tuple[str, ...]
+    chain_head_digest: str
+
+    _digests = field_validator(
+        "admission_binding_digest",
+        "semantic_replay_key_digest",
+        "semantic_result_digest",
+        "chain_head_digest",
+    )(_digest)
+
+    @field_validator("record_digests")
+    @classmethod
+    def _record_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        for digest in value:
+            _digest(digest)
+        return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+
 ProcedureTerminalV1: TypeAlias = Annotated[
     ProcedureAdmissionRefusalV1
     | ProcedureNodeRefusalV1
@@ -166,5 +229,7 @@ __all__ = [
     "ProcedureNodeRefusalV1",
     "ProcedureOperationalFailureCodeV1",
     "ProcedureOperationalFailureV1",
+    "ProcedureRunAttributionV1",
+    "ProcedureRunReceiptV2",
     "ProcedureTerminalV1",
 ]

@@ -44,6 +44,9 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureInternalFailureV1,
     ProcedureJournalCoordinateV1,
     ProcedureNodeRefusalV1,
+    ProcedureOperationalFailureV1,
+    ProcedureRunAttributionV1,
+    ProcedureRunReceiptV2,
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -59,17 +62,16 @@ from cruxible_core.playbill.exhaust.promotions import VerifiedExhaustRecordV1
 from cruxible_core.playbill.exhaust.records import parse_journal_payload
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.procedures.execution import (
+    PROCEDURE_RUN_RECEIPT_V2_DOMAIN,
+    ProcedureAdmissionBoundPayloadV2,
     ProcedureClockProtocol,
+    ProcedureRunAdmissionV2,
     ProcedureRunReceiptV1,
     prepare_direct_procedure_run,
-    procedure_run_receipt_digest,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.service.documents import (
-    PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
-)
+from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_procedures import (
     PlaybillProcedureStateTapReader,
     service_execute_direct_procedure,
@@ -201,10 +203,19 @@ class ProcedureBindRequestV1(_StrictProcedureSurfaceModel):
         return value
 
 
-class ProcedureBindResultV1(_StrictProcedureSurfaceModel):
-    tag: Literal["playbill-procedure-bind-result-v1"] = "playbill-procedure-bind-result-v1"
-    proposal: PlaybillProposalInspection
-    readiness: ProcedureReadinessResultV1
+class ProcedurePendingSuccessorV1(_StrictProcedureSurfaceModel):
+    tag: Literal["playbill-procedure-pending-successor-v1"] = (
+        "playbill-procedure-pending-successor-v1"
+    )
+    proposal_id: str
+    pending_successor_digest: str
+
+
+class ProcedureBindResultV2(_StrictProcedureSurfaceModel):
+    tag: Literal["playbill-procedure-bind-result-v2"] = "playbill-procedure-bind-result-v2"
+    accepted_digest: str
+    accepted_readiness: ProcedureReadinessResultV1
+    pending: ProcedurePendingSuccessorV1 | None = None
 
 
 class ProcedureRunRequestV1(_StrictProcedureSurfaceModel):
@@ -223,6 +234,23 @@ class ProcedureRunRequestV1(_StrictProcedureSurfaceModel):
         return normalize_canonical(value)
 
 
+class ProcedureRunRequestV2(_StrictProcedureSurfaceModel):
+    tag: Literal["playbill-procedure-run-request-v2"] = "playbill-procedure-run-request-v2"
+    at: AcceptedCoordinate | None = None
+    evaluation_time: datetime | None = None
+    input: object
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _time(cls, value: datetime | None) -> datetime | None:
+        return None if value is None else ensure_utc(value)
+
+    @field_validator("input", mode="before")
+    @classmethod
+    def _input(cls, value: object) -> CanonicalValue:
+        return normalize_canonical(value)
+
+
 class ProcedureRunOutcomeV1(_StrictProcedureSurfaceModel):
     sequence: int = Field(ge=1)
     event_kind: str
@@ -230,28 +258,37 @@ class ProcedureRunOutcomeV1(_StrictProcedureSurfaceModel):
     payload_digest: str
 
 
-class ProcedureRunStateV1(_StrictProcedureSurfaceModel):
-    tag: Literal["playbill-procedure-run-state-v1"] = "playbill-procedure-run-state-v1"
-    run_id: str
+class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
+    tag: Literal["playbill-procedure-run-state-v2"] = "playbill-procedure-run-state-v2"
+    run_id: str | None
     procedure_identity: ArtifactIdentity
     procedure_artifact_digest: str
-    coordinate: PlaybillAcceptedCoordinate
+    bound_coordinate: PlaybillAcceptedCoordinate
+    head_at_admission: PlaybillAcceptedCoordinate
+    lane: Literal["current", "replay"]
     evaluation_time: datetime
     status: Literal[
-        "binding_required",
-        "unsupported",
         "running",
         "succeeded",
-        "refused",
-        "failed",
-        "budget_exhausted",
+        "admission_refused",
+        "node_refused",
+        "operational_failed",
+        "internal_failed",
     ]
     pending_inputs: tuple[str, ...]
     outcomes: tuple[ProcedureRunOutcomeV1, ...]
     next_operation: ProcedureNextOperationV1
     result: object | None = None
+    attribution: ProcedureRunAttributionV1 | None = None
+    semantic_replay_key_digest: str | None = None
+    semantic_result_digest: str | None = None
+    receipt: ProcedureRunReceiptV2 | None = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
+
+    @property
+    def coordinate(self) -> PlaybillAcceptedCoordinate:
+        return self.bound_coordinate
 
 
 def _resolve_coordinate(
@@ -425,7 +462,7 @@ def service_bind_playbill_procedure(
     request: ProcedureBindRequestV1,
     actor: AuthenticatedActor,
     timestamp: str,
-) -> ProcedureBindResultV1:
+) -> ProcedureBindResultV2:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
     tree = instance.tree_at(coordinate.git_oid)
@@ -501,22 +538,17 @@ def service_bind_playbill_procedure(
         candidate_tree=candidate_tree,
         timestamp=timestamp,
     )
-    successor_accepted = AcceptedProcedureV1(
-        path=accepted.path,
-        procedure=successor,
-        artifact_digest=procedure_artifact_digest(successor).tagged,
-    )
-    return ProcedureBindResultV1(
-        proposal=PlaybillProposalInspection(
-            proposal=proposal,
-            accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-                instance.accepted_coordinate()
-            ),
-        ),
-        readiness=_readiness(
-            successor_accepted,
+    pending_digest = procedure_artifact_digest(successor).tagged
+    return ProcedureBindResultV2(
+        accepted_digest=accepted.artifact_digest,
+        accepted_readiness=_readiness(
+            accepted,
             coordinate=coordinate,
             evaluation_time=ensure_utc(datetime.fromisoformat(timestamp.replace("Z", "+00:00"))),
+        ),
+        pending=ProcedurePendingSuccessorV1(
+            proposal_id=proposal.admission.proposal_id,
+            pending_successor_digest=pending_digest,
         ),
     )
 
@@ -570,8 +602,12 @@ def _stream(instance: PlaybillInstance) -> JournalStreamIdentityV1:
     )
 
 
-def _activate_writer(journal: LocalJournalBackend, stream: JournalStreamIdentityV1) -> None:
-    state = journal.writer_state(stream, PROCEDURE_RUN_PARTITION_ID)
+def _activate_writer(
+    journal: LocalJournalBackend,
+    stream: JournalStreamIdentityV1,
+    partition_id: str,
+) -> None:
+    state = journal.writer_state(stream, partition_id)
     if state is not None and state.active:
         if state.fencing_token != PROCEDURE_RUN_FENCING_TOKEN:
             raise ProcedureRunRecoveryRequired(
@@ -580,9 +616,9 @@ def _activate_writer(journal: LocalJournalBackend, stream: JournalStreamIdentity
         return
     journal.activate_writer(
         stream,
-        PROCEDURE_RUN_PARTITION_ID,
+        partition_id,
         fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
-        expected_head=journal.read_head(stream, PROCEDURE_RUN_PARTITION_ID),
+        expected_head=journal.read_head(stream, partition_id),
     )
 
 
@@ -615,7 +651,8 @@ def _records_for_run(instance: PlaybillInstance, run_id: str):  # type: ignore[n
     journal, _root = _journal(instance)
     return tuple(
         item
-        for item in journal.all_records(_stream(instance), PROCEDURE_RUN_PARTITION_ID)
+        for partition_id in journal.partition_ids(_stream(instance))
+        for item in journal.all_records(_stream(instance), partition_id)
         if item.record.run_id == run_id
     )
 
@@ -637,19 +674,22 @@ def _state_from_records(
     *,
     run_id: str,
     receipt: ProcedureRunReceiptV1 | None = None,
-) -> ProcedureRunStateV1:
+) -> ProcedureRunStateV2:
     records = _records_for_run(instance, run_id)
     if not records:
         raise ProcedureRunNotFound(f"{ProcedureRunNotFound.code}: {run_id}")
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="procedure-runtime", can_read_body=True)
-    admission = None
+    admission: ProcedureRunAdmissionV2 | None = None
     final = None
     outcomes: list[ProcedureRunOutcomeV1] = []
     for stored in records:
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
         if stored.record.event_kind == "admission_bound":
-            admission = payload
+            if isinstance(payload, dict) and payload.get("tag") == (
+                "playbill-procedure-admission-bound-payload-v2"
+            ):
+                admission = ProcedureAdmissionBoundPayloadV2.model_validate(payload).admission
         if stored.record.event_kind in {"node_fired", "attempt_finalized"}:
             node_id = payload.get("node_id") if isinstance(payload, dict) else None
             outcomes.append(
@@ -662,30 +702,42 @@ def _state_from_records(
             )
         if stored.record.event_kind == "attempt_finalized":
             final = payload
-    if not isinstance(admission, dict):
+    if admission is None:
         raise ProcedureRunRecoveryRequired(
-            f"{ProcedureRunRecoveryRequired.code}: run lacks admission_bound"
+            f"{ProcedureRunRecoveryRequired.code}: run lacks a v2 admission_bound"
         )
-    status: Literal["running", "succeeded", "refused", "failed", "budget_exhausted"] = "running"
+    status: Literal[
+        "running",
+        "succeeded",
+        "node_refused",
+        "operational_failed",
+        "internal_failed",
+    ] = "running"
     result = None
     terminal: ProcedureTerminalV1 | None = None
+    semantic_result_digest = None
     if isinstance(final, dict):
         raw_status = final.get("status")
         if raw_status not in {"succeeded", "refused", "failed", "budget_exhausted"}:
             raise ProcedureRunRecoveryRequired(
                 f"{ProcedureRunRecoveryRequired.code}: final status is invalid"
             )
-        status = cast(
-            Literal["succeeded", "refused", "failed", "budget_exhausted"],
-            raw_status,
+        status = (
+            "succeeded"
+            if raw_status == "succeeded"
+            else "node_refused"
+            if raw_status in {"refused", "budget_exhausted"}
+            else "internal_failed"
         )
-        result = final.get("output") if status == "succeeded" else None
+        result = final.get("output") if raw_status == "succeeded" else None
+        raw_semantic = final.get("semantic_result_digest")
+        semantic_result_digest = raw_semantic if isinstance(raw_semantic, str) else None
         final_record = records[-1]
         last_node_id = next(
             (item.node_id for item in reversed(outcomes) if item.node_id is not None),
             "procedure",
         )
-        if status == "refused":
+        if raw_status == "refused":
             raw_refusal = final.get("refusal")
             refusal = raw_refusal if isinstance(raw_refusal, dict) else {}
             raw_budget = refusal.get("budget")
@@ -704,46 +756,95 @@ def _state_from_records(
                 details=refusal.get("details", {}),
                 budget=budget,
             )
-        elif status == "budget_exhausted":
+        elif raw_status == "budget_exhausted":
             terminal = ProcedureNodeRefusalV1(
                 code="budget_exhausted",
                 message="Procedure execution exhausted its declared budget.",
                 node_id=last_node_id,
                 journal_coordinate=_journal_coordinate(final_record),
             )
-        elif status == "failed":
-            terminal = ProcedureInternalFailureV1(
-                code="unexpected_exception",
-                message="Procedure execution failed unexpectedly; inspect daemon logs.",
-                correlation_id=run_id,
-                journal_coordinate=_journal_coordinate(final_record),
-            )
-    if receipt is None and final is not None:
-        receipt = ProcedureRunReceiptV1(
+        elif raw_status == "failed":
+            failure_code = final.get("failure_code")
+            if failure_code == "cas_unavailable_at_replay":
+                status = "operational_failed"
+                terminal = ProcedureOperationalFailureV1(
+                    code="cas_unavailable_at_replay",
+                    message="Admitted Procedure replay material is unavailable.",
+                    journal_coordinate=_journal_coordinate(final_record),
+                )
+            else:
+                terminal = ProcedureInternalFailureV1(
+                    code="unexpected_exception",
+                    message="Procedure execution failed unexpectedly; inspect daemon logs.",
+                    correlation_id=run_id,
+                    journal_coordinate=_journal_coordinate(final_record),
+                )
+    attribution = ProcedureRunAttributionV1(
+        actor_type=admission.actor_context.actor_type,
+        actor_id=admission.actor_context.actor_id,
+        org_id=admission.actor_context.org_id,
+        operation_id=admission.actor_context.operation_id,
+        request_id=admission.actor_context.request_id,
+        recorded_time=admission.actor_context.timestamp,
+    )
+    public_receipt = None
+    receipt_digest = None
+    if final is not None:
+        stream = records[0].record.stream
+        public_receipt = ProcedureRunReceiptV2(
             run_id=run_id,
-            admission_binding_digest=str(admission["admission_binding_digest"]),
-            stream=records[0].record.stream,
-            partition_id=PROCEDURE_RUN_PARTITION_ID,
+            admission_binding_digest=admission.admission_binding_digest,
+            semantic_replay_key_digest=admission.semantic_replay_key_digest,
+            semantic_result_digest=semantic_result_digest,
+            bound_coordinate=admission.bound_coordinate,
+            head_at_admission=admission.head_at_admission,
+            lane=admission.lane,
+            evaluation_time=admission.admitted_at,
+            validated_pins=admission.full_pins,
+            admitted_inputs=tuple(
+                cast(dict[str, object], item.model_dump(mode="json"))
+                for item in admission.accepted_state_inputs
+            ),
+            attribution=attribution,
+            stream_instance_id=stream.instance_id,
+            journal_family=stream.journal_family,
+            stream_id=stream.stream_id,
+            partition_id=records[0].record.partition_id,
             first_sequence=records[0].record.sequence,
             last_sequence=records[-1].record.sequence,
             record_digests=tuple(item.record_digest for item in records),
             chain_head_digest=records[-1].record_digest,
         )
+        receipt_digest = typed_digest(
+            Sha256Value,
+            PROCEDURE_RUN_RECEIPT_V2_DOMAIN,
+            {"receipt": public_receipt.model_dump(mode="json")},
+        ).tagged
     next_kind: Literal["retry", "done", "terminal"] = (
         "done" if status == "succeeded" else "retry" if status == "running" else "terminal"
     )
-    return ProcedureRunStateV1(
+    return ProcedureRunStateV2(
         run_id=run_id,
-        procedure_identity=ArtifactIdentity.model_validate(admission["procedure_identity"]),
-        procedure_artifact_digest=str(admission["procedure_artifact_digest"]),
-        coordinate=PlaybillAcceptedCoordinate.model_validate(admission["accepted_coordinate"]),
-        evaluation_time=ensure_utc(datetime.fromisoformat(str(admission["admitted_at"]))),
+        procedure_identity=admission.procedure_identity,
+        procedure_artifact_digest=admission.procedure_artifact_digest,
+        bound_coordinate=PlaybillAcceptedCoordinate.model_validate(
+            admission.bound_coordinate.model_dump(mode="json")
+        ),
+        head_at_admission=PlaybillAcceptedCoordinate.model_validate(
+            admission.head_at_admission.model_dump(mode="json")
+        ),
+        lane=admission.lane,
+        evaluation_time=admission.admitted_at,
         status=status,
         pending_inputs=(),
         outcomes=tuple(outcomes),
         next_operation=ProcedureNextOperationV1(kind=next_kind),
         result=result,
-        receipt_digest=None if receipt is None else procedure_run_receipt_digest(receipt),
+        attribution=attribution,
+        semantic_replay_key_digest=admission.semantic_replay_key_digest,
+        semantic_result_digest=semantic_result_digest,
+        receipt=public_receipt,
+        receipt_digest=receipt_digest,
         terminal=terminal,
     )
 
@@ -752,31 +853,33 @@ def service_run_playbill_procedure(
     instance: PlaybillInstance,
     *,
     name: str,
-    request: ProcedureRunRequestV1,
+    request: ProcedureRunRequestV2,
     actor_context: GovernedActorContext,
-) -> ProcedureRunStateV1:
-    coordinate = instance.accepted_coordinate()
+) -> ProcedureRunStateV2:
+    if request.evaluation_time is None:
+        raise ProcedureSurfaceError(
+            f"{ProcedureSurfaceError.code}: evaluation_time default is not installed"
+        )
+    evaluation_time = request.evaluation_time
+    coordinate = _resolve_coordinate(instance, request.at)
+    head_at_admission = instance.accepted_coordinate()
+    lane: Literal["current", "replay"] = "replay" if request.at is not None else "current"
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
     readiness = _readiness(
         accepted,
         coordinate=coordinate,
-        evaluation_time=request.evaluation_time,
-    )
-    run_id = _run_id(
-        instance,
-        actor_id=actor_context.actor_id,
-        accepted=accepted,
-        coordinate=coordinate,
-        request=request,
+        evaluation_time=evaluation_time,
     )
     if readiness.state == "binding_required":
-        return ProcedureRunStateV1(
-            run_id=run_id,
+        return ProcedureRunStateV2(
+            run_id=None,
             procedure_identity=accepted.procedure.identity,
             procedure_artifact_digest=accepted.artifact_digest,
-            coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-            evaluation_time=request.evaluation_time,
-            status="binding_required",
+            bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+            lane=lane,
+            evaluation_time=evaluation_time,
+            status="admission_refused",
             pending_inputs=readiness.required_slots,
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="bind"),
@@ -787,13 +890,15 @@ def service_run_playbill_procedure(
             ),
         )
     if readiness.state == "unsupported":
-        return ProcedureRunStateV1(
-            run_id=run_id,
+        return ProcedureRunStateV2(
+            run_id=None,
             procedure_identity=accepted.procedure.identity,
             procedure_artifact_digest=accepted.artifact_digest,
-            coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
-            evaluation_time=request.evaluation_time,
-            status="unsupported",
+            bound_coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
+            head_at_admission=PlaybillAcceptedCoordinate.from_internal(head_at_admission),
+            lane=lane,
+            evaluation_time=evaluation_time,
+            status="admission_refused",
             pending_inputs=(),
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="terminal"),
@@ -809,23 +914,26 @@ def service_run_playbill_procedure(
         )
     stream = _stream(instance)
     journal, root = _journal(instance)
-    _activate_writer(journal, stream)
     prepared = prepare_direct_procedure_run(
         accepted,
         instance_id=instance.descriptor.instance_id,
-        run_id=run_id,
+        run_id=None,
         accepted_coordinate=AcceptedCoordinate.from_internal(coordinate),
         invocation_input=request.input,
-        actor_context=actor_context.model_copy(update={"timestamp": request.evaluation_time}),
+        actor_context=actor_context.model_copy(update={"timestamp": evaluation_time}),
         state_reader=PlaybillProcedureStateTapReader(
             instance=instance,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=evaluation_time,
         ),
+        bodies=instance.body_store(),
         journal_stream=stream,
-        journal_partition_id=PROCEDURE_RUN_PARTITION_ID,
-        admitted_at=request.evaluation_time,
+        journal_partition_id=None,
+        head_at_admission=AcceptedCoordinate.from_internal(head_at_admission),
+        lane=lane,
+        admitted_at=evaluation_time,
     )
-    if instance.accepted_coordinate() != coordinate:
+    _activate_writer(journal, stream, prepared.admission.journal_partition_id)
+    if lane == "current" and instance.accepted_coordinate() != coordinate:
         raise ProcedureRunNotCurrent(
             f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before append"
         )
@@ -839,7 +947,7 @@ def service_run_playbill_procedure(
             fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
             activation_authority=_CurrentProcedureAuthority(instance),
             provider_executor=None,
-            clock=_DeterministicClock(request.evaluation_time),
+            clock=_DeterministicClock(evaluation_time),
         )
     except PlaybillExecutionError as exc:
         if "run_recovery_required" in str(exc):
@@ -849,14 +957,14 @@ def service_run_playbill_procedure(
         if "current" in str(exc):
             raise ProcedureRunNotCurrent(f"{ProcedureRunNotCurrent.code}: {exc}") from exc
         raise
-    return _state_from_records(instance, run_id=run_id, receipt=result.receipt)
+    return _state_from_records(instance, run_id=prepared.admission.run_id, receipt=result.receipt)
 
 
 def service_get_playbill_procedure_run(
     instance: PlaybillInstance,
     *,
     run_id: str,
-) -> ProcedureRunStateV1:
+) -> ProcedureRunStateV2:
     return _state_from_records(instance, run_id=run_id)
 
 
@@ -894,11 +1002,12 @@ __all__ = [
     "DirectProcedureReceiptReducer",
     "PROCEDURE_RUN_ID_DOMAIN",
     "ProcedureBindRequestV1",
-    "ProcedureBindResultV1",
+    "ProcedureBindResultV2",
+    "ProcedurePendingSuccessorV1",
     "ProcedureReadinessRequestV1",
     "ProcedureReadinessResultV1",
-    "ProcedureRunRequestV1",
-    "ProcedureRunStateV1",
+    "ProcedureRunRequestV2",
+    "ProcedureRunStateV2",
     "ProcedureSurfaceError",
     "service_bind_playbill_procedure",
     "service_get_playbill_procedure_run",

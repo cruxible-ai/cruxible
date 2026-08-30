@@ -79,7 +79,7 @@ from cruxible_core.server.config import get_runtime_bearer_token, resolve_server
 from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
-    ProcedureRunRequestV1,
+    ProcedureRunRequestV2,
 )
 from cruxible_core.service.playbill_since import validate_playbill_since_request
 
@@ -1155,18 +1155,22 @@ def handle_playbill_procedure_run(
     instance_id: str,
     name: str,
     *,
-    evaluation_time: str,
+    evaluation_time: str | None,
+    at: dict[str, Any] | None,
     input: Any,
 ) -> contracts.PlaybillProcedureRunState:
     evaluated_at = parse_datetime(evaluation_time)
-    if evaluated_at is None:  # pragma: no cover - required public argument
-        raise DataValidationError("Procedure run requires evaluation_time")
-    request = ProcedureRunRequestV1(evaluation_time=evaluated_at, input=input)
+    request = ProcedureRunRequestV2.model_validate(
+        {"evaluation_time": evaluated_at, "at": at, "input": input}
+    )
     return _dispatch_remote_or_local(
         lambda client: client.run_playbill_procedure(
             instance_id,
             name,
-            evaluation_time=request.evaluation_time.isoformat(),
+            evaluation_time=(
+                None if request.evaluation_time is None else request.evaluation_time.isoformat()
+            ),
+            at=None if request.at is None else request.at.model_dump(mode="json"),
             input=request.input,
         ),
         lambda: playbill_api.playbill_procedure_run(instance_id, name, request=request),

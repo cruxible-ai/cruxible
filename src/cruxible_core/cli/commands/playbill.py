@@ -2276,20 +2276,30 @@ def bind_procedure(name: str, request_file: str, output_json: bool) -> None:
 @procedure_group.command("run")
 @click.argument("name")
 @click.argument("input_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--evaluation-time", required=True, help="Explicit ISO-8601 evaluation time.")
+@click.option("--evaluation-time", default=None, help="Explicit ISO-8601 evaluation time.")
+@click.option(
+    "--at",
+    "at_file",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="AcceptedCoordinate JSON/YAML file; its presence selects replay lane.",
+)
 @json_option
 @handle_errors
 def run_procedure(
     name: str,
     input_file: str,
-    evaluation_time: str,
+    evaluation_time: str | None,
+    at_file: str | None,
     output_json: bool,
 ) -> None:
+    at = None if at_file is None else _read_model(at_file, AcceptedCoordinate)
     result = _server_call(
         lambda client, instance_id: client.run_playbill_procedure(
             instance_id,
             name,
             evaluation_time=evaluation_time,
+            at=None if at is None else at.model_dump(mode="json"),
             input=_read_mapping(input_file),
         ),
         command_name="playbill procedure run",

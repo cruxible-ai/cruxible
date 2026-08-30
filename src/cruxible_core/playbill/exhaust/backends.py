@@ -566,6 +566,34 @@ class LocalJournalBackend:
 
         return self._records(stream, partition_id)
 
+    def partition_ids(self, stream: JournalStreamIdentityV1) -> tuple[str, ...]:
+        """List authenticated local partition identities for rebuild-only scans."""
+
+        stream_directory = self._streams_root / _identity_key(stream)
+        if not stream_directory.exists():
+            return ()
+        if stream_directory.is_symlink() or not stream_directory.is_dir():
+            raise PlaybillJournalError("journal stream directory is not trustworthy")
+        found: list[str] = []
+        for directory in stream_directory.iterdir():
+            if directory.is_symlink() or not directory.is_dir():
+                raise PlaybillJournalError("journal partition directory is not trustworthy")
+            identity_path = directory / "identity.json"
+            if identity_path.is_symlink() or not identity_path.is_file():
+                raise PlaybillJournalError("journal partition identity is not trustworthy")
+            try:
+                payload = json.loads(identity_path.read_bytes())
+                partition_id = payload["partition_id"]
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise PlaybillJournalError("journal partition identity is invalid") from exc
+            if not isinstance(partition_id, str):
+                raise PlaybillJournalError("journal partition identity is invalid")
+            expected = self._partition_directory(stream, partition_id, create=False)
+            if expected != directory:
+                raise PlaybillJournalError("journal partition directory identity mismatches")
+            found.append(partition_id)
+        return tuple(sorted(found, key=lambda value: value.encode("utf-8")))
+
     def _record_log_path_for_testing(
         self,
         stream: JournalStreamIdentityV1,

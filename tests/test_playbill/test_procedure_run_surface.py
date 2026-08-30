@@ -22,6 +22,7 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.results import ProcedureAdmissionRefusalV1
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
@@ -31,7 +32,7 @@ from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindingTargetV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
-    ProcedureRunRequestV1,
+    ProcedureRunRequestV2,
     ProcedureSlotBindingRequestV1,
     service_bind_playbill_procedure,
     service_get_playbill_procedure_run,
@@ -98,7 +99,7 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     assert readiness.next_operation.kind == "run"
     assert readiness.required_slots == ()
     assert readiness.unsupported_nodes == ()
-    request = ProcedureRunRequestV1(evaluation_time=READ_TIME, input={})
+    request = ProcedureRunRequestV2(evaluation_time=READ_TIME, input={})
     first = service_run_playbill_procedure(
         instance,
         name=procedure.identity.name,
@@ -109,7 +110,9 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
         instance,
         name=procedure.identity.name,
         request=request,
-        actor_context=_actor(instance),
+        actor_context=_actor(instance).model_copy(
+            update={"operation_id": "random-retry-operation"}
+        ),
     )
 
     assert first == second
@@ -119,6 +122,10 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     assert first.result is not None
     assert len(first.result["rows"]) == 2  # type: ignore[index]
     assert first.receipt_digest is not None
+    assert first.attribution is not None
+    assert first.attribution.operation_id == "served-procedure-test"
+    assert first.semantic_replay_key_digest is not None
+    assert first.semantic_result_digest is not None
     assert service_get_playbill_procedure_run(instance, run_id=first.run_id) == first
 
 
@@ -128,6 +135,42 @@ def test_direct_receipt_reducer_identity_is_stable() -> None:
 
     assert first.reducer_digest == second.reducer_digest
     assert QUERY_NAME
+
+
+def test_explicit_historical_coordinate_uses_read_only_replay_lane(tmp_path: Path) -> None:
+    instance, owner, procedure = _world(tmp_path)
+    historical = instance.accepted_coordinate()
+    successor = procedure.model_copy(
+        update={
+            "lifecycle": procedure.lifecycle.model_copy(
+                update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
+            )
+        }
+    )
+    _activate_procedure(
+        instance,
+        owner,
+        successor,
+        sequence=5,
+        timestamp="2026-08-24T17:00:00.000000Z",
+    )
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(
+            at=AcceptedCoordinate.from_internal(historical),
+            evaluation_time=READ_TIME,
+            input={},
+        ),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "succeeded"
+    assert run.lane == "replay"
+    assert run.bound_coordinate.git_oid == historical.git_oid
+    assert run.head_at_admission.git_oid == instance.accepted_coordinate().git_oid
+    assert run.evaluation_time == READ_TIME
 
 
 def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path: Path) -> None:
@@ -180,10 +223,10 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
     blocked = service_run_playbill_procedure(
         instance,
         name=abstract.identity.name,
-        request=ProcedureRunRequestV1(evaluation_time=READ_TIME, input={}),
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
         actor_context=_actor(instance),
     )
-    assert blocked.status == "binding_required"
+    assert blocked.status == "admission_refused"
     assert isinstance(blocked.terminal, ProcedureAdmissionRefusalV1)
     assert blocked.terminal.code == "binding_required"
 
@@ -205,15 +248,14 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
         timestamp="2026-08-24T16:00:00.000000Z",
     )
 
-    assert result.readiness.state == "ready"
-    assert result.readiness.procedure_identity == ArtifactIdentity(
+    assert result.accepted_digest == procedure_artifact_digest(abstract).tagged
+    assert result.accepted_readiness.state == "binding_required"
+    assert result.accepted_readiness.procedure_identity == ArtifactIdentity(
         kind="Procedure", name=abstract.identity.name
     )
-    assert result.proposal.proposal.candidate is not None
-    assert result.proposal.proposal.candidate.members[0].artifact_kind == "procedure"
-    successor = result.proposal.proposal.candidate.members[0]
-    assert successor.disposition == "replace"
-    assert successor.candidate_artifact_digest != procedure_artifact_digest(abstract).tagged
+    assert result.pending is not None
+    assert result.pending.proposal_id.startswith("sha256:")
+    assert result.pending.pending_successor_digest != procedure_artifact_digest(abstract).tagged
     assert isinstance(query_pin, ArtifactPin)
 
 
@@ -265,7 +307,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     run = service_run_playbill_procedure(
         instance,
         name=unsupported.identity.name,
-        request=ProcedureRunRequestV1(evaluation_time=READ_TIME, input={}),
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
         actor_context=_actor(instance),
     )
 

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -54,6 +54,7 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import ProcedureBudgetRefusalDetailV1
+from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
@@ -84,6 +85,7 @@ from cruxible_core.playbill.procedures.egress import (
 )
 from cruxible_core.playbill.procedures.input_planes import (
     AcceptedStateRunInputV1,
+    AcceptedStateRunInputV2,
     ExhaustRunInputV1,
     LandedCaptureRunInputV1,
     ProcedureRunInputV1,
@@ -117,6 +119,12 @@ from cruxible_core.playbill.procedures.terminal_dependencies import (
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
 ProcedureRunStatusV1 = Literal["succeeded", "refused", "failed", "budget_exhausted"]
+
+PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN = "playbill-procedure-semantic-replay-key-v1"
+PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
+PROCEDURE_ADMISSION_BINDING_V2_DOMAIN = "playbill-procedure-run-admission-v2"
+PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
+PROCEDURE_RUN_RECEIPT_V2_DOMAIN = "playbill-procedure-run-receipt-v2"
 
 
 class _StrictExecutionModel(BaseModel):
@@ -177,6 +185,25 @@ class AcceptedStateRunMaterialV1(_StrictExecutionModel):
 
     @model_validator(mode="after")
     def _digest(self) -> "AcceptedStateRunMaterialV1":
+        if self.input.result_digest != run_value_digest("state-result", self.value):
+            raise ValueError("accepted-state material does not reproduce its result digest")
+        return self
+
+
+class AcceptedStateRunMaterialV2(_StrictExecutionModel):
+    tag: Literal["playbill-accepted-state-run-material-v2"] = (
+        "playbill-accepted-state-run-material-v2"
+    )
+    input: AcceptedStateRunInputV2
+    value: object
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _digest(self) -> "AcceptedStateRunMaterialV2":
         if self.input.result_digest != run_value_digest("state-result", self.value):
             raise ValueError("accepted-state material does not reproduce its result digest")
         return self
@@ -338,6 +365,28 @@ class ProcedureRunAdmissionV1(_StrictExecutionModel):
         return self
 
 
+class ProcedureRunAdmissionV2(ProcedureRunAdmissionV1):
+    tag: Literal["playbill-procedure-run-admission-v2"] = "playbill-procedure-run-admission-v2"  # type: ignore[assignment]
+    accepted_state_inputs: tuple[AcceptedStateRunInputV2, ...]  # type: ignore[assignment]
+    bound_coordinate: AcceptedCoordinate
+    head_at_admission: AcceptedCoordinate
+    lane: Literal["current", "replay"]
+    semantic_replay_key_digest: str
+
+    @field_validator("semantic_replay_key_digest")
+    @classmethod
+    def _semantic_replay_key(cls, value: str) -> str:
+        return _sha256(value, label="semantic_replay_key_digest")
+
+    @model_validator(mode="after")
+    def _v2_shape(self) -> "ProcedureRunAdmissionV2":
+        if self.accepted_coordinate != self.bound_coordinate:
+            raise ValueError("v2 admission bound and accepted coordinates differ")
+        if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
+            raise ValueError("semantic replay key does not reproduce")
+        return self
+
+
 class LandedCaptureRunMaterialV1(_StrictExecutionModel):
     """One admitted landed Capture and the exact envelope its digest reproduces."""
 
@@ -399,6 +448,20 @@ class PreparedProcedureRunV1(_StrictExecutionModel):
         if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
             raise ValueError("prepared acquisition outcomes must be sorted and unique")
         return self
+
+
+class PreparedProcedureRunV2(PreparedProcedureRunV1):
+    tag: Literal["playbill-prepared-procedure-run-v2"] = "playbill-prepared-procedure-run-v2"  # type: ignore[assignment]
+    admission: ProcedureRunAdmissionV2
+    accepted_state_materials: tuple[AcceptedStateRunMaterialV2, ...]  # type: ignore[assignment]
+
+
+class ProcedureAdmissionBoundPayloadV2(_StrictExecutionModel):
+    tag: Literal["playbill-procedure-admission-bound-payload-v2"] = (
+        "playbill-procedure-admission-bound-payload-v2"
+    )
+    admission: ProcedureRunAdmissionV2
+    accepted_state_materials: tuple[AcceptedStateRunMaterialV2, ...]
 
 
 class ProcedureRunRefusalV1(_StrictExecutionModel):
@@ -479,6 +542,43 @@ def procedure_run_receipt_digest(receipt: ProcedureRunReceiptV1) -> str:
     ).tagged
 
 
+def _semantic_refusal_payload(refusal: ProcedureRunRefusalV1) -> CanonicalValue:
+    return normalize_canonical(
+        {
+            "code": refusal.code,
+            "node_id": refusal.node_id,
+            "detail_code": (
+                refusal.code if refusal.code not in {"guard_refused", "budget_exhausted"} else None
+            ),
+            "details": refusal.details,
+            "budget": None if refusal.budget is None else refusal.budget.model_dump(mode="json"),
+        }
+    )
+
+
+def procedure_semantic_result_digest(
+    *,
+    semantic_replay_key_digest: str,
+    status: Literal["succeeded", "refused"],
+    output: CanonicalValue | None,
+    refusal: ProcedureRunRefusalV1 | None,
+) -> str:
+    """Commit only replay-stable output or refusal material."""
+
+    if (status == "refused") != (refusal is not None):
+        raise ValueError("semantic Procedure refusal shape is inconsistent")
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_SEMANTIC_RESULT_DOMAIN,
+        {
+            "semantic_replay_key_digest": semantic_replay_key_digest,
+            "status": status,
+            "output": output if status == "succeeded" else None,
+            "refusal": None if refusal is None else _semantic_refusal_payload(refusal),
+        },
+    ).tagged
+
+
 class ProviderInvocationResultV1(_StrictExecutionModel):
     tag: Literal["playbill-provider-invocation-result-v1"] = (
         "playbill-provider-invocation-result-v1"
@@ -492,6 +592,17 @@ class ProviderInvocationResultV1(_StrictExecutionModel):
         return normalize_canonical(value)
 
 
+class StateTapReadResultV1(_StrictExecutionModel):
+    tag: Literal["playbill-state-tap-read-result-v1"] = "playbill-state-tap-read-result-v1"
+    value: object
+    effective_budgets: QueryBudgetsV1
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+
 class StateTapReaderProtocol(Protocol):
     def read_accepted_state(
         self,
@@ -499,7 +610,7 @@ class StateTapReaderProtocol(Protocol):
         query: ArtifactPin,
         parameters: CanonicalValue,
         coordinate: AcceptedCoordinate,
-    ) -> object: ...
+    ) -> StateTapReadResultV1: ...
 
 
 class ProviderExecutorProtocol(Protocol):
@@ -563,7 +674,52 @@ def procedure_pin_set_digest(
     ).tagged
 
 
+def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:
+    pins = [
+        {
+            "role": pin.role,
+            "target": pin.target.model_dump(mode="json"),
+            "artifact_digest": pin.artifact_digest,
+        }
+        for pin in admission.full_pins
+    ]
+    pins.sort(key=canonical_bytes)
+    admitted_inputs = [
+        {
+            "input_name": item.input_name,
+            "read_coordinate": item.read_coordinate.model_dump(mode="json"),
+            "query_definition_digest": item.query_definition_digest,
+            "parameters_digest": item.parameters_digest,
+            "result_digest": item.result_digest,
+            "effective_query_budgets": item.effective_query_budgets.model_dump(mode="json"),
+        }
+        for item in admission.accepted_state_inputs
+    ]
+    admitted_inputs.sort(key=lambda item: str(item["input_name"]).encode("utf-8"))
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN,
+        {
+            "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
+            "procedure_artifact_digest": admission.procedure_artifact_digest,
+            "invocation_input": admission.invocation_input,
+            "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
+            "evaluation_time": format_datetime(admission.admitted_at),
+            "validated_pins": pins,
+            "admitted_inputs": admitted_inputs,
+            "budget": admission.budget.model_dump(mode="json"),
+            "hard_caps": admission.hard_caps.model_dump(mode="json"),
+        },
+    ).tagged
+
+
 def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
+    if isinstance(admission, ProcedureRunAdmissionV2):
+        return typed_digest(
+            ArtifactDigest,
+            PROCEDURE_ADMISSION_BINDING_V2_DOMAIN,
+            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
+        ).tagged
     payload = admission.model_dump(mode="json")
     payload.pop("tag")
     payload.pop("admission_binding_digest")
@@ -653,16 +809,19 @@ def prepare_direct_procedure_run(
     accepted: AcceptedProcedureV1,
     *,
     instance_id: str,
-    run_id: str,
+    run_id: str | None,
     accepted_coordinate: AcceptedCoordinate,
     invocation_input: object,
     actor_context: GovernedActorContext,
     state_reader: StateTapReaderProtocol,
+    bodies: ContentAddressedBodyStore,
     journal_stream: JournalStreamIdentityV1,
-    journal_partition_id: str,
+    journal_partition_id: str | None,
+    head_at_admission: AcceptedCoordinate | None = None,
+    lane: Literal["current", "replay"] = "current",
     admitted_at: datetime,
     attempt: int = 1,
-) -> PreparedProcedureRunV1:
+) -> PreparedProcedureRunV2:
     """Bind exact accepted state and all pins for an actor-authenticated direct run."""
 
     procedure = accepted.procedure
@@ -671,36 +830,40 @@ def prepare_direct_procedure_run(
     if procedure_artifact_digest(procedure).tagged != accepted.artifact_digest:
         raise PlaybillExecutionError("accepted Procedure artifact digest does not reproduce")
 
-    materials: list[AcceptedStateRunMaterialV1] = []
+    materials: list[AcceptedStateRunMaterialV2] = []
     for node in procedure.definition.nodes:
         if not isinstance(node, StateTapNodeV3):
             continue
         query = _exact_pin(node.query, label=f"state_tap {node.node_id!r}")
         parameters = normalize_canonical(node.parameters)
-        value = normalize_canonical(
-            state_reader.read_accepted_state(
-                query=query,
-                parameters=parameters,
-                coordinate=accepted_coordinate,
-            )
+        read = state_reader.read_accepted_state(
+            query=query,
+            parameters=parameters,
+            coordinate=accepted_coordinate,
         )
-        run_input = AcceptedStateRunInputV1(
+        value = normalize_canonical(read.value)
+        retained = bodies.store(canonical_bytes(value))
+        run_input = AcceptedStateRunInputV2(
             input_name=node.as_,
             read_coordinate=accepted_coordinate,
             query_definition_digest=query.artifact_digest,
             parameters_digest=run_value_digest("state-parameters", parameters),
             result_digest=run_value_digest("state-result", value),
+            effective_query_budgets=read.effective_budgets,
+            material_body_digest=retained.digest,
         )
-        materials.append(AcceptedStateRunMaterialV1(input=run_input, value=value))
+        materials.append(AcceptedStateRunMaterialV2(input=run_input, value=value))
     materials.sort(key=lambda item: item.input.input_name.encode("utf-8"))
 
     node_pin_sets = _node_pin_sets(accepted)
     full_pins = procedure.pins
     pin_digest = procedure_pin_set_digest(full_pins, node_pin_sets)
-    provisional = ProcedureRunAdmissionV1.model_construct(
+    placeholder_run_id = run_id or "RUN-" + "0" * 64
+    placeholder_partition = journal_partition_id or "direct:" + "0" * 64
+    provisional = ProcedureRunAdmissionV2.model_construct(
         _fields_set=None,
         instance_id=instance_id,
-        run_id=run_id,
+        run_id=placeholder_run_id,
         attempt=attempt,
         accepted_coordinate=accepted_coordinate,
         procedure_identity=procedure.identity,
@@ -718,7 +881,7 @@ def prepare_direct_procedure_run(
         actor_context=actor_context,
         invocation_origin="actor",
         journal_stream=journal_stream,
-        journal_partition_id=journal_partition_id,
+        journal_partition_id=placeholder_partition,
         line_spec_digest=None,
         occurrence_id=None,
         deployment_snapshot_digest=None,
@@ -728,10 +891,28 @@ def prepare_direct_procedure_run(
         epsilon_member=False,
         admitted_at=ensure_utc(admitted_at),
         admission_binding_digest="sha256:" + "0" * 64,
+        bound_coordinate=accepted_coordinate,
+        head_at_admission=head_at_admission or accepted_coordinate,
+        lane=lane,
+        semantic_replay_key_digest="sha256:" + "0" * 64,
     )
-    admission = ProcedureRunAdmissionV1(
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    semantic_run_id = "RUN-" + typed_digest(
+        Sha256Value,
+        PROCEDURE_RUN_ID_V2_DOMAIN,
+        {"semantic_replay_key_digest": replay_key},
+    ).tagged.removeprefix("sha256:")
+    semantic_partition = "direct:" + replay_key.removeprefix("sha256:")
+    provisional = provisional.model_copy(
+        update={
+            "run_id": semantic_run_id,
+            "journal_partition_id": journal_partition_id or semantic_partition,
+            "semantic_replay_key_digest": replay_key,
+        }
+    )
+    admission = ProcedureRunAdmissionV2(
         instance_id=instance_id,
-        run_id=run_id,
+        run_id=semantic_run_id,
         attempt=attempt,
         accepted_coordinate=accepted_coordinate,
         procedure_identity=procedure.identity,
@@ -749,11 +930,15 @@ def prepare_direct_procedure_run(
         actor_context=actor_context,
         invocation_origin="actor",
         journal_stream=journal_stream,
-        journal_partition_id=journal_partition_id,
+        journal_partition_id=journal_partition_id or semantic_partition,
         admitted_at=ensure_utc(admitted_at),
+        bound_coordinate=accepted_coordinate,
+        head_at_admission=head_at_admission or accepted_coordinate,
+        lane=lane,
+        semantic_replay_key_digest=replay_key,
         admission_binding_digest=procedure_admission_digest(provisional),
     )
-    return PreparedProcedureRunV1(
+    return PreparedProcedureRunV2(
         admission=admission,
         accepted_state_materials=tuple(materials),
     )
@@ -896,15 +1081,29 @@ class ProcedureExecutor:
             admission,
             records,
             "admission_bound",
-            admission.model_dump(mode="json"),
+            (
+                ProcedureAdmissionBoundPayloadV2(
+                    admission=admission,
+                    accepted_state_materials=prepared.accepted_state_materials,
+                ).model_dump(mode="json")
+                if isinstance(admission, ProcedureRunAdmissionV2)
+                and isinstance(prepared, PreparedProcedureRunV2)
+                else admission.model_dump(mode="json")
+            ),
         )
 
-        state = self._seed_state(prepared)
+        state = _RunState(
+            outputs={},
+            input_payload=normalize_canonical(admission.invocation_input),
+            parameters={},
+        )
         status: ProcedureRunStatusV1
         output: CanonicalValue | None = None
         refusal: ProcedureRunRefusalV1 | None = None
         failure_message: str | None = None
+        failure_code: str | None = None
         try:
+            state = self._seed_state(prepared)
             input_contract = self._pin(
                 accepted.procedure.definition.contract_in,
                 label="Procedure contract_in",
@@ -930,15 +1129,35 @@ class ProcedureExecutor:
         except _BudgetExceeded as exc:
             status = "budget_exhausted"
             failure_message = str(exc)
+        except PlaybillExecutionError as exc:
+            status = "failed"
+            raw_code = str(exc).split(":", 1)[0]
+            failure_code = (
+                raw_code
+                if raw_code in {"cas_unavailable_at_replay", "replay_material_mismatch"}
+                else "unexpected_exception"
+            )
+            failure_message = "Procedure execution failed."
         except Exception as exc:
             status = "failed"
             failure_message = f"{type(exc).__name__}: {exc}"
+            failure_code = "unexpected_exception"
 
+        semantic_result_digest = None
+        if isinstance(admission, ProcedureRunAdmissionV2) and status in {"succeeded", "refused"}:
+            semantic_result_digest = procedure_semantic_result_digest(
+                semantic_replay_key_digest=admission.semantic_replay_key_digest,
+                status=cast(Literal["succeeded", "refused"], status),
+                output=output,
+                refusal=refusal,
+            )
         final_payload = {
             "status": status,
             "output": output,
             "refusal": None if refusal is None else refusal.model_dump(mode="json"),
             "failure": failure_message,
+            "failure_code": failure_code,
+            "semantic_result_digest": semantic_result_digest,
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
         }
@@ -968,6 +1187,20 @@ class ProcedureExecutor:
             outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
         )
         for accepted_state in prepared.accepted_state_materials:
+            if isinstance(accepted_state, AcceptedStateRunMaterialV2):
+                access = BodyAccessContext(
+                    principal_id="procedure-runtime",
+                    can_read_body=True,
+                )
+                try:
+                    retained = self.bodies.read(
+                        accepted_state.input.material_body_digest,
+                        access=access,
+                    )
+                except Exception as exc:
+                    raise PlaybillExecutionError("cas_unavailable_at_replay") from exc
+                if retained != canonical_bytes(accepted_state.value):
+                    raise PlaybillExecutionError("replay_material_mismatch")
             digest = run_input_digest(accepted_state.input)
             name = accepted_state.input.input_name
             state.outputs[name] = normalize_canonical(accepted_state.value)
@@ -1157,6 +1390,8 @@ class ProcedureExecutor:
                 )
 
     def _require_current(self, admission: ProcedureRunAdmissionV1) -> None:
+        if isinstance(admission, ProcedureRunAdmissionV2) and admission.lane == "replay":
+            return
         current = self.activation_authority.current_procedure_digest(
             admission.procedure_identity,
             coordinate=admission.accepted_coordinate,

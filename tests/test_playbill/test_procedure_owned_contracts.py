@@ -215,6 +215,7 @@ def test_query_only_procedure_runs_through_daemon_query_without_provider(
             instance=instance,
             evaluation_time=READ_TIME,
         ),
+        bodies=ContentAddressedBodyStore(cas_root),
         journal_stream=stream,
         journal_partition_id="runs",
         admitted_at=READ_TIME,

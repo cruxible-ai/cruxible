@@ -177,7 +177,7 @@ from cruxible_core.service.playbill_next import (
 from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
-    ProcedureRunRequestV1,
+    ProcedureRunRequestV2,
     service_bind_playbill_procedure,
     service_get_playbill_procedure_run,
     service_playbill_procedure_readiness,
@@ -1288,7 +1288,7 @@ def playbill_procedure_run(
     instance_id: str,
     name: str,
     *,
-    request: ProcedureRunRequestV1,
+    request: ProcedureRunRequestV2,
 ) -> contracts.PlaybillProcedureRunState:
     check_permission("cruxible_playbill_procedure_run", instance_id=instance_id)
     actor = _actor_context()
