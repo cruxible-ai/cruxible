@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -53,7 +54,10 @@ from cruxible_client.contracts.procedures.models import (
     TransformNodeV3,
     iter_pin_bindings,
 )
-from cruxible_client.contracts.procedures.results import ProcedureBudgetRefusalDetailV1
+from cruxible_client.contracts.procedures.results import (
+    ProcedureBudgetRefusalDetailV1,
+    ProcedureNodeRefusalCodeV1,
+)
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_core.playbill.actor_context import GovernedActorContext
@@ -946,7 +950,7 @@ def prepare_direct_procedure_run(
 class _RunRefusal(Exception):
     def __init__(
         self,
-        code: str,
+        code: ProcedureNodeRefusalCodeV1,
         message: str,
         *,
         node_id: str | None = None,
@@ -966,7 +970,34 @@ class _RunRefusal(Exception):
 
 
 class _BudgetExceeded(Exception):
-    pass
+    def __init__(
+        self,
+        budget_kind: Literal["wall_clock", "max_provider_calls", "max_capture_bytes"],
+        *,
+        limit: int,
+        observed: int,
+        node_id: str,
+    ) -> None:
+        super().__init__(f"Procedure {budget_kind} budget exhausted")
+        self.budget_kind = budget_kind
+        self.limit = limit
+        self.observed = observed
+        self.node_id = node_id
+
+
+class _OperationalFailure(Exception):
+    def __init__(
+        self,
+        code: Literal["cas_unavailable_at_replay", "replay_material_mismatch"],
+    ) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class _TransformInputInvalid(PlaybillExecutionError):
+    def __init__(self, message: str, *, slot: str) -> None:
+        super().__init__(message)
+        self.slot = slot
 
 
 @dataclass
@@ -1128,21 +1159,34 @@ class ProcedureExecutor:
             status = "refused"
             refusal = exc.refusal
         except _BudgetExceeded as exc:
-            if isinstance(admission, ProcedureRunAdmissionV2) and "wall-clock" in str(exc):
+            if isinstance(admission, ProcedureRunAdmissionV2) and exc.budget_kind == "wall_clock":
                 status = "failed"
                 failure_code = "wall_clock_exhausted"
                 failure_message = "Procedure execution exceeded its operational budget."
             else:
-                status = "budget_exhausted"
-                failure_message = str(exc)
-        except PlaybillExecutionError as exc:
+                status = (
+                    "refused"
+                    if isinstance(admission, ProcedureRunAdmissionV2)
+                    else "budget_exhausted"
+                )
+                failure_message = "Procedure execution exhausted its declared budget."
+                refusal = ProcedureRunRefusalV1(
+                    code="budget_exhausted",
+                    message=failure_message,
+                    node_id=exc.node_id,
+                    budget=ProcedureBudgetRefusalDetailV1(
+                        budget_kind=exc.budget_kind,
+                        limit=exc.limit,
+                        observed=exc.observed,
+                    ),
+                )
+        except _OperationalFailure as exc:
             status = "failed"
-            raw_code = str(exc).split(":", 1)[0]
-            failure_code = (
-                raw_code
-                if raw_code in {"cas_unavailable_at_replay", "replay_material_mismatch"}
-                else "unexpected_exception"
-            )
+            failure_code = exc.code
+            failure_message = "Procedure execution failed."
+        except PlaybillExecutionError:
+            status = "failed"
+            failure_code = "unexpected_exception"
             failure_message = "Procedure execution failed."
         except Exception as exc:
             status = "failed"
@@ -1204,12 +1248,23 @@ class ProcedureExecutor:
                         access=access,
                     )
                 except Exception as exc:
-                    raise PlaybillExecutionError("cas_unavailable_at_replay") from exc
-                if retained != canonical_bytes(accepted_state.value):
-                    raise PlaybillExecutionError("cas_unavailable_at_replay")
+                    raise _OperationalFailure("cas_unavailable_at_replay") from exc
+                try:
+                    retained_value = normalize_canonical(json.loads(retained))
+                except Exception as exc:
+                    raise _OperationalFailure("replay_material_mismatch") from exc
+                if (
+                    canonical_bytes(retained_value) != retained
+                    or run_value_digest("state-result", retained_value)
+                    != accepted_state.input.result_digest
+                ):
+                    raise _OperationalFailure("replay_material_mismatch")
+                value = retained_value
+            else:
+                value = accepted_state.value
             digest = run_input_digest(accepted_state.input)
             name = accepted_state.input.input_name
-            state.outputs[name] = normalize_canonical(accepted_state.value)
+            state.outputs[name] = normalize_canonical(value)
             state.provenance[name] = AliasProvenanceV1(
                 whole=frozenset(
                     {
@@ -1417,14 +1472,30 @@ class ProcedureExecutor:
         state: _RunState,
         *,
         started_ns: int,
+        node_id: str,
     ) -> None:
         elapsed_us = (self.clock.monotonic_ns() - started_ns) // 1000
         if elapsed_us > admission.budget.wall_clock.microseconds:
-            raise _BudgetExceeded("Procedure wall-clock budget exhausted")
+            raise _BudgetExceeded(
+                "wall_clock",
+                limit=admission.budget.wall_clock.microseconds,
+                observed=elapsed_us,
+                node_id=node_id,
+            )
         if state.provider_calls > admission.budget.max_provider_calls:
-            raise _BudgetExceeded("Procedure provider-call budget exhausted")
+            raise _BudgetExceeded(
+                "max_provider_calls",
+                limit=admission.budget.max_provider_calls,
+                observed=state.provider_calls,
+                node_id=node_id,
+            )
         if state.capture_bytes > admission.budget.max_capture_bytes:
-            raise _BudgetExceeded("Procedure capture-byte budget exhausted")
+            raise _BudgetExceeded(
+                "max_capture_bytes",
+                limit=admission.budget.max_capture_bytes,
+                observed=state.capture_bytes,
+                node_id=node_id,
+            )
 
     def _walk(
         self,
@@ -1440,9 +1511,14 @@ class ProcedureExecutor:
         nodes = {node.node_id: node for node in definition.nodes}
         current = definition.nodes[0].node_id
         while True:
-            self._checkpoint_current(admission, effect=False)
-            self._check_budget(admission, state, started_ns=started_ns)
             node = nodes[current]
+            self._checkpoint_current(admission, effect=False)
+            self._check_budget(
+                admission,
+                state,
+                started_ns=started_ns,
+                node_id=node.node_id,
+            )
             try:
                 branch = self._execute_node(
                     node,
@@ -1451,7 +1527,12 @@ class ProcedureExecutor:
                     records=records,
                     started_ns=started_ns,
                 )
-                self._check_budget(admission, state, started_ns=started_ns)
+                self._check_budget(
+                    admission,
+                    state,
+                    started_ns=started_ns,
+                    node_id=node.node_id,
+                )
                 self._append_event(
                     admission,
                     records,
@@ -1774,9 +1855,12 @@ class ProcedureExecutor:
                 disposition="refused",
             )
             raise _RunRefusal(
-                decision.reason_codes[0]
-                if decision.reason_codes
-                else "playbill.acquisition.refused",
+                cast(
+                    ProcedureNodeRefusalCodeV1,
+                    decision.reason_codes[0]
+                    if decision.reason_codes
+                    else "playbill.acquisition.refused",
+                ),
                 "The declared acquisition rule refuses this typed source result.",
                 node_id=node.node_id,
             )
@@ -1920,7 +2004,7 @@ class ProcedureExecutor:
                 {**payload, "verdict": "refused_effective_rung"},
             )
             raise _RunRefusal(
-                rung.refusal_code,
+                cast(ProcedureNodeRefusalCodeV1, rung.refusal_code),
                 f"Terminal {node.kind!r} requires rung {required}; the "
                 f"{rung.limiting_term} term capped this run at {rung.effective_rung}. "
                 f"{rung.term(rung.limiting_term).reason}",
@@ -2112,7 +2196,12 @@ class ProcedureExecutor:
             )
         )
         if state.provider_calls >= admission.budget.max_provider_calls:
-            raise _BudgetExceeded("Procedure provider-call budget exhausted")
+            raise _BudgetExceeded(
+                "max_provider_calls",
+                limit=admission.budget.max_provider_calls,
+                observed=state.provider_calls + 1,
+                node_id=node.node_id,
+            )
         state.provider_calls += 1
         effect_policy = node.effect_policy
         effectful = effect_policy is not None
@@ -2151,7 +2240,11 @@ class ProcedureExecutor:
                 declared_effect_grants=self.declared_effect_grants,
             )
             if refusal is not None:
-                raise _RunRefusal(*refusal, node_id=node.node_id)
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCodeV1, refusal[0]),
+                    refusal[1],
+                    node_id=node.node_id,
+                )
         result = self.provider_executor.execute_provider(
             provider=provider,
             environment=environment,
@@ -2204,7 +2297,12 @@ class ProcedureExecutor:
                     local_provenance=local_provenance,
                     records=records,
                 )
-                self._check_budget(admission, state, started_ns=started_ns)
+                self._check_budget(
+                    admission,
+                    state,
+                    started_ns=started_ns,
+                    node_id=body.node_id,
+                )
             try:
                 verdict, trace = _evaluate_predicate(
                     node.until,
@@ -2337,7 +2435,12 @@ class ProcedureExecutor:
         contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
         contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
         if state.provider_calls >= admission.budget.max_provider_calls:
-            raise _BudgetExceeded("Procedure provider-call budget exhausted")
+            raise _BudgetExceeded(
+                "max_provider_calls",
+                limit=admission.budget.max_provider_calls,
+                observed=state.provider_calls + 1,
+                node_id=body.node_id,
+            )
         state.provider_calls += 1
         validated_input = normalize_canonical(
             self.contract_validator.validate_contract(
@@ -2774,7 +2877,7 @@ def _declared_transform_spec(kind: str, spec: object) -> CanonicalValue:
     return normalize_canonical(payload)
 
 
-_TRANSFORM_INPUT_REFUSAL_CODES: dict[str, str] = {
+_TRANSFORM_INPUT_REFUSAL_CODES: dict[str, ProcedureNodeRefusalCodeV1] = {
     "adapter": "adapter_value_invalid",
     "shape_items": "shape_items_input_invalid",
     "filter_items": "filter_items_input_invalid",
@@ -2814,7 +2917,7 @@ def _resolve_node_template(
             node_id=node_id,
         ) from exc
     except Exception as exc:
-        code = (
+        code: ProcedureNodeRefusalCodeV1 = (
             "result_not_canonical"
             if transform_kind is None
             else _TRANSFORM_INPUT_REFUSAL_CODES[transform_kind]
@@ -2843,8 +2946,11 @@ def _validate_node_contract(
             )
         )
     except Exception as exc:
+        code: ProcedureNodeRefusalCodeV1 = (
+            "contract_input_refused" if direction == "input" else "contract_output_refused"
+        )
         raise _RunRefusal(
-            "contract_input_refused" if direction == "input" else "contract_output_refused",
+            code,
             f"The Procedure node {direction} contract refused its value.",
             node_id=node_id,
         ) from exc
@@ -2861,12 +2967,18 @@ def _apply_node_transform(
         return _apply_transform(kind, spec, max_items=max_items, node_id=node_id)
     except _RunRefusal:
         raise
-    except PlaybillExecutionError as exc:
+    except _TransformInputInvalid as exc:
         code = _TRANSFORM_INPUT_REFUSAL_CODES[kind]
-        if kind == "join_items" and "right" in str(exc):
+        if kind == "join_items" and exc.slot == "right_items":
             code = "join_items_right_input_invalid"
         raise _RunRefusal(
             code,
+            f"The {kind} transform input is invalid.",
+            node_id=node_id,
+        ) from exc
+    except PlaybillExecutionError as exc:
+        raise _RunRefusal(
+            _TRANSFORM_INPUT_REFUSAL_CODES[kind],
             f"The {kind} transform input is invalid.",
             node_id=node_id,
         ) from exc
@@ -2929,7 +3041,11 @@ def _extract_items(
                 node_id=node_id,
             )
         return [normalize_canonical(item) for item in value["items"]]
-    raise PlaybillExecutionError(f"{label} requires a list or object with an items list")
+    slot = "right_items" if label == "join_items right_items" else "left_items"
+    raise _TransformInputInvalid(
+        f"{label} requires a list or object with an items list",
+        slot=slot,
+    )
 
 
 _ItemLineage = tuple[tuple[tuple[str, int], ...], ...]

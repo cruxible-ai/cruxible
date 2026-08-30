@@ -17,6 +17,7 @@ from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     GenerationRoot,
     SemanticRoot,
+    canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.captures import CanonicalDurationV1
@@ -719,6 +720,115 @@ def test_successful_state_run_binds_inputs_and_logs_every_path(tmp_path) -> None
     assert result.receipt.record_digests == tuple(item.record_digest for item in records)
 
 
+def _final_payload(fixture: _Fixture, partition_id: str = "runs") -> dict[str, object]:
+    stored = fixture.journal.all_records(fixture.stream, partition_id)[-1]
+    payload = parse_journal_payload(
+        fixture.bodies.read(
+            stored.record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert isinstance(payload, dict)
+    return payload
+
+
+def test_v2_execution_reads_retained_state_from_an_independent_handle(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    prepared = _prepare(accepted, fixture, _StateReader())
+    independent_bodies = ContentAddressedBodyStore(fixture.bodies.root)
+    assert independent_bodies is not fixture.bodies
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=independent_bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(prepared, accepted)
+
+    assert result.status == "succeeded"
+    assert result.output == {"items": [{"id": "one"}], "status": "ok"}
+
+
+def test_missing_retained_state_is_a_typed_operational_failure(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    prepared = _prepare(accepted, fixture, _StateReader())
+    assert fixture.bodies.erase(prepared.accepted_state_materials[0].input.material_body_digest)
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(prepared, accepted)
+
+    assert result.status == "failed"
+    assert _final_payload(fixture)["failure_code"] == "cas_unavailable_at_replay"
+
+
+def test_retained_state_result_mismatch_is_typed(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    prepared = _prepare(accepted, fixture, _StateReader())
+    material = prepared.accepted_state_materials[0]
+    other = fixture.bodies.store(canonical_bytes({"items": [{"id": "other"}]}))
+    mismatched_input = material.input.model_copy(update={"material_body_digest": other.digest})
+    mismatched = prepared.model_copy(
+        update={
+            "admission": prepared.admission.model_copy(
+                update={"accepted_state_inputs": (mismatched_input,)}
+            ),
+            "accepted_state_materials": (material.model_copy(update={"input": mismatched_input}),),
+        }
+    )
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(mismatched, accepted)
+
+    assert result.status == "failed"
+    assert _final_payload(fixture)["failure_code"] == "replay_material_mismatch"
+
+
+class _ExpiredBudgetClock:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def now(self):
+        return NOW
+
+    def monotonic_ns(self):
+        self.calls += 1
+        return 0 if self.calls == 1 else 2_000_000_000
+
+
+def test_wall_clock_exhaustion_uses_typed_classification(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        clock=_ExpiredBudgetClock(),
+    ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
+
+    assert result.status == "failed"
+    assert _final_payload(fixture)["failure_code"] == "wall_clock_exhausted"
+
+
 def test_false_guard_is_a_typed_refusal_with_complete_finalize(tmp_path) -> None:
     fixture = _fixture(tmp_path)
     accepted = _state_procedure(false_branch=True)
@@ -809,7 +919,16 @@ def test_provider_budget_refuses_before_effect_intent_or_dispatch(tmp_path) -> N
         provider_executor=provider,
     ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
 
-    assert result.status == "budget_exhausted"
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "budget_exhausted"
+    assert result.refusal.budget is not None
+    assert result.refusal.budget.model_dump(mode="json") == {
+        "tag": "playbill-procedure-budget-refusal-detail-v1",
+        "budget_kind": "max_provider_calls",
+        "limit": 0,
+        "observed": 1,
+    }
     assert provider.calls == 0
     assert "effect_intent" not in {
         item.record.event_kind for item in fixture.journal.all_records(fixture.stream, "runs")

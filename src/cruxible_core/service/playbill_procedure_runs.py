@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.canonical import (
@@ -729,57 +729,74 @@ def _state_from_records(
             (item.node_id for item in reversed(outcomes) if item.node_id is not None),
             "procedure",
         )
-        if raw_status == "refused":
-            raw_refusal = final.get("refusal")
-            refusal = raw_refusal if isinstance(raw_refusal, dict) else {}
-            raw_budget = refusal.get("budget")
-            budget = (
-                ProcedureBudgetRefusalDetailV1.model_validate(raw_budget)
-                if isinstance(raw_budget, dict)
-                else None
-            )
-            refusal_code = str(refusal.get("code", "guard_refused"))
-            raw_detail_code = refusal.get("detail_code")
-            terminal = ProcedureNodeRefusalV1.model_validate(
-                {
-                    "code": refusal_code,
-                    "message": str(refusal.get("message", "Procedure node refused execution.")),
-                    "node_id": str(refusal.get("node_id") or last_node_id),
-                    "journal_coordinate": _journal_coordinate(final_record),
-                    "detail_code": (raw_detail_code if isinstance(raw_detail_code, str) else None),
-                    "details": refusal.get("details", {}),
-                    "budget": budget,
-                }
-            )
-        elif raw_status == "budget_exhausted":
-            terminal = ProcedureNodeRefusalV1(
-                code="budget_exhausted",
-                message="Procedure execution exhausted its declared budget.",
-                node_id=last_node_id,
-                journal_coordinate=_journal_coordinate(final_record),
-            )
-        elif raw_status == "failed":
-            failure_code = final.get("failure_code")
-            if failure_code in {"cas_unavailable_at_replay", "wall_clock_exhausted"}:
-                status = "operational_failed"
-                terminal = ProcedureOperationalFailureV1.model_validate(
+        try:
+            if raw_status in {"refused", "budget_exhausted"}:
+                raw_refusal = final.get("refusal")
+                refusal = raw_refusal if isinstance(raw_refusal, dict) else {}
+                raw_budget = refusal.get("budget")
+                budget = (
+                    ProcedureBudgetRefusalDetailV1.model_validate(raw_budget)
+                    if isinstance(raw_budget, dict)
+                    else None
+                )
+                refusal_code = str(refusal.get("code", "guard_refused"))
+                raw_detail_code = refusal.get("detail_code")
+                terminal = ProcedureNodeRefusalV1.model_validate(
                     {
-                        "code": failure_code,
-                        "message": (
-                            "Admitted Procedure replay material is unavailable."
-                            if failure_code == "cas_unavailable_at_replay"
-                            else "Procedure execution exceeded its wall-clock budget."
-                        ),
+                        "code": refusal_code,
+                        "message": str(refusal.get("message", "Procedure node refused execution.")),
+                        "node_id": str(refusal.get("node_id") or last_node_id),
                         "journal_coordinate": _journal_coordinate(final_record),
+                        "detail_code": (
+                            raw_detail_code if isinstance(raw_detail_code, str) else None
+                        ),
+                        "details": refusal.get("details", {}),
+                        "budget": budget,
                     }
                 )
-            else:
-                terminal = ProcedureInternalFailureV1(
-                    code="unexpected_exception",
-                    message="Procedure execution failed unexpectedly; inspect daemon logs.",
-                    correlation_id=run_id,
-                    journal_coordinate=_journal_coordinate(final_record),
-                )
+            elif raw_status == "failed":
+                failure_code = final.get("failure_code")
+                if failure_code in {
+                    "cas_unavailable_at_replay",
+                    "replay_material_mismatch",
+                    "wall_clock_exhausted",
+                }:
+                    status = "operational_failed"
+                    messages = {
+                        "cas_unavailable_at_replay": (
+                            "Admitted Procedure replay material is unavailable."
+                        ),
+                        "replay_material_mismatch": (
+                            "Admitted Procedure replay material does not match its binding."
+                        ),
+                        "wall_clock_exhausted": (
+                            "Procedure execution exceeded its wall-clock budget."
+                        ),
+                    }
+                    terminal = ProcedureOperationalFailureV1.model_validate(
+                        {
+                            "code": failure_code,
+                            "message": messages[str(failure_code)],
+                            "journal_coordinate": _journal_coordinate(final_record),
+                        }
+                    )
+                else:
+                    terminal = ProcedureInternalFailureV1(
+                        code="unexpected_exception",
+                        message="Procedure execution failed unexpectedly; inspect daemon logs.",
+                        correlation_id=run_id,
+                        journal_coordinate=_journal_coordinate(final_record),
+                    )
+        except (ValidationError, TypeError, ValueError):
+            status = "internal_failed"
+            result = None
+            semantic_result_digest = None
+            terminal = ProcedureInternalFailureV1(
+                code="run_record_invalid",
+                message="Procedure run record is invalid; inspect daemon logs.",
+                correlation_id=run_id,
+                journal_coordinate=_journal_coordinate(final_record),
+            )
     attribution = ProcedureRunAttributionV1(
         actor_type=admission.actor_context.actor_type,
         actor_id=admission.actor_context.actor_id,

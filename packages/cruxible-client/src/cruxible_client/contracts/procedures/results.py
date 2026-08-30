@@ -38,10 +38,29 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "join_items_right_input_invalid",
     "aggregate_items_input_invalid",
     "result_not_canonical",
+    "line_binding_required",
+    "source_acquisition_unavailable",
+    "source_material_unavailable",
+    "terminal_not_available",
+    "terminal_egress_unverified",
+    "provider_unavailable",
+    "playbill.acquisition.unavailable",
+    "playbill.acquisition.stale",
+    "playbill.acquisition.oversized",
+    "playbill.acquisition.refused",
+    "effect_grant_unrecognized",
+    "effect_dispatch_requires_actor",
+    "effect_dispatch_requires_authenticated_actor",
+    "terminal_rung_capped_by_procedure_terminal_capability",
+    "terminal_rung_capped_by_line_requested_rung",
+    "terminal_rung_capped_by_propagated_sensitivity",
+    "terminal_rung_capped_by_mandate_grant",
+    "terminal_rung_capped_by_calibration",
 ]
 ProcedureOperationalFailureCodeV1: TypeAlias = Literal[
     "wall_clock_exhausted",
     "cas_unavailable_at_replay",
+    "replay_material_mismatch",
     "journal_append_failed",
     "journal_read_failed",
     "journal_conflict",
@@ -84,8 +103,14 @@ class ProcedureBudgetRefusalDetailV1(_StrictResultModel):
     tag: Literal["playbill-procedure-budget-refusal-detail-v1"] = (
         "playbill-procedure-budget-refusal-detail-v1"
     )
-    budget_kind: Literal["max_items", "result_bytes"]
-    limit: int = Field(ge=1)
+    budget_kind: Literal[
+        "max_items",
+        "result_bytes",
+        "wall_clock",
+        "max_provider_calls",
+        "max_capture_bytes",
+    ]
+    limit: int = Field(ge=0)
     observed: int = Field(ge=1)
 
 
