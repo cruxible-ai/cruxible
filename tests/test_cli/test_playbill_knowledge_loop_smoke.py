@@ -282,14 +282,30 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             "--payload-file",
             payload_file,
         )
-        submitted = cruxible.json(
-            "playbill",
-            "authoring",
-            "submit",
-            str(bound["certificate"]["intent_id"]),
-        )
-        claim_identities.append(f"Claim:{submitted['intent']['semantic_identity']}")
-        cruxible.accept(str(submitted["status"]["proposal_id"]))
+        intent_id = str(bound["certificate"]["intent_id"])
+        if subject_id == "wi-42":
+            brief = cruxible.run(
+                "playbill",
+                "authoring",
+                "submit",
+                intent_id,
+                "--and-activate",
+                "--brief",
+            ).stdout
+            assert "outcome: accepted" in brief
+            assert "coordinate: " in brief
+            assert "receipt: playbill-activation-receipt-v1" in brief
+            intent = cruxible.json("playbill", "authoring", "get", intent_id)["intent"]
+            claim_identities.append(f"Claim:{intent['semantic_identity']}")
+        else:
+            submitted = cruxible.json(
+                "playbill",
+                "authoring",
+                "submit",
+                intent_id,
+            )
+            claim_identities.append(f"Claim:{submitted['intent']['semantic_identity']}")
+            cruxible.accept(str(submitted["status"]["proposal_id"]))
 
     # 5. Publish the named entrypoint that reads them.
     proposed = cruxible.json(

@@ -1786,6 +1786,7 @@ def submit_authoring_intent(
                 ),
                 "receipt": activation.tag if activation is not None else None,
             },
+            reason=_submit_refusal_reason(submitted),
             next_command=_submit_next_command(submitted, activated=activation is not None),
         )
         return
@@ -1801,6 +1802,29 @@ def _not_activated_note(state: str) -> str:
             "Collect it with `cruxible playbill proposal approve`, then activate."
         )
     return f"not activated: the candidate is {state}, not ready_to_activate"
+
+
+def _submit_refusal_reason(submitted: Any) -> str | None:
+    """Render the complete typed preflight refusal on one transcript line."""
+
+    if submitted.status.state != "preflight_refused" or not isinstance(submitted.intent, Mapping):
+        return None
+    preflight = submitted.intent.get("last_preflight")
+    frontier = preflight.get("frontier") if isinstance(preflight, Mapping) else None
+    diagnostics = frontier.get("diagnostics") if isinstance(frontier, Mapping) else None
+    if not isinstance(diagnostics, list | tuple):
+        return "preflight refused without a delivered diagnostic"
+    rendered: list[str] = []
+    for diagnostic in diagnostics:
+        if not isinstance(diagnostic, Mapping):
+            continue
+        code = diagnostic.get("code")
+        message = diagnostic.get("message")
+        if not isinstance(code, str) or not isinstance(message, str):
+            continue
+        one_line_message = " ".join(message.split())
+        rendered.append(f"{code}: {one_line_message}")
+    return "; ".join(rendered) or "preflight refused without a delivered diagnostic"
 
 
 def _submit_next_command(submitted: Any, *, activated: bool) -> str | None:
