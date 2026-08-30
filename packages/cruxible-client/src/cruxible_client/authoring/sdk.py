@@ -2087,14 +2087,19 @@ class Procedure:
         )
         return result
 
-    def run(self, **inputs: CanonicalValue) -> ProcedureRun:
+    def run(
+        self,
+        *,
+        at: AcceptedCoordinate | None = None,
+        **inputs: CanonicalValue,
+    ) -> ProcedureRun:
         self._playbill._assert_coordinate(self._coordinate)
         normalized = normalize_canonical(inputs)
         result = self._playbill._client.run_playbill_procedure(
             self._playbill._instance_id,
             self._name,
             evaluation_time=self._playbill._evaluation_time(),
-            at=_api_coordinate(self._coordinate),
+            at=None if at is None else _api_coordinate(at),
             input=normalized,
         )
         return ProcedureRun(self._playbill, result)
