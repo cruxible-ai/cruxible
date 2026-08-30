@@ -1280,6 +1280,7 @@ class ProcedureExecutor:
                 node.spec,
                 input_payload=state.input_payload,
                 outputs=state.outputs,
+                preserve_item_references=True,
             )
             contract_in = self._pin(node.contract_in, label=f"transform {node.node_id!r} input")
             validated_input = normalize_canonical(
@@ -1958,7 +1959,12 @@ class ProcedureExecutor:
     ) -> None:
         combined = {**state.outputs, **local_outputs}
         spec = normalize_canonical(
-            _resolve_template(body.spec, input_payload=state.input_payload, outputs=combined)
+            _resolve_template(
+                body.spec,
+                input_payload=state.input_payload,
+                outputs=combined,
+                preserve_item_references=body.operation == "transform",
+            )
         )
         if body.operation == "transform":
             contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
@@ -2315,8 +2321,11 @@ def _resolve_template(
     input_payload: CanonicalValue,
     outputs: dict[str, CanonicalValue],
     item: CanonicalValue | None = None,
+    preserve_item_references: bool = False,
 ) -> CanonicalValue:
     if isinstance(value, str):
+        if preserve_item_references and (value == "$item" or value.startswith("$item.")):
+            return value
         return normalize_canonical(
             _resolve_reference(
                 value,
@@ -2332,6 +2341,7 @@ def _resolve_template(
                 input_payload=input_payload,
                 outputs=outputs,
                 item=item,
+                preserve_item_references=preserve_item_references,
             )
             for member in value
         ]
@@ -2342,6 +2352,7 @@ def _resolve_template(
                 input_payload=input_payload,
                 outputs=outputs,
                 item=item,
+                preserve_item_references=preserve_item_references,
             )
             for key, member in value.items()
         }

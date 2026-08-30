@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+import cruxible_core.playbill.procedures.execution as execution_module
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactPin,
@@ -37,6 +38,7 @@ from cruxible_client.contracts.procedures.models import (
     ProviderNodeV3,
     SourceNodeV3,
     StateTapNodeV3,
+    TransformNodeV3,
 )
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import ContentAddressedBodyStore
@@ -48,6 +50,7 @@ from cruxible_core.playbill.exhaust import (
 from cruxible_core.playbill.procedures.execution import (
     ProcedureExecutor,
     ProviderInvocationResultV1,
+    _apply_transform,
     prepare_direct_procedure_run,
 )
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
@@ -191,6 +194,31 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
     return _accepted(definition, pins=(contract_in, contract_out, query))
 
 
+def _transform_procedure(kind: str, spec: object) -> AcceptedProcedureV1:
+    contract_in = _pin("contract-in", "Contract", "input")
+    contract_out = _pin("contract-out", "Contract", "output")
+    definition = ProcedureDefinitionV3(
+        name=f"{kind.replace('_', '-')}-procedure",
+        contract_in=contract_in,
+        contract_out=contract_out,
+        nodes=(
+            TransformNodeV3(
+                node_id="transform",
+                transform_kind=kind,  # type: ignore[arg-type]
+                contract_in=contract_in,
+                contract_out=contract_out,
+                spec=spec,
+                as_="result",
+            ),
+        ),
+        returns="result",
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+        terminal_capability=1,
+    )
+    return _accepted(definition, pins=(contract_in, contract_out))
+
+
 def _provider_procedure(
     *,
     effectful: bool,
@@ -325,6 +353,159 @@ def _prepare(accepted: AcceptedProcedureV1, fixture: _Fixture, reader: _StateRea
         journal_partition_id="runs",
         admitted_at=NOW,
     )
+
+
+_TRANSFORM_CASES = [
+    (
+        "adapter",
+        {"arbitrary": ["bridge", {"value": 2}]},
+        {"arbitrary": ["bridge", {"value": 2}]},
+        None,
+    ),
+    (
+        "shape_items",
+        {
+            "items": [{"id": "a", "keep": True}, {"id": "b", "keep": False}],
+            "fields": {"identifier": "$item.id"},
+            "include_input": True,
+        },
+        {
+            "items": [
+                {"id": "a", "identifier": "a", "keep": True},
+                {"id": "b", "identifier": "b", "keep": False},
+            ],
+            "input_count": 2,
+            "output_count": 2,
+        },
+        ((("items", 0),), (("items", 1),)),
+    ),
+    (
+        "filter_items",
+        {
+            "items": [{"id": "a", "keep": True}, {"id": "b", "keep": False}],
+            "where": {"keep": True},
+        },
+        {
+            "items": [{"id": "a", "keep": True}],
+            "input_count": 2,
+            "output_count": 1,
+        },
+        ((("items", 0),),),
+    ),
+    (
+        "dedupe_items",
+        {
+            "items": [{"id": "a", "v": 1}, {"id": "a", "v": 2}, {"id": "b"}],
+            "keys": ["id"],
+        },
+        {
+            "items": [{"id": "a", "v": 1}, {"id": "b"}],
+            "input_count": 3,
+            "output_count": 2,
+        },
+        ((("items", 0),), (("items", 2),)),
+    ),
+    (
+        "join_items",
+        {
+            "left_items": [{"id": "a", "left": 1}, {"id": "b", "left": 2}],
+            "right_items": [{"key": "b", "right": 3}, {"key": "a", "right": 4}],
+            "left_key": "id",
+            "right_key": "key",
+            "fields": {"id": "$item.left.id", "value": "$item.right.right"},
+        },
+        {"items": [{"id": "a", "value": 4}, {"id": "b", "value": 3}], "output_count": 2},
+        (
+            (("left_items", 0), ("right_items", 1)),
+            (("left_items", 1), ("right_items", 0)),
+        ),
+    ),
+    (
+        "aggregate_items",
+        {"items": [{"id": "a"}, {"id": "b"}]},
+        {"count": 2},
+        None,
+    ),
+]
+
+
+@pytest.mark.parametrize(("kind", "spec", "expected", "lineage"), _TRANSFORM_CASES)
+def test_existing_transform_kernel_matrix_preserves_output_and_lineage(
+    kind: str,
+    spec: object,
+    expected: object,
+    lineage: object,
+) -> None:
+    assert _apply_transform(kind, spec) == (expected, lineage)
+
+
+@pytest.mark.parametrize(("kind", "spec", "expected", "lineage"), _TRANSFORM_CASES)
+def test_existing_transform_kernel_matrix_runs_through_procedure_executor(
+    tmp_path,
+    monkeypatch,
+    kind: str,
+    spec: object,
+    expected: object,
+    lineage: object,
+) -> None:
+    accepted = _transform_procedure(kind, spec)
+    fixture = _fixture(tmp_path)
+    prepared = _prepare(accepted, fixture, _StateReader())
+    observed_lineage: list[object] = []
+    existing_kernel = execution_module._apply_transform
+
+    def record_kernel(*args, **kwargs):  # type: ignore[no-untyped-def]
+        value, actual_lineage = existing_kernel(*args, **kwargs)
+        observed_lineage.append(actual_lineage)
+        return value, actual_lineage
+
+    monkeypatch.setattr(execution_module, "_apply_transform", record_kernel)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(prepared, accepted)
+
+    assert result.status == "succeeded"
+    assert result.output == expected
+    assert observed_lineage == [lineage]
+
+
+@pytest.mark.parametrize(
+    ("kind", "spec", "message"),
+    [
+        ("shape_items", {"items": "not-a-list", "fields": {}}, "requires a list"),
+        ("filter_items", {"items": "not-a-list", "where": {}}, "requires a list"),
+        ("dedupe_items", {"items": [], "keys": "id"}, "keys must be a string list"),
+        (
+            "join_items",
+            {
+                "left_items": [],
+                "right_items": "not-a-list",
+                "left_key": "id",
+                "right_key": "id",
+                "fields": {},
+            },
+            "requires a list",
+        ),
+        ("aggregate_items", {"items": "not-a-list"}, "requires a list"),
+    ],
+)
+def test_existing_transform_kernel_matrix_refuses_malformed_inputs(
+    kind: str,
+    spec: object,
+    message: str,
+) -> None:
+    with pytest.raises(PlaybillExecutionError, match=message):
+        _apply_transform(kind, spec)
+
+
+def test_existing_adapter_kernel_accepts_every_canonical_shape() -> None:
+    for value in (None, True, 3, "text", [1, 2], {"items": [1, 2]}):
+        assert _apply_transform("adapter", value) == (value, None)
 
 
 def test_successful_state_run_binds_inputs_and_logs_every_path(tmp_path) -> None:
