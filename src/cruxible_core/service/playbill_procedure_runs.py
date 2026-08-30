@@ -90,9 +90,7 @@ PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_PARTITION_ID = "direct-runs"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
 DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
-SERVED_NODE_KINDS = frozenset(
-    {"state_tap", "transform", "project", "guard", "repeat", "halt"}
-)
+SERVED_NODE_KINDS = frozenset({"state_tap", "transform", "project", "guard", "repeat", "halt"})
 
 
 class _StrictProcedureSurfaceModel(BaseModel):

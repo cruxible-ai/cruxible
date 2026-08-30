@@ -615,9 +615,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     halting_nodes[1] = halting_gate.model_copy(
         update={
             "predicate": halting_gate.predicate.model_copy(
-                update={
-                    "right": halting_gate.predicate.right.model_copy(update={"value": False})
-                }
+                update={"right": halting_gate.predicate.right.model_copy(update={"value": False})}
             ),
             "on_false": "stop",
         }
@@ -627,9 +625,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     halting = unsupported.model_copy(
         update={
             "definition": halting_definition,
-            "definition_digest": compute_procedure_definition_digest_v3(
-                halting_definition
-            ).tagged,
+            "definition_digest": compute_procedure_definition_digest_v3(halting_definition).tagged,
             "lifecycle": refusing.lifecycle.model_copy(
                 update={"predecessor_digest": procedure_artifact_digest(refusing).tagged}
             ),

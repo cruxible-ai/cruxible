@@ -1061,9 +1061,7 @@ class _RunState:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
         current = (
             b"" if self.max_items_boundary is None else self.max_items_boundary.encode("utf-8"),
-            b""
-            if self.max_items_field_path is None
-            else self.max_items_field_path.encode("utf-8"),
+            b"" if self.max_items_field_path is None else self.max_items_field_path.encode("utf-8"),
         )
         if observed > self.max_items_high_water or (
             observed == self.max_items_high_water
@@ -3119,9 +3117,7 @@ def _validate_node_contract(
                 max_items=max_items,
             )
             if not isinstance(budget_result, ValidatedProcedureContract):
-                raise PlaybillExecutionError(
-                    "Contract budget validator returned an invalid result"
-                )
+                raise PlaybillExecutionError("Contract budget validator returned an invalid result")
             if observe_items is not None:
                 for observation in budget_result.list_observations:
                     observe_items(observation.observed, boundary, observation.field_path)

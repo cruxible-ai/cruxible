@@ -12165,10 +12165,14 @@
                 "$ref": "#/$defs/ProcedureRunReceiptV2"
               },
               {
+                "$ref": "#/$defs/ProcedureRunReceiptV3"
+              },
+              {
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "title": "Receipt"
           }
         },
         "receipt_digest": {
@@ -12272,7 +12276,8 @@
               "admission_refused",
               "node_refused",
               "operational_failed",
-              "internal_failed"
+              "internal_failed",
+              "halted"
             ],
             "title": "Status",
             "type": "string"
@@ -12305,6 +12310,8 @@
                 "discriminator": {
                   "mapping": {
                     "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusalV1",
+                    "playbill-procedure-budget-exhausted-v1": "#/$defs/ProcedureBudgetExhaustedV1",
+                    "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
                     "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
@@ -12323,6 +12330,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureHaltTerminalV1"
                   }
                 ]
               },
@@ -12416,6 +12429,27 @@
             "title": "ArtifactPin",
             "type": "object"
           },
+          "CanonicalDurationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "microseconds": {
+                "minimum": 0,
+                "title": "Microseconds",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-duration-v1",
+                "default": "playbill-duration-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "microseconds"
+            ],
+            "title": "CanonicalDurationV1",
+            "type": "object"
+          },
           "PlaybillAcceptedCoordinate": {
             "additionalProperties": false,
             "properties": {
@@ -12505,6 +12539,153 @@
             "title": "ProcedureAdmissionRefusalV1",
             "type": "object"
           },
+          "ProcedureBudgetBoundaryObservationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "boundary": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Boundary"
+              },
+              "field_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Field Path"
+              },
+              "high_water": {
+                "minimum": 0,
+                "title": "High Water",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-boundary-observation-v1",
+                "default": "playbill-procedure-budget-boundary-observation-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "high_water"
+            ],
+            "title": "ProcedureBudgetBoundaryObservationV1",
+            "type": "object"
+          },
+          "ProcedureBudgetExceededDetailV1": {
+            "additionalProperties": false,
+            "properties": {
+              "boundary": {
+                "title": "Boundary",
+                "type": "string"
+              },
+              "dimension": {
+                "const": "max_items",
+                "default": "max_items",
+                "title": "Dimension",
+                "type": "string"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "limit": {
+                "minimum": 1,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "observed": {
+                "minimum": 1,
+                "title": "Observed",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-exceeded-detail-v1",
+                "default": "playbill-procedure-budget-exceeded-detail-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "limit",
+              "observed",
+              "boundary",
+              "field_path"
+            ],
+            "title": "ProcedureBudgetExceededDetailV1",
+            "type": "object"
+          },
+          "ProcedureBudgetExhaustedV1": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "budget_exhausted",
+                "default": "budget_exhausted",
+                "title": "Classification",
+                "type": "string"
+              },
+              "code": {
+                "const": "budget_max_items_exceeded",
+                "default": "budget_max_items_exceeded",
+                "title": "Code",
+                "type": "string"
+              },
+              "details": {
+                "$ref": "#/$defs/ProcedureBudgetExceededDetailV1"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "message": {
+                "const": "A Procedure collection exceeded its declared item bound.",
+                "default": "A Procedure collection exceeded its declared item bound.",
+                "title": "Message",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "retryable": {
+                "const": false,
+                "default": false,
+                "title": "Retryable",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-exhausted-v1",
+                "default": "playbill-procedure-budget-exhausted-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "details"
+            ],
+            "title": "ProcedureBudgetExhaustedV1",
+            "type": "object"
+          },
           "ProcedureBudgetRefusalDetailV1": {
             "additionalProperties": false,
             "properties": {
@@ -12542,6 +12723,149 @@
               "observed"
             ],
             "title": "ProcedureBudgetRefusalDetailV1",
+            "type": "object"
+          },
+          "ProcedureBudgetV3": {
+            "additionalProperties": false,
+            "properties": {
+              "max_capture_bytes": {
+                "maximum": 9223372036854775807,
+                "minimum": 0,
+                "title": "Max Capture Bytes",
+                "type": "integer"
+              },
+              "max_items": {
+                "anyOf": [
+                  {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Items"
+              },
+              "max_provider_calls": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "Max Provider Calls",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-budget-v1",
+                "default": "playbill-procedure-budget-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "wall_clock": {
+                "$ref": "#/$defs/CanonicalDurationV1"
+              }
+            },
+            "required": [
+              "wall_clock",
+              "max_provider_calls",
+              "max_capture_bytes"
+            ],
+            "title": "ProcedureBudgetV3",
+            "type": "object"
+          },
+          "ProcedureHaltTerminalV1": {
+            "additionalProperties": false,
+            "properties": {
+              "classification": {
+                "const": "halted",
+                "default": "halted",
+                "title": "Classification",
+                "type": "string"
+              },
+              "journal_coordinate": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ProcedureJournalCoordinateV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Reason"
+              },
+              "tag": {
+                "const": "playbill-procedure-halt-terminal-v1",
+                "default": "playbill-procedure-halt-terminal-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id"
+            ],
+            "title": "ProcedureHaltTerminalV1",
+            "type": "object"
+          },
+          "ProcedureHardCapsV3": {
+            "additionalProperties": false,
+            "properties": {
+              "max_capture_bytes": {
+                "maximum": 9223372036854775807,
+                "minimum": 0,
+                "title": "Max Capture Bytes",
+                "type": "integer"
+              },
+              "max_items": {
+                "maximum": 2147483647,
+                "minimum": 1,
+                "title": "Max Items",
+                "type": "integer"
+              },
+              "max_provider_calls": {
+                "maximum": 1000000,
+                "minimum": 0,
+                "title": "Max Provider Calls",
+                "type": "integer"
+              },
+              "max_repeat_attempts": {
+                "maximum": 25,
+                "minimum": 1,
+                "title": "Max Repeat Attempts",
+                "type": "integer"
+              },
+              "max_wall_clock": {
+                "$ref": "#/$defs/CanonicalDurationV1"
+              },
+              "tag": {
+                "const": "playbill-procedure-hard-caps-v1",
+                "default": "playbill-procedure-hard-caps-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "max_wall_clock",
+              "max_provider_calls",
+              "max_capture_bytes",
+              "max_items",
+              "max_repeat_attempts"
+            ],
+            "title": "ProcedureHardCapsV3",
             "type": "object"
           },
           "ProcedureInternalFailureV1": {
@@ -12879,6 +13203,99 @@
             "title": "ProcedureRunAttributionV1",
             "type": "object"
           },
+          "ProcedureRunBudgetDeclaredV1": {
+            "additionalProperties": false,
+            "properties": {
+              "budget": {
+                "$ref": "#/$defs/ProcedureBudgetV3"
+              },
+              "hard_caps": {
+                "$ref": "#/$defs/ProcedureHardCapsV3"
+              },
+              "result_bytes_cap": {
+                "const": 1048576,
+                "default": 1048576,
+                "title": "Result Bytes Cap",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-budget-declared-v1",
+                "default": "playbill-procedure-run-budget-declared-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "budget",
+              "hard_caps"
+            ],
+            "title": "ProcedureRunBudgetDeclaredV1",
+            "type": "object"
+          },
+          "ProcedureRunBudgetObservedV1": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_bytes": {
+                "minimum": 0,
+                "title": "Capture Bytes",
+                "type": "integer"
+              },
+              "max_items": {
+                "$ref": "#/$defs/ProcedureBudgetBoundaryObservationV1"
+              },
+              "provider_calls": {
+                "minimum": 0,
+                "title": "Provider Calls",
+                "type": "integer"
+              },
+              "result_bytes": {
+                "$ref": "#/$defs/ProcedureBudgetBoundaryObservationV1"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-budget-observed-v1",
+                "default": "playbill-procedure-run-budget-observed-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "wall_clock_microseconds": {
+                "minimum": 0,
+                "title": "Wall Clock Microseconds",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "max_items",
+              "result_bytes",
+              "provider_calls",
+              "capture_bytes",
+              "wall_clock_microseconds"
+            ],
+            "title": "ProcedureRunBudgetObservedV1",
+            "type": "object"
+          },
+          "ProcedureRunBudgetV1": {
+            "additionalProperties": false,
+            "properties": {
+              "declared": {
+                "$ref": "#/$defs/ProcedureRunBudgetDeclaredV1"
+              },
+              "observed": {
+                "$ref": "#/$defs/ProcedureRunBudgetObservedV1"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-budget-v1",
+                "default": "playbill-procedure-run-budget-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "declared",
+              "observed"
+            ],
+            "title": "ProcedureRunBudgetV1",
+            "type": "object"
+          },
           "ProcedureRunReceiptV2": {
             "additionalProperties": false,
             "properties": {
@@ -13009,6 +13426,195 @@
             ],
             "title": "ProcedureRunReceiptV2",
             "type": "object"
+          },
+          "ProcedureRunReceiptV3": {
+            "additionalProperties": false,
+            "properties": {
+              "admission_binding_digest": {
+                "title": "Admission Binding Digest",
+                "type": "string"
+              },
+              "admitted_inputs": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Admitted Inputs",
+                "type": "array"
+              },
+              "attribution": {
+                "$ref": "#/$defs/ProcedureRunAttributionV1"
+              },
+              "bound_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "budget": {
+                "$ref": "#/$defs/ProcedureRunBudgetV1"
+              },
+              "chain_head_digest": {
+                "title": "Chain Head Digest",
+                "type": "string"
+              },
+              "evaluation_time": {
+                "format": "date-time",
+                "title": "Evaluation Time",
+                "type": "string"
+              },
+              "first_sequence": {
+                "minimum": 1,
+                "title": "First Sequence",
+                "type": "integer"
+              },
+              "head_at_admission": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "lane": {
+                "enum": [
+                  "current",
+                  "replay"
+                ],
+                "title": "Lane",
+                "type": "string"
+              },
+              "last_sequence": {
+                "minimum": 1,
+                "title": "Last Sequence",
+                "type": "integer"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "record_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Record Digests",
+                "type": "array"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "semantic_replay_key_digest": {
+                "title": "Semantic Replay Key Digest",
+                "type": "string"
+              },
+              "semantic_result_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Semantic Result Digest"
+              },
+              "status": {
+                "enum": [
+                  "succeeded",
+                  "node_refused",
+                  "operational_failed",
+                  "internal_failed",
+                  "halted"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-receipt-v3",
+                "default": "playbill-procedure-run-receipt-v3",
+                "title": "Tag",
+                "type": "string"
+              },
+              "terminal": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusalV1",
+                        "playbill-procedure-budget-exhausted-v1": "#/$defs/ProcedureBudgetExhaustedV1",
+                        "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
+                        "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
+                        "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                      },
+                      "propertyName": "tag"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/ProcedureAdmissionRefusalV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureNodeRefusalV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureOperationalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureInternalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureHaltTerminalV1"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Terminal"
+              },
+              "validated_pins": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Validated Pins",
+                "type": "array"
+              }
+            },
+            "required": [
+              "run_id",
+              "admission_binding_digest",
+              "semantic_replay_key_digest",
+              "semantic_result_digest",
+              "bound_coordinate",
+              "head_at_admission",
+              "lane",
+              "evaluation_time",
+              "validated_pins",
+              "admitted_inputs",
+              "attribution",
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "first_sequence",
+              "last_sequence",
+              "record_digests",
+              "chain_head_digest",
+              "status",
+              "terminal",
+              "budget"
+            ],
+            "title": "ProcedureRunReceiptV3",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -13077,10 +13683,14 @@
                 "$ref": "#/$defs/ProcedureRunReceiptV2"
               },
               {
+                "$ref": "#/$defs/ProcedureRunReceiptV3"
+              },
+              {
                 "type": "null"
               }
             ],
-            "default": null
+            "default": null,
+            "title": "Receipt"
           },
           "receipt_digest": {
             "anyOf": [
@@ -13140,7 +13750,8 @@
               "admission_refused",
               "node_refused",
               "operational_failed",
-              "internal_failed"
+              "internal_failed",
+              "halted"
             ],
             "title": "Status",
             "type": "string"
@@ -13157,6 +13768,8 @@
                 "discriminator": {
                   "mapping": {
                     "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusalV1",
+                    "playbill-procedure-budget-exhausted-v1": "#/$defs/ProcedureBudgetExhaustedV1",
+                    "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
                     "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
                     "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
                     "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
@@ -13175,6 +13788,12 @@
                   },
                   {
                     "$ref": "#/$defs/ProcedureInternalFailureV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
+                  },
+                  {
+                    "$ref": "#/$defs/ProcedureHaltTerminalV1"
                   }
                 ]
               },

@@ -661,10 +661,7 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
             raise ValueError("Procedure budget exceeds its provider-call hard cap")
         if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
             raise ValueError("Procedure budget exceeds its capture-byte hard cap")
-        if (
-            self.budget.max_items is not None
-            and self.budget.max_items > self.hard_caps.max_items
-        ):
+        if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
             raise ValueError("Procedure budget exceeds its item hard cap")
         if any(
             isinstance(node, RepeatNodeV3)

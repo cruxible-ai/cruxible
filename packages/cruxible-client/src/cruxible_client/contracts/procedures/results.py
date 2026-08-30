@@ -282,9 +282,7 @@ class ProcedureBudgetExhaustedV1(_StrictResultModel):
 
 
 class ProcedureHaltTerminalV1(_StrictResultModel):
-    tag: Literal["playbill-procedure-halt-terminal-v1"] = (
-        "playbill-procedure-halt-terminal-v1"
-    )
+    tag: Literal["playbill-procedure-halt-terminal-v1"] = "playbill-procedure-halt-terminal-v1"
     classification: Literal["halted"] = "halted"
     node_id: str
     reason: str | None = None

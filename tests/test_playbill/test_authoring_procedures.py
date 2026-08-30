@@ -181,9 +181,7 @@ def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
     )
     assert refused.verdict == "refused"
     diagnostic = refused.frontier.diagnostics[0]
-    assert diagnostic.code == (
-        "playbill.authoring.procedure_definition_invalid"
-    )
+    assert diagnostic.code == ("playbill.authoring.procedure_definition_invalid")
     assert diagnostic.offending_element == "definition.budget.max_items"
     assert "declare a list field" in diagnostic.repairs[0].description.lower()
 

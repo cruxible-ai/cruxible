@@ -132,15 +132,15 @@ LAW_COORDINATES: tuple[
         PROCEDURE_ACCEPTANCE_LAW,
         "playbill.procedure.v1",
         "playbill-procedure-v1",
-        4,
-        "sha256:05e1c8cd5232f21f80db6e1784b27019598771bc4222d224297def6d7b47c395",
+        5,
+        "sha256:5b8317597568eefa490c174ed69ab6a8bad567a37f9159b0d552e32881b13489",
     ),
     (
         PROCEDURE_V2_ACCEPTANCE_LAW,
         "playbill.procedure.v2",
         "playbill-procedure-v2",
-        4,
-        "sha256:7dc07ec3b5e2ec176f4daab53633bf6b8af35037e75b77e5403f9a77f6198c23",
+        5,
+        "sha256:6aa5295ab49ce917156d718dd46f6e991a422298581e428bd7a252a7079cec83",
     ),
     (
         LINE_ACCEPTANCE_LAW,
@@ -193,14 +193,14 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
 
 
 def test_playbill_compiler_coordinate_is_exact() -> None:
-    expected = "sha256:c49592345e73dd5e1b29425f5d344ff7f39dc1a00d7a49a4259ec188e4321574"
+    expected = "sha256:62d6aa3f0c7b8657d9ecbdb1a7e5c8bd02fc711e114f850ce35e212035efa9df"
     computed = "sha256:" + canonical_digest(
         "playbill-compiler-v1",
         {
             "implementation": "python-reference",
             "projection_content": "claims-procedures-runtime-v1",
             "schema_version": 1,
-            "semantic_revision": 9,
+            "semantic_revision": 10,
         },
     )
     assert computed == expected
