@@ -589,6 +589,50 @@ def test_existing_adapter_kernel_accepts_every_canonical_shape() -> None:
         assert _apply_transform("adapter", value) == (value, None)
 
 
+@pytest.mark.parametrize(
+    ("kind", "spec"),
+    [
+        ("adapter", "$item.id"),
+        ("shape_items", {"items": "$item.rows", "fields": {}}),
+        (
+            "filter_items",
+            {"items": [{"id": "a"}], "where": {"id": "$item.id"}},
+        ),
+        ("dedupe_items", {"items": "$item.rows", "keys": ["id"]}),
+        (
+            "join_items",
+            {
+                "left_items": "$item.left",
+                "right_items": [],
+                "left_key": "id",
+                "right_key": "id",
+                "fields": {},
+            },
+        ),
+        ("aggregate_items", {"items": "$item.rows"}),
+    ],
+)
+def test_item_references_outside_per_item_field_templates_fail_closed(
+    tmp_path,
+    kind: str,
+    spec: object,
+) -> None:
+    accepted = _transform_procedure(kind, spec)
+    fixture = _fixture(tmp_path)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(_prepare(accepted, fixture, _StateReader()), accepted)
+
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "runtime_reference_unresolved"
+
+
 def test_join_refuses_at_the_n_plus_one_emission() -> None:
     spec = {
         "left_items": [{"id": "same", "left": index} for index in range(2)],

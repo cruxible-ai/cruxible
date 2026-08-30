@@ -2721,6 +2721,50 @@ def _resolve_template(
     return normalize_canonical(value)
 
 
+def _contains_item_reference(value: object) -> bool:
+    if isinstance(value, str):
+        return value == "$item" or value.startswith("$item.")
+    if isinstance(value, list | tuple):
+        return any(_contains_item_reference(member) for member in value)
+    if isinstance(value, dict):
+        return any(_contains_item_reference(member) for member in value.values())
+    return False
+
+
+def _resolve_transform_template(
+    value: object,
+    *,
+    transform_kind: str,
+    input_payload: CanonicalValue,
+    outputs: dict[str, CanonicalValue],
+) -> CanonicalValue:
+    """Resolve a transform spec while leaving only per-item field templates deferred."""
+
+    if not isinstance(value, dict):
+        return _resolve_template(
+            value,
+            input_payload=input_payload,
+            outputs=outputs,
+        )
+    deferred_fields = transform_kind in {"shape_items", "join_items"}
+    for key, member in value.items():
+        if key == "fields" and deferred_fields:
+            continue
+        if _contains_item_reference(member):
+            raise PlaybillExecutionError(
+                f"$item is unavailable in {transform_kind}.{key} outside an item field template"
+            )
+    return {
+        key: _resolve_template(
+            member,
+            input_payload=input_payload,
+            outputs=outputs,
+            preserve_item_references=key == "fields" and deferred_fields,
+        )
+        for key, member in value.items()
+    }
+
+
 def _declared_transform_spec(kind: str, spec: object) -> CanonicalValue:
     if not isinstance(spec, BaseModel):
         raise PlaybillExecutionError("typed transform spec is absent")
@@ -2749,11 +2793,19 @@ def _resolve_node_template(
     outputs: dict[str, CanonicalValue],
 ) -> CanonicalValue:
     try:
-        return _resolve_template(
-            value,
-            input_payload=input_payload,
-            outputs=outputs,
-            preserve_item_references=transform_kind is not None,
+        return (
+            _resolve_template(
+                value,
+                input_payload=input_payload,
+                outputs=outputs,
+            )
+            if transform_kind is None
+            else _resolve_transform_template(
+                value,
+                transform_kind=transform_kind,
+                input_payload=input_payload,
+                outputs=outputs,
+            )
         )
     except PlaybillExecutionError as exc:
         raise _RunRefusal(
