@@ -547,9 +547,14 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         assert payload["kind"] in {"claim", "procedure"}
         assert "tag" not in payload
         if name == "procedure":
-            assert payload["definition"]["nodes"][1]["spec"]["tag"] == (
-                "playbill-transform-adapter-spec-v1"
-            )
+            assert [node["spec"]["tag"] for node in payload["definition"]["nodes"]] == [
+                "playbill-transform-adapter-spec-v1",
+                "playbill-transform-shape-items-spec-v1",
+                "playbill-transform-filter-items-spec-v1",
+                "playbill-transform-dedupe-items-spec-v1",
+                "playbill-transform-join-items-spec-v1",
+                "playbill-transform-aggregate-items-spec-v1",
+            ]
         assert result.stderr == ""
 
 
