@@ -217,7 +217,7 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
     assert isinstance(query_pin, ArtifactPin)
 
 
-def test_effectful_profile_refuses_before_opening_a_journal(tmp_path: Path) -> None:
+def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None:
     instance, owner, procedure = _world(tmp_path)
     nodes = list(procedure.definition.nodes)
     read = nodes[0]
@@ -269,12 +269,9 @@ def test_effectful_profile_refuses_before_opening_a_journal(tmp_path: Path) -> N
         actor_context=_actor(instance),
     )
 
-    assert readiness.state == "unsupported"
-    assert [(item.node_id, item.kind) for item in readiness.unsupported_nodes] == [
-        ("gate", "guard")
-    ]
-    assert run.status == "unsupported"
-    assert isinstance(run.terminal, ProcedureAdmissionRefusalV1)
-    assert run.terminal.code == "unsupported_node"
-    assert run.next_operation.kind == "terminal"
-    assert not journal_root.exists()
+    assert readiness.state == "ready"
+    assert readiness.unsupported_nodes == ()
+    assert run.status == "succeeded"
+    assert run.terminal is None
+    assert run.next_operation.kind == "done"
+    assert journal_root.exists()

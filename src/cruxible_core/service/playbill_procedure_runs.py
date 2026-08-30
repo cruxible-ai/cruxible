@@ -35,6 +35,7 @@ from cruxible_client.contracts.procedures.graph import compute_procedure_definit
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
     ProcedurePinSlotRefV1,
+    RepeatNodeV3,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
@@ -79,7 +80,7 @@ PROCEDURE_RUN_STREAM_ID = "procedures"
 PROCEDURE_RUN_PARTITION_ID = "direct-runs"
 PROCEDURE_RUN_FENCING_TOKEN = "playbill-procedure-direct-run-v1"
 DIRECT_RECEIPT_REDUCER_DOMAIN = "playbill-direct-procedure-receipt-reducer-v1"
-SERVED_NODE_KINDS = frozenset({"state_tap", "transform", "project"})
+SERVED_NODE_KINDS = frozenset({"state_tap", "transform", "project", "guard", "repeat"})
 
 
 class _StrictProcedureSurfaceModel(BaseModel):
@@ -306,11 +307,22 @@ def _readiness(
     coordinate: AcceptedProjectionCoordinate,
     evaluation_time: datetime,
 ) -> ProcedureReadinessResultV1:
-    unsupported = tuple(
-        ProcedureUnsupportedNodeV1(node_id=node.node_id, kind=node.kind)
-        for node in accepted.procedure.definition.nodes
-        if node.kind not in SERVED_NODE_KINDS
-    )
+    unsupported_rows: list[ProcedureUnsupportedNodeV1] = []
+    for node in accepted.procedure.definition.nodes:
+        if node.kind not in SERVED_NODE_KINDS:
+            unsupported_rows.append(
+                ProcedureUnsupportedNodeV1(node_id=node.node_id, kind=node.kind)
+            )
+        if isinstance(node, RepeatNodeV3):
+            unsupported_rows.extend(
+                ProcedureUnsupportedNodeV1(
+                    node_id=f"{node.node_id}.{body.node_id}",
+                    kind=body.operation,
+                )
+                for body in node.body
+                if body.operation != "transform"
+            )
+    unsupported = tuple(unsupported_rows)
     slots = _required_slots(accepted.procedure)
     if unsupported:
         state: Literal["ready", "binding_required", "unsupported"] = "unsupported"

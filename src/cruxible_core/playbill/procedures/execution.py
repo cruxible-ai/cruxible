@@ -1388,9 +1388,6 @@ class ProcedureExecutor:
                 records=records,
                 started_ns=started_ns,
             )
-            state.provenance[node.as_] = AliasProvenanceV1(
-                whole=_base_tokens(node, state, tuple(body.spec for body in node.body))
-            )
             return None
         if isinstance(
             node,
@@ -1936,12 +1933,14 @@ class ProcedureExecutor:
         attempts: list[CanonicalValue] = []
         for attempt in range(1, node.max_attempts + 1):
             local_outputs: dict[str, CanonicalValue] = {}
+            local_provenance: dict[str, AliasProvenanceV1] = {}
             for body in node.body:
                 self._run_repeat_body(
                     body,
                     admission=admission,
                     state=state,
                     local_outputs=local_outputs,
+                    local_provenance=local_provenance,
                     records=records,
                 )
                 self._check_budget(admission, state, started_ns=started_ns)
@@ -1964,11 +1963,22 @@ class ProcedureExecutor:
                     "repeat_attempt": attempt,
                     "verdict": verdict,
                     "operands": trace,
+                    "body_lineage": {
+                        alias: _alias_provenance_payload(provenance)
+                        for alias, provenance in sorted(local_provenance.items())
+                    },
                 },
             )
             if verdict:
                 state.outputs[node.as_] = normalize_canonical(
                     {"attempts": attempts, "final": local_outputs}
+                )
+                repeated_tokens = frozenset(
+                    token for provenance in local_provenance.values() for token in provenance.whole
+                )
+                state.provenance[node.as_] = AliasProvenanceV1(
+                    whole=_base_tokens(node, state, tuple(body.spec for body in node.body))
+                    | repeated_tokens
                 )
                 return
         raise _RunRefusal(
@@ -1984,6 +1994,7 @@ class ProcedureExecutor:
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         local_outputs: dict[str, CanonicalValue],
+        local_provenance: dict[str, AliasProvenanceV1],
         records: list[StoredProcedureJournalRecordV1],
     ) -> None:
         combined = {**state.outputs, **local_outputs}
@@ -1996,6 +2007,13 @@ class ProcedureExecutor:
             )
         )
         if body.operation == "transform":
+            transform_kind = getattr(body, "transform_kind", None)
+            if not isinstance(transform_kind, str):
+                raise _RunRefusal(
+                    "runtime_reference_unresolved",
+                    "Repeat transform body has no declared transform kind.",
+                    node_id=body.node_id,
+                )
             contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
             contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
             validated = normalize_canonical(
@@ -2005,12 +2023,35 @@ class ProcedureExecutor:
                     direction="input",
                 )
             )
+            value, lineage = _apply_transform(
+                transform_kind,
+                validated,
+                max_items=admission.budget.max_items,
+                node_id=body.node_id,
+            )
             local_outputs[body.as_] = normalize_canonical(
                 self.contract_validator.validate_contract(
                     contract=contract_out,
-                    payload=validated,
+                    payload=value,
                     direction="output",
                 )
+            )
+            local_state = _RunState(
+                outputs=combined,
+                input_payload=state.input_payload,
+                parameters=state.parameters,
+                provenance={**state.provenance, **local_provenance},
+                facts=state.facts,
+                outcomes=state.outcomes,
+                control=state.control,
+                provider_calls=state.provider_calls,
+                capture_bytes=state.capture_bytes,
+            )
+            local_provenance[body.as_] = _transform_provenance(
+                body,
+                state=local_state,
+                lineage=lineage,
+                base=_base_tokens(body, local_state, body.spec),
             )
             return
         if self.provider_executor is None or body.provider is None or body.environment is None:
@@ -2200,7 +2241,7 @@ def _base_tokens(
 
 
 def _transform_provenance(
-    node: TransformNodeV3,
+    node: TransformNodeV3 | RepeatBodyNodeV3,
     *,
     state: _RunState,
     lineage: tuple[tuple[tuple[str, int], ...], ...] | None,
@@ -2219,6 +2260,19 @@ def _transform_provenance(
                 tokens = tokens | state.item_tokens(alias, index)
         items.append(tokens)
     return AliasProvenanceV1(whole=base, items=tuple(items))
+
+
+def _alias_provenance_payload(provenance: AliasProvenanceV1) -> CanonicalValue:
+    def tokens(values: frozenset[DependencyToken]) -> list[CanonicalValue]:
+        return [
+            {"slot": token.slot, "digest": token.digest}
+            for token in sorted(values, key=lambda item: (item.slot, item.digest))
+        ]
+
+    return {
+        "whole": tokens(provenance.whole),
+        "items": None if provenance.items is None else [tokens(item) for item in provenance.items],
+    }
 
 
 def _projected_provenance(
