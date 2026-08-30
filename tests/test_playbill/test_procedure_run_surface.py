@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 import cruxible_core.service.playbill_procedure_runs as procedure_run_service
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -30,6 +32,7 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalV1,
     ProcedureNodeRefusalV1,
+    ProcedureOperationalFailureV1,
 )
 from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.playbill.actor_context import GovernedActorContext
@@ -211,6 +214,56 @@ def test_explicit_at_equal_to_head_still_selects_replay_lane(tmp_path: Path) -> 
     assert run.lane == "replay"
     assert run.bound_coordinate.git_oid == head.git_oid
     assert run.head_at_admission.git_oid == head.git_oid
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    ("cas_unavailable_at_replay", "replay_material_mismatch"),
+)
+def test_retained_material_failures_reach_the_served_typed_terminal(
+    tmp_path: Path,
+    monkeypatch,
+    failure_code: str,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    original_prepare = procedure_run_service.prepare_direct_procedure_run
+
+    def break_retained_material(*args, **kwargs):  # type: ignore[no-untyped-def]
+        prepared = original_prepare(*args, **kwargs)
+        material = prepared.accepted_state_materials[0]
+        bodies = kwargs["bodies"]
+        if failure_code == "cas_unavailable_at_replay":
+            assert bodies.erase(material.input.material_body_digest)
+            return prepared
+        other = bodies.store(canonical_bytes({"different": True}))
+        mismatched_input = material.input.model_copy(update={"material_body_digest": other.digest})
+        return prepared.model_copy(
+            update={
+                "admission": prepared.admission.model_copy(
+                    update={"accepted_state_inputs": (mismatched_input,)}
+                ),
+                "accepted_state_materials": (
+                    material.model_copy(update={"input": mismatched_input}),
+                ),
+            }
+        )
+
+    monkeypatch.setattr(
+        procedure_run_service,
+        "prepare_direct_procedure_run",
+        break_retained_material,
+    )
+
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "operational_failed"
+    assert isinstance(run.terminal, ProcedureOperationalFailureV1)
+    assert run.terminal.code == failure_code
 
 
 def test_served_compute_pipeline_replays_byte_identically_at_pinned_coordinate(
