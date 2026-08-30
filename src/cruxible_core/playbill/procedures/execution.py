@@ -53,6 +53,7 @@ from cruxible_client.contracts.procedures.models import (
     TransformNodeV3,
     iter_pin_bindings,
 )
+from cruxible_client.contracts.procedures.results import ProcedureBudgetRefusalDetailV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
@@ -405,6 +406,13 @@ class ProcedureRunRefusalV1(_StrictExecutionModel):
     code: str
     message: str
     node_id: str | None = None
+    details: object = Field(default_factory=dict)
+    budget: ProcedureBudgetRefusalDetailV1 | None = None
+
+    @field_validator("details", mode="before")
+    @classmethod
+    def _details(cls, value: object) -> object:
+        return normalize_canonical(value)
 
 
 class ProcedureRunReceiptV1(_StrictExecutionModel):
@@ -752,9 +760,23 @@ def prepare_direct_procedure_run(
 
 
 class _RunRefusal(Exception):
-    def __init__(self, code: str, message: str, *, node_id: str | None = None) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        node_id: str | None = None,
+        details: object | None = None,
+        budget: ProcedureBudgetRefusalDetailV1 | None = None,
+    ) -> None:
         super().__init__(message)
-        self.refusal = ProcedureRunRefusalV1(code=code, message=message, node_id=node_id)
+        self.refusal = ProcedureRunRefusalV1(
+            code=code,
+            message=message,
+            node_id=node_id,
+            details={} if details is None else details,
+            budget=budget,
+        )
 
 
 class _BudgetExceeded(Exception):
@@ -1162,10 +1184,6 @@ class ProcedureExecutor:
             raise _BudgetExceeded("Procedure provider-call budget exhausted")
         if state.capture_bytes > admission.budget.max_capture_bytes:
             raise _BudgetExceeded("Procedure capture-byte budget exhausted")
-        for value in state.outputs.values():
-            count = _item_count(value)
-            if count > admission.budget.max_items:
-                raise _BudgetExceeded("Procedure item budget exhausted")
 
     def _walk(
         self,
@@ -1236,9 +1254,15 @@ class ProcedureExecutor:
                 )
             if target is None:
                 try:
-                    return state.outputs[definition.returns]
+                    result = state.outputs[definition.returns]
                 except KeyError as exc:  # pragma: no cover - static law should prevent
                     raise PlaybillExecutionError("Procedure return alias was not produced") from exc
+                _check_return_budget(
+                    result,
+                    max_items=admission.budget.max_items,
+                    node_id=node.node_id,
+                )
+                return result
             current = target
 
     def _execute_node(
@@ -1290,7 +1314,12 @@ class ProcedureExecutor:
                     direction="input",
                 )
             )
-            value, lineage = _apply_transform(node.transform_kind, validated_input)
+            value, lineage = _apply_transform(
+                node.transform_kind,
+                validated_input,
+                max_items=admission.budget.max_items,
+                node_id=node.node_id,
+            )
             contract = self._pin(node.contract_out, label=f"transform {node.node_id!r} output")
             state.outputs[node.as_] = normalize_canonical(
                 self.contract_validator.validate_contract(
@@ -2359,20 +2388,62 @@ def _resolve_template(
     return normalize_canonical(value)
 
 
-def _item_count(value: CanonicalValue) -> int:
+PROCEDURE_RESULT_MAX_BYTES = 1_048_576
+
+
+def _item_count(value: CanonicalValue, *, extractable_only: bool = False) -> int | None:
     if isinstance(value, list):
         return len(value)
     if isinstance(value, dict):
         items = value.get("items")
         if isinstance(items, list):
             return len(items)
-    return 1
+    return None if extractable_only else 1
 
 
-def _extract_items(value: object, *, label: str) -> list[CanonicalValue]:
+def _budget_refusal(
+    *,
+    budget_kind: Literal["max_items", "result_bytes"],
+    limit: int,
+    observed: int,
+    node_id: str,
+) -> _RunRefusal:
+    return _RunRefusal(
+        "budget_exhausted",
+        f"Procedure {budget_kind} budget exhausted.",
+        node_id=node_id,
+        budget=ProcedureBudgetRefusalDetailV1(
+            budget_kind=budget_kind,
+            limit=limit,
+            observed=observed,
+        ),
+    )
+
+
+def _extract_items(
+    value: object,
+    *,
+    label: str,
+    max_items: int | None = None,
+    node_id: str = "transform",
+) -> list[CanonicalValue]:
     if isinstance(value, list):
+        if max_items is not None and len(value) > max_items:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=max_items,
+                observed=len(value),
+                node_id=node_id,
+            )
         return [normalize_canonical(item) for item in value]
     if isinstance(value, dict) and isinstance(value.get("items"), list):
+        if max_items is not None and len(value["items"]) > max_items:
+            raise _budget_refusal(
+                budget_kind="max_items",
+                limit=max_items,
+                observed=len(value["items"]),
+                node_id=node_id,
+            )
         return [normalize_canonical(item) for item in value["items"]]
     raise PlaybillExecutionError(f"{label} requires a list or object with an items list")
 
@@ -2380,7 +2451,13 @@ def _extract_items(value: object, *, label: str) -> list[CanonicalValue]:
 _ItemLineage = tuple[tuple[tuple[str, int], ...], ...]
 
 
-def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _ItemLineage | None]:
+def _apply_transform(
+    kind: str,
+    spec: CanonicalValue,
+    *,
+    max_items: int | None = None,
+    node_id: str = "transform",
+) -> tuple[CanonicalValue, _ItemLineage | None]:
     """Apply one deterministic transform and report which input item fed each output."""
 
     if kind == "adapter":
@@ -2388,7 +2465,7 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
     if not isinstance(spec, dict):
         raise PlaybillExecutionError(f"transform {kind!r} requires an object spec")
     if kind == "shape_items":
-        items = _extract_items(spec.get("items"), label=kind)
+        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
         fields = spec.get("fields", {})
         if not isinstance(fields, dict):
             raise PlaybillExecutionError("shape_items fields must be an object")
@@ -2404,22 +2481,37 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
                     outputs={},
                     item=item,
                 )
+            if max_items is not None and len(shaped) >= max_items:
+                raise _budget_refusal(
+                    budget_kind="max_items",
+                    limit=max_items,
+                    observed=len(shaped) + 1,
+                    node_id=node_id,
+                )
             shaped.append(normalize_canonical(base))
         return (
             {"items": shaped, "input_count": len(items), "output_count": len(shaped)},
             tuple((("items", index),) for index in range(len(shaped))),
         )
     if kind == "filter_items":
-        items = _extract_items(spec.get("items"), label=kind)
+        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
         where = spec.get("where", {})
         if not isinstance(where, dict):
             raise PlaybillExecutionError("filter_items where must be an object")
-        kept_indices = [
-            index
-            for index, item in enumerate(items)
-            if isinstance(item, dict)
-            and all(item.get(key) == value for key, value in where.items())
-        ]
+        kept_indices: list[int] = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict) or not all(
+                item.get(key) == value for key, value in where.items()
+            ):
+                continue
+            if max_items is not None and len(kept_indices) >= max_items:
+                raise _budget_refusal(
+                    budget_kind="max_items",
+                    limit=max_items,
+                    observed=len(kept_indices) + 1,
+                    node_id=node_id,
+                )
+            kept_indices.append(index)
         kept = [items[index] for index in kept_indices]
         return (
             normalize_canonical(
@@ -2428,7 +2520,7 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
             tuple((("items", index),) for index in kept_indices),
         )
     if kind == "dedupe_items":
-        items = _extract_items(spec.get("items"), label=kind)
+        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
         keys = spec.get("keys", [])
         if not isinstance(keys, list) or not all(isinstance(item, str) for item in keys):
             raise PlaybillExecutionError("dedupe_items keys must be a string list")
@@ -2442,6 +2534,13 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
             )
             if identity in seen:
                 continue
+            if max_items is not None and len(output) >= max_items:
+                raise _budget_refusal(
+                    budget_kind="max_items",
+                    limit=max_items,
+                    observed=len(output) + 1,
+                    node_id=node_id,
+                )
             seen.add(identity)
             output.append(item)
             deduped_indices.append(index)
@@ -2452,8 +2551,12 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
             tuple((("items", index),) for index in deduped_indices),
         )
     if kind == "join_items":
-        left = _extract_items(spec.get("left_items"), label=kind)
-        right = _extract_items(spec.get("right_items"), label=kind)
+        left = _extract_items(
+            spec.get("left_items"), label=kind, max_items=max_items, node_id=node_id
+        )
+        right = _extract_items(
+            spec.get("right_items"), label=kind, max_items=max_items, node_id=node_id
+        )
         left_key = spec.get("left_key")
         right_key = spec.get("right_key")
         fields = spec.get("fields", {})
@@ -2471,6 +2574,13 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
                     continue
                 if left_item.get(left_key) != right_item.get(right_key):
                     continue
+                if max_items is not None and len(joined_output) >= max_items:
+                    raise _budget_refusal(
+                        budget_kind="max_items",
+                        limit=max_items,
+                        observed=len(joined_output) + 1,
+                        node_id=node_id,
+                    )
                 joined = {"left": left_item, "right": right_item}
                 joined_output.append(
                     {
@@ -2489,9 +2599,28 @@ def _apply_transform(kind: str, spec: CanonicalValue) -> tuple[CanonicalValue, _
             tuple(joined_lineage),
         )
     if kind == "aggregate_items":
-        items = _extract_items(spec.get("items"), label=kind)
+        items = _extract_items(spec.get("items"), label=kind, max_items=max_items, node_id=node_id)
         return normalize_canonical({"count": len(items)}), None
     raise PlaybillExecutionError(f"unsupported deterministic transform {kind!r}")
+
+
+def _check_return_budget(value: CanonicalValue, *, max_items: int, node_id: str) -> None:
+    count = _item_count(value, extractable_only=True)
+    if count is not None and count > max_items:
+        raise _budget_refusal(
+            budget_kind="max_items",
+            limit=max_items,
+            observed=count,
+            node_id=node_id,
+        )
+    size = len(canonical_bytes(value))
+    if size > PROCEDURE_RESULT_MAX_BYTES:
+        raise _budget_refusal(
+            budget_kind="result_bytes",
+            limit=PROCEDURE_RESULT_MAX_BYTES,
+            observed=size,
+            node_id=node_id,
+        )
 
 
 def _operand_value(

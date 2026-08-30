@@ -48,9 +48,12 @@ from cruxible_core.playbill.exhaust import (
     LocalJournalBackend,
 )
 from cruxible_core.playbill.procedures.execution import (
+    PROCEDURE_RESULT_MAX_BYTES,
     ProcedureExecutor,
     ProviderInvocationResultV1,
     _apply_transform,
+    _check_return_budget,
+    _RunRefusal,
     prepare_direct_procedure_run,
 )
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
@@ -508,6 +511,58 @@ def test_existing_adapter_kernel_accepts_every_canonical_shape() -> None:
         assert _apply_transform("adapter", value) == (value, None)
 
 
+def test_join_refuses_at_the_n_plus_one_emission() -> None:
+    spec = {
+        "left_items": [{"id": "same", "left": index} for index in range(2)],
+        "right_items": [{"id": "same", "right": index} for index in range(2)],
+        "left_key": "id",
+        "right_key": "id",
+        "fields": {"left": "$item.left.left", "right": "$item.right.right"},
+    }
+
+    with pytest.raises(_RunRefusal) as raised:
+        _apply_transform("join_items", spec, max_items=2, node_id="join")
+
+    refusal = raised.value.refusal
+    assert refusal.code == "budget_exhausted"
+    assert refusal.node_id == "join"
+    assert refusal.budget is not None
+    assert refusal.budget.model_dump(mode="json") == {
+        "tag": "playbill-procedure-budget-refusal-detail-v1",
+        "budget_kind": "max_items",
+        "limit": 2,
+        "observed": 3,
+    }
+
+
+def test_max_items_is_rechecked_not_consumed_across_fanout() -> None:
+    spec = {"items": [{"id": index} for index in range(80)], "where": {}}
+
+    first, _lineage = _apply_transform("filter_items", spec, max_items=100, node_id="one")
+    second, _lineage = _apply_transform("filter_items", spec, max_items=100, node_id="two")
+
+    assert len(first["items"]) == 80  # type: ignore[index]
+    assert second == first
+
+
+def test_return_seam_counts_extractable_values_and_caps_all_result_bytes() -> None:
+    with pytest.raises(_RunRefusal) as item_refusal:
+        _check_return_budget({"items": [1, 2]}, max_items=1, node_id="return")
+    assert item_refusal.value.refusal.budget is not None
+    assert item_refusal.value.refusal.budget.budget_kind == "max_items"
+
+    with pytest.raises(_RunRefusal) as byte_refusal:
+        _check_return_budget(
+            "x" * PROCEDURE_RESULT_MAX_BYTES,
+            max_items=1,
+            node_id="return",
+        )
+    assert byte_refusal.value.refusal.budget is not None
+    assert byte_refusal.value.refusal.budget.budget_kind == "result_bytes"
+
+    _check_return_budget({"nested": {"items": list(range(200))}}, max_items=1, node_id="return")
+
+
 def test_successful_state_run_binds_inputs_and_logs_every_path(tmp_path) -> None:
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
@@ -674,7 +729,11 @@ def test_item_budget_exhaustion_is_finalized_without_output(tmp_path) -> None:
         activation_authority=_Authority(accepted.artifact_digest),
         contract_validator=_Contracts(),
     ).execute(prepared, accepted)
-    assert result.status == "budget_exhausted"
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "budget_exhausted"
+    assert result.refusal.budget is not None
+    assert result.refusal.budget.budget_kind == "max_items"
     assert result.output is None
 
 

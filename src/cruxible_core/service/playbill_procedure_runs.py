@@ -39,6 +39,7 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalV1,
+    ProcedureBudgetRefusalDetailV1,
     ProcedureInternalFailureV1,
     ProcedureJournalCoordinateV1,
     ProcedureNodeRefusalV1,
@@ -675,12 +676,21 @@ def _state_from_records(
         if status == "refused":
             raw_refusal = final.get("refusal")
             refusal = raw_refusal if isinstance(raw_refusal, dict) else {}
+            raw_budget = refusal.get("budget")
+            budget = (
+                ProcedureBudgetRefusalDetailV1.model_validate(raw_budget)
+                if isinstance(raw_budget, dict)
+                else None
+            )
+            detail_code = str(refusal.get("code", "refused"))
             terminal = ProcedureNodeRefusalV1(
-                code="guard_refused",
+                code=("budget_exhausted" if detail_code == "budget_exhausted" else "guard_refused"),
                 message=str(refusal.get("message", "Procedure node refused execution.")),
                 node_id=str(refusal.get("node_id") or last_node_id),
                 journal_coordinate=_journal_coordinate(final_record),
-                detail_code=str(refusal.get("code", "refused")),
+                detail_code=None if detail_code == "budget_exhausted" else detail_code,
+                details=refusal.get("details", {}),
+                budget=budget,
             )
         elif status == "budget_exhausted":
             terminal = ProcedureNodeRefusalV1(
