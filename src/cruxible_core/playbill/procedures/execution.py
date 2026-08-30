@@ -2949,10 +2949,20 @@ def _validate_node_contract(
         code: ProcedureNodeRefusalCodeV1 = (
             "contract_input_refused" if direction == "input" else "contract_output_refused"
         )
+        details: dict[str, object] = {
+            "boundary": f"contract-{direction}:{contract.target.name}",
+        }
+        field_path = getattr(exc, "field_path", None)
+        element_index = getattr(exc, "element_index", None)
+        if isinstance(field_path, str):
+            details["field_path"] = field_path
+        if isinstance(element_index, int):
+            details["element_index"] = element_index
         raise _RunRefusal(
             code,
             f"The Procedure node {direction} contract refused its value.",
             node_id=node_id,
+            details=details,
         ) from exc
 
 

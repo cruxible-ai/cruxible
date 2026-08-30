@@ -24,6 +24,7 @@ PropertyType = Literal[
     "date",
     "datetime",
     "json",
+    "list",
 ]
 
 
@@ -40,6 +41,10 @@ class PropertySchema(BaseModel):
     enum_ref: str | None = None
     description: str | None = None
     json_schema: dict[str, Any] | None = None
+    item_fields: dict[str, PropertySchema] | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_schema_usage(self) -> "PropertySchema":
@@ -50,6 +55,12 @@ class PropertySchema(BaseModel):
             self.optional = required_optional
         if self.primary_key and self.optional:
             raise ValueError("primary_key properties may not be optional")
+        if self.type == "list" and self.item_fields is None:
+            raise ValueError("list properties require item_fields")
+        if self.type != "list" and self.item_fields is not None:
+            raise ValueError("item_fields is only allowed on properties with type 'list'")
+        if self.type == "list" and self.primary_key:
+            raise ValueError("list properties may not be primary_key")
         if self.enum is not None and self.enum_ref is not None:
             raise ValueError("enum and enum_ref are mutually exclusive")
         if self.enum_ref is not None and self.type != "string":

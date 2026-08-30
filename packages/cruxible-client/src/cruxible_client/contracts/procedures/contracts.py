@@ -22,8 +22,24 @@ from cruxible_client.contracts.temporal import format_datetime, parse_datetime
 class ProcedureContractValidationError(ValueError):
     """A payload or Contract pin does not match an owner's frozen closure."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        field_path: str | None = None,
+        element_index: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.field_path = field_path
+        self.element_index = element_index
 
-def _normalize_value(value: object, schema: PropertySchema) -> object:
+
+def _normalize_value(
+    value: object,
+    schema: PropertySchema,
+    *,
+    field_path: str,
+) -> object:
     if value is None:
         if schema.optional:
             return None
@@ -78,7 +94,82 @@ def _normalize_value(value: object, schema: PropertySchema) -> object:
         except (TypeError, ValueError) as exc:
             raise ProcedureContractValidationError("must be JSON-serializable") from exc
         return value
+    if schema.type == "list":
+        if not isinstance(value, list):
+            raise ProcedureContractValidationError(
+                "must be a list",
+                field_path=field_path,
+            )
+        assert schema.item_fields is not None
+        normalized_items: list[object] = []
+        for index, item in enumerate(value):
+            item_path = f"{field_path}[{index}]"
+            if not isinstance(item, Mapping):
+                raise ProcedureContractValidationError(
+                    "list elements must be objects",
+                    field_path=item_path,
+                    element_index=index,
+                )
+            try:
+                normalized_items.append(
+                    _normalize_fields(
+                        dict(item),
+                        fields=schema.item_fields,
+                        allow_extra=False,
+                        path_prefix=item_path,
+                    )
+                )
+            except ProcedureContractValidationError as exc:
+                if exc.element_index is None:
+                    exc.element_index = index
+                raise
+        return normalized_items
     raise ProcedureContractValidationError(f"unsupported field type {schema.type!r}")
+
+
+def _normalize_fields(
+    source: dict[str, object],
+    *,
+    fields: Mapping[str, PropertySchema],
+    allow_extra: bool,
+    path_prefix: str,
+) -> dict[str, object]:
+    extras = sorted(set(source) - set(fields), key=lambda item: item.encode("utf-8"))
+    if extras and not allow_extra:
+        raise ProcedureContractValidationError(
+            f"unexpected fields: {extras}",
+            field_path=path_prefix,
+        )
+    normalized: dict[str, object] = {}
+    if allow_extra:
+        normalized.update({name: source[name] for name in extras})
+    for name in sorted(fields, key=lambda item: item.encode("utf-8")):
+        field = fields[name]
+        field_path = f"{path_prefix}.{name}" if path_prefix else name
+        if name not in source:
+            if field.default is not None:
+                normalized[name] = _normalize_value(
+                    field.default,
+                    field,
+                    field_path=field_path,
+                )
+            elif not field.optional:
+                raise ProcedureContractValidationError(
+                    f"missing required field {name!r}",
+                    field_path=field_path,
+                )
+            continue
+        try:
+            normalized[name] = _normalize_value(
+                source[name],
+                field,
+                field_path=field_path,
+            )
+        except ProcedureContractValidationError as exc:
+            if exc.field_path is None:
+                exc.field_path = field_path
+            raise
+    return normalized
 
 
 def _validate_payload(
@@ -89,24 +180,12 @@ def _validate_payload(
         raise ProcedureContractValidationError("Contract payload must be an object")
     source = dict(payload)
     schema = contract.contract_schema
-    extras = sorted(set(source) - set(schema.fields), key=lambda item: item.encode("utf-8"))
-    if extras and not schema.allow_extra:
-        raise ProcedureContractValidationError(f"unexpected fields: {extras}")
-    normalized: dict[str, object] = {}
-    if schema.allow_extra:
-        normalized.update({name: source[name] for name in extras})
-    for name in sorted(schema.fields, key=lambda item: item.encode("utf-8")):
-        field = schema.fields[name]
-        if name not in source:
-            if field.default is not None:
-                normalized[name] = _normalize_value(field.default, field)
-            elif not field.optional:
-                raise ProcedureContractValidationError(f"missing required field {name!r}")
-            continue
-        try:
-            normalized[name] = _normalize_value(source[name], field)
-        except ProcedureContractValidationError as exc:
-            raise ProcedureContractValidationError(f"field {name!r}: {exc}") from exc
+    normalized = _normalize_fields(
+        source,
+        fields=schema.fields,
+        allow_extra=schema.allow_extra,
+        path_prefix="",
+    )
     return normalize_canonical(normalized)
 
 

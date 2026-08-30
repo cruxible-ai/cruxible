@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -25,6 +27,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     render_procedure,
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.contracts import (
+    ProcedureContractValidationError,
+    _validate_payload,
+)
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
@@ -65,6 +71,59 @@ from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 
 READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
+
+
+def test_list_contract_schema_is_recursive_without_changing_scalar_bytes() -> None:
+    scalar = PropertySchema(type="string")
+    assert "item_fields" not in scalar.model_dump(mode="json")
+
+    schema = PropertySchema(
+        type="list",
+        item_fields={
+            "id": PropertySchema(type="string"),
+            "parts": PropertySchema(
+                type="list",
+                item_fields={"value": PropertySchema(type="int")},
+            ),
+        },
+    )
+    assert schema.item_fields is not None
+    assert schema.item_fields["parts"].item_fields is not None
+    with pytest.raises(ValueError, match="require item_fields"):
+        PropertySchema(type="list")
+    with pytest.raises(ValueError, match="only allowed"):
+        PropertySchema(type="string", item_fields={})
+    with pytest.raises(ValueError, match="may not be primary_key"):
+        PropertySchema(type="list", item_fields={}, primary_key=True)
+
+
+def test_list_contract_validation_names_nested_element_and_path() -> None:
+    contract = _contract(
+        "rows",
+        {
+            "rows": PropertySchema(
+                type="list",
+                item_fields={
+                    "parts": PropertySchema(
+                        type="list",
+                        item_fields={"value": PropertySchema(type="int")},
+                    )
+                },
+            )
+        },
+    )
+
+    assert _validate_payload(
+        contract,
+        {"rows": [{"parts": [{"value": 3}]}]},
+    ) == {"rows": [{"parts": [{"value": 3}]}]}
+    with pytest.raises(ProcedureContractValidationError) as caught:
+        _validate_payload(
+            contract,
+            {"rows": [{"parts": [{"value": "not-an-int"}]}]},
+        )
+    assert caught.value.field_path == "rows[0].parts[0].value"
+    assert caught.value.element_index == 0
 
 
 class _Authority:
