@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Claim admission now separates corroboration scope from freeze scope (PC-C4).**
+  Corroboration requirements apply only to Claims authored under their own
+  ClaimType, while freeze requirements continue to protect every applicable
+  ClaimType on the same Subject. Claim v2/v3 admission laws advance in place
+  for this prerelease correction. Next v2 deltas also report removed item IDs
+  as presentation-only public wire without changing the whole-queue digest.
+
 - **Claim retirement closure is one coordinated disposition.** A retiring
   dependent may advance a Claim-target pin by one verified succession hop only
   when that target also retires in the same complete ChangeSet; the earlier
