@@ -230,7 +230,7 @@ def _activate(instance: PlaybillInstance, result: ProposalResult, tree: dict[str
     assert publisher.activate(bundle, projection, base=base).status == "accepted"
 
 
-def test_proposal_pass_persists_two_canonically_ordered_accounts_and_replays(
+def test_proposal_pass_persists_only_the_authored_type_account_and_replays(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -261,8 +261,7 @@ def test_proposal_pass_persists_two_canonically_ordered_accounts_and_replays(
 
     assert result.evaluation.verdict == "candidate"
     assert [item.claim_type_identity for item in result.evaluation.claim_admission_accounts] == [
-        "ClaimType:project.work_item.status",
-        "ClaimType:project.work_item.summary",
+        "ClaimType:project.work_item.status"
     ]
     persisted = instance.proposal_evidence().read_evaluation(result.admission.proposal_id)
     assert persisted.claim_admission_accounts == result.evaluation.claim_admission_accounts
@@ -272,6 +271,46 @@ def test_proposal_pass_persists_two_canonically_ordered_accounts_and_replays(
     calls.clear()
     instance.refresh()
     assert calls == [instance.accepted_history()[-2].oid]
+
+
+def test_unsatisfiable_type_does_not_gate_another_type_and_can_retire(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    query = _query()
+    query_digest = query_definition_digest(query).tagged
+    authored_type = _claim_type()
+    blocker_type = _corroborated_type(
+        query_digest,
+        predicate="project.work_item.corrob99",
+        min_count=99,
+    )
+    _seed_vocabulary(
+        instance,
+        owner,
+        claim_types=(authored_type, blocker_type),
+        query=query,
+    )
+    claim = _claim_for_type(instance, authored_type, claim_id="CLM-" + "99" * 16)
+    retired_blocker = blocker_type.model_copy(
+        update={
+            "lifecycle": ArtifactLifecycle(
+                state="retired",
+                predecessor_digest=claim_type_digest(blocker_type).tagged,
+            )
+        }
+    )
+
+    result, _tree = _submit_claim(
+        instance,
+        claim,
+        proposal_name="unrelated-type-and-retirement",
+        extra_tree={claim_type_path(retired_blocker.predicate): render_claim_type(retired_blocker)},
+    )
+
+    assert result.evaluation.verdict == "candidate"
+    assert result.evaluation.diagnostics == ()
+    assert result.evaluation.claim_admission_accounts == ()
 
 
 def test_insufficient_refusal_persists_its_account(tmp_path: Path) -> None:

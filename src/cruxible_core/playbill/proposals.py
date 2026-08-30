@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Final, Literal, Protocol, cast
+from typing import Callable, Final, Literal, Protocol
 
 from pydantic import (
     BaseModel,
@@ -94,6 +94,7 @@ from cruxible_client.contracts.claim_types import (
 )
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
+    ClaimArtifactAny,
     ClaimArtifactV3,
     ClaimFormatError,
     ExactContentClaimObject,
@@ -152,7 +153,6 @@ from cruxible_client.contracts.merkle import (
 )
 from cruxible_client.contracts.policies import (
     ClaimAdmissionCandidateContextV1,
-    ClaimAdmissionCandidateResultV1,
     ClaimAdmissionEvaluationAccountV1,
     ClaimAdmissionPolicyV1,
     ClaimCorroborationResultV1,
@@ -994,14 +994,16 @@ def _claim_admission_evaluations(
     tuple[ClaimAdmissionEvaluationAccountV1, ...],
     tuple[CompilerDiagnostic, ...],
 ]:
-    """Evaluate every policy governing each Subject changed by Claim members."""
+    """Evaluate the authored ClaimType policy for each changed Claim member."""
 
-    changed_by_subject: dict[str, list[str]] = {}
+    changed_by_subject: dict[str, list[tuple[str, ClaimArtifactAny]]] = {}
     for path in scope:
         if not _CLAIM_PATH_RE.fullmatch(path) or path not in candidate_tree:
             continue
         claim = parse_claim(candidate_tree[path], path=path)
-        changed_by_subject.setdefault(claim.statement.subject.artifact_path, []).append(path)
+        changed_by_subject.setdefault(claim.statement.subject.artifact_path, []).append(
+            (path, claim)
+        )
     if not changed_by_subject:
         return {}, {}, {}, (), ()
 
@@ -1014,26 +1016,13 @@ def _claim_admission_evaluations(
     diagnostics: list[CompilerDiagnostic] = []
     definitions = _accepted_queries_by_digest(current_tree)
     facts: ClaimQueryFactsV1 | None = None
-    for subject_path, changed_paths in sorted(
+    for subject_path, changed_claims in sorted(
         changed_by_subject.items(),
         key=lambda item: item[0].encode("utf-8"),
     ):
         subject = subjects.get(subject_path)
         if subject is None:
             continue  # Claim law emits the exact unresolved-subject diagnostic.
-        applicable = tuple(
-            sorted(
-                (
-                    item
-                    for item in claim_types.values()
-                    if claim_type_accepts_subject(item.claim_type, subject.shell.subject_kind)
-                    and _policy_has_requirements(item.claim_type.admission_policy)
-                ),
-                key=lambda item: item.claim_type.identity.qualified.encode("utf-8"),
-            )
-        )
-        if not applicable:
-            continue
         declared_predicates = tuple(
             sorted(
                 {
@@ -1044,16 +1033,20 @@ def _claim_admission_evaluations(
                 key=lambda item: item.encode("utf-8"),
             )
         )
-        evaluations: list[
-            tuple[
-                AcceptedClaimType,
-                str,
-                object,
-                tuple[ClaimCorroborationResultV1, ...],
-                tuple[tuple[str, str], ...],
-            ]
-        ] = []
-        for accepted_type in applicable:
+        for changed_path, parsed_claim in sorted(
+            changed_claims,
+            key=lambda item: item[0].encode("utf-8"),
+        ):
+            # The Claim law emits the exact unresolved or mismatched ClaimType
+            # diagnostic. Admission requirements belong only to the type the
+            # authored statement pins; other types accepting the same Subject
+            # kind are context, never additional gates.
+            claim_type_identity = parsed_claim.statement.claim_type.qualified
+            accepted_type = claim_types.get(claim_type_identity)
+            if accepted_type is None or not _policy_has_requirements(
+                accepted_type.claim_type.admission_policy
+            ):
+                continue
             policy = accepted_type.claim_type.admission_policy
             policy_digest = _canonical_model_digest(
                 "playbill-claim-admission-policy-v1",
@@ -1089,54 +1082,50 @@ def _claim_admission_evaluations(
                 corroboration_results=results,
             )
             evaluated = evaluate_claim_admission_candidate(policy, context)
-            evaluations.append((accepted_type, policy_digest, evaluated, results, issues))
-        for changed_path in changed_paths:
             entries: list[dict[str, object]] = []
             policy_digests: set[str] = set()
             query_digests: set[str] = set()
-            for accepted_type, policy_digest, evaluated_raw, results, issues in evaluations:
-                evaluated = cast(ClaimAdmissionCandidateResultV1, evaluated_raw)
-                account: ClaimAdmissionEvaluationAccountV1 | None = None
-                if accepted_type.claim_type.admission_policy.corroboration_requirements:
-                    complete = len(results) == len(
-                        accepted_type.claim_type.admission_policy.corroboration_requirements
-                    )
-                    account = ClaimAdmissionEvaluationAccountV1(
-                        claim_path=changed_path,
-                        claim_type_identity=accepted_type.claim_type.identity.qualified,
-                        claim_type_digest=accepted_type.artifact_digest,
-                        policy_digest=policy_digest,
-                        corroboration_results=results,
-                        satisfied=complete and all(item.satisfied for item in results),
-                    )
-                    accounts.append(account)
-                    query_digests.update(item.result_digest for item in results)
-                entries.append(
-                    {
-                        "admission_account": (
-                            None if account is None else account.model_dump(mode="json")
-                        ),
-                        "claim_type_digest": accepted_type.artifact_digest,
-                        "claim_type_identity": accepted_type.claim_type.identity.qualified,
-                        "policy_digest": policy_digest,
-                        "candidate_result": evaluated.model_dump(mode="json"),
-                    }
+            evaluated_result = evaluated
+            account: ClaimAdmissionEvaluationAccountV1 | None = None
+            if accepted_type.claim_type.admission_policy.corroboration_requirements:
+                complete = len(results) == len(
+                    accepted_type.claim_type.admission_policy.corroboration_requirements
                 )
-                policy_digests.add(policy_digest)
-                for code, message in issues:
-                    diagnostics.append(_diagnostic(code, message, changed_path))
-                issue_codes = {item[0] for item in issues}
-                for code in evaluated.refusal_codes:
-                    if code in issue_codes:
-                        continue
-                    diagnostics.append(
-                        _diagnostic(
-                            code,
-                            "The Subject-level Claim admission policy refused "
-                            "this closed change set.",
-                            changed_path,
-                        )
+                account = ClaimAdmissionEvaluationAccountV1(
+                    claim_path=changed_path,
+                    claim_type_identity=accepted_type.claim_type.identity.qualified,
+                    claim_type_digest=accepted_type.artifact_digest,
+                    policy_digest=policy_digest,
+                    corroboration_results=results,
+                    satisfied=complete and all(item.satisfied for item in results),
+                )
+                accounts.append(account)
+                query_digests.update(item.result_digest for item in results)
+            entries.append(
+                {
+                    "admission_account": (
+                        None if account is None else account.model_dump(mode="json")
+                    ),
+                    "claim_type_digest": accepted_type.artifact_digest,
+                    "claim_type_identity": accepted_type.claim_type.identity.qualified,
+                    "policy_digest": policy_digest,
+                    "candidate_result": evaluated_result.model_dump(mode="json"),
+                }
+            )
+            policy_digests.add(policy_digest)
+            for code, message in issues:
+                diagnostics.append(_diagnostic(code, message, changed_path))
+            issue_codes = {item[0] for item in issues}
+            for code in evaluated_result.refusal_codes:
+                if code in issue_codes:
+                    continue
+                diagnostics.append(
+                    _diagnostic(
+                        code,
+                        "The authored ClaimType admission policy refused this closed change set.",
+                        changed_path,
                     )
+                )
             entries_by_path[changed_path] = tuple(
                 sorted(entries, key=lambda item: canonical_bytes(item))
             )
