@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from pydantic import TypeAdapter
@@ -36,10 +37,14 @@ from cruxible_client.contracts.procedures.contracts import (
     OwnedProcedureContractValidator,
     ValidatedProcedureContract,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.graph import (
+    ProcedureGraphFormatError,
+    compute_procedure_definition_digest_v3,
+)
 from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     GuardPredicateV1,
+    HaltNodeV3,
     PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
@@ -400,6 +405,174 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedureV1:
         terminal_capability=1,
     )
     return _accepted(definition, pins=(contract_in, contract_out))
+
+
+def _typed_transform_node(**values: object) -> TransformNodeV3:
+    return TransformNodeV3.model_validate(values)
+
+
+def _guarded_filter_procedure(
+    *,
+    operator: str,
+    result_next: str | None = None,
+) -> AcceptedProcedureV1:
+    item_fields = {
+        "id": PropertySchema(type="string"),
+        "keep": PropertySchema(type="bool"),
+    }
+    empty = _owned_contract("guard-empty-input", {})
+    filter_spec = _owned_contract(
+        "guard-filter-spec",
+        {
+            "items": PropertySchema(type="list", item_fields=item_fields),
+            "where": PropertySchema(type="json"),
+        },
+    )
+    filtered_result = _owned_contract(
+        "guard-filtered-result",
+        {
+            "items": PropertySchema(type="list", item_fields=item_fields),
+            "input_count": PropertySchema(type="int"),
+            "output_count": PropertySchema(type="int"),
+        },
+    )
+    aggregate_spec = _owned_contract(
+        "guard-aggregate-spec",
+        {"items": PropertySchema(type="list", item_fields=item_fields)},
+    )
+    count_result = _owned_contract(
+        "guard-count-result",
+        {"count": PropertySchema(type="int")},
+    )
+    entry_pin = _owned_pin("contract-in", empty)
+    filter_in = _owned_pin("contract-in", filter_spec)
+    filter_out = _owned_pin("contract-out", filtered_result)
+    aggregate_in = _owned_pin("contract-in", aggregate_spec)
+    result_pin = _owned_pin("contract-out", count_result)
+    definition = ProcedureDefinitionV3(
+        name=f"guarded-filter-{operator}{'-explicit-next' if result_next else ''}",
+        contract_in=entry_pin,
+        contract_out=result_pin,
+        nodes=(
+            _typed_transform_node(
+                node_id="filter",
+                transform_kind="filter_items",
+                contract_in=filter_in,
+                contract_out=filter_out,
+                spec={
+                    "tag": "playbill-transform-filter-items-spec-v1",
+                    "items": [
+                        {"id": "one", "keep": True},
+                        {"id": "two", "keep": False},
+                    ],
+                    "where": {"keep": True},
+                },
+                as_="filtered",
+                next="gate",
+            ),
+            GuardNodeV3(
+                node_id="gate",
+                predicate=GuardPredicateV1(
+                    left=PredicateOperandV1(kind="count", alias="filtered"),
+                    operator=operator,  # type: ignore[arg-type]
+                    right=PredicateOperandV1(kind="literal", value=0),
+                ),
+                on_true="aggregate",
+                on_false="stop",
+                refusal_code="guard.no_filtered_items",
+                message="No filtered items are available.",
+            ),
+            _typed_transform_node(
+                node_id="aggregate",
+                transform_kind="aggregate_items",
+                contract_in=aggregate_in,
+                contract_out=result_pin,
+                spec={
+                    "tag": "playbill-transform-aggregate-items-spec-v1",
+                    "items": "$steps.filtered.items",
+                },
+                as_="result",
+                next=result_next,
+            ),
+            HaltNodeV3(node_id="stop", reason="No filtered items."),
+        ),
+        returns="result",
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+        terminal_capability=1,
+    )
+    return _owned_accepted(
+        definition,
+        contracts=(empty, filter_spec, filtered_result, aggregate_spec, count_result),
+        pins=(entry_pin, filter_in, filter_out, aggregate_in, result_pin),
+    )
+
+
+def _guarded_scalar_procedure(
+    *,
+    alias: str = "summary",
+    path: tuple[str, ...] = ("count",),
+) -> AcceptedProcedureV1:
+    empty = _owned_contract("scalar-empty-input", {})
+    count_result = _owned_contract(
+        "scalar-count-result",
+        {"count": PropertySchema(type="int")},
+    )
+    entry_pin = _owned_pin("contract-in", empty)
+    count_in = _owned_pin("contract-in", count_result)
+    count_out = _owned_pin("contract-out", count_result)
+    definition = ProcedureDefinitionV3(
+        name="guarded-scalar-" + alias + "-" + "-".join(path),
+        contract_in=entry_pin,
+        contract_out=count_out,
+        nodes=(
+            _typed_transform_node(
+                node_id="summarize",
+                transform_kind="adapter",
+                contract_in=count_in,
+                contract_out=count_out,
+                spec={
+                    "tag": "playbill-transform-adapter-spec-v1",
+                    "value": {"count": 1},
+                },
+                as_="summary",
+                next="gate",
+            ),
+            GuardNodeV3(
+                node_id="gate",
+                predicate=GuardPredicateV1(
+                    left=PredicateOperandV1(kind="step", alias=alias, path=path),
+                    operator="gt",
+                    right=PredicateOperandV1(kind="literal", value=0),
+                ),
+                on_true="emit",
+                on_false="stop",
+                refusal_code="guard.nonpositive_summary",
+                message="The summary count is not positive.",
+            ),
+            _typed_transform_node(
+                node_id="emit",
+                transform_kind="adapter",
+                contract_in=count_in,
+                contract_out=count_out,
+                spec={
+                    "tag": "playbill-transform-adapter-spec-v1",
+                    "value": "$steps.summary",
+                },
+                as_="result",
+            ),
+            HaltNodeV3(node_id="stop", reason="Summary count was not positive."),
+        ),
+        returns="result",
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+        terminal_capability=1,
+    )
+    return _owned_accepted(
+        definition,
+        contracts=(empty, count_result),
+        pins=(entry_pin, count_in, count_out),
+    )
 
 
 def _provider_procedure(
@@ -1332,6 +1505,127 @@ def test_false_guard_is_a_typed_refusal_with_complete_finalize(tmp_path) -> None
     assert fixture.journal.all_records(fixture.stream, "runs")[-1].record.event_kind == (
         "attempt_finalized"
     )
+
+
+def test_count_guard_selects_mutually_exclusive_arms_with_production_validator(
+    tmp_path: Path,
+) -> None:
+    cases = (
+        ("gt", "succeeded", "on_true", {"count": 1}),
+        ("eq", "halted", "on_false", None),
+    )
+    for operator, expected_status, expected_arm, expected_output in cases:
+        root = tmp_path / operator
+        root.mkdir()
+        fixture = _fixture(root)
+        accepted = _guarded_filter_procedure(operator=operator)
+        result = ProcedureExecutor(
+            journal=fixture.journal,
+            bodies=fixture.bodies,
+            run_index=fixture.run_index,
+            fencing_token="writer",
+            activation_authority=_Authority(accepted.artifact_digest),
+            contract_validator=OwnedProcedureContractValidator(accepted),
+        ).execute(
+            _prepare(
+                accepted,
+                fixture,
+                _StateReader(),
+                invocation_input={},
+                run_id=f"run-{operator}",
+            ),
+            accepted,
+        )
+
+        branch_records = [
+            parse_journal_payload(
+                fixture.bodies.read(
+                    stored.record.payload_digest,
+                    access=BodyAccessContext(principal_id="test", can_read_body=True),
+                )
+            )
+            for stored in fixture.journal.all_records(fixture.stream, "runs")
+            if stored.record.event_kind == "branch_evaluated"
+        ]
+        assert result.status == expected_status
+        assert result.output == expected_output
+        assert len(branch_records) == 1
+        branch_record = branch_records[0]
+        assert isinstance(branch_record, dict)
+        assert branch_record["selected_arm"] == expected_arm
+
+
+def test_scalar_step_guard_returns_through_true_arm_with_production_validator(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _guarded_scalar_procedure()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=OwnedProcedureContractValidator(accepted),
+    ).execute(
+        _prepare(accepted, fixture, _StateReader(), invocation_input={}),
+        accepted,
+    )
+
+    assert result.status == "succeeded"
+    assert result.refusal is None
+    assert result.output == {"count": 1}
+
+
+def test_explicit_next_into_guard_arm_halt_remains_authoritative(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _guarded_filter_procedure(operator="gt", result_next="stop")
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=OwnedProcedureContractValidator(accepted),
+    ).execute(
+        _prepare(accepted, fixture, _StateReader(), invocation_input={}),
+        accepted,
+    )
+
+    assert result.status == "halted"
+    assert result.output is None
+    assert result.refusal is None
+
+
+def test_unresolved_step_guard_operand_is_typed_refusal_not_false_branch(
+    tmp_path: Path,
+) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _guarded_scalar_procedure(path=("missing",))
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=OwnedProcedureContractValidator(accepted),
+    ).execute(
+        _prepare(accepted, fixture, _StateReader(), invocation_input={}),
+        accepted,
+    )
+
+    assert result.status == "refused"
+    assert result.output is None
+    assert result.refusal is not None
+    assert result.refusal.code == "runtime_reference_unresolved"
+    assert result.refusal.node_id == "gate"
+
+
+def test_guard_missing_alias_is_rejected_by_static_law() -> None:
+    with pytest.raises(ProcedureGraphFormatError, match="R15: guard.*missing"):
+        _guarded_scalar_procedure(alias="missing")
 
 
 def test_source_node_refuses_line_binding_until_pc_e2(tmp_path) -> None:

@@ -13,6 +13,8 @@ from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     analyze_procedure_v3,
+    compute_procedure_definition_digest_v3,
+    compute_procedure_node_digests_v3,
 )
 from cruxible_client.contracts.procedures.models import (
     CaptureEgressNodeV3,
@@ -384,6 +386,98 @@ def test_trailing_halt_is_a_terminal_graph_leaf_without_edges() -> None:
 
     assert graph.edges["read"] == {"next": "stop"}
     assert graph.edges["stop"] == {}
+
+
+def _guard_halt_layout(*, halt_before_return: bool) -> ProcedureDefinitionV3:
+    contract_out = _pin("contract-out", "Contract", "guard-layout-result")
+    read = StateTapNodeV3(
+        node_id="read",
+        query=_pin("query", "QueryDefinition", "guard-layout-input"),
+        as_="rows",
+        next="gate",
+    )
+    gate = GuardNodeV3(
+        node_id="gate",
+        predicate=_predicate("rows"),
+        on_true="result",
+        on_false="stop",
+        refusal_code="guard.empty",
+        message="No rows are available.",
+    )
+    result = ProjectNodeV3(
+        node_id="result",
+        fields={"rows": "$steps.rows"},
+        contract_out=contract_out,
+        as_="result",
+    )
+    stop = HaltNodeV3(node_id="stop", reason="No rows are available.")
+    tail = (stop, result) if halt_before_return else (result, stop)
+    return _definition((read, gate, *tail), returns="result", terminal_capability=1)
+
+
+def test_guard_arm_halt_layout_order_has_identical_graph_identity() -> None:
+    halt_first = _guard_halt_layout(halt_before_return=True)
+    halt_last = _guard_halt_layout(halt_before_return=False)
+
+    first_graph = analyze_procedure_v3(halt_first)
+    last_graph = analyze_procedure_v3(halt_last)
+    assert first_graph.edges == last_graph.edges
+    assert last_graph.edges["result"] == {}
+    assert last_graph.predecessors["stop"] == ("gate",)
+    assert compute_procedure_node_digests_v3(halt_first) == (
+        compute_procedure_node_digests_v3(halt_last)
+    )
+    assert compute_procedure_definition_digest_v3(halt_first) == (
+        compute_procedure_definition_digest_v3(halt_last)
+    )
+
+
+def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
+    contract_out = _pin("contract-out", "Contract", "guard-tail-result")
+    with pytest.raises(ProcedureGraphFormatError) as raised:
+        _definition(
+            (
+                StateTapNodeV3(
+                    node_id="read",
+                    query=_pin("query", "QueryDefinition", "guard-tail-input"),
+                    as_="rows",
+                    next="gate",
+                ),
+                GuardNodeV3(
+                    node_id="gate",
+                    predicate=_predicate("rows"),
+                    on_true="result",
+                    on_false="stop",
+                    refusal_code="guard.empty",
+                    message="No rows are available.",
+                ),
+                TransformNodeV3(
+                    node_id="result",
+                    transform_kind="aggregate_items",
+                    contract_in=_pin("contract-in", "Contract", "guard-tail-items"),
+                    contract_out=contract_out,
+                    spec={
+                        "tag": "playbill-transform-aggregate-items-spec-v1",
+                        "items": "$steps.rows",
+                    },
+                    as_="result",
+                ),
+                ProjectNodeV3(
+                    node_id="tail",
+                    fields={"extra": True},
+                    contract_out=contract_out,
+                    as_="extra",
+                ),
+                HaltNodeV3(node_id="stop", reason="No rows are available."),
+            ),
+            returns="result",
+            terminal_capability=1,
+        )
+
+    assert str(raised.value) == (
+        "Procedure leaf 'tail' neither halts, emits typed egress, nor returns "
+        "the declared output alias 'result'"
+    )
 
 
 @pytest.mark.parametrize(
