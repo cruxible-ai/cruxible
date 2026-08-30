@@ -367,7 +367,6 @@ def _abstract_assess_procedure() -> ProcedureDefinitionV3:
             wall_clock=CanonicalDurationV1(microseconds=1_000_000),
             max_provider_calls=0,
             max_capture_bytes=0,
-            max_items=100,
         ),
         hard_caps=ProcedureHardCapsV3(
             max_wall_clock=CanonicalDurationV1(microseconds=2_000_000),
@@ -1130,7 +1129,7 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
         activation_policy=ActivationPolicy.DRAIN,
         retire=False,
     ).prepare()
-    assert not procedure.refused
+    assert not procedure.refused, procedure.diagnostics
     procedure.submit()
     procedure_proposal = procedure.status().proposal_id
     assert procedure_proposal is not None

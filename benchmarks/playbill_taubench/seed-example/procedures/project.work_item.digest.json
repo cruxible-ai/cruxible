@@ -10,7 +10,15 @@
       "allow_extra": false,
       "fields": {
         "rows": {
-          "type": "json"
+          "item_fields": {
+            "item_id": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            }
+          },
+          "type": "list"
         }
       },
       "name": "work-item-query-result"

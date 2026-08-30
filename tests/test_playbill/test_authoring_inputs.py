@@ -25,8 +25,14 @@ from cruxible_client.contracts.claim_types import (
     ClaimEvidenceFreshnessV1,
     ClaimFreshnessDurationV1,
 )
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureArtifactV2,
+    parse_procedure,
+    procedure_owned_contract_digest,
+)
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
+from cruxible_core.playbill.authoring.lowering import lower_authoring
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.playbill.claim_type_inputs import (
@@ -251,7 +257,7 @@ def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: P
                 CarriedContractInput(name="empty-input", fields={}),
                 CarriedContractInput(
                     name="query-result",
-                    fields={"rows": PropertySchema(type="json")},
+                    fields={"rows": PropertySchema(type="list", item_fields={})},
                 ),
             ),
         ),
@@ -267,6 +273,32 @@ def test_carried_contract_input_computes_exact_pins_and_procedure_v2(tmp_path: P
     assert "playbill-procedure-owned-contract-v1" in encoded
     assert "carried_contract" in encoded
     assert "artifact_digest" not in encoded
+
+    intent = coordinator.list_pending(actor=AuthenticatedActor(actor_id="owner")).intents[0]
+    lowered = lower_authoring(instance, intent=intent, actor_id="owner")
+    procedure_path, content = lowered.changed_members[0]
+    procedure = parse_procedure(content, path=procedure_path)
+    assert isinstance(procedure, ProcedureArtifactV2)
+    contracts = {contract.identity.name: contract for contract in procedure.owned_contracts}
+    expected_pins = {
+        ("contract-in", "Contract:empty-input"): (
+            "sha256:29f46c96b59b046a24793570a573f83cb4ba61372351976866f7aa2e6809f7a1"
+        ),
+        ("contract-out", "Contract:query-result"): (
+            "sha256:74a97d982c95bd8035d5ee9f8bb3a5aed3ed83c65ca9fb28316ce9fd0b35062e"
+        ),
+    }
+    assert {
+        ("contract-in", "Contract:empty-input"): procedure_owned_contract_digest(
+            contracts["empty-input"]
+        ).tagged,
+        ("contract-out", "Contract:query-result"): procedure_owned_contract_digest(
+            contracts["query-result"]
+        ).tagged,
+    } == expected_pins
+    assert {
+        (pin.role, pin.target.qualified): pin.artifact_digest for pin in procedure.pins
+    } == expected_pins
 
 
 def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
