@@ -175,10 +175,30 @@ def test_cli_init_key_dir_alone_bootstraps_a_solo_instance(
     assert not (custody / f"{SIGNER_ID}.ed25519").exists()
 
 
-def test_cli_independent_approval_flag_requires_reviewer_custody(tmp_path: Path) -> None:
+def test_cli_independent_approval_flag_validates_before_provisioning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reached: list[str] = []
+
+    def unexpected_key(*_args: object, **_kwargs: object) -> object:
+        reached.append("key")
+        raise AssertionError("invalid arguments must not provision custody")
+
+    def unexpected_client() -> object:
+        reached.append("server")
+        raise AssertionError("invalid arguments must not contact the server")
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.generate_client_principal_key",
+        unexpected_key,
+    )
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", unexpected_client)
     result = CliRunner().invoke(
         cli,
         [
+            "--server-url",
+            "https://init.example.test",
             "playbill",
             "init",
             "--key-dir",
@@ -189,6 +209,7 @@ def test_cli_independent_approval_flag_requires_reviewer_custody(tmp_path: Path)
     assert result.exit_code == 2
     assert "requires --reviewer-key-dir" in result.output
     assert not (tmp_path / "solo-custody").exists()
+    assert reached == []
 
 
 def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
