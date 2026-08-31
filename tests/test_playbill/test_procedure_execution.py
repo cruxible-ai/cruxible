@@ -86,6 +86,8 @@ from cruxible_core.playbill.exhaust import (
     ProcedureExhaustWriter,
     parse_journal_payload,
 )
+from cruxible_core.playbill.exhaust.line_track_records import LineTrackRecordReducer
+from cruxible_core.playbill.exhaust.promotions import VerifiedExhaustRecordV1
 from cruxible_core.playbill.material_reservations import (
     ProcedureMaterialRecoveryRequired,
     ProcedureMaterialReservationStore,
@@ -96,11 +98,13 @@ from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RESULT_MAX_BYTES,
     ExhaustRunMaterialV1,
     PreparedProcedureRunV3,
+    ProcedureAdmissionBoundPayloadV2,
     ProcedureAdmissionBoundPayloadV3,
     ProcedureAdmissionMaterialManifestV1,
     ProcedureAdmissionMaterialMemberV1,
     ProcedureExecutor,
     ProcedureProviderBindingV1,
+    ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV3,
     ProcedureRunRefusalV1,
     ProcedureSelectionDecisionV1,
@@ -982,6 +986,7 @@ def _line_admission(
     occurrence_id: str = "OCC-0001",
     occurrence_evaluation_time: datetime = NOW,
     admitted_at: datetime = NOW,
+    attempt: int = 1,
     landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = (),
     exhaust_inputs: tuple[ExhaustRunInputV1, ...] = (),
 ) -> ProcedureRunAdmissionV3:
@@ -997,6 +1002,7 @@ def _line_admission(
     fields.update(
         {
             "run_id": "RUN-" + "0" * 64,
+            "attempt": attempt,
             "invocation_origin": "line",
             "journal_stream": procedure_line_journal_stream("instance-a"),
             "journal_partition_id": procedure_line_partition(line_identity),
@@ -1092,10 +1098,14 @@ def test_line_v3_run_id_is_placement_identity_not_semantic_identity(tmp_path) ->
         occurrence_evaluation_time=NOW + timedelta(hours=1),
         admitted_at=NOW + timedelta(hours=2),
     )
+    later_attempt = _line_admission(accepted, fixture, attempt=2)
 
     assert first.semantic_replay_key_digest == second.semantic_replay_key_digest
     assert first.admission_binding_digest == second.admission_binding_digest
     assert first.run_id != second.run_id
+    assert first.semantic_replay_key_digest == later_attempt.semantic_replay_key_digest
+    assert first.admission_binding_digest == later_attempt.admission_binding_digest
+    assert first.run_id != later_attempt.run_id
     assert first.journal_partition_id == second.journal_partition_id
     with pytest.raises(ValueError, match="run_id does not reproduce"):
         ProcedureRunAdmissionV3.model_validate(
@@ -1930,6 +1940,68 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
     assert state.receipt.admission_material_manifest.model_dump(mode="json") == manifest.model_dump(
         mode="json"
     )
+
+
+def test_line_track_fold_reads_real_v2_and_v3_nested_admission_payloads(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    direct = _prepare(accepted, fixture, _StateReader())
+    v3 = _line_admission(accepted, fixture)
+    accepted_line = _accepted_line_for_admission(v3, accepted)
+    v3 = v3.model_copy(update={"line_spec_digest": accepted_line.artifact_digest})
+    v2_fields = {
+        name: getattr(v3, name) for name in ProcedureRunAdmissionV2.model_fields if name != "tag"
+    }
+    v2_fields.update(
+        {
+            "run_id": "RUN-v2-line",
+            "semantic_replay_key_digest": "sha256:" + "0" * 64,
+            "admission_binding_digest": "sha256:" + "0" * 64,
+        }
+    )
+    provisional_v2 = ProcedureRunAdmissionV2.model_construct(**v2_fields)
+    replay_key = procedure_semantic_replay_key_digest(provisional_v2)
+    provisional_v2 = provisional_v2.model_copy(update={"semantic_replay_key_digest": replay_key})
+    v2 = ProcedureRunAdmissionV2.model_validate(
+        {
+            **provisional_v2.model_dump(mode="python"),
+            "admission_binding_digest": procedure_admission_digest(provisional_v2),
+        }
+    )
+    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    payloads = (
+        ProcedureAdmissionBoundPayloadV2(
+            admission=v2,
+            accepted_state_materials=direct.accepted_state_materials,
+        ).model_dump(mode="json"),
+        ProcedureAdmissionBoundPayloadV3(
+            admission=v3,
+            admission_material_manifest=manifest,
+            admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+        ).model_dump(mode="json"),
+    )
+    reducer = LineTrackRecordReducer(
+        accepted_line=accepted_line,
+        accepted_procedure=accepted,
+    )
+
+    for index, payload in enumerate(payloads, start=1):
+        record = VerifiedExhaustRecordV1(
+            record_digest=_digest(f"nested-record-{index}"),
+            generation_digest=_digest("nested-generation"),
+            sequence=1,
+            event_kind="admission_bound",
+            payload_digest=_digest(f"nested-payload-{index}"),
+            payload=payload,
+            procedure_artifact_digest=accepted.artifact_digest,
+            definition_digest=accepted.procedure.definition_digest,
+            run_id=f"line-run-{index}",
+            occurrence_id=f"occurrence-{index}",
+            attempt=1,
+            line_spec_digest=accepted_line.artifact_digest,
+        )
+        output = reducer.reduce((record,))
+        assert output["deployment_snapshot_digests"] == [v3.deployment_snapshot_digest]
 
 
 @pytest.mark.parametrize(

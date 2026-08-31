@@ -5,6 +5,7 @@ catch packaging regressions that the in-repo ``uv run`` developer flow hides:
 
 * a wheel that cannot be built at all (e.g. a redundant ``force-include`` that
   double-adds files into the archive), and
+* a wheel that omits the governed Procedure runtime-policy seed, and
 * declared ``[project.scripts]`` aliases that are missing or broken once the
   package is actually installed into a fresh interpreter.
 
@@ -192,6 +193,26 @@ def test_installed_entry_point_targets_resolve(installed_venv: Path) -> None:
         line.split("=", 1) for line in completed.stdout.strip().splitlines() if "=" in line
     )
     assert resolved == _declared_scripts()
+
+
+def test_installed_wheel_carries_the_procedure_runtime_policy_seed(
+    installed_venv: Path,
+) -> None:
+    """Genesis policy authority must survive source-tree to wheel packaging."""
+
+    python = _venv_bin(installed_venv) / "python"
+    completed = _run(
+        [
+            str(python),
+            "-c",
+            (
+                "from cruxible_core.playbill.bootstrap import "
+                "seeded_procedure_runtime_policy; "
+                "print(seeded_procedure_runtime_policy().provider_output_bytes_cap)"
+            ),
+        ]
+    )
+    assert completed.stdout.strip() == "1048576"
 
 
 @pytest.mark.parametrize("alias", _BASE_RUNNABLE_ALIASES)

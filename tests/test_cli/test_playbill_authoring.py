@@ -530,6 +530,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     runner = CliRunner()
     help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
     assert help_result.exit_code == 0
+    assert "Input kind family: claim | procedure | subject | query_definition" in help_result.output
     assert "procedure_runtime_policy" in help_result.output
 
     for name in (

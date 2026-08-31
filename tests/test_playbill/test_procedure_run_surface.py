@@ -337,6 +337,123 @@ def test_run_id_collision_across_partitions_fails_closed(tmp_path: Path) -> None
         procedure_run_service._records_for_run(instance, "RUN-collision")  # noqa: SLF001
 
 
+def test_reading_partition_may_reference_a_run_without_joining_run_authority(
+    tmp_path: Path,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert run.run_id is not None
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    stream = procedure_run_service._stream(instance)  # noqa: SLF001
+    reading_partition = "procedure-readings:test"
+    procedure_run_service._activate_writer(journal, stream, reading_partition)  # noqa: SLF001
+    ProcedureExhaustWriter(
+        journal=journal,
+        bodies=instance.body_store(),
+        fencing_token=procedure_run_service.PROCEDURE_RUN_FENCING_TOKEN,
+    ).append(
+        stream=stream,
+        partition_id=reading_partition,
+        event_kind="procedure_reading",
+        accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        procedure_artifact_digest=procedure_artifact_digest(procedure).tagged,
+        definition_digest=procedure.definition_digest,
+        actor_context=_actor(instance).model_copy(update={"operation_id": "reading"}),
+        recorded_at=READ_TIME,
+        payload={"reading": "separate authority"},
+        run_id=run.run_id,
+    )
+
+    assert service_get_playbill_procedure_run(instance, run_id=run.run_id) == run
+
+
+def test_run_status_refuses_record_metadata_that_disagrees_with_admission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert run.run_id is not None and run.receipt is not None
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    records = list(
+        journal.all_records(
+            procedure_run_service._stream(instance),  # noqa: SLF001
+            run.receipt.partition_id,
+        )
+    )
+    original = records[1].record
+    mismatches = {
+        "stream": original.stream.model_copy(update={"stream_id": "other-stream"}),
+        "partition_id": "other-partition",
+        "accepted_coordinate": original.accepted_coordinate.model_copy(
+            update={"git_oid": "b" * len(original.accepted_coordinate.git_oid)}
+        ),
+        "procedure_artifact_digest": "sha256:" + "2" * 64,
+        "definition_digest": "sha256:" + "3" * 64,
+        "run_id": "RUN-other",
+        "line_spec_digest": "sha256:" + "4" * 64,
+        "occurrence_id": "OCC-other",
+        "attempt": 2,
+        "admission_binding_digest": "sha256:" + "5" * 64,
+        "actor_context": original.actor_context.model_copy(update={"operation_id": "other"}),
+    }
+    for field, mismatch in mismatches.items():
+        divergent = list(records)
+        divergent[1] = divergent[1].model_copy(
+            update={"record": original.model_copy(update={field: mismatch})}
+        )
+        monkeypatch.setattr(
+            procedure_run_service,
+            "_records_for_run",
+            lambda _instance, _run_id, divergent=divergent: tuple(divergent),
+        )
+
+        with pytest.raises(ProcedureRunRecoveryRequired, match="metadata disagrees"):
+            procedure_run_service._state_from_records(  # noqa: SLF001
+                instance, run_id=run.run_id
+            )
+
+
+def test_run_status_refuses_a_second_admission_bound_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+    assert run.run_id is not None and run.receipt is not None
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    records = journal.all_records(
+        procedure_run_service._stream(instance),  # noqa: SLF001
+        run.receipt.partition_id,
+    )
+    admission_record = next(
+        stored for stored in records if stored.record.event_kind == "admission_bound"
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_records_for_run",
+        lambda _instance, _run_id: (admission_record, *records),
+    )
+
+    with pytest.raises(ProcedureRunRecoveryRequired, match="one admission_bound"):
+        procedure_run_service._state_from_records(instance, run_id=run.run_id)  # noqa: SLF001
+
+
 def test_served_journal_open_recovers_an_unpublished_material_lease(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001

@@ -682,7 +682,7 @@ def _records_for_run(instance: PlaybillInstance, run_id: str):  # type: ignore[n
         item
         for partition_id in journal.partition_ids(_stream(instance))
         for item in journal.all_records(_stream(instance), partition_id)
-        if item.record.run_id == run_id
+        if item.record.run_id == run_id and item.record.admission_binding_digest is not None
     )
     partitions = {item.record.partition_id for item in records}
     admission_digests = {
@@ -962,6 +962,20 @@ def _state_from_records(
             and isinstance(admission, ProcedureRunAdmissionV3)
             and admission_material_manifest is not None
         ):
+            required_line_fields = (
+                admission.line_spec_digest,
+                admission.occurrence_id,
+                admission.deployment_snapshot_digest,
+                admission.acquisition_policy_digest,
+                admission.sensitivity_policy_digest,
+                admission.mandate_coordinate_digest,
+                admission.calibration_coordinate_digest,
+                admission_material_manifest_digest,
+            )
+            if any(value is None for value in required_line_fields):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Line admission is incomplete"
+                )
             parsed_budget = ProcedureRunBudgetV1.model_validate(raw_budget_block)
             public_receipt = ProcedureRunReceiptV4(
                 **{
@@ -984,8 +998,8 @@ def _state_from_records(
                 terminal=terminal,
                 invocation_origin="line",
                 line_identity=admission.line_identity,
-                line_spec_digest=admission.line_spec_digest or "",
-                occurrence_id=admission.occurrence_id or "",
+                line_spec_digest=cast(str, admission.line_spec_digest),
+                occurrence_id=cast(str, admission.occurrence_id),
                 occurrence_evaluation_time=admission.occurrence_evaluation_time,
                 node_pin_sets=tuple(
                     ProcedureRunNodePinSetV1(node_id=item.node_id, pins=item.pins)
@@ -996,8 +1010,8 @@ def _state_from_records(
                     ProcedureReplayInputProjectionV1.model_validate(item.model_dump(mode="json"))
                     for item in procedure_replay_input_vector(admission)
                 ),
-                deployment_snapshot_digest=admission.deployment_snapshot_digest or "",
-                acquisition_policy_digest=admission.acquisition_policy_digest or "",
+                deployment_snapshot_digest=cast(str, admission.deployment_snapshot_digest),
+                acquisition_policy_digest=cast(str, admission.acquisition_policy_digest),
                 selection_receipt_digest=admission.selection_receipt_digest,
                 selection_decision=ProcedureSelectionDecisionV1.model_validate(
                     admission.selection_decision.model_dump(mode="json")
@@ -1007,9 +1021,9 @@ def _state_from_records(
                     ProcedureProviderBindingV1.model_validate(item.model_dump(mode="json"))
                     for item in admission.resolved_provider_bindings
                 ),
-                sensitivity_policy_digest=admission.sensitivity_policy_digest or "",
-                mandate_coordinate_digest=admission.mandate_coordinate_digest or "",
-                calibration_coordinate_digest=admission.calibration_coordinate_digest or "",
+                sensitivity_policy_digest=cast(str, admission.sensitivity_policy_digest),
+                mandate_coordinate_digest=cast(str, admission.mandate_coordinate_digest),
+                calibration_coordinate_digest=cast(str, admission.calibration_coordinate_digest),
                 taint_labels=admission.taint_labels,
                 epsilon_member=admission.epsilon_member,
                 admission_material_manifest=(
@@ -1017,7 +1031,7 @@ def _state_from_records(
                         admission_material_manifest.model_dump(mode="json")
                     )
                 ),
-                admission_material_manifest_digest=admission_material_manifest_digest or "",
+                admission_material_manifest_digest=cast(str, admission_material_manifest_digest),
                 budget=ProcedureRunBudgetV2(
                     declared=ProcedureRunBudgetDeclaredV2(
                         budget=admission.budget,

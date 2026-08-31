@@ -288,27 +288,6 @@ def test_a_malformed_declared_track_record_refuses() -> None:
         line_track_record_facts(accepted, output=normalize_canonical(output))
 
 
-def test_v3_nested_admission_keeps_its_deployment_track_record_dimension() -> None:
-    procedure, line = _artifacts()
-    records = list(_verified_records(procedure=procedure, line=line))
-    deployment = _digest("nested-v3-deployment")
-    records[0] = records[0].model_copy(
-        update={
-            "payload": {
-                "tag": "playbill-procedure-admission-bound-payload-v3",
-                "admission": {"deployment_snapshot_digest": deployment},
-            }
-        }
-    )
-
-    output = LineTrackRecordReducer(
-        accepted_line=line,
-        accepted_procedure=procedure,
-    ).reduce(tuple(records))
-
-    assert output["deployment_snapshot_digests"] == [deployment]
-
-
 def test_an_accepted_promotion_projects_its_line_track_record_through_the_floor(tmp_path) -> None:
     instance, owner = initialize_local(tmp_path)
     procedure, line = _artifacts()
