@@ -13019,6 +13019,26 @@
             "type": "object"
           }
         },
+        "inserted_block_base64": {
+          "default": null,
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "inserted_block_base64",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inserted Block Base64"
+          }
+        },
         "intent": {
           "has_default": false,
           "has_default_factory": false,
@@ -13137,6 +13157,18 @@
             "additionalProperties": true,
             "title": "Expectation",
             "type": "object"
+          },
+          "inserted_block_base64": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Inserted Block Base64"
           },
           "intent": {
             "additionalProperties": true,
