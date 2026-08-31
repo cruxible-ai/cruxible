@@ -3137,15 +3137,30 @@ def _resolved_coverage(
     *,
     command_name: str,
     scan_budget: CoverageScanBudgetV1 | None = None,
+    instance_id: str | None = None,
 ) -> CoverageResultV3:
-    result = _server_call(
-        lambda client, instance_id: client.resolve_playbill_coverage(
-            instance_id,
+    def resolve(
+        client: CruxibleClient,
+        selected_instance_id: str,
+    ) -> contracts.PlaybillCoverageResult:
+        return client.resolve_playbill_coverage(
+            selected_instance_id,
             observations=[item.model_dump(mode="json") for item in observations],
             scan_budget=None if scan_budget is None else scan_budget.model_dump(mode="json"),
-        ),
-        command_name=command_name,
-    )
+        )
+
+    if instance_id is None:
+        result = _server_call(resolve, command_name=command_name)
+    else:
+        dispatched = _dispatch_cli(
+            lambda client: resolve(client, instance_id),
+            lambda: None,
+            allow_local=False,
+            command_name=command_name,
+        )
+        if dispatched is None:
+            raise click.ClickException("coverage resolver returned no result")
+        result = dispatched
     return CoverageResultV3.model_validate(result.result)
 
 
@@ -3262,6 +3277,7 @@ def _hook_resolver(config: CoverageWorkspaceConfig) -> ResolveCoverage:
             tuple(observations),
             command_name="playbill hook post-tool-use",
             scan_budget=config.scan_budget,
+            instance_id=config.instance_id,
         )
 
     return resolve
@@ -3340,10 +3356,11 @@ def post_tool_use_hook(root: str) -> None:
             delivery = middleware.after_tool(event)
             text = delivery.appended_coverage_text
             if delivery.failure_code == "coverage_operation_unavailable":
-                try:
-                    _require_instance_id()
-                except click.UsageError:
-                    diagnostic = "playbill.coverage_hook.instance_id_missing"
+                if config.instance_id is None:
+                    try:
+                        _require_instance_id()
+                    except click.UsageError:
+                        diagnostic = "playbill.coverage_hook.instance_id_missing"
     except CoverageRuleTagError:
         diagnostic = "playbill.coverage_hook.rule_tag_invalid"
         text = ""

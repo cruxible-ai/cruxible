@@ -174,7 +174,7 @@ def read_post_tool_use_event(
     tool_name = payload.get("tool_name")
     if not isinstance(tool_name, str) or tool_name not in TOOL_KINDS:
         return None
-    if not isinstance(payload.get("tool_response"), dict):
+    if tool_name in ANNOTATABLE_TOOLS and not isinstance(payload.get("tool_response"), dict):
         raise PostToolUseResponseError("recognized PostToolUse tool_response must be an object")
 
     tool_input = _mapping(payload.get("tool_input"))

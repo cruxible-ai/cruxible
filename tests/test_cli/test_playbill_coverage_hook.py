@@ -620,6 +620,38 @@ def test_hook_reports_missing_instance_id_without_changing_stdout(
     assert stderr == "playbill.coverage_hook.instance_id_missing\n"
 
 
+def test_hook_uses_the_workspace_config_instance_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "absent-context.json"))
+    monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
+    workspace = _workspace(tmp_path)
+    config_path = workspace / CONFIG_RELATIVE_PATH
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["instance_id"] = "inst_from_workspace"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    calls: list[str] = []
+
+    class StubClient:
+        def resolve_playbill_coverage(self, instance_id: str, **_: object) -> None:
+            calls.append(instance_id)
+            raise RuntimeError("stop after proving instance selection")
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    payload = _post_tool_use(
+        "Read",
+        {"file_path": str(workspace / FOREIGN_PATH)},
+        {"type": "text", "file": {"content": "governed"}},
+    )
+
+    emitted, stderr = _run_hook_with_diagnostic(workspace, payload)
+
+    assert calls == ["inst_from_workspace"]
+    assert emitted == {}
+    assert stderr == ""
+
+
 def test_hook_reports_invalid_rule_tag_without_changing_stdout(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     config_path = workspace / CONFIG_RELATIVE_PATH
@@ -652,6 +684,26 @@ def test_hook_reports_non_object_tool_response_without_changing_stdout(tmp_path:
 
     assert emitted == {}
     assert stderr == "playbill.coverage_hook.tool_response_invalid\n"
+
+
+@pytest.mark.parametrize("tool_name", ["Read", "Edit", "Write"])
+def test_unstructured_nonannotatable_tool_responses_stay_silent(
+    tmp_path: Path,
+    tool_name: str,
+) -> None:
+    workspace = _workspace(tmp_path)
+
+    emitted, stderr = _run_hook_with_diagnostic(
+        workspace,
+        _post_tool_use(
+            tool_name,
+            {"file_path": str(workspace / "notes.txt")},
+            "unstructured output",
+        ),
+    )
+
+    assert emitted == {}
+    assert stderr == ""
 
 
 def test_unbound_event_remains_silent_without_an_instance_id(
