@@ -280,3 +280,29 @@ def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(
     assert result.exit_code == 0, result.output
     assert result.stderr == ""
     assert result.stdout.startswith("Playbill coverage: 0 exact, 0 drifted, 0 candidates, 0 none")
+
+
+def test_claim_type_template_does_not_announce_a_write_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: (_ for _ in ()).throw(AssertionError("template must stay local")),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://example.test",
+            "--instance-id",
+            "inst_template",
+            "playbill",
+            "claim-type",
+            "propose",
+            "--template",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
