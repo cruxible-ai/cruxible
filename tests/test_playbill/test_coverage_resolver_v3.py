@@ -204,6 +204,30 @@ def test_span_rollup_never_masks_drift_behind_an_exact_card() -> None:
         )
 
 
+def test_resolver_summary_counts_a_mixed_exact_and_drifted_source_as_drifted() -> None:
+    second = b"The deployment window is Friday.\n"
+    citations = index_v2(
+        capture(HANDBOOK, CITED, name="still-exact"),
+        capture(HANDBOOK, second, name="now-drifted"),
+    )
+    snapshot = overlay(
+        working(HANDBOOK, PREAMBLE + CITED + b"The deployment window is Monday.\n"),
+        citations=citations,
+    )
+
+    result = resolve_coverage_v3(
+        request(HANDBOOK),
+        index=citations,
+        overlay=snapshot,
+        access=profile(),
+        manifest=manifest_v2(citations, snapshot),
+    )
+
+    assert {card.match_state for card in result.spans[0].cards} == {"exact", "drifted"}
+    assert result.spans[0].match_state == "drifted"
+    assert (result.summary.exact, result.summary.drifted) == (0, 1)
+
+
 def test_the_frozen_coverage_v3_grammar_matches_its_golden() -> None:
     fixture = json.loads(GOLDEN.read_bytes())
 
