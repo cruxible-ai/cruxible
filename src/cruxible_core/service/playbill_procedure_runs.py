@@ -1240,8 +1240,18 @@ def service_prepare_playbill_line_admission(
             message=str(exc),
             details={"policy_path": PROCEDURE_RUNTIME_POLICY_PATH},
         )
-    bound = bind_line_admission_runtime_policy(admission, policy)
-    verify_line_admission_spec(bound, accepted_line)
+    try:
+        bound = bind_line_admission_runtime_policy(admission, policy)
+        verify_line_admission_spec(bound, accepted_line)
+    except PlaybillExecutionError as exc:
+        return ProcedureAdmissionRefusalV1(
+            code="artifact_binding_mismatch",
+            message=str(exc),
+            details={
+                "accepted_line_identity": accepted_line.line.identity.qualified,
+                "accepted_line_spec_digest": accepted_line.artifact_digest,
+            },
+        )
     return bound
 
 

@@ -1169,6 +1169,16 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
     assert isinstance(refused, ProcedureAdmissionRefusalV1)
     assert refused.code == "procedure_runtime_policy_absent"
 
+    monkeypatch.setattr(instance, "tree_at", lambda _git_oid: accepted_tree)
+    mismatched = service_prepare_playbill_line_admission(
+        instance,
+        admission=admission,
+        accepted_line=accepted_line.model_copy(update={"artifact_digest": "sha256:" + "9" * 64}),
+    )
+    assert isinstance(mismatched, ProcedureAdmissionRefusalV1)
+    assert mismatched.code == "artifact_binding_mismatch"
+    assert "another accepted LineSpec" in mismatched.message
+
 
 def test_replay_carriers_have_one_client_contract_definition_source() -> None:
     for name in (
