@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
 from cruxible_client.authoring.examples import claim_flow_a_example, procedure_example
-from cruxible_client.contracts.authoring.inputs import CarriedContractInput
+from cruxible_client.contracts.authoring.inputs import CarriedContractInput, lower_authoring_input
+from cruxible_client.contracts.authoring.models import ProcedureAuthoringPayloadV2
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_core.playbill.authoring.insertions import PublicationClaimNotAccepted
 from cruxible_core.playbill.claim_type_inputs import (
@@ -302,6 +303,38 @@ def test_http_unused_procedure_contract_is_a_typed_preflight_refusal(
                 "replacement": None,
             }
         ]
+
+
+def test_http_unsorted_owned_contracts_use_the_typed_artifact_validation_refusal(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    payload = lower_authoring_input(procedure_example(), tree={})
+    assert isinstance(payload, ProcedureAuthoringPayloadV2)
+    assert len(payload.owned_contracts) > 1
+    unsorted = payload.model_copy(
+        update={"owned_contracts": tuple(reversed(payload.owned_contracts))}
+    )
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        json={
+            "tag": "playbill-authoring-intent-compile-request-v1",
+            "payload": unsorted.model_dump(mode="json"),
+            "intent_id": None,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["verdict"] == "refused"
+    diagnostic = result["frontier"]["diagnostics"][0]
+    assert diagnostic["code"] == "playbill.authoring.procedure_definition_invalid"
+    assert diagnostic["stage"] == "lowering"
+    assert diagnostic["offending_element"] == "procedure"
+    assert "owned Contracts must be canonically byte-sorted" in diagnostic["message"]
+    assert "<ProcedureOwnedContractV1>" in diagnostic["message"]
+    assert "arrays must be concrete lists" not in diagnostic["message"]
 
 
 def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_input(

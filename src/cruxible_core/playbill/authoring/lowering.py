@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -949,8 +950,15 @@ def _validation_error_lines(exc: ValidationError, *, root: str) -> tuple[str, ..
         )
         offending = error.get("input")
         try:
-            rendered = canonical_bytes(offending).decode("utf-8")
-        except (TypeError, ValueError):
+            rendered = json.dumps(
+                offending,
+                allow_nan=False,
+                default=lambda value: f"<{type(value).__name__}>",
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except Exception:  # noqa: BLE001 - error reporting must be total over arbitrary inputs
             rendered = f"<{type(offending).__name__}>"
         lines.append(f"{location}: {error['msg']}; offending element: {rendered}")
     return tuple(lines)
