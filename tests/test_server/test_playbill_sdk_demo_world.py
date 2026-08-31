@@ -69,13 +69,13 @@ from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.claim_type_inputs import (
-    claim_type_input_example,
-    defaulted_claim_type_input_example,
-)
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
+from tests.test_playbill._claim_type_support import (
+    claim_type_input_example,
+    defaulted_claim_type_input_example,
+)
 
 
 def _digest(label: str) -> str:

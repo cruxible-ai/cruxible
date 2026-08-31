@@ -12,9 +12,7 @@ from cruxible_client.authoring.examples import AuthoringExampleName, authoring_e
 from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.tool_prompts import tool_description
-from cruxible_core.playbill.claim_type_inputs import (
-    claim_type_input_example,
-)
+from tests.test_playbill._claim_type_support import claim_type_input_example
 
 
 def _coordinate() -> contracts.PlaybillAcceptedCoordinate:

@@ -39,11 +39,11 @@ from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
-    claim_type_input_example,
     lint_claim_type_input,
     lower_claim_type_input,
 )
 from cruxible_core.playbill.proposals import AuthenticatedActor
+from tests.test_playbill._claim_type_support import claim_type_input_example
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_authoring_preflight import (
     TIMESTAMP,

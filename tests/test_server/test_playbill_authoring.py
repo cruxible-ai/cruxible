@@ -11,10 +11,10 @@ from cruxible_client import contracts
 from cruxible_client.authoring.examples import claim_flow_a_example
 from cruxible_core.playbill.authoring.insertions import PublicationClaimNotAccepted
 from cruxible_core.playbill.claim_type_inputs import (
-    claim_type_input_example,
     lower_claim_type_input,
 )
 from tests.test_client.test_playbill_authoring import OBSERVATION
+from tests.test_playbill._claim_type_support import claim_type_input_example
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,

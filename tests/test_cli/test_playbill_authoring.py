@@ -20,13 +20,13 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.test_client.test_playbill_authoring import OBSERVATION
+from tests.test_playbill._claim_type_support import claim_type_input_example
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
