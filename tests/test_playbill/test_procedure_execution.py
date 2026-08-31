@@ -10,6 +10,8 @@ import pytest
 from pydantic import TypeAdapter
 
 import cruxible_core.playbill.procedures.execution as execution_module
+import cruxible_core.service.playbill_procedure_runs as procedure_run_service
+from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecisionV1
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactPin,
@@ -21,7 +23,10 @@ from cruxible_client.contracts.canonical import (
     canonical_bytes,
     typed_digest,
 )
-from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.captures import (
+    CanonicalDurationV1,
+    CaptureRetentionErasurePolicyV1,
+)
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
@@ -41,6 +46,13 @@ from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     compute_procedure_definition_digest_v3,
 )
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpecV1,
+    LineSpecV1,
+    ManualTriggerPolicyV1,
+    line_spec_digest,
+    line_spec_path,
+)
 from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     GuardPredicateV1,
@@ -58,6 +70,7 @@ from cruxible_client.contracts.procedures.models import (
     StateTapNodeV3,
     TransformNodeV3,
 )
+from cruxible_client.contracts.procedures.results import ProcedureRunReceiptV4
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
@@ -65,21 +78,47 @@ from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalStreamIdentityV1,
     LocalJournalBackend,
+    ProcedureExhaustWriter,
     parse_journal_payload,
+)
+from cruxible_core.playbill.material_reservations import (
+    ProcedureMaterialRecoveryRequired,
+    ProcedureMaterialReservationStore,
+    reserve_admission_material_body,
 )
 from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RESULT_MAX_BYTES,
+    PreparedProcedureRunV3,
+    ProcedureAdmissionBoundPayloadV3,
+    ProcedureAdmissionMaterialManifestV1,
+    ProcedureAdmissionMaterialMemberV1,
     ProcedureExecutor,
+    ProcedureProviderBindingV1,
+    ProcedureRunAdmissionV3,
     ProcedureRunRefusalV1,
+    ProcedureSelectionDecisionV1,
     ProviderInvocationResultV1,
     StateTapReadResultV1,
     _apply_transform,
     _check_return_budget,
     _extract_items,
     _RunRefusal,
+    capture_admission_material_member,
     prepare_direct_procedure_run,
+    procedure_admission_digest,
+    procedure_admission_material_digest,
+    procedure_line_journal_stream,
+    procedure_line_partition,
+    procedure_line_run_id,
+    procedure_replay_input_vector,
+    procedure_selection_decision_digest,
     procedure_semantic_replay_key_digest,
     procedure_semantic_result_digest,
+    verify_line_admission_spec,
+)
+from cruxible_core.playbill.procedures.input_planes import (
+    ExhaustRunInputV1,
+    LandedCaptureRunInputV1,
 )
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -889,6 +928,850 @@ def test_independent_execution_commits_one_semantic_result_across_partitions(tmp
 
     assert results[0][0] == results[1][0]
     assert results[0][1] != results[1][1]
+
+
+def _line_admission(
+    accepted: AcceptedProcedureV1,
+    fixture: _Fixture,
+    *,
+    occurrence_id: str = "OCC-0001",
+    occurrence_evaluation_time: datetime = NOW,
+    admitted_at: datetime = NOW,
+    landed_capture_inputs: tuple[LandedCaptureRunInputV1, ...] = (),
+    exhaust_inputs: tuple[ExhaustRunInputV1, ...] = (),
+) -> ProcedureRunAdmissionV3:
+    direct = _prepare(accepted, fixture, _StateReader()).admission
+    policy_digest = _digest("acquisition-policy")
+    decision = ProcedureSelectionDecisionV1(
+        policy_digest=policy_digest,
+        verdict="selected",
+        decisions=(),
+    )
+    line_identity = ArtifactIdentity(kind="Line", name="daily-triage")
+    fields = {name: getattr(direct, name) for name in type(direct).model_fields if name != "tag"}
+    fields.update(
+        {
+            "run_id": "RUN-" + "0" * 64,
+            "invocation_origin": "line",
+            "journal_stream": procedure_line_journal_stream("instance-a"),
+            "journal_partition_id": procedure_line_partition(line_identity),
+            "line_spec_digest": _digest("line-spec"),
+            "occurrence_id": occurrence_id,
+            "deployment_snapshot_digest": _digest("deployment"),
+            "acquisition_policy_digest": policy_digest,
+            "selection_receipt_digest": _digest("selection-receipt"),
+            "sensitivity_policy_digest": _digest("sensitivity"),
+            "mandate_coordinate_digest": _digest("mandate"),
+            "calibration_coordinate_digest": _digest("calibration"),
+            "taint_labels": ("sensitive",),
+            "epsilon_member": True,
+            "admitted_at": admitted_at,
+            "line_identity": line_identity,
+            "occurrence_evaluation_time": occurrence_evaluation_time,
+            "resolved_provider_bindings": (),
+            "selection_decision": decision,
+            "selection_decision_digest": procedure_selection_decision_digest(decision),
+            "provider_output_bytes_cap": 1_048_576,
+            "landed_capture_inputs": landed_capture_inputs,
+            "exhaust_inputs": exhaust_inputs,
+            "semantic_replay_key_digest": "sha256:" + "0" * 64,
+            "admission_binding_digest": "sha256:" + "0" * 64,
+        }
+    )
+    provisional = ProcedureRunAdmissionV3.model_construct(**fields)
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
+    admission_digest = procedure_admission_digest(provisional)
+    run_id = procedure_line_run_id(
+        occurrence_id=occurrence_id,
+        attempt=provisional.attempt,
+        admission_binding_digest=admission_digest,
+        occurrence_evaluation_time=occurrence_evaluation_time,
+    )
+    return ProcedureRunAdmissionV3.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "run_id": run_id,
+            "admission_binding_digest": admission_digest,
+        }
+    )
+
+
+def test_line_v3_run_id_is_placement_identity_not_semantic_identity(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    first = _line_admission(accepted, fixture)
+    second = _line_admission(
+        accepted,
+        fixture,
+        occurrence_id="OCC-0002",
+        occurrence_evaluation_time=NOW + timedelta(hours=1),
+        admitted_at=NOW + timedelta(hours=2),
+    )
+
+    assert first.semantic_replay_key_digest == second.semantic_replay_key_digest
+    assert first.admission_binding_digest == second.admission_binding_digest
+    assert first.run_id != second.run_id
+    assert first.journal_partition_id == second.journal_partition_id
+    with pytest.raises(ValueError, match="run_id does not reproduce"):
+        ProcedureRunAdmissionV3.model_validate(
+            {**first.model_dump(mode="python"), "run_id": second.run_id}
+        )
+
+
+def test_line_v3_admission_binds_the_exact_accepted_line_spec(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted_procedure = _state_procedure()
+    admission = _line_admission(accepted_procedure, fixture)
+    procedure_pin = ArtifactPin(
+        role="procedure",
+        target=accepted_procedure.procedure.identity,
+        artifact_digest=accepted_procedure.artifact_digest,
+    )
+    acquisition_pin = ArtifactPin(
+        role="acquisition-policy",
+        target=ArtifactIdentity(kind="SourceAcquisitionPolicy", name="line-policy"),
+        artifact_digest=admission.acquisition_policy_digest or "",
+    )
+    line = LineSpecV1(
+        identity=admission.line_identity,
+        occurrence_epoch=1,
+        procedure=procedure_pin,
+        parameters={},
+        slot_bindings=(),
+        trigger_policy=ManualTriggerPolicyV1(),
+        acquisition_policy=acquisition_pin,
+        requested_terminal_rung=1,
+        budgets={},
+        epsilon={"$decimal": "0"},
+        pins=tuple(
+            sorted(
+                (procedure_pin, acquisition_pin),
+                key=lambda pin: (pin.role.encode(), pin.target.qualified.encode()),
+            )
+        ),
+    )
+    accepted_line = AcceptedLineSpecV1(
+        path=line_spec_path(line.identity.name),
+        line=line,
+        artifact_digest=line_spec_digest(line).tagged,
+    )
+    bound = admission.model_copy(update={"line_spec_digest": accepted_line.artifact_digest})
+
+    verify_line_admission_spec(bound, accepted_line)
+    with pytest.raises(PlaybillExecutionError, match="another accepted LineSpec"):
+        verify_line_admission_spec(
+            bound.model_copy(update={"line_identity": ArtifactIdentity(kind="Line", name="other")}),
+            accepted_line,
+        )
+
+
+def test_equal_line_admission_digests_retrieve_two_exact_runs(tmp_path, monkeypatch) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    direct = _prepare(accepted, fixture, _StateReader())
+    first = _line_admission(accepted, fixture)
+    second = _line_admission(
+        accepted,
+        fixture,
+        occurrence_id="OCC-0002",
+        occurrence_evaluation_time=NOW + timedelta(hours=1),
+        admitted_at=NOW + timedelta(hours=2),
+    )
+    assert first.admission_binding_digest == second.admission_binding_digest
+    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    prepared = tuple(
+        PreparedProcedureRunV3(
+            admission=admission,
+            accepted_state_materials=direct.accepted_state_materials,
+            admission_material_manifest=manifest,
+            admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+        )
+        for admission in (first, second)
+    )
+    fixture.journal.activate_writer(
+        first.journal_stream,
+        first.journal_partition_id,
+        fencing_token="writer",
+        expected_head=fixture.journal.read_head(first.journal_stream, first.journal_partition_id),
+    )
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    )
+    for item in prepared:
+        assert executor.execute(item, accepted).status == "succeeded"
+
+    records = fixture.journal.all_records(first.journal_stream, first.journal_partition_id)
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_records_for_run",
+        lambda _instance, run_id: tuple(item for item in records if item.record.run_id == run_id),
+    )
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    first_state = procedure_run_service._state_from_records(  # noqa: SLF001
+        _Instance(), run_id=first.run_id
+    )
+    second_state = procedure_run_service._state_from_records(  # noqa: SLF001
+        _Instance(), run_id=second.run_id
+    )
+    assert first_state.run_id == first.run_id
+    assert second_state.run_id == second.run_id
+    assert first_state.receipt != second_state.receipt
+    assert fixture.run_index.get(first.run_id) is not None
+    assert fixture.run_index.get(second.run_id) is not None
+
+
+def test_line_v3_replay_key_includes_byte_inputs_and_excludes_provenance(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    admission = _line_admission(_state_procedure(), fixture)
+    baseline = admission.semantic_replay_key_digest
+
+    for update in (
+        {"admitted_at": NOW + timedelta(days=1)},
+        {"deployment_snapshot_digest": _digest("other-deployment")},
+        {"selection_receipt_digest": _digest("other-selection-receipt")},
+        {"occurrence_id": "OCC-other"},
+        {"occurrence_evaluation_time": NOW + timedelta(days=1)},
+        {"procedure_path": "procedures/provenance-only.yaml"},
+    ):
+        changed = admission.model_copy(update=update)
+        assert procedure_semantic_replay_key_digest(changed) == baseline
+
+    alternate_decision = ProcedureSelectionDecisionV1(
+        policy_digest=admission.selection_decision.policy_digest,
+        verdict="refused",
+        decisions=(
+            AcquisitionInputDecisionV1(
+                input_name="source",
+                disposition="refused",
+                reason_codes=("unavailable",),
+            ),
+        ),
+    )
+    for update in (
+        {"provider_output_bytes_cap": admission.provider_output_bytes_cap + 1},
+        {"lane": "replay"},
+        {"epsilon_member": False},
+        {"selection_decision": alternate_decision},
+        {"mandate_coordinate_digest": _digest("other-mandate")},
+    ):
+        changed = admission.model_copy(update=update)
+        assert procedure_semantic_replay_key_digest(changed) != baseline
+
+
+def test_line_v3_replay_key_membership_is_closed(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    capture = LandedCaptureRunInputV1(
+        input_name="capture",
+        capture_digest=_digest("key-capture"),
+        capture_contract_digest=_digest("key-capture-contract"),
+        landing_cursor="partition:0001",
+    )
+    exhaust = ExhaustRunInputV1(
+        input_name="exhaust",
+        journal_identity="procedure-exhaust-v1/procedures",
+        first_cursor="partition:0001",
+        last_cursor="partition:0002",
+        reducer_or_query_digest=_digest("key-reducer"),
+        result_digest=_digest("key-exhaust-result"),
+    )
+    decision = ProcedureSelectionDecisionV1(
+        policy_digest=_digest("acquisition-policy"),
+        verdict="selected",
+        decisions=(
+            AcquisitionInputDecisionV1(
+                input_name="capture",
+                disposition="selected",
+                considered_capture_digests=(_digest("considered-capture"),),
+                selected_capture_digests=(capture.capture_digest,),
+                selected_cursors=(capture.landing_cursor,),
+                reason_codes=("selected-current",),
+            ),
+        ),
+        coherence_proof_digest=_digest("coherence"),
+    )
+    binding = ProcedureProviderBindingV1(
+        node_id="provider",
+        provider_artifact_digest=_digest("provider"),
+        interface_artifact_digest=_digest("interface-artifact"),
+        interface_digest=_digest("interface"),
+        classifier_digest=_digest("classifier"),
+        accepted_bucket_selectors=("public",),
+        implementation_digest=_digest("implementation"),
+        secret_binding_identity_digests=(_digest("secret-identity"),),
+    )
+    admission = _line_admission(
+        _state_procedure(),
+        fixture,
+        landed_capture_inputs=(capture,),
+        exhaust_inputs=(exhaust,),
+    ).model_copy(
+        update={
+            "selection_decision": decision,
+            "selection_decision_digest": procedure_selection_decision_digest(decision),
+            "resolved_provider_bindings": (binding,),
+        }
+    )
+    baseline = procedure_semantic_replay_key_digest(admission)
+    accepted_input = admission.accepted_state_inputs[0]
+    pin = admission.full_pins[0]
+    node_pins = admission.node_pin_sets[0]
+    included = {
+        "procedure identity": {
+            "procedure_identity": ArtifactIdentity(kind="Procedure", name="other")
+        },
+        "Procedure artifact": {"procedure_artifact_digest": _digest("other-procedure")},
+        "invocation input": {"invocation_input": {"other": True}},
+        "bound coordinate": {
+            "bound_coordinate": admission.bound_coordinate.model_copy(
+                update={"semantic_root": _digest("other-semantic-root")}
+            )
+        },
+        "full pins": {
+            "full_pins": (pin.model_copy(update={"artifact_digest": _digest("other-pin")}),)
+        },
+        "node pin sets": {
+            "node_pin_sets": (node_pins.model_copy(update={"node_id": "other-node"}),)
+        },
+        "pin set digest": {"pin_set_digest": _digest("other-pin-set")},
+        "state query": {
+            "accepted_state_inputs": (
+                accepted_input.model_copy(
+                    update={"query_definition_digest": _digest("other-query")}
+                ),
+            )
+        },
+        "state parameters": {
+            "accepted_state_inputs": (
+                accepted_input.model_copy(update={"parameters_digest": _digest("other-params")}),
+            )
+        },
+        "state result": {
+            "accepted_state_inputs": (
+                accepted_input.model_copy(update={"result_digest": _digest("other-result")}),
+            )
+        },
+        "state read coordinate": {
+            "accepted_state_inputs": (
+                accepted_input.model_copy(
+                    update={
+                        "read_coordinate": accepted_input.read_coordinate.model_copy(
+                            update={"git_oid": "b" * 40}
+                        )
+                    }
+                ),
+            )
+        },
+        "state query budgets": {
+            "accepted_state_inputs": (
+                accepted_input.model_copy(
+                    update={
+                        "effective_query_budgets": (
+                            accepted_input.effective_query_budgets.model_copy(
+                                update={
+                                    "max_results": (
+                                        accepted_input.effective_query_budgets.max_results + 1
+                                    )
+                                }
+                            )
+                        )
+                    }
+                ),
+            )
+        },
+        "Capture digest": {
+            "landed_capture_inputs": (
+                capture.model_copy(update={"capture_digest": _digest("other-capture")}),
+            )
+        },
+        "Capture contract": {
+            "landed_capture_inputs": (
+                capture.model_copy(
+                    update={"capture_contract_digest": _digest("other-capture-contract")}
+                ),
+            )
+        },
+        "Capture cursor": {
+            "landed_capture_inputs": (capture.model_copy(update={"landing_cursor": "other:1"}),)
+        },
+        "exhaust journal": {
+            "exhaust_inputs": (exhaust.model_copy(update={"journal_identity": "other/journal"}),)
+        },
+        "exhaust first cursor": {
+            "exhaust_inputs": (exhaust.model_copy(update={"first_cursor": "other:1"}),)
+        },
+        "exhaust last cursor": {
+            "exhaust_inputs": (exhaust.model_copy(update={"last_cursor": "other:2"}),)
+        },
+        "exhaust reducer": {
+            "exhaust_inputs": (
+                exhaust.model_copy(update={"reducer_or_query_digest": _digest("other-reducer")}),
+            )
+        },
+        "exhaust result": {
+            "exhaust_inputs": (
+                exhaust.model_copy(update={"result_digest": _digest("other-exhaust-result")}),
+            )
+        },
+        "Procedure budget": {
+            "budget": admission.budget.model_copy(
+                update={"max_items": (admission.budget.max_items or 1) + 1}
+            )
+        },
+        "Procedure hard caps": {
+            "hard_caps": admission.hard_caps.model_copy(
+                update={"max_items": admission.hard_caps.max_items + 1}
+            )
+        },
+        "acquisition policy": {"acquisition_policy_digest": _digest("other-policy")},
+        "selection decision": {
+            "selection_decision": decision.model_copy(update={"verdict": "refused"})
+        },
+        "Provider artifact": {
+            "resolved_provider_bindings": (
+                binding.model_copy(update={"provider_artifact_digest": _digest("other-provider")}),
+            )
+        },
+        "interface artifact": {
+            "resolved_provider_bindings": (
+                binding.model_copy(
+                    update={"interface_artifact_digest": _digest("other-interface-artifact")}
+                ),
+            )
+        },
+        "interface": {
+            "resolved_provider_bindings": (
+                binding.model_copy(update={"interface_digest": _digest("other-interface")}),
+            )
+        },
+        "classifier": {
+            "resolved_provider_bindings": (
+                binding.model_copy(update={"classifier_digest": _digest("other-classifier")}),
+            )
+        },
+        "bucket selectors": {
+            "resolved_provider_bindings": (
+                binding.model_copy(update={"accepted_bucket_selectors": ("restricted",)}),
+            )
+        },
+        "implementation": {
+            "resolved_provider_bindings": (
+                binding.model_copy(update={"implementation_digest": _digest("other-impl")}),
+            )
+        },
+        "secret identity": {
+            "resolved_provider_bindings": (
+                binding.model_copy(
+                    update={"secret_binding_identity_digests": (_digest("other-secret"),)}
+                ),
+            )
+        },
+        "mandate": {"mandate_coordinate_digest": _digest("other-mandate")},
+        "calibration": {"calibration_coordinate_digest": _digest("other-calibration")},
+        "sensitivity": {"sensitivity_policy_digest": _digest("other-sensitivity")},
+        "lane": {"lane": "replay"},
+        "taint": {"taint_labels": ("other-taint",)},
+        "epsilon": {"epsilon_member": False},
+        "Provider output cap": {
+            "provider_output_bytes_cap": admission.provider_output_bytes_cap + 1
+        },
+    }
+    for label, update in included.items():
+        assert (
+            procedure_semantic_replay_key_digest(admission.model_copy(update=update)) != baseline
+        ), label
+
+    excluded = {
+        "run id": {"run_id": "RUN-" + "f" * 64},
+        "admission digest": {"admission_binding_digest": _digest("other-admission")},
+        "admitted time": {"admitted_at": NOW + timedelta(days=1)},
+        "head at admission": {
+            "head_at_admission": admission.head_at_admission.model_copy(
+                update={"git_oid": "c" * 40}
+            )
+        },
+        "Line identity": {"line_identity": ArtifactIdentity(kind="Line", name="other-line")},
+        "LineSpec digest": {"line_spec_digest": _digest("other-line-spec")},
+        "occurrence": {"occurrence_id": "OCC-other"},
+        "occurrence time": {"occurrence_evaluation_time": NOW + timedelta(hours=1)},
+        "attempt": {"attempt": admission.attempt + 1},
+        "actor": {
+            "actor_context": admission.actor_context.model_copy(update={"operation_id": "other-op"})
+        },
+        "Procedure path": {"procedure_path": "procedures/other.yaml"},
+        "journal stream": {
+            "journal_stream": JournalStreamIdentityV1(
+                instance_id=admission.instance_id,
+                journal_family=PROCEDURE_EXHAUST_JOURNAL_FAMILY,
+                stream_id="other-stream",
+            )
+        },
+        "journal partition": {"journal_partition_id": "line:other"},
+        "deployment": {"deployment_snapshot_digest": _digest("other-deployment")},
+        "selection receipt": {"selection_receipt_digest": _digest("other-receipt")},
+        "selection decision digest": {
+            "selection_decision_digest": _digest("other-decision-digest")
+        },
+        "accepted material body": {
+            "accepted_state_inputs": (
+                accepted_input.model_copy(
+                    update={"material_body_digest": _digest("other-material")}
+                ),
+            )
+        },
+    }
+    for label, update in excluded.items():
+        assert (
+            procedure_semantic_replay_key_digest(admission.model_copy(update=update)) == baseline
+        ), label
+
+
+def test_three_plane_projection_is_stable_and_material_digest_free(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    admission = _line_admission(_state_procedure(), fixture)
+    capture = LandedCaptureRunInputV1(
+        input_name="capture",
+        capture_digest=_digest("capture"),
+        capture_contract_digest=_digest("capture-contract"),
+        landing_cursor="partition:0001",
+    )
+    exhaust = ExhaustRunInputV1(
+        input_name="exhaust",
+        journal_identity="procedure-exhaust-v1/procedures",
+        first_cursor="partition:0001",
+        last_cursor="partition:0002",
+        reducer_or_query_digest=_digest("reducer"),
+        result_digest=_digest("exhaust-result"),
+    )
+    projected = procedure_replay_input_vector(
+        admission.model_copy(
+            update={"landed_capture_inputs": (capture,), "exhaust_inputs": (exhaust,)}
+        )
+    )
+
+    assert [(item.input_name, item.plane, item.kind) for item in projected] == [
+        ("capture", "landed_capture", "capture"),
+        ("exhaust", "exhaust", "reduced_exhaust"),
+        ("rows", "accepted_state", "query_result"),
+    ]
+    assert projected[2].value_or_body_digest == admission.accepted_state_inputs[0].result_digest
+    assert (
+        "material_body_digest"
+        not in canonical_bytes([item.model_dump(mode="json") for item in projected]).decode()
+    )
+
+
+def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) -> None:
+    member = ProcedureAdmissionMaterialMemberV1(
+        input_name="capture",
+        plane="landed_capture",
+        semantic_digest=_digest("capture"),
+        body_digest=None,
+        retention_authority_digest=_digest("capture-contract"),
+        body_retention="never_materialize",
+    )
+    manifest = ProcedureAdmissionMaterialManifestV1(members=(member,))
+    assert procedure_admission_material_digest(manifest).startswith("sha256:")
+    bodies_root = tmp_path / "material-cas"
+    bodies_root.mkdir()
+    bodies = ContentAddressedBodyStore(bodies_root)
+    with pytest.raises(Exception) as exc_info:
+        execution_module.read_admission_material_body(bodies, member)
+    assert getattr(exc_info.value, "code") == "replay_material_unavailable"
+    assert getattr(exc_info.value, "details")["input_name"] == "capture"
+
+    optional = member.model_copy(update={"body_retention": "optional"})
+    with pytest.raises(Exception) as optional_exc:
+        execution_module.read_admission_material_body(bodies, optional)
+    assert getattr(optional_exc.value, "code") == "replay_material_unavailable"
+
+    stored = bodies.store(b'{"capture":"retained"}')
+    retained_optional = optional.model_copy(update={"body_digest": stored.digest})
+    reopened = ContentAddressedBodyStore(bodies_root)
+    assert (
+        execution_module.read_admission_material_body(
+            reopened,
+            retained_optional,
+        )
+        == b'{"capture":"retained"}'
+    )
+    body_path = (
+        bodies_root
+        / "sha256"
+        / stored.digest.removeprefix("sha256:")[:2]
+        / stored.digest.removeprefix("sha256:")
+    )
+    body_path.write_bytes(b"corrupt")
+    with pytest.raises(Exception) as corrupt_exc:
+        execution_module.read_admission_material_body(reopened, retained_optional)
+    assert getattr(corrupt_exc.value, "code") == "admission_material_corrupt"
+
+    with pytest.raises(ValueError, match="never_materialize"):
+        ProcedureAdmissionMaterialMemberV1(
+            **{
+                **member.model_dump(mode="python"),
+                "body_digest": _digest("forbidden-body"),
+            }
+        )
+
+    capture_input = LandedCaptureRunInputV1(
+        input_name="capture",
+        capture_digest=_digest("retained-capture"),
+        capture_contract_digest=_digest("retained-capture-contract"),
+        landing_cursor="partition:0001",
+    )
+    policy = CaptureRetentionErasurePolicyV1(
+        body_retention="required_for_duration",
+        minimum_retention=CanonicalDurationV1(microseconds=3_000_000),
+        erasure="prohibited",
+        selector_privacy="direct_allowed",
+    )
+    retained = capture_admission_material_member(
+        capture_input,
+        policy=policy,
+        admitted_at=NOW,
+        body_digest=_digest("retained-body"),
+    )
+    assert retained.retain_until == NOW + timedelta(seconds=3)
+    assert retained.retention_authority_digest == capture_input.capture_contract_digest
+
+
+def test_admission_bound_manifest_matches_the_exact_three_plane_admission(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    capture_input = LandedCaptureRunInputV1(
+        input_name="capture",
+        capture_digest=_digest("manifest-capture"),
+        capture_contract_digest=_digest("manifest-contract"),
+        landing_cursor="partition:0001",
+    )
+    admission = _line_admission(
+        _state_procedure(),
+        fixture,
+        landed_capture_inputs=(capture_input,),
+    )
+    member = ProcedureAdmissionMaterialMemberV1(
+        input_name="capture",
+        plane="landed_capture",
+        semantic_digest=capture_input.capture_digest,
+        body_digest=_digest("manifest-body"),
+        retention_authority_digest=capture_input.capture_contract_digest,
+        body_retention="optional",
+    )
+    manifest = ProcedureAdmissionMaterialManifestV1(members=(member,))
+    bound = ProcedureAdmissionBoundPayloadV3(
+        admission=admission,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+    )
+    assert bound.admission_material_manifest == manifest
+
+    wrong = ProcedureAdmissionMaterialManifestV1(
+        members=(member.model_copy(update={"semantic_digest": _digest("substituted")}),)
+    )
+    with pytest.raises(ValueError, match="disagrees with its admitted input"):
+        ProcedureAdmissionBoundPayloadV3(
+            admission=admission,
+            admission_material_manifest=wrong,
+            admission_material_manifest_digest=procedure_admission_material_digest(wrong),
+        )
+
+
+def test_manifest_references_remain_gc_reachable_after_lease_promotion(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    capture_input = LandedCaptureRunInputV1(
+        input_name="capture",
+        capture_digest=_digest("reachable-capture"),
+        capture_contract_digest=_digest("reachable-contract"),
+        landing_cursor="partition:0001",
+    )
+    admission = _line_admission(
+        accepted,
+        fixture,
+        landed_capture_inputs=(capture_input,),
+    )
+    pending = reserve_admission_material_body(
+        bodies=fixture.bodies,
+        instance_id=admission.instance_id,
+        run_id=admission.run_id,
+        admission_binding_digest=admission.admission_binding_digest,
+        input_name="capture",
+        plane="landed_capture",
+        content=b'{"retained":"capture"}',
+    )
+    member = ProcedureAdmissionMaterialMemberV1(
+        input_name="capture",
+        plane="landed_capture",
+        semantic_digest=capture_input.capture_digest,
+        body_digest=pending.body_digest,
+        retention_authority_digest=capture_input.capture_contract_digest,
+        body_retention="optional",
+    )
+    manifest = ProcedureAdmissionMaterialManifestV1(members=(member,))
+    payload = ProcedureAdmissionBoundPayloadV3(
+        admission=admission,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+    )
+    fixture.journal.activate_writer(
+        admission.journal_stream,
+        admission.journal_partition_id,
+        fencing_token="writer",
+        expected_head=fixture.journal.read_head(
+            admission.journal_stream,
+            admission.journal_partition_id,
+        ),
+    )
+    ProcedureExhaustWriter(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        fencing_token="writer",
+    ).append(
+        stream=admission.journal_stream,
+        partition_id=admission.journal_partition_id,
+        event_kind="admission_bound",
+        accepted_coordinate=admission.accepted_coordinate,
+        definition_digest=admission.definition_digest,
+        actor_context=admission.actor_context,
+        recorded_at=NOW,
+        payload=payload.model_dump(mode="json"),
+        procedure_artifact_digest=admission.procedure_artifact_digest,
+        run_id=admission.run_id,
+        admission_binding_digest=admission.admission_binding_digest,
+        line_spec_digest=admission.line_spec_digest,
+        occurrence_id=admission.occurrence_id,
+        attempt=admission.attempt,
+    )
+    reservations = ProcedureMaterialReservationStore(fixture.bodies.reservation_root)
+    reservations.release(pending.reservation_id)
+    records = fixture.journal.all_records(
+        admission.journal_stream,
+        admission.journal_partition_id,
+    )
+
+    reachable = reservations.reachable_body_digests(records, bodies=fixture.bodies)
+
+    assert pending.body_digest in reachable
+    assert records[0].record.payload_digest in reachable
+
+    corrupt_payload = payload.model_dump(mode="json")
+    corrupt_payload["admission_material_manifest_digest"] = _digest("corrupt-manifest")
+    ProcedureExhaustWriter(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        fencing_token="writer",
+    ).append(
+        stream=admission.journal_stream,
+        partition_id=admission.journal_partition_id,
+        event_kind="admission_bound",
+        accepted_coordinate=admission.accepted_coordinate,
+        definition_digest=admission.definition_digest,
+        actor_context=admission.actor_context,
+        recorded_at=NOW,
+        payload=corrupt_payload,
+        procedure_artifact_digest=admission.procedure_artifact_digest,
+        run_id=admission.run_id,
+        admission_binding_digest=admission.admission_binding_digest,
+        line_spec_digest=admission.line_spec_digest,
+        occurrence_id=admission.occurrence_id,
+        attempt=admission.attempt,
+    )
+    corrupt_record = fixture.journal.all_records(
+        admission.journal_stream,
+        admission.journal_partition_id,
+    )[-1]
+    with pytest.raises(
+        ProcedureMaterialRecoveryRequired,
+        match="reachability cannot be authenticated",
+    ):
+        reservations.reachable_body_digests((corrupt_record,), bodies=fixture.bodies)
+
+
+def test_line_v3_admission_bound_persists_manifest_not_material_values(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    direct = _prepare(accepted, fixture, _StateReader())
+    admission = _line_admission(accepted, fixture)
+    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    prepared = PreparedProcedureRunV3(
+        admission=admission,
+        accepted_state_materials=direct.accepted_state_materials,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+    )
+    fixture.journal.activate_writer(
+        fixture.stream,
+        admission.journal_partition_id,
+        fencing_token="writer",
+        expected_head=fixture.journal.read_head(
+            fixture.stream,
+            admission.journal_partition_id,
+        ),
+    )
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(prepared, accepted)
+
+    assert result.status == "succeeded"
+    admission_record = next(
+        item
+        for item in fixture.journal.all_records(
+            fixture.stream,
+            admission.journal_partition_id,
+        )
+        if item.record.event_kind == "admission_bound"
+    )
+    payload = parse_journal_payload(
+        fixture.bodies.read(
+            admission_record.record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert payload["tag"] == "playbill-procedure-admission-bound-payload-v3"
+    assert "accepted_state_materials" not in payload
+    assert payload["admission_material_manifest"]["members"] == []
+    assert ProcedureRunAdmissionV3.model_validate(payload["admission"]) == admission
+
+    records = fixture.journal.all_records(
+        fixture.stream,
+        admission.journal_partition_id,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_records_for_run",
+        lambda _instance, _run_id: records,
+    )
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    state = procedure_run_service._state_from_records(  # noqa: SLF001
+        _Instance(),
+        run_id=admission.run_id,
+    )
+    assert isinstance(state.receipt, ProcedureRunReceiptV4)
+    assert state.receipt.line_identity == admission.line_identity
+    assert state.receipt.admission_material_manifest.model_dump(mode="json") == manifest.model_dump(
+        mode="json"
+    )
 
 
 @pytest.mark.parametrize(

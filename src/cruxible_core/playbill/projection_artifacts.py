@@ -43,6 +43,11 @@ from cruxible_client.contracts.errors import (
     SubjectFormatError,
 )
 from cruxible_client.contracts.principal_rendering import render_principal
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_IDENTITY,
+    parse_procedure_runtime_policy,
+    procedure_runtime_policy_digest,
+)
 from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
     ProjectionFact,
@@ -72,6 +77,10 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
         ArtifactPathKind(
             "approval-policy",
             re.compile(r"^governance/approval-policy\.yaml$"),
+        ),
+        ArtifactPathKind(
+            "procedure-runtime-policy",
+            re.compile(r"^governance/procedure-runtime-policy\.yaml$"),
         ),
         ArtifactPathKind(
             "principal",
@@ -153,6 +162,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             implemented=tag
             in {
                 "playbill-approval-policy-v1",
+                "playbill-procedure-runtime-policy-v1",
                 "playbill-capture-contract-v1",
                 "playbill-capture-envelope-v1",
                 "playbill-claim-v2",
@@ -175,6 +185,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
         )
         for tag in (
             "playbill-approval-policy-v1",
+            "playbill-procedure-runtime-policy-v1",
             "playbill-accepted-state-run-input-v1",
             "playbill-capture-contract-v1",
             "playbill-capture-envelope-v1",
@@ -199,6 +210,7 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
 
 RegisteredPathKind = Literal[
     "approval-policy",
+    "procedure-runtime-policy",
     "capture-contract",
     "changeset",
     "claim",
@@ -582,6 +594,27 @@ def parse_projection_tree(
                         identity=APPROVAL_POLICY_IDENTITY,
                         kind="approval-policy",
                         format_tag=policy.tag,
+                        path=path,
+                        artifact_digest=digest,
+                        predecessor_digest=None,
+                        revision=projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=file_digest(content).tagged,
+                            artifact_digest=digest,
+                        ),
+                    )
+                )
+                continue
+            if kind == "procedure-runtime-policy":
+                runtime_policy = parse_procedure_runtime_policy(content, path=path)
+                digest = procedure_runtime_policy_digest(runtime_policy).tagged
+                identities[PROCEDURE_RUNTIME_POLICY_IDENTITY] = path
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=PROCEDURE_RUNTIME_POLICY_IDENTITY,
+                        kind="procedure-runtime-policy",
+                        format_tag=runtime_policy.tag,
                         path=path,
                         artifact_digest=digest,
                         predecessor_digest=None,

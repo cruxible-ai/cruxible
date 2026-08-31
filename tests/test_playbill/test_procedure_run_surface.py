@@ -50,6 +50,7 @@ from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindingTargetV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
+    ProcedureRunRecoveryRequired,
     ProcedureRunRequestV2,
     ProcedureSlotBindingRequestV1,
     service_bind_playbill_procedure,
@@ -300,6 +301,36 @@ def test_explicit_at_equal_to_head_still_selects_replay_lane(tmp_path: Path) -> 
     assert run.lane == "replay"
     assert run.bound_coordinate.git_oid == head.git_oid
     assert run.head_at_admission.git_oid == head.git_oid
+
+
+def test_run_id_collision_across_partitions_fails_closed(tmp_path: Path) -> None:
+    instance, _owner, procedure = _world(tmp_path)
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    stream = procedure_run_service._stream(instance)  # noqa: SLF001
+    writer = ProcedureExhaustWriter(
+        journal=journal,
+        bodies=instance.body_store(),
+        fencing_token=procedure_run_service.PROCEDURE_RUN_FENCING_TOKEN,
+    )
+    procedure_digest = procedure_artifact_digest(procedure).tagged
+    for partition_id in ("collision-a", "collision-b"):
+        procedure_run_service._activate_writer(journal, stream, partition_id)  # noqa: SLF001
+        writer.append(
+            stream=stream,
+            partition_id=partition_id,
+            event_kind="attempt_started",
+            accepted_coordinate=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            procedure_artifact_digest=procedure_digest,
+            definition_digest=procedure.definition_digest,
+            run_id="RUN-collision",
+            admission_binding_digest=procedure_digest,
+            actor_context=_actor(instance),
+            recorded_at=READ_TIME,
+            payload={"phase": "collision"},
+        )
+
+    with pytest.raises(ProcedureRunRecoveryRequired, match="collides across journal authority"):
+        procedure_run_service._records_for_run(instance, "RUN-collision")  # noqa: SLF001
 
 
 @pytest.mark.parametrize(

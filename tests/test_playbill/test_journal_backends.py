@@ -18,17 +18,27 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import PlaybillJournalError
 from cruxible_core.playbill.actor_context import GovernedActorContext
+from cruxible_core.playbill.cas import ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
     PROCEDURE_EXHAUST_JOURNAL_FAMILY,
     JournalHeadVectorV1,
     JournalPartitionHeadV1,
     JournalStreamIdentityV1,
     LocalJournalBackend,
+    ProcedureExhaustWriter,
     ProcedureJournalRecordDraftV1,
     build_journal_head_manifest,
     journal_genesis_digest,
+    journal_payload_bytes,
     payload_digest,
     verify_journal_head_manifest,
+)
+from cruxible_core.playbill.material_reservations import (
+    ProcedureMaterialRecoveryRequired,
+    ProcedureMaterialReservationError,
+    ProcedureMaterialReservationStore,
+    make_run_reservation,
+    reserve_admission_material_body,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
@@ -172,6 +182,219 @@ def test_expected_head_fence_chain_and_idempotent_append(tmp_path) -> None:
         backend.append(_draft("second"), expected_head=genesis, fencing_token="writer-b")
     with pytest.raises(PlaybillJournalError, match="stale or forked"):
         backend.append(_draft("second"), expected_head=genesis, fencing_token="writer-a")
+
+
+def test_payload_reservation_spans_cas_to_journal_and_recovers_both_crash_sides(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    backend = _backend(tmp_path, "reserved-journal")
+    _activate(backend)
+    cas_root = tmp_path / "reserved-cas"
+    cas_root.mkdir()
+    bodies = ContentAddressedBodyStore(cas_root)
+    writer = ProcedureExhaustWriter(
+        journal=backend,
+        bodies=bodies,
+        fencing_token="writer-a",
+    )
+    original_append = backend.append
+
+    def crash_before_append(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise KeyboardInterrupt("crash before journal append")
+
+    monkeypatch.setattr(backend, "append", crash_before_append)
+    with pytest.raises(KeyboardInterrupt, match="before journal append"):
+        writer.append(
+            stream=_stream(),
+            partition_id="runs-2026-08",
+            event_kind="node_fired",
+            accepted_coordinate=_coordinate(),
+            procedure_artifact_digest=_digest("procedure"),
+            definition_digest=_digest("definition"),
+            actor_context=_actor(),
+            recorded_at=NOW,
+            payload={"phase": "before"},
+            run_id="run-before",
+            admission_binding_digest=_digest("admission-before"),
+        )
+    store = ProcedureMaterialReservationStore(bodies.reservation_root)
+    (before_reservation,) = store.active()
+    assert bodies.verify(before_reservation.body_digest)
+    assert store.recover((), bodies=bodies) == (before_reservation.reservation_id,)
+
+    monkeypatch.setattr(backend, "append", original_append)
+    original_release = writer.material_reservations.release_locked
+
+    def crash_after_append(_reservation_id: str) -> None:
+        raise KeyboardInterrupt("crash after journal append")
+
+    monkeypatch.setattr(writer.material_reservations, "release_locked", crash_after_append)
+    with pytest.raises(KeyboardInterrupt, match="after journal append"):
+        writer.append(
+            stream=_stream(),
+            partition_id="runs-2026-08",
+            event_kind="node_fired",
+            accepted_coordinate=_coordinate(),
+            procedure_artifact_digest=_digest("procedure"),
+            definition_digest=_digest("definition"),
+            actor_context=_actor(),
+            recorded_at=NOW,
+            payload={"phase": "after"},
+            run_id="run-after",
+            admission_binding_digest=_digest("admission-after"),
+        )
+    monkeypatch.setattr(writer.material_reservations, "release_locked", original_release)
+    records = backend.all_records(_stream(), "runs-2026-08")
+    (after_reservation,) = store.active()
+    assert records[-1].record.payload_digest == after_reservation.body_digest
+    assert store.recover(records, bodies=bodies) == (after_reservation.reservation_id,)
+    assert store.active() == ()
+
+
+def test_missing_or_corrupt_reservation_store_fails_recovery_closed(tmp_path) -> None:
+    root = tmp_path / "procedure-material"
+    store = ProcedureMaterialReservationStore(root)
+    moved = tmp_path / "procedure-material-moved"
+    root.rename(moved)
+    with pytest.raises(ProcedureMaterialRecoveryRequired, match="run_recovery_required"):
+        store.active()
+    with pytest.raises(ProcedureMaterialRecoveryRequired, match="run_recovery_required"):
+        ProcedureMaterialReservationStore(root)
+
+
+def test_run_reservation_recovery_reproduces_partition_bound_invocation_id(tmp_path) -> None:
+    backend = _backend(tmp_path, "partition-bound-recovery")
+    cas_root = tmp_path / "partition-bound-cas"
+    cas_root.mkdir()
+    bodies = ContentAddressedBodyStore(cas_root)
+    payload_bytes = journal_payload_bytes({"phase": "partition-bound"})
+    metadata = bodies.store(payload_bytes)
+    reservation = make_run_reservation(
+        instance_id="instance-a",
+        partition_id="partition-a",
+        event_kind="node_fired",
+        run_id="run-partition",
+        admission_binding_digest=_digest("partition-admission"),
+        body_digest=metadata.digest,
+    )
+    store = ProcedureMaterialReservationStore(bodies.reservation_root)
+    store.reserve(reservation)
+
+    records = []
+    for partition_id in ("partition-a", "partition-b"):
+        stream = _stream()
+        head = backend.read_head(stream, partition_id)
+        backend.activate_writer(
+            stream,
+            partition_id,
+            fencing_token="writer-a",
+            expected_head=head,
+        )
+        records.append(
+            backend.append(
+                ProcedureJournalRecordDraftV1(
+                    stream=stream,
+                    partition_id=partition_id,
+                    event_kind="node_fired",
+                    accepted_coordinate=_coordinate(),
+                    procedure_artifact_digest=_digest("procedure"),
+                    definition_digest=_digest("definition"),
+                    run_id="run-partition",
+                    admission_binding_digest=_digest("partition-admission"),
+                    payload_digest=metadata.digest,
+                    actor_context=_actor(),
+                    recorded_at=NOW,
+                ),
+                expected_head=head,
+                fencing_token="writer-a",
+            )
+        )
+
+    assert store.recover(tuple(records), bodies=bodies) == (reservation.reservation_id,)
+    assert store.active() == ()
+
+
+def test_pending_admission_body_is_reserved_before_cas_visibility(tmp_path) -> None:
+    cas_root = tmp_path / "pending-cas"
+    cas_root.mkdir()
+    bodies = ContentAddressedBodyStore(cas_root)
+    reservation = reserve_admission_material_body(
+        bodies=bodies,
+        instance_id="instance-a",
+        run_id="run-pending",
+        admission_binding_digest=_digest("pending-admission"),
+        input_name="capture",
+        plane="landed_capture",
+        content=b'{"capture":"value"}',
+    )
+    store = ProcedureMaterialReservationStore(bodies.reservation_root)
+    assert store.active() == (reservation,)
+    assert bodies.verify(reservation.body_digest)
+
+    duplicate = reserve_admission_material_body(
+        bodies=bodies,
+        instance_id="instance-a",
+        run_id="run-pending",
+        admission_binding_digest=_digest("pending-admission"),
+        input_name="capture",
+        plane="landed_capture",
+        content=b'{"capture":"value"}',
+    )
+    assert duplicate == reservation
+    assert store.active() == (reservation,)
+
+
+def test_pending_admission_crash_before_cas_keeps_the_durable_lease(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cas_root = tmp_path / "pending-before-cas"
+    cas_root.mkdir()
+    bodies = ContentAddressedBodyStore(cas_root)
+
+    def crash_before_cas(_content: bytes):
+        raise KeyboardInterrupt("crash before CAS visibility")
+
+    monkeypatch.setattr(bodies, "store", crash_before_cas)
+    with pytest.raises(KeyboardInterrupt, match="before CAS visibility"):
+        reserve_admission_material_body(
+            bodies=bodies,
+            instance_id="instance-a",
+            run_id="run-before-cas",
+            admission_binding_digest=_digest("before-cas-admission"),
+            input_name="capture",
+            plane="landed_capture",
+            content=b'{"capture":"not-yet-visible"}',
+        )
+
+    store = ProcedureMaterialReservationStore(bodies.reservation_root)
+    (reservation,) = store.active()
+    assert not bodies.verify(reservation.body_digest)
+    assert store.recover((), bodies=bodies) == (reservation.reservation_id,)
+
+
+def test_reservation_collision_and_corrupt_sidecar_fail_closed(tmp_path) -> None:
+    cas_root = tmp_path / "reservation-corruption-cas"
+    cas_root.mkdir()
+    bodies = ContentAddressedBodyStore(cas_root)
+    reservation = reserve_admission_material_body(
+        bodies=bodies,
+        instance_id="instance-a",
+        run_id="run-corrupt",
+        admission_binding_digest=_digest("corrupt-admission"),
+        input_name="capture",
+        plane="landed_capture",
+        content=b'{"capture":"reserved"}',
+    )
+    store = ProcedureMaterialReservationStore(bodies.reservation_root)
+    sidecar = bodies.reservation_root / f"{reservation.reservation_id.removeprefix('sha256:')}.json"
+    sidecar.write_bytes(b"{}\n")
+
+    with pytest.raises(ProcedureMaterialReservationError, match="collides"):
+        store.reserve(reservation)
+    with pytest.raises(ProcedureMaterialRecoveryRequired, match="sidecar is corrupt"):
+        store.active()
 
 
 def test_recovery_discards_only_an_incomplete_final_frame(tmp_path) -> None:

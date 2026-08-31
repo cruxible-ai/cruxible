@@ -43,7 +43,12 @@ from cruxible_client.contracts.types import (
 )
 from cruxible_core.playbill.activation import ActivationPublisher
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
-from cruxible_core.playbill.bootstrap import VerifiedGenesis, prepare_genesis, verify_genesis
+from cruxible_core.playbill.bootstrap import (
+    VerifiedGenesis,
+    prepare_genesis,
+    seeded_procedure_runtime_policy,
+    verify_genesis,
+)
 from cruxible_core.playbill.cas import CasObjectMetadata, ContentAddressedBodyStore
 from cruxible_core.playbill.checkpoints import (
     CHECKPOINT_DIRECTORY,
@@ -266,6 +271,7 @@ class PlaybillInstance:
                         else "self_approval_allowed"
                     )
                 ),
+                procedure_runtime_policy=seeded_procedure_runtime_policy(),
                 timestamp=commit_timestamp,
             )
             descriptor = PlaybillDescriptor(
@@ -535,7 +541,10 @@ class PlaybillInstance:
         """Return PB-C's inert, access-controlled content-addressed body store."""
 
         paths = self._validated_paths(self.root, self.descriptor.storage)
-        return ContentAddressedBodyStore(paths["cas"])
+        return ContentAddressedBodyStore(
+            paths["cas"],
+            reservation_root=paths["leases"] / "procedure-material",
+        )
 
     def store_document_body(self, content: bytes) -> CasObjectMetadata:
         """Persist inert bytes without proposing or changing accepted state."""

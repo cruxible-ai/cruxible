@@ -31,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    ProcedureRuntimePolicyAuthoringPayloadV1,
     QueryDefinitionAuthoringPayloadV1,
     RepairAlternativeV1,
     SelfSourceBodyV1,
@@ -85,6 +86,11 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    procedure_runtime_policy_digest,
+    render_procedure_runtime_policy,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureArtifactAny,
     ProcedureArtifactV1,
@@ -1292,7 +1298,8 @@ def _lower_procedure(
 def _render_non_procedure_member(
     payload: SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
-    | ApprovalPolicyAuthoringPayloadV1,
+    | ApprovalPolicyAuthoringPayloadV1
+    | ProcedureRuntimePolicyAuthoringPayloadV1,
 ) -> tuple[str, bytes, str]:
     if isinstance(payload, SubjectAuthoringPayloadV1):
         shell = payload.subject
@@ -1308,10 +1315,16 @@ def _render_non_procedure_member(
             render_query_definition(query),
             query_definition_digest(query).tagged,
         )
+    if isinstance(payload, ApprovalPolicyAuthoringPayloadV1):
+        return (
+            APPROVAL_POLICY_PATH,
+            render_approval_policy(payload.approval_policy),
+            approval_policy_digest(payload.approval_policy).tagged,
+        )
     return (
-        APPROVAL_POLICY_PATH,
-        render_approval_policy(payload.approval_policy),
-        approval_policy_digest(payload.approval_policy).tagged,
+        PROCEDURE_RUNTIME_POLICY_PATH,
+        render_procedure_runtime_policy(payload.procedure_runtime_policy),
+        procedure_runtime_policy_digest(payload.procedure_runtime_policy).tagged,
     )
 
 
@@ -1319,7 +1332,8 @@ def _lower_non_procedure(
     *,
     payload: SubjectAuthoringPayloadV1
     | QueryDefinitionAuthoringPayloadV1
-    | ApprovalPolicyAuthoringPayloadV1,
+    | ApprovalPolicyAuthoringPayloadV1
+    | ProcedureRuntimePolicyAuthoringPayloadV1,
     base_tree: dict[str, bytes],
 ) -> LoweredAuthoring:
     path, content, digest = _render_non_procedure_member(payload)
@@ -1353,6 +1367,18 @@ def _lower_change_set(
             repair_kind="split_change_set",
             repair_description=(
                 "Author and accept the ApprovalPolicy separately from the change set."
+            ),
+        )
+    if any(
+        isinstance(member, ProcedureRuntimePolicyAuthoringPayloadV1) for member in payload.members
+    ):
+        _refuse(
+            "playbill.authoring.procedure_runtime_policy_singleton_required",
+            "members",
+            "ProcedureRuntimePolicy authoring must be submitted as a singleton payload.",
+            repair_kind="split_change_set",
+            repair_description=(
+                "Author and accept the ProcedureRuntimePolicy separately from the change set."
             ),
         )
     staged_tree = dict(base_tree)

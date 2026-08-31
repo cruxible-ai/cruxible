@@ -80,6 +80,7 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
         "claim_admission_policy",
         "claim_evidence_admission_policy",
         "claim_resolution_policy",
+        "procedure_runtime_policy",
         "query_evaluation_policy",
     ]
     assert result.policies[0].placement == "standalone"
@@ -108,7 +109,10 @@ def test_policies_in_force_lists_live_standalone_and_embedded_rows(tmp_path) -> 
             compiler_digest=instance.accepted_coordinate().compiler.rule_digest,
         ),
     )
-    assert [row.policy_kind for row in historical.policies] == ["approval_policy"]
+    assert [row.policy_kind for row in historical.policies] == [
+        "approval_policy",
+        "procedure_runtime_policy",
+    ]
 
 
 @pytest.fixture(scope="module")
@@ -220,6 +224,7 @@ def complete_policy_inventory(
     rows = tuple(list_playbill_policies_in_force(instance).policies)
     expected = {
         "approval_policy": ("ApprovalPolicy:instance", None),
+        "procedure_runtime_policy": ("ProcedureRuntimePolicy:instance", None),
         "source_acquisition_policy": (
             live_acquisition.identity.qualified,
             retired_acquisition.identity.qualified,

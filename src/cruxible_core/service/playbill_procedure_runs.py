@@ -40,6 +40,7 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionMaterialManifestV1,
     ProcedureAdmissionRefusalV1,
     ProcedureBudgetExceededDetailV1,
     ProcedureBudgetExhaustedV1,
@@ -50,10 +51,17 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureNodeRefusalV1,
     ProcedureOperationalFailureV1,
     ProcedurePendingSuccessorV1,
+    ProcedureProviderBindingV1,
+    ProcedureReplayInputProjectionV1,
     ProcedureRunAttributionV1,
+    ProcedureRunBudgetDeclaredV2,
     ProcedureRunBudgetV1,
+    ProcedureRunBudgetV2,
+    ProcedureRunNodePinSetV1,
     ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
+    ProcedureRunReceiptV4,
+    ProcedureSelectionDecisionV1,
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -71,11 +79,15 @@ from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RUN_RECEIPT_V2_DOMAIN,
     PROCEDURE_RUN_RECEIPT_V3_DOMAIN,
+    PROCEDURE_RUN_RECEIPT_V4_DOMAIN,
     ProcedureAdmissionBoundPayloadV2,
+    ProcedureAdmissionBoundPayloadV3,
     ProcedureClockProtocol,
     ProcedureRunAdmissionV2,
+    ProcedureRunAdmissionV3,
     ProcedureRunReceiptV1,
     prepare_direct_procedure_run,
+    procedure_replay_input_vector,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -284,7 +296,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     attribution: ProcedureRunAttributionV1 | None = None
     semantic_replay_key_digest: str | None = None
     semantic_result_digest: str | None = None
-    receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | None = None
+    receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | ProcedureRunReceiptV4 | None = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
 
@@ -650,12 +662,23 @@ def _run_id(
 
 def _records_for_run(instance: PlaybillInstance, run_id: str):  # type: ignore[no-untyped-def]
     journal, _root = _journal(instance)
-    return tuple(
+    records = tuple(
         item
         for partition_id in journal.partition_ids(_stream(instance))
         for item in journal.all_records(_stream(instance), partition_id)
         if item.record.run_id == run_id
     )
+    partitions = {item.record.partition_id for item in records}
+    admission_digests = {
+        item.record.admission_binding_digest
+        for item in records
+        if item.record.admission_binding_digest is not None
+    }
+    if len(partitions) > 1 or len(admission_digests) > 1:
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: run id collides across journal authority"
+        )
+    return records
 
 
 def _journal_coordinate(stored) -> ProcedureJournalCoordinateV1:  # type: ignore[no-untyped-def]
@@ -681,13 +704,24 @@ def _state_from_records(
         raise ProcedureRunNotFound(f"{ProcedureRunNotFound.code}: {run_id}")
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="procedure-runtime", can_read_body=True)
-    admission: ProcedureRunAdmissionV2 | None = None
+    admission: ProcedureRunAdmissionV2 | ProcedureRunAdmissionV3 | None = None
+    admission_count = 0
+    admission_material_manifest = None
+    admission_material_manifest_digest: str | None = None
     final = None
     outcomes: list[ProcedureRunOutcomeV1] = []
     for stored in records:
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
         if stored.record.event_kind == "admission_bound":
+            admission_count += 1
             if isinstance(payload, dict) and payload.get("tag") == (
+                "playbill-procedure-admission-bound-payload-v3"
+            ):
+                bound = ProcedureAdmissionBoundPayloadV3.model_validate(payload)
+                admission = bound.admission
+                admission_material_manifest = bound.admission_material_manifest
+                admission_material_manifest_digest = bound.admission_material_manifest_digest
+            elif isinstance(payload, dict) and payload.get("tag") == (
                 "playbill-procedure-admission-bound-payload-v2"
             ):
                 admission = ProcedureAdmissionBoundPayloadV2.model_validate(payload).admission
@@ -705,8 +739,30 @@ def _state_from_records(
             final = payload
     if admission is None:
         raise ProcedureRunRecoveryRequired(
-            f"{ProcedureRunRecoveryRequired.code}: run lacks a v2 admission_bound"
+            f"{ProcedureRunRecoveryRequired.code}: run lacks a supported admission_bound"
         )
+    if admission_count != 1:
+        raise ProcedureRunRecoveryRequired(
+            f"{ProcedureRunRecoveryRequired.code}: run must have one admission_bound"
+        )
+    for stored in records:
+        record = stored.record
+        if (
+            record.stream != admission.journal_stream
+            or record.partition_id != admission.journal_partition_id
+            or record.accepted_coordinate != admission.accepted_coordinate
+            or record.procedure_artifact_digest != admission.procedure_artifact_digest
+            or record.definition_digest != admission.definition_digest
+            or record.run_id != admission.run_id
+            or record.line_spec_digest != admission.line_spec_digest
+            or record.occurrence_id != admission.occurrence_id
+            or record.attempt != admission.attempt
+            or record.admission_binding_digest != admission.admission_binding_digest
+            or record.actor_context != admission.actor_context
+        ):
+            raise ProcedureRunRecoveryRequired(
+                f"{ProcedureRunRecoveryRequired.code}: run record metadata disagrees with admission"
+            )
     status: Literal[
         "running",
         "succeeded",
@@ -799,6 +855,8 @@ def _state_from_records(
                     "cas_unavailable_at_replay",
                     "replay_material_mismatch",
                     "wall_clock_exhausted",
+                    "replay_material_unavailable",
+                    "admission_material_corrupt",
                 }:
                     status = "operational_failed"
                     messages = {
@@ -811,12 +869,20 @@ def _state_from_records(
                         "wall_clock_exhausted": (
                             "Procedure execution exceeded its wall-clock budget."
                         ),
+                        "replay_material_unavailable": (
+                            "Admitted Procedure replay material is unavailable; local loss and "
+                            "governed erasure are indistinguishable in this format."
+                        ),
+                        "admission_material_corrupt": (
+                            "Admitted Procedure replay material fails its content address."
+                        ),
                     }
                     terminal = ProcedureOperationalFailureV1.model_validate(
                         {
                             "code": failure_code,
                             "message": messages[str(failure_code)],
                             "journal_coordinate": _journal_coordinate(final_record),
+                            "details": final.get("failure_details", {}),
                         }
                     )
                 else:
@@ -844,7 +910,9 @@ def _state_from_records(
         request_id=admission.actor_context.request_id,
         recorded_time=admission.actor_context.timestamp,
     )
-    public_receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | None = None
+    public_receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | ProcedureRunReceiptV4 | None = (
+        None
+    )
     receipt_digest = None
     if final is not None:
         stream = records[0].record.stream
@@ -873,7 +941,79 @@ def _state_from_records(
             "chain_head_digest": records[-1].record_digest,
         }
         raw_budget_block = final.get("budget") if isinstance(final, dict) else None
-        if isinstance(raw_budget_block, dict):
+        if (
+            isinstance(raw_budget_block, dict)
+            and isinstance(admission, ProcedureRunAdmissionV3)
+            and admission_material_manifest is not None
+        ):
+            parsed_budget = ProcedureRunBudgetV1.model_validate(raw_budget_block)
+            public_receipt = ProcedureRunReceiptV4(
+                **{
+                    **receipt_fields,
+                    "admitted_inputs": tuple(
+                        cast(dict[str, object], item.model_dump(mode="json"))
+                        for item in admission.run_inputs
+                    ),
+                },
+                status=cast(
+                    Literal[
+                        "succeeded",
+                        "node_refused",
+                        "operational_failed",
+                        "internal_failed",
+                        "halted",
+                    ],
+                    status,
+                ),
+                terminal=terminal,
+                invocation_origin="line",
+                line_identity=admission.line_identity,
+                line_spec_digest=admission.line_spec_digest or "",
+                occurrence_id=admission.occurrence_id or "",
+                occurrence_evaluation_time=admission.occurrence_evaluation_time,
+                node_pin_sets=tuple(
+                    ProcedureRunNodePinSetV1(node_id=item.node_id, pins=item.pins)
+                    for item in admission.node_pin_sets
+                ),
+                pin_set_digest=admission.pin_set_digest,
+                replay_input_vector=tuple(
+                    ProcedureReplayInputProjectionV1.model_validate(item.model_dump(mode="json"))
+                    for item in procedure_replay_input_vector(admission)
+                ),
+                deployment_snapshot_digest=admission.deployment_snapshot_digest or "",
+                acquisition_policy_digest=admission.acquisition_policy_digest or "",
+                selection_receipt_digest=admission.selection_receipt_digest,
+                selection_decision=ProcedureSelectionDecisionV1.model_validate(
+                    admission.selection_decision.model_dump(mode="json")
+                ),
+                selection_decision_digest=admission.selection_decision_digest,
+                resolved_provider_bindings=tuple(
+                    ProcedureProviderBindingV1.model_validate(item.model_dump(mode="json"))
+                    for item in admission.resolved_provider_bindings
+                ),
+                sensitivity_policy_digest=admission.sensitivity_policy_digest or "",
+                mandate_coordinate_digest=admission.mandate_coordinate_digest or "",
+                calibration_coordinate_digest=admission.calibration_coordinate_digest or "",
+                taint_labels=admission.taint_labels,
+                epsilon_member=admission.epsilon_member,
+                admission_material_manifest=(
+                    ProcedureAdmissionMaterialManifestV1.model_validate(
+                        admission_material_manifest.model_dump(mode="json")
+                    )
+                ),
+                admission_material_manifest_digest=admission_material_manifest_digest or "",
+                budget=ProcedureRunBudgetV2(
+                    declared=ProcedureRunBudgetDeclaredV2(
+                        budget=admission.budget,
+                        hard_caps=admission.hard_caps,
+                        result_bytes_cap=parsed_budget.declared.result_bytes_cap,
+                        provider_output_bytes_cap=admission.provider_output_bytes_cap,
+                    ),
+                    observed=parsed_budget.observed,
+                ),
+            )
+            receipt_domain = PROCEDURE_RUN_RECEIPT_V4_DOMAIN
+        elif isinstance(raw_budget_block, dict):
             public_receipt = ProcedureRunReceiptV3(
                 **receipt_fields,
                 status=cast(

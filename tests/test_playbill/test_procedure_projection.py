@@ -6,6 +6,7 @@ from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import render_line_spec
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.compiler import (
+    P2_B0_COMPILER,
     PC_C_COMPILER,
     PC_D_COMPILER,
     PC_E1_COMPILER,
@@ -67,7 +68,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     after = SemanticAddress.procedure_node(accepted.path, "read")
 
     assert before == after
-    assert current_compiler_coordinate() == PC_E1_COMPILER
+    assert current_compiler_coordinate() == P2_B0_COMPILER
     assert (
         projection_registry_for_compiler(PC_C_COMPILER).supports(
             "playbill.procedure.definition",

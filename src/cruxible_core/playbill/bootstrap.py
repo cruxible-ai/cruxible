@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from importlib.resources import files
 
 from pydantic import ValidationError
 
@@ -26,6 +27,13 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import PlaybillBootstrapError
 from cruxible_client.contracts.principal_rendering import render_principal
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    ProcedureRuntimePolicyFormatError,
+    ProcedureRuntimePolicyV1,
+    parse_procedure_runtime_policy,
+    render_procedure_runtime_policy,
+)
 from cruxible_client.contracts.types import (
     GenerationDescriptor,
     PlaybillTrustRoot,
@@ -47,6 +55,7 @@ class VerifiedGenesis:
     generation_root: GenerationRoot
     principals: tuple[PrincipalRecord, ...]
     approval_policy: ApprovalPolicyV1
+    procedure_runtime_policy: ProcedureRuntimePolicyV1 | None
 
 
 def bootstrap_root(*, instance_id: str, daemon_public_key: str) -> BootstrapRoot:
@@ -111,18 +120,35 @@ def genesis_tree(
     principals: Sequence[PrincipalRecord],
     *,
     approval_policy: ApprovalPolicyV1,
+    procedure_runtime_policy: ProcedureRuntimePolicyV1 | None = None,
 ) -> dict[str, bytes]:
     ordered = sorted(principals, key=lambda record: record.principal_id)
     if [record.principal_id for record in ordered] != sorted(
         {record.principal_id for record in ordered}
     ):
         raise PlaybillBootstrapError("genesis principals must be unique")
-    return {
+    tree = {
         APPROVAL_POLICY_PATH: render_approval_policy(approval_policy),
         **{
             f"principals/{record.principal_id}.yaml": render_principal(record) for record in ordered
         },
     }
+    if procedure_runtime_policy is not None:
+        tree[PROCEDURE_RUNTIME_POLICY_PATH] = render_procedure_runtime_policy(
+            procedure_runtime_policy
+        )
+    return tree
+
+
+def seeded_procedure_runtime_policy() -> ProcedureRuntimePolicyV1:
+    """Load the checked-in genesis policy artifact; no runtime cap lives in code."""
+
+    return parse_procedure_runtime_policy(
+        files("cruxible_core.playbill.seed_artifacts")
+        .joinpath("procedure-runtime-policy.yaml")
+        .read_bytes(),
+        path=PROCEDURE_RUNTIME_POLICY_PATH,
+    )
 
 
 def verify_genesis(
@@ -148,16 +174,27 @@ def verify_genesis(
         approval_policy = parse_approval_policy(policy_content, path=APPROVAL_POLICY_PATH)
     except ApprovalPolicyFormatError as exc:
         raise PlaybillBootstrapError("genesis approval policy is invalid") from exc
+    runtime_policy: ProcedureRuntimePolicyV1 | None = None
+    runtime_policy_content = tree.get(PROCEDURE_RUNTIME_POLICY_PATH)
+    if runtime_policy_content is not None:
+        try:
+            runtime_policy = parse_procedure_runtime_policy(
+                runtime_policy_content,
+                path=PROCEDURE_RUNTIME_POLICY_PATH,
+            )
+        except ProcedureRuntimePolicyFormatError as exc:
+            raise PlaybillBootstrapError("genesis Procedure runtime policy is invalid") from exc
     expected_tree = genesis_tree(
         trust_root.principals,
         approval_policy=approval_policy,
+        procedure_runtime_policy=runtime_policy,
     )
     if set(tree) != set(expected_tree):
         raise PlaybillBootstrapError("genesis principal registry paths differ from trust root")
 
     parsed: list[PrincipalRecord] = []
     for path in sorted(expected_tree):
-        if path == APPROVAL_POLICY_PATH:
+        if path in {APPROVAL_POLICY_PATH, PROCEDURE_RUNTIME_POLICY_PATH}:
             if tree[path] != expected_tree[path]:  # pragma: no cover - parser already proves this
                 raise PlaybillBootstrapError("genesis approval policy is not canonical")
             continue
@@ -197,6 +234,7 @@ def verify_genesis(
         generation_root=generation_root(descriptor),
         principals=tuple(parsed),
         approval_policy=approval_policy,
+        procedure_runtime_policy=runtime_policy,
     )
 
 
@@ -205,11 +243,20 @@ def prepare_genesis(
     *,
     trust_root: PlaybillTrustRoot,
     approval_policy: ApprovalPolicyV1,
+    procedure_runtime_policy: ProcedureRuntimePolicyV1 | None = None,
     timestamp: str,
 ) -> VerifiedGenesis:
     """Create, verify, and install the one no-parent genesis commit."""
 
-    tree = genesis_tree(trust_root.principals, approval_policy=approval_policy)
+    tree = genesis_tree(
+        trust_root.principals,
+        approval_policy=approval_policy,
+        procedure_runtime_policy=(
+            seeded_procedure_runtime_policy()
+            if procedure_runtime_policy is None
+            else procedure_runtime_policy
+        ),
+    )
     oid = ledger.create_signed_genesis(tree, timestamp=timestamp)
     verified = verify_genesis(ledger, oid, trust_root=trust_root)
     ledger.set_main_genesis(oid)
@@ -227,5 +274,6 @@ __all__ = [
     "genesis_tree",
     "prepare_genesis",
     "render_principal",
+    "seeded_procedure_runtime_policy",
     "verify_genesis",
 ]

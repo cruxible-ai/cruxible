@@ -144,6 +144,7 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
+    PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     InstalledAcceptanceLaw,
 )
 from cruxible_client.contracts.merkle import (
@@ -162,6 +163,12 @@ from cruxible_client.contracts.policies import (
 from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
+)
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    ProcedureRuntimePolicyFormatError,
+    parse_procedure_runtime_policy,
+    procedure_runtime_policy_digest,
 )
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
@@ -252,6 +259,7 @@ from cruxible_core.playbill.query.engine import (
 
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$")
 _APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.yaml$")
+_PROCEDURE_RUNTIME_POLICY_PATH_RE = re.compile(r"^governance/procedure-runtime-policy\.yaml$")
 _PRINCIPAL_PATH_RE = re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$")
 _SUBJECT_PATH_RE = re.compile(
     r"^subjects/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
@@ -295,6 +303,7 @@ another. There is only one evaluator now, so only the rebase still asks.
 
 _SEMANTIC_MEMBER_PATTERNS: Final = (
     _APPROVAL_POLICY_PATH_RE,
+    _PROCEDURE_RUNTIME_POLICY_PATH_RE,
     _DOCUMENT_PATH_RE,
     _SUBJECT_PATH_RE,
     *_DEPENDENCY_CLOSED_PATTERNS,
@@ -2133,6 +2142,51 @@ def _approval_policy_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _procedure_runtime_policy_member(context: _MemberContext) -> _MemberVerdict:
+    if context.path != PROCEDURE_RUNTIME_POLICY_PATH or context.scope != (
+        PROCEDURE_RUNTIME_POLICY_PATH,
+    ):
+        return _MemberVerdict(diagnostics=(_unregistered(context.path),))
+    try:
+        policy = parse_procedure_runtime_policy(context.content, path=context.path)
+    except ProcedureRuntimePolicyFormatError as exc:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.procedure_runtime_policy.format_invalid",
+                    str(exc),
+                    context.path,
+                ),
+            )
+        )
+    predecessor_digest: str | None = None
+    if context.parent_content is not None:
+        try:
+            predecessor = parse_procedure_runtime_policy(
+                context.parent_content,
+                path=context.path,
+            )
+        except ProcedureRuntimePolicyFormatError as exc:
+            raise ProposalIntegrityError(
+                "accepted Procedure runtime policy cannot be reproduced"
+            ) from exc
+        predecessor_digest = procedure_runtime_policy_digest(predecessor).tagged
+    return _accepted(
+        context,
+        PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
+        predecessor_artifact_digest=predecessor_digest,
+        candidate_artifact_digest=procedure_runtime_policy_digest(policy).tagged,
+        required_tier="governed_write",
+        approval_scope=(),
+        activation_policy="snapshot",
+        result={
+            "artifact_digest": procedure_runtime_policy_digest(policy).tagged,
+            "provider_output_bytes_cap": policy.provider_output_bytes_cap,
+            "verdict": "accepted",
+        },
+    )
+
+
 def _principal_member(context: _MemberContext) -> _MemberVerdict:
     """Judge one control-plane principal transition as an ordinary scoped member.
 
@@ -2193,6 +2247,14 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         removal_message="Approval policy is a genesis singleton and cannot be removed.",
         evaluate=_approval_policy_member,
         format_code="playbill.approval_policy.format_invalid",
+    ),
+    _MemberKind(
+        name="procedure-runtime-policy",
+        pattern=_PROCEDURE_RUNTIME_POLICY_PATH_RE,
+        removal_code="playbill.procedure_runtime_policy.removal_unsupported",
+        removal_message=("Procedure runtime policy is a governed singleton and cannot be removed."),
+        evaluate=_procedure_runtime_policy_member,
+        format_code="playbill.procedure_runtime_policy.format_invalid",
     ),
     _MemberKind(
         name="procedure",
@@ -2291,6 +2353,7 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
 )
 ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "approval-policy",
+    "procedure-runtime-policy",
     "procedure",
     "exhaust-promotion",
     "line",

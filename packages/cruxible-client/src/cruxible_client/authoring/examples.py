@@ -12,6 +12,7 @@ from cruxible_client.authoring.inputs import (
     ExistingCaptureInput,
     LiteralObjectInput,
     ProcedureInput,
+    ProcedureRuntimePolicyInput,
     QueryDefinitionInput,
     SelfSourceInput,
     SubjectInput,
@@ -20,6 +21,7 @@ from cruxible_client.authoring.inputs import (
 from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
@@ -46,6 +48,7 @@ AuthoringExampleName = Literal[
     "query-claims-by-type",
     "subject",
     "approval-policy",
+    "procedure-runtime-policy",
 ]
 
 
@@ -64,6 +67,13 @@ def approval_policy_example() -> ApprovalPolicyInput:
     return ApprovalPolicyInput(
         kind="approval_policy",
         approval_policy=ApprovalPolicyV1(mode="independent_approval_required"),
+    )
+
+
+def procedure_runtime_policy_example() -> ProcedureRuntimePolicyInput:
+    return ProcedureRuntimePolicyInput(
+        kind="procedure_runtime_policy",
+        procedure_runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=2_097_152),
     )
 
 
@@ -389,6 +399,7 @@ AUTHORING_EXAMPLE_FACTORIES: Final[dict[AuthoringExampleName, Callable[[], Autho
     "query-claims-by-type": query_claims_by_type_example,
     "subject": subject_example,
     "approval-policy": approval_policy_example,
+    "procedure-runtime-policy": procedure_runtime_policy_example,
 }
 
 _DOOR_EXAMPLES = {
@@ -407,6 +418,7 @@ AUTHORING_EXAMPLE_NAMES: Final[tuple[AuthoringExampleName, ...]] = (
     "query-claims-by-type",
     "subject",
     "approval-policy",
+    "procedure-runtime-policy",
 )
 
 

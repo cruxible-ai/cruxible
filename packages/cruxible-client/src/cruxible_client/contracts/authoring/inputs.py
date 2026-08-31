@@ -27,6 +27,7 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    ProcedureRuntimePolicyAuthoringPayloadV1,
     QueryDefinitionAuthoringPayloadV1,
     SelfSourceBodyV1,
     SubjectAuthoringPayloadV1,
@@ -39,6 +40,7 @@ from cruxible_client.contracts.claims import (
     SubjectClaimObject,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -172,8 +174,17 @@ class ApprovalPolicyInput(_StrictInputModel):
     approval_policy: ApprovalPolicyV1
 
 
+class ProcedureRuntimePolicyInput(_StrictInputModel):
+    kind: Literal["procedure_runtime_policy"]
+    procedure_runtime_policy: ProcedureRuntimePolicyV1
+
+
 AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
-    SubjectInput | QueryDefinitionInput | ApprovalPolicyInput | ProcedureInput,
+    SubjectInput
+    | QueryDefinitionInput
+    | ApprovalPolicyInput
+    | ProcedureRuntimePolicyInput
+    | ProcedureInput,
     Field(discriminator="kind"),
 ]
 
@@ -189,6 +200,7 @@ AuthoringInputV1: TypeAlias = Annotated[
     | SubjectInput
     | QueryDefinitionInput
     | ApprovalPolicyInput
+    | ProcedureRuntimePolicyInput
     | ChangeSetInput,
     Field(discriminator="kind"),
 ]
@@ -506,6 +518,10 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
         return QueryDefinitionAuthoringPayloadV1(query_definition=value.query_definition)
     if isinstance(value, ApprovalPolicyInput):
         return ApprovalPolicyAuthoringPayloadV1(approval_policy=value.approval_policy)
+    if isinstance(value, ProcedureRuntimePolicyInput):
+        return ProcedureRuntimePolicyAuthoringPayloadV1(
+            procedure_runtime_policy=value.procedure_runtime_policy
+        )
     members = tuple(
         _procedure_payload(member)
         if isinstance(member, ProcedureInput)
@@ -515,7 +531,13 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
             else (
                 QueryDefinitionAuthoringPayloadV1(query_definition=member.query_definition)
                 if isinstance(member, QueryDefinitionInput)
-                else ApprovalPolicyAuthoringPayloadV1(approval_policy=member.approval_policy)
+                else (
+                    ApprovalPolicyAuthoringPayloadV1(approval_policy=member.approval_policy)
+                    if isinstance(member, ApprovalPolicyInput)
+                    else ProcedureRuntimePolicyAuthoringPayloadV1(
+                        procedure_runtime_policy=member.procedure_runtime_policy
+                    )
+                )
             )
         )
         for member in value.members
@@ -541,6 +563,7 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
 __all__ = [
     "AcceptedReferenceInput",
     "ApprovalPolicyInput",
+    "ProcedureRuntimePolicyInput",
     "AuthoringChangeSetMemberInputV1",
     "AuthoringInputError",
     "AuthoringInputV1",
