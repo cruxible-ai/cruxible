@@ -45,6 +45,7 @@ from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import ProcedureExhaustWriter, parse_journal_payload
 from cruxible_core.playbill.material_reservations import (
     ProcedureMaterialReservationStore,
+    make_pending_reservation,
     make_run_reservation,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
@@ -469,13 +470,23 @@ def test_served_journal_open_recovers_an_unpublished_material_lease(tmp_path: Pa
     )
     store = ProcedureMaterialReservationStore(bodies.reservation_root)
     store.reserve(reservation)
-    assert store.active() == (reservation,)
+    pending = make_pending_reservation(
+        instance_id=instance.descriptor.instance_id,
+        run_id="RUN-pending-admission",
+        admission_binding_digest="sha256:" + "6" * 64,
+        input_name="capture",
+        plane="landed_capture",
+        body_digest="sha256:" + "7" * 64,
+    )
+    store.reserve(pending)
+    assert set(store.active()) == {pending, reservation}
 
     reopened, _root = procedure_run_service._journal(instance)  # noqa: SLF001
 
     assert reopened.partition_ids(procedure_run_service._stream(instance)) == ()  # noqa: SLF001
-    assert store.active() == ()
+    assert store.active() == (pending,)
     assert journal.partition_ids(procedure_run_service._stream(instance)) == ()  # noqa: SLF001
+    store.release(pending.reservation_id)
 
 
 @pytest.mark.parametrize(

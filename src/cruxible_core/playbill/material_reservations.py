@@ -445,10 +445,35 @@ class ProcedureMaterialReservationStore:
         a partial scan cannot prove that a pre-append reservation is unreferenced.
         """
 
+        return self._recover(records, bodies=bodies, include_pending_admission=True)
+
+    def recover_run_material(
+        self,
+        records: Sequence[StoredProcedureJournalRecordV1],
+        *,
+        bodies: ContentAddressedBodyStore,
+    ) -> tuple[str, ...]:
+        """Recover append-window leases without racing pending Line admission material."""
+
+        return self._recover(records, bodies=bodies, include_pending_admission=False)
+
+    def _recover(
+        self,
+        records: Sequence[StoredProcedureJournalRecordV1],
+        *,
+        bodies: ContentAddressedBodyStore,
+        include_pending_admission: bool,
+    ) -> tuple[str, ...]:
+
         released: list[str] = []
         access = BodyAccessContext(principal_id="procedure-material-recovery", can_read_body=True)
         with self.locked():
             for reservation in self.active_locked():
+                if (
+                    isinstance(reservation, PendingAdmissionMaterialReservationV1)
+                    and not include_pending_admission
+                ):
+                    continue
                 matches: list[StoredProcedureJournalRecordV1] = []
                 for stored in records:
                     record = stored.record

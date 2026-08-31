@@ -619,7 +619,10 @@ def _journal(instance: PlaybillInstance) -> tuple[LocalJournalBackend, Path]:
         for stored in journal.all_records(stream, partition_id)
     )
     bodies = instance.body_store()
-    ProcedureMaterialReservationStore(bodies.reservation_root).recover(records, bodies=bodies)
+    ProcedureMaterialReservationStore(bodies.reservation_root).recover_run_material(
+        records,
+        bodies=bodies,
+    )
     return journal, root
 
 
