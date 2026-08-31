@@ -55,6 +55,7 @@ from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindingTargetV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
+    ProcedureRunNotFound,
     ProcedureRunRecoveryRequired,
     ProcedureRunRequestV2,
     ProcedureSlotBindingRequestV1,
@@ -455,8 +456,10 @@ def test_run_status_refuses_a_second_admission_bound_record(
         procedure_run_service._state_from_records(instance, run_id=run.run_id)  # noqa: SLF001
 
 
-def test_served_journal_open_recovers_an_unpublished_material_lease(tmp_path: Path) -> None:
-    instance, _owner = initialize_local(tmp_path)
+def test_served_get_preserves_leases_until_the_next_write_recovers_them(
+    tmp_path: Path,
+) -> None:
+    instance, _owner, procedure = _world(tmp_path)
     journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
     bodies = instance.body_store()
     metadata = bodies.store(b'{"orphaned":"before-append"}')
@@ -481,11 +484,23 @@ def test_served_journal_open_recovers_an_unpublished_material_lease(tmp_path: Pa
     store.reserve(pending)
     assert set(store.active()) == {pending, reservation}
 
-    reopened, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    with pytest.raises(ProcedureRunNotFound):
+        service_get_playbill_procedure_run(instance, run_id="RUN-does-not-exist")
+    assert set(store.active()) == {pending, reservation}
 
-    assert reopened.partition_ids(procedure_run_service._stream(instance)) == ()  # noqa: SLF001
+    run = service_run_playbill_procedure(
+        instance,
+        name=procedure.identity.name,
+        request=ProcedureRunRequestV2(evaluation_time=READ_TIME, input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert run.status == "succeeded"
+    assert run.receipt is not None
     assert store.active() == (pending,)
-    assert journal.partition_ids(procedure_run_service._stream(instance)) == ()  # noqa: SLF001
+    assert journal.partition_ids(procedure_run_service._stream(instance)) == (  # noqa: SLF001
+        run.receipt.partition_id,
+    )
     store.release(pending.reservation_id)
 
 

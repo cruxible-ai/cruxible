@@ -611,7 +611,13 @@ class _DeterministicClock(ProcedureClockProtocol):
 def _journal(instance: PlaybillInstance) -> tuple[LocalJournalBackend, Path]:
     root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
     root.mkdir(mode=0o700, exist_ok=True)
-    journal = LocalJournalBackend(root)
+    return LocalJournalBackend(root), root
+
+
+def _journal_for_write(instance: PlaybillInstance) -> tuple[LocalJournalBackend, Path]:
+    """Open the journal and recover append-window leases before the next write."""
+
+    journal, root = _journal(instance)
     stream = _stream(instance)
     records = tuple(
         stored
@@ -1162,7 +1168,7 @@ def service_run_playbill_procedure(
             ),
         )
     stream = _stream(instance)
-    journal, root = _journal(instance)
+    journal, root = _journal_for_write(instance)
     prepared = prepare_direct_procedure_run(
         accepted,
         instance_id=instance.descriptor.instance_id,
