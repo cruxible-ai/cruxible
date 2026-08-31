@@ -997,20 +997,8 @@ def _resolve_authoring_references(
                     repair_description="Use an explicit Procedure pin-slot reference.",
                 )
             if target_identity in candidate_identities:
-                candidate = (candidates or {}).get(target_identity)
-                if candidate is None:
-                    _refuse(
-                        "playbill.authoring.change_set_reference_inconsistent",
-                        location,
-                        "The accepted reference names a sibling member, but its staged "
-                        "successor could not be resolved.",
-                        repair_kind="replace_reference",
-                        repair_description=(
-                            "Use a resolvable sibling member or split the internally "
-                            "inconsistent change set."
-                        ),
-                    )
-                resolved = candidate
+                # Both maps derive from the same staged non-Procedure members.
+                resolved = (candidates or {})[target_identity]
             _path, digest = resolved
             return ArtifactPin(
                 role=reference.role,
