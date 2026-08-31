@@ -12,6 +12,7 @@ from cruxible_client.contracts.candidates import (
     CandidateMemberLawEvidenceV2,
     DependencyProofReferenceV1,
     MemberLawEvaluationV2,
+    SemanticCandidate,
     SemanticCandidateV2,
     candidate_digest,
     candidate_member_evidence_digest,
@@ -269,6 +270,8 @@ def _update_changeset_golden() -> None:
 
 def _update_candidate_v2_golden() -> None:
     path = GOLDENS / "candidate-v2.json"
+    if not path.exists():
+        return
     fixture = _read(path)
     candidate = SemanticCandidateV2.model_validate(fixture["candidate"])
     payload = candidate.model_dump(mode="json")
@@ -277,11 +280,18 @@ def _update_candidate_v2_golden() -> None:
         {"tag": "playbill-candidate-v2", **payload}
     ).decode()
     fixture["candidate_digest"] = candidate_digest(candidate).tagged
+    sibling = fixture["flat_rooted_v1_sibling"]
+    if not isinstance(sibling, dict):
+        raise TypeError("candidate-v2 golden has no flat-rooted sibling")
+    sibling_candidate = SemanticCandidate.model_validate(sibling["candidate"])
+    sibling["candidate_digest"] = candidate_digest(sibling_candidate).tagged
     _write(path, fixture)
 
 
 def _update_merkle_manifest_golden() -> None:
     path = GOLDENS / "merkle-manifest-v1.json"
+    if not path.exists():
+        return
     fixture = _read(path)
     inputs = fixture["input"]
     members = inputs["members"]
@@ -306,6 +316,8 @@ def _update_merkle_manifest_golden() -> None:
 
 def _update_dependency_edge_golden() -> None:
     path = GOLDENS / "depgraph-v3.json"
+    if not path.exists():
+        return
     fixture = _read(path)
     inputs = fixture["input"]
     parent_edges = tuple(
