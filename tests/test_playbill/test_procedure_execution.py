@@ -55,6 +55,7 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_path,
 )
 from cruxible_client.contracts.procedures.models import (
+    ExhaustTapNodeV3,
     GuardNodeV3,
     GuardPredicateV1,
     HaltNodeV3,
@@ -88,10 +89,12 @@ from cruxible_core.playbill.exhaust import (
 from cruxible_core.playbill.material_reservations import (
     ProcedureMaterialRecoveryRequired,
     ProcedureMaterialReservationStore,
+    RunMaterialReservationV1,
     reserve_admission_material_body,
 )
 from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RESULT_MAX_BYTES,
+    ExhaustRunMaterialV1,
     PreparedProcedureRunV3,
     ProcedureAdmissionBoundPayloadV3,
     ProcedureAdmissionMaterialManifestV1,
@@ -118,6 +121,7 @@ from cruxible_core.playbill.procedures.execution import (
     procedure_selection_decision_digest,
     procedure_semantic_replay_key_digest,
     procedure_semantic_result_digest,
+    run_value_digest,
     verify_line_admission_spec,
 )
 from cruxible_core.playbill.procedures.input_planes import (
@@ -265,6 +269,41 @@ def _state_procedure(*, false_branch: bool = False, max_items: int = 100) -> Acc
         terminal_capability=1,
     )
     return _accepted(definition, pins=(contract_in, contract_out, query))
+
+
+def _exhaust_procedure() -> AcceptedProcedureV1:
+    contract_in = _pin("contract-in", "Contract", "input")
+    contract_out = _pin("contract-out", "Contract", "output")
+    reducer = ArtifactPin(
+        role="reducer",
+        target=ArtifactIdentity(kind="Reducer", name="upstream"),
+        artifact_digest=_digest("upstream-reducer"),
+    )
+    definition = ProcedureDefinitionV3(
+        name="exhaust-procedure",
+        contract_in=contract_in,
+        contract_out=contract_out,
+        nodes=(
+            ExhaustTapNodeV3(
+                node_id="read-prior",
+                reducer_or_query=reducer,
+                journal_identity="upstream-journal",
+                as_="prior_rows",
+                next="project",
+            ),
+            ProjectNodeV3(
+                node_id="project",
+                fields={"items": "$steps.prior_rows.rows", "status": "ok"},
+                contract_out=contract_out,
+                as_="result",
+            ),
+        ),
+        returns="result",
+        budget=_budget(),
+        hard_caps=_hard_caps(),
+        terminal_capability=1,
+    )
+    return _accepted(definition, pins=(contract_in, contract_out, reducer))
 
 
 def _owned_contract(name: str, fields: dict[str, PropertySchema]) -> ProcedureOwnedContractV1:
@@ -1767,13 +1806,40 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
     monkeypatch,
 ) -> None:
     fixture = _fixture(tmp_path)
-    accepted = _state_procedure()
+    accepted = _exhaust_procedure()
     direct = _prepare(accepted, fixture, _StateReader())
-    admission = _line_admission(accepted, fixture)
-    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    exhaust_value = {"rows": [{"id": "retained"}]}
+    exhaust_input = ExhaustRunInputV1(
+        input_name="prior_rows",
+        journal_identity="upstream-journal",
+        first_cursor="partition:0001",
+        last_cursor="partition:0001",
+        reducer_or_query_digest=_digest("upstream-reducer"),
+        result_digest=run_value_digest("exhaust-result", exhaust_value),
+    )
+    admission = _line_admission(accepted, fixture, exhaust_inputs=(exhaust_input,))
+    pending = reserve_admission_material_body(
+        bodies=fixture.bodies,
+        instance_id=admission.instance_id,
+        run_id=admission.run_id,
+        admission_binding_digest=admission.admission_binding_digest,
+        input_name=exhaust_input.input_name,
+        plane="exhaust",
+        content=canonical_bytes(exhaust_value),
+    )
+    member = ProcedureAdmissionMaterialMemberV1(
+        input_name=exhaust_input.input_name,
+        plane="exhaust",
+        semantic_digest=exhaust_input.result_digest,
+        body_digest=pending.body_digest,
+        retention_authority_digest=exhaust_input.reducer_or_query_digest,
+        body_retention="optional",
+    )
+    manifest = ProcedureAdmissionMaterialManifestV1(members=(member,))
     prepared = PreparedProcedureRunV3(
         admission=admission,
         accepted_state_materials=direct.accepted_state_materials,
+        exhaust_materials=(ExhaustRunMaterialV1(input=exhaust_input, value=exhaust_value),),
         admission_material_manifest=manifest,
         admission_material_manifest_digest=procedure_admission_material_digest(manifest),
     )
@@ -1786,6 +1852,31 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
             admission.journal_partition_id,
         ),
     )
+    reservations = ProcedureMaterialReservationStore(fixture.bodies.reservation_root)
+    original_store = fixture.bodies.store
+
+    def store_after_run_reservation(content: bytes):  # type: ignore[no-untyped-def]
+        body_digest = fixture.bodies.digest_bytes(content).tagged
+        assert any(
+            isinstance(item, RunMaterialReservationV1) and item.body_digest == body_digest
+            for item in reservations.active_locked()
+        )
+        return original_store(content)
+
+    monkeypatch.setattr(fixture.bodies, "store", store_after_run_reservation)
+    original_append = fixture.journal.append
+
+    def append_while_leased(draft, **kwargs):  # type: ignore[no-untyped-def]
+        active = reservations.active_locked()
+        assert any(
+            isinstance(item, RunMaterialReservationV1) and item.body_digest == draft.payload_digest
+            for item in active
+        )
+        if draft.event_kind == "admission_bound":
+            assert pending in active
+        return original_append(draft, **kwargs)
+
+    monkeypatch.setattr(fixture.journal, "append", append_while_leased)
     result = ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -1812,8 +1903,9 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
     )
     assert payload["tag"] == "playbill-procedure-admission-bound-payload-v3"
     assert "accepted_state_materials" not in payload
-    assert payload["admission_material_manifest"]["members"] == []
+    assert payload["admission_material_manifest"]["members"] == [member.model_dump(mode="json")]
     assert ProcedureRunAdmissionV3.model_validate(payload["admission"]) == admission
+    assert reservations.active() == ()
 
     records = fixture.journal.all_records(
         fixture.stream,

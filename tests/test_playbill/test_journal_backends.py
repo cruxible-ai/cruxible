@@ -37,6 +37,7 @@ from cruxible_core.playbill.material_reservations import (
     ProcedureMaterialRecoveryRequired,
     ProcedureMaterialReservationError,
     ProcedureMaterialReservationStore,
+    RunMaterialReservationV1,
     make_run_reservation,
     reserve_admission_material_body,
 )
@@ -198,6 +199,17 @@ def test_payload_reservation_spans_cas_to_journal_and_recovers_both_crash_sides(
         bodies=bodies,
         fencing_token="writer-a",
     )
+    original_store = bodies.store
+
+    def store_after_reservation(content: bytes):  # type: ignore[no-untyped-def]
+        body_digest = bodies.digest_bytes(content).tagged
+        assert any(
+            isinstance(item, RunMaterialReservationV1) and item.body_digest == body_digest
+            for item in writer.material_reservations.active_locked()
+        )
+        return original_store(content)
+
+    monkeypatch.setattr(bodies, "store", store_after_reservation)
     original_append = backend.append
 
     def crash_before_append(*args, **kwargs):  # type: ignore[no-untyped-def]

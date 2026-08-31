@@ -78,6 +78,7 @@ from cruxible_core.playbill.exhaust import (
 from cruxible_core.playbill.exhaust.promotions import VerifiedExhaustRecordV1
 from cruxible_core.playbill.exhaust.records import parse_journal_payload
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.material_reservations import ProcedureMaterialReservationStore
 from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RUN_RECEIPT_V2_DOMAIN,
     PROCEDURE_RUN_RECEIPT_V3_DOMAIN,
@@ -610,7 +611,16 @@ class _DeterministicClock(ProcedureClockProtocol):
 def _journal(instance: PlaybillInstance) -> tuple[LocalJournalBackend, Path]:
     root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
     root.mkdir(mode=0o700, exist_ok=True)
-    return LocalJournalBackend(root), root
+    journal = LocalJournalBackend(root)
+    stream = _stream(instance)
+    records = tuple(
+        stored
+        for partition_id in journal.partition_ids(stream)
+        for stored in journal.all_records(stream, partition_id)
+    )
+    bodies = instance.body_store()
+    ProcedureMaterialReservationStore(bodies.reservation_root).recover(records, bodies=bodies)
+    return journal, root
 
 
 def _stream(instance: PlaybillInstance) -> JournalStreamIdentityV1:

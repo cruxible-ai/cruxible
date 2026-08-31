@@ -43,6 +43,10 @@ from cruxible_client.contracts.query.definitions import query_definition_digest
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import ProcedureExhaustWriter, parse_journal_payload
+from cruxible_core.playbill.material_reservations import (
+    ProcedureMaterialReservationStore,
+    make_run_reservation,
+)
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.service.playbill_procedure_runs import (
@@ -331,6 +335,30 @@ def test_run_id_collision_across_partitions_fails_closed(tmp_path: Path) -> None
 
     with pytest.raises(ProcedureRunRecoveryRequired, match="collides across journal authority"):
         procedure_run_service._records_for_run(instance, "RUN-collision")  # noqa: SLF001
+
+
+def test_served_journal_open_recovers_an_unpublished_material_lease(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    journal, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+    bodies = instance.body_store()
+    metadata = bodies.store(b'{"orphaned":"before-append"}')
+    reservation = make_run_reservation(
+        instance_id=instance.descriptor.instance_id,
+        partition_id="direct-runs",
+        event_kind="node_fired",
+        run_id="RUN-orphaned",
+        admission_binding_digest="sha256:" + "1" * 64,
+        body_digest=metadata.digest,
+    )
+    store = ProcedureMaterialReservationStore(bodies.reservation_root)
+    store.reserve(reservation)
+    assert store.active() == (reservation,)
+
+    reopened, _root = procedure_run_service._journal(instance)  # noqa: SLF001
+
+    assert reopened.partition_ids(procedure_run_service._stream(instance)) == ()  # noqa: SLF001
+    assert store.active() == ()
+    assert journal.partition_ids(procedure_run_service._stream(instance)) == ()  # noqa: SLF001
 
 
 @pytest.mark.parametrize(
