@@ -196,9 +196,7 @@ def lint_claim_type_input(
     resolvable_contracts: dict[str, str] = {}
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
         contract = foreign_source_capture_contract(source_id)
-        resolvable_contracts[capture_contract_digest(contract).tagged] = (
-            contract.identity.qualified
-        )
+        resolvable_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("capture-contracts/"):
             continue

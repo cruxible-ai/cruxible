@@ -416,9 +416,7 @@ def test_dead_direct_self_asserted_profile_remains_an_unresolved_contract(
                         "rule_id": "dead-direct-self-asserted",
                         "claim_roles": ["normative", "observation"],
                         "capture_contract_digests": [
-                            capture_contract_digest(
-                                DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
-                            ).tagged
+                            capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
                         ],
                         "evidence_kinds": ["self_asserted"],
                         "admission": "direct",
