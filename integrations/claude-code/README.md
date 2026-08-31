@@ -72,6 +72,9 @@ extension and all — and that string must be exactly the
 identity that does not satisfy the identity grammar binds nothing.
 
 Exact rules beat prefix rules; among prefix rules, the longest match wins.
+The config's `instance_id` is read by the hook and overrides the ambient CLI
+instance selection. The server URL or socket remains a CLI/environment/context
+setting; it is not inferred from a source binding.
 
 ## What actually gets annotated, and why
 
@@ -127,6 +130,20 @@ unreachable, a working file is unreadable, or the configuration is missing, the
 tool result is returned unchanged plus — where a channel exists — one
 `Playbill coverage: unavailable  [<code>]` line. A broken hook never breaks the
 agent's tool call.
+
+Three adapter diagnostics may appear on stderr, without changing stdout:
+
+- `playbill.coverage_hook.instance_id_missing` — set `instance_id` in
+  `.playbill/coverage.json` or select an ambient CLI instance.
+- `playbill.coverage_hook.rule_tag_invalid` — replace the rule tag with
+  `playbill-coverage-exact-path-rule-v1` or
+  `playbill-coverage-path-prefix-rule-v1` and keep the matching fields above.
+- `playbill.coverage_hook.tool_response_invalid` — configure the Grep hook to
+  pass the structured PostToolUse `tool_response` object, not rendered text.
+
+Only Grep needs a structured response to carry annotations. Unstructured Read,
+Edit, and Write responses stay silent and fail open because their tool input
+still supplies the path being observed.
 
 Semantics fail closed even while infrastructure fails open: a degraded delivery
 carries no cards at all rather than a downgraded guess, and no coverage card
