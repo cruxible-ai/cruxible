@@ -42,7 +42,14 @@ from cruxible_client.contracts.claim_verdicts import (
 from cruxible_client.contracts.claims import (
     AcceptedClaim,
     claim_artifact_digest,
+    claim_path,
     claim_statement_digest,
+    parse_claim,
+)
+from cruxible_client.contracts.declared_blocks import (
+    ProjectionClaimBackingV1,
+    ProjectionMarkerError,
+    parse_projection_blocks,
 )
 from cruxible_client.contracts.errors import PlaybillCasError, ProposalIntegrityError
 from cruxible_client.contracts.source_references import (
@@ -64,6 +71,7 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageAccessProfileV1,
     CoverageCardBudgetV1,
     CoverageCommitmentMaterializationCorrupt,
+    CoverageLineOverlayV1,
     CoverageRequestV1,
     CoverageResultV3,
     LogicalSourceIdentityV1,
@@ -91,13 +99,17 @@ from cruxible_core.playbill.coverage.manifest import (
     write_coverage_manifest,
     write_coverage_manifest_v2,
 )
-from cruxible_core.playbill.coverage.resolver import resolve_coverage_v3
+from cruxible_core.playbill.coverage.resolver import (
+    BoundPublicationObservation,
+    resolve_coverage_v3,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_claims import (
     _claim_from_view,
     service_list_playbill_claims,
 )
+from cruxible_core.service.playbill_publications import bound_publication_registrations
 
 COVERAGE_ACCESS_PROFILE_ID = "playbill.coverage.read"
 COVERAGE_PRINCIPAL = "playbill-coverage"
@@ -551,6 +563,94 @@ def _publish_manifest_v2(
     return candidate
 
 
+def _line_overlay(content: bytes, *, start_byte: int, end_byte: int) -> CoverageLineOverlayV1:
+    last_byte = max(start_byte, end_byte - 1)
+    return CoverageLineOverlayV1(
+        start_byte=start_byte,
+        end_byte=end_byte,
+        start_line=content.count(b"\n", 0, start_byte) + 1,
+        end_line=content.count(b"\n", 0, last_byte) + 1,
+    )
+
+
+def _bound_publication_observations(
+    instance: PlaybillInstance,
+    *,
+    at: PlaybillAcceptedCoordinate,
+    observations: Sequence[WorkingSourceObservationV1],
+) -> tuple[BoundPublicationObservation, ...]:
+    """Join confirmed publication protocol state to parsed working blocks."""
+
+    registrations = bound_publication_registrations(instance)
+    if registrations is None:
+        return ()
+    tree = instance.tree_at(at.git_oid)
+    by_source = {
+        item.source.identity: item for item in observations if item.source.plane == "external"
+    }
+    parsed_by_source: dict[str, tuple[object, ...]] = {}
+    result: dict[tuple[bytes, bytes, bytes], BoundPublicationObservation] = {}
+    for registration in registrations:
+        preparation = registration.preparation
+        observed = by_source.get(preparation.source_id)
+        if observed is None:
+            continue
+        path = claim_path(registration.claim_identity)
+        raw_claim = tree.get(path)
+        if raw_claim is None:
+            continue
+        claim = parse_claim(raw_claim, path=path)
+        if (
+            claim.lifecycle.state != "live"
+            or claim_statement_digest(claim.statement).tagged != registration.claim_statement_digest
+            or preparation.body_digest != preparation.stamp.body_digest
+        ):
+            continue
+        expected_backing = ProjectionClaimBackingV1(
+            identity=claim.identity,
+            statement_digest=registration.claim_statement_digest,
+        )
+        if expected_backing not in preparation.stamp.backing:
+            continue
+        if preparation.source_id not in parsed_by_source:
+            try:
+                parsed_by_source[preparation.source_id] = parse_projection_blocks(
+                    observed.content,
+                    source_id=preparation.source_id,
+                )
+            except ProjectionMarkerError:
+                parsed_by_source[preparation.source_id] = ()
+        matches = tuple(
+            block
+            for block in parsed_by_source[preparation.source_id]
+            if getattr(block, "block_id", None) == preparation.block_id
+            and getattr(block, "stamp", None) == preparation.stamp
+        )
+        if len(matches) != 1:
+            continue
+        block = matches[0]
+        body_start = getattr(block, "body_start")
+        body_end = getattr(block, "body_end")
+        item = BoundPublicationObservation(
+            source=LogicalSourceIdentityV1(
+                plane="external",
+                identity=preparation.source_id,
+            ),
+            block_id=preparation.block_id,
+            claim_path=path,
+            claim_statement_digest=registration.claim_statement_digest,
+            expected_body_digest=preparation.body_digest,
+            observed_body_digest=getattr(block, "body_digest"),
+            line_overlay=_line_overlay(
+                observed.content,
+                start_byte=body_start,
+                end_byte=body_end,
+            ),
+        )
+        result[item.sort_key] = item
+    return tuple(result[key] for key in sorted(result))
+
+
 def service_resolve_playbill_coverage(
     instance: PlaybillInstance,
     *,
@@ -613,6 +713,11 @@ def service_resolve_playbill_coverage(
         ),
         additional_window_citation_ids=frozenset(
             citation_id for _source, citation_id, _capture in retired_associations
+        ),
+        publication_observations=_bound_publication_observations(
+            instance,
+            at=coordinate,
+            observations=observations,
         ),
     )
 

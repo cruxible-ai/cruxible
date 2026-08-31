@@ -57,12 +57,17 @@ from cruxible_core.playbill.authoring.insertions import (
     publication_confirmation_matches,
 )
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
-from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
+from cruxible_core.playbill.coverage.adapter import observe_working_source
+from cruxible_core.playbill.coverage.contracts import (
+    CoverageAccessProfileV1,
+    LogicalSourceIdentityV1,
+)
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from cruxible_core.service.playbill_coverage import service_resolve_playbill_coverage
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV3,
@@ -874,6 +879,66 @@ def test_only_confirmed_publication_registration_suppresses_next_orphan_repair(
         for item in service_playbill_next(_instance, request=request).items
         if item.reason == "unregistered_projection_block"
     ]
+
+
+def test_confirmed_publication_resolves_exact_then_drifted_coverage(tmp_path: Path) -> None:
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.preparation is not None
+    landed = apply_playbill_publication(
+        preimage,
+        intent_id=intent_id,
+        expectation=prepared.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    source = LogicalSourceIdentityV1(plane="external", identity="repo.work-items")
+
+    before_confirmation = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, landed.content),),
+    )
+    assert before_confirmation.summary.candidate == 1
+    assert before_confirmation.summary.exact == 0
+
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(landed.content),
+    )
+    assert confirmation is not None
+    coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+
+    exact = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, landed.content),),
+    )
+    assert exact.summary.exact == 1
+    assert exact.summary.candidate == 0
+    (exact_card,) = exact.spans[0].cards
+    assert exact_card.accepted_source == source
+    assert exact_card.line_overlay is not None
+    assert exact_card.line_overlay.start_byte == prepared.preparation.body_start_byte
+    assert exact_card.line_overlay.end_byte == prepared.preparation.body_end_byte
+
+    changed = landed.content.replace(b"status: ready\n", b"status: stale\n", 1)
+    drifted = service_resolve_playbill_coverage(
+        instance,
+        instance_id=instance.descriptor.instance_id,
+        observations=(observe_working_source(source, changed),),
+    )
+    assert drifted.summary.drifted == 1
+    assert drifted.summary.candidate == 0
+    (drifted_card,) = drifted.spans[0].cards
+    assert drifted_card.expected_commitment_digest == _digest(b"status: ready\n")
+    assert drifted_card.observed_commitment_digest == _digest(b"status: stale\n")
 
 
 def test_prepared_then_abandoned_expectation_retains_terminal_tombstone_shape(

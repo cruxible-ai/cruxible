@@ -13,7 +13,6 @@ from typing import Literal, TypeAlias, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from cruxible_client.contracts import PlaybillNextReason
-from cruxible_client.contracts.authoring.models import InsertionExpectationV2
 from cruxible_client.contracts.canonical import (
     CanonicalValue,
     Sha256Value,
@@ -70,7 +69,6 @@ from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
 from cruxible_client.contracts.temporal import ensure_utc
-from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.citation_relations import (
     RELATION_RETIRED_CONFLICT_SCHEMA,
@@ -114,6 +112,7 @@ from cruxible_core.service.playbill_evidence import (
     current_verified_claim_attestations,
     service_evaluate_playbill_claim_verdict,
 )
+from cruxible_core.service.playbill_publications import bound_publication_registrations
 from cruxible_core.service.playbill_query import build_accepted_query_facts
 from cruxible_core.service.playbill_search import claim_resolution_statuses
 
@@ -2740,28 +2739,12 @@ def _registered_publication_blocks(
 ) -> frozenset[tuple[str, str]] | None:
     """Fold durable bound publication identities from latest intent events."""
 
-    exhaust_root = instance.root / instance.descriptor.storage.exhaust
-    if not (exhaust_root / "authoring-intents").is_dir():
-        return frozenset()
-    try:
-        latest = {
-            event.intent.intent_id: event.intent
-            for event in AuthoringIntentStore(exhaust_root).events()
-        }
-    except (OSError, PlaybillError):
+    registrations = bound_publication_registrations(instance)
+    if registrations is None:
         return None
-    registrations: set[tuple[str, str]] = set()
-    for intent in latest.values():
-        expectation = intent.insertion_expectation
-        if (
-            not isinstance(expectation, InsertionExpectationV2)
-            or expectation.state != "bound"
-            or expectation.preparation is None
-        ):
-            continue
-        preparation = expectation.preparation
-        registrations.add((preparation.source_id, preparation.block_id))
-    return frozenset(registrations)
+    return frozenset(
+        (item.preparation.source_id, item.preparation.block_id) for item in registrations
+    )
 
 
 def _projection_marker_invalid_item(
