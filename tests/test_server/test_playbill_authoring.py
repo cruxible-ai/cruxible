@@ -8,7 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cruxible_client import contracts
-from cruxible_client.authoring.examples import claim_flow_a_example
+from cruxible_client.authoring.examples import claim_flow_a_example, procedure_example
+from cruxible_client.contracts.authoring.inputs import CarriedContractInput
+from cruxible_client.contracts.procedures.contract_schema import PropertySchema
 from cruxible_core.playbill.authoring.insertions import PublicationClaimNotAccepted
 from cruxible_core.playbill.claim_type_inputs import (
     lower_claim_type_input,
@@ -240,6 +242,66 @@ def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
         "create and compile cannot observe local working-source bytes. "
         "Repair: Run playbill authoring bind with this input and the selected local file."
     )
+
+
+def test_http_unused_procedure_contract_is_a_typed_preflight_refusal(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key = playbill_http
+    example = procedure_example()
+    invalid = example.model_copy(
+        update={
+            "contracts": (
+                *example.contracts,
+                CarriedContractInput(
+                    name="unused-contract",
+                    fields={"unused": PropertySchema(type="string")},
+                ),
+            )
+        }
+    ).model_dump(mode="json")
+
+    created = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        json={
+            "tag": "playbill-authoring-input-create-request-v1",
+            "input": invalid,
+        },
+    )
+
+    assert created.status_code == 200, created.text
+    intent_id = created.json()["intent"]["intent_id"]
+    preflight = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents/{intent_id}/preflight",
+        json={"tag": "playbill-authoring-intent-preflight-request-v1"},
+    )
+    compiled = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/compile",
+        json={
+            "tag": "playbill-authoring-input-compile-request-v1",
+            "input": invalid,
+            "intent_id": None,
+        },
+    )
+
+    for response in (preflight, compiled):
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result["verdict"] == "refused"
+        diagnostic = result["frontier"]["diagnostics"][0]
+        assert diagnostic["code"] == "playbill.authoring.procedure_definition_invalid"
+        assert diagnostic["stage"] == "lowering"
+        assert diagnostic["offending_element"] == "owned_contracts"
+        assert "Contract:unused-contract" in diagnostic["message"]
+        assert diagnostic["repairs"] == [
+            {
+                "kind": "replace_contracts_or_definition",
+                "description": (
+                    "Remove each unused owned Contract or reference it from the Procedure graph."
+                ),
+                "replacement": None,
+            }
+        ]
 
 
 def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_input(
