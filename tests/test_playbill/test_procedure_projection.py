@@ -17,6 +17,7 @@ from cruxible_client.contracts.procedures.line_specs import render_line_spec
 from cruxible_client.contracts.projection_extensions import ProjectionFactClassification
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.compiler import (
+    P2_B0_COMPILER,
     PC_C_COMPILER,
     PC_D_COMPILER,
     PC_E1_COMPILER,

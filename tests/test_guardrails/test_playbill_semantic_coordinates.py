@@ -32,7 +32,7 @@ from cruxible_client.contracts.laws import (
     SUBJECT_ACCEPTANCE_LAW,
     InstalledAcceptanceLaw,
 )
-from cruxible_core.playbill.compiler import PC_HR_COMPILER, P2_B0_COMPILER, PC_E1_COMPILER
+from cruxible_core.playbill.compiler import P2_B0_COMPILER, PC_E1_COMPILER, PC_HR_COMPILER
 
 LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],

@@ -521,14 +521,11 @@ def _procedure_node_span(
 ) -> ContentSpan:
     payload = node.model_dump(mode="json", by_alias=True)
     compact = canonical_bytes(payload)
-    pretty = pretty_canonical_bytes(payload).removesuffix(b"\n").replace(
-        b"\n", b"\n      "
-    )
+    pretty = pretty_canonical_bytes(payload).removesuffix(b"\n").replace(b"\n", b"\n      ")
     matches = [
         (start, encoded)
         for encoded in (compact, pretty)
-        if (start := content.find(encoded)) >= 0
-        and content.find(encoded, start + 1) < 0
+        if (start := content.find(encoded)) >= 0 and content.find(encoded, start + 1) < 0
     ]
     if len(matches) != 1:
         raise ProjectionFormatError("Procedure node bytes do not have one exact source occurrence")
