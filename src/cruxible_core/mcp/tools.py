@@ -558,6 +558,13 @@ def register_tools(
         return handlers.handle_playbill_list_query_definitions(instance_id)
 
     @_tool
+    def cruxible_playbill_policies_in_force(
+        instance_id: str,
+    ) -> contracts.PlaybillPolicyInForceList:
+        """List live governed policies embedded in and standing beside accepted artifacts."""
+        return handlers.handle_playbill_policies_in_force(instance_id)
+
+    @_tool
     def cruxible_playbill_get_query_definition(
         instance_id: str, name: str
     ) -> contracts.PlaybillQueryDefinitionView:

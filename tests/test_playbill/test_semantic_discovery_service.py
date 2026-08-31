@@ -22,14 +22,12 @@ from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
     PlaybillProposalInspection,
 )
-from cruxible_core.playbill.service.query_definitions import (
-    service_propose_playbill_query_definition,
-)
 from cruxible_core.service.playbill_discovery import (
     PlaybillInterfaceInventoryV1,
     build_accepted_discovery_vocabulary,
     service_discover_playbill_semantic,
 )
+from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._knowledge_loop_support import (
     EVALUATION_TIME,
     PREDICATE,
@@ -45,7 +43,7 @@ from tests.test_playbill._support import initialize_local
 
 def _instance_with_query(tmp_path: Path):
     instance, owner = seed_claims(tmp_path)
-    inspection = service_propose_playbill_query_definition(
+    inspection = submit_query_definition_candidate(
         instance,
         query=work_item_query(),
         actor_id="owner",

@@ -17,20 +17,12 @@ from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_digest,
     query_definition_path,
-    render_query_definition,
 )
-from cruxible_core.playbill.actor_context import TransportCapability
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
-from cruxible_core.playbill.proposals import (
-    AuthenticatedActor,
-    ProposalAdmissionRequest,
-)
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
 )
-from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
 
 QUERY_DEFINITION_PATH_PREFIX = "query-definitions/"
 
@@ -105,39 +97,6 @@ def accepted_query_definition(
     )
 
 
-def service_propose_playbill_query_definition(
-    instance: PlaybillInstance,
-    *,
-    query: QueryDefinitionV1,
-    actor_id: str,
-    proposal_name: str,
-    timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
-    capabilities: tuple[TransportCapability, ...] = ("propose",),
-) -> PlaybillProposalInspection:
-    """Submit one QueryDefinition candidate through the generic proposal path."""
-
-    proposed_base = _resolve_coordinate(instance, base)
-    candidate_tree = instance.tree_at(proposed_base.git_oid)
-    candidate_tree[query_definition_path(query.identity.name)] = render_query_definition(query)
-    ref_name = canonical_playbill_proposal_name(proposal_name, family="query definition")
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),
-        request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
-            proposed_base_oid=proposed_base.git_oid,
-        ),
-        candidate_tree=candidate_tree,
-        timestamp=timestamp,
-    )
-    return PlaybillProposalInspection(
-        proposal=result,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
-    )
-
-
 def service_get_playbill_query_definition(
     instance: PlaybillInstance,
     *,
@@ -177,5 +136,4 @@ __all__ = [
     "accepted_query_definition",
     "service_get_playbill_query_definition",
     "service_list_playbill_query_definitions",
-    "service_propose_playbill_query_definition",
 ]

@@ -11,20 +11,31 @@ from typing import NoReturn
 
 from pydantic import ValidationError
 
+from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_PATH,
+    approval_policy_digest,
+    render_approval_policy,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.models import (
+    ApprovalPolicyAuthoringPayloadV1,
     AuthoringArtifactReferenceV1,
+    AuthoringCandidateReferenceV1,
     AuthoringExactContentObjectV1,
     AuthoringIntentV1,
+    ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV2,
     ClaimAuthoringPayloadV3,
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    QueryDefinitionAuthoringPayloadV1,
     RepairAlternativeV1,
     SelfSourceBodyV1,
+    SubjectAuthoringPayloadV1,
     WorkingSelectionObservationV1,
+    authoring_member_identity,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
@@ -84,9 +95,17 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.graph import (
+    ProcedureGraphFormatError,
+    compute_procedure_definition_digest_v3,
+)
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, iter_pin_bindings
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
+from cruxible_client.contracts.query.definitions import (
+    query_definition_digest,
+    query_definition_path,
+    render_query_definition,
+)
 from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress, SourceMapping
 from cruxible_client.contracts.source_references import LedgerSourceReferenceV1
 from cruxible_client.contracts.subjects import (
@@ -941,6 +960,8 @@ def _resolve_authoring_references(
     value: object,
     *,
     accepted: dict[str, tuple[str, str]],
+    candidates: dict[str, tuple[str, str]] | None = None,
+    candidate_identities: frozenset[str] = frozenset(),
     owned_contracts: dict[str, ProcedureOwnedContractV1] | None = None,
     location: str = "definition",
 ) -> object:
@@ -970,6 +991,43 @@ def _resolve_authoring_references(
             return ArtifactPin(
                 role=reference.role,
                 target=reference.target,
+                artifact_digest=digest,
+            ).model_dump(mode="json")
+        if value.get("tag") == "playbill-authoring-candidate-reference-v1":
+            try:
+                candidate_reference = AuthoringCandidateReferenceV1.model_validate(value)
+            except ValidationError as exc:
+                _refuse(
+                    "playbill.authoring.candidate_reference_invalid",
+                    location,
+                    "The change-set candidate reference is invalid: "
+                    + " | ".join(_validation_error_lines(exc, root=location)),
+                    repair_kind="replace_reference",
+                    repair_description="Use a valid candidate member reference.",
+                )
+            if candidate_reference.target.kind == "Procedure":
+                _refuse(
+                    "playbill.authoring.candidate_procedure_reference_forbidden",
+                    location,
+                    "A Procedure cannot candidate-reference another Procedure in change-set v1.",
+                    repair_kind="replace_reference",
+                    repair_description="Reference a non-Procedure member of this change set.",
+                )
+            if candidate_reference.target.qualified not in candidate_identities:
+                _refuse(
+                    "playbill.authoring.candidate_reference_outside_change_set",
+                    location,
+                    "The candidate reference does not name a member of this change set.",
+                    repair_kind="add_or_replace_member",
+                    repair_description="Add the referenced artifact or use an accepted reference.",
+                )
+            resolved = (candidates or {}).get(candidate_reference.target.qualified)
+            if resolved is None:  # pragma: no cover - staged-tree invariant
+                raise ValueError("candidate member was not present in its staged tree")
+            _path, digest = resolved
+            return ArtifactPin(
+                role=candidate_reference.role,
+                target=candidate_reference.target,
                 artifact_digest=digest,
             ).model_dump(mode="json")
         if value.get("kind") == "carried_contract" and set(value) == {
@@ -1007,6 +1065,8 @@ def _resolve_authoring_references(
             key: _resolve_authoring_references(
                 member,
                 accepted=accepted,
+                candidates=candidates,
+                candidate_identities=candidate_identities,
                 owned_contracts=owned_contracts,
                 location=f"{location}.{key}",
             )
@@ -1017,6 +1077,8 @@ def _resolve_authoring_references(
             _resolve_authoring_references(
                 member,
                 accepted=accepted,
+                candidates=candidates,
+                candidate_identities=candidate_identities,
                 owned_contracts=owned_contracts,
                 location=f"{location}[{index}]",
             )
@@ -1030,11 +1092,13 @@ def _lower_procedure(
     intent: AuthoringIntentV1,
     base: AcceptedProjectionCoordinate,
     base_tree: dict[str, bytes],
+    accepted_reference_tree: dict[str, bytes] | None = None,
+    candidate_identities: frozenset[str] = frozenset(),
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
     parsed = parse_projection_tree(
-        base_tree,
+        base_tree if accepted_reference_tree is None else accepted_reference_tree,
         registry=projection_registry_for_compiler(base.compiler),
     )
     accepted: dict[str, tuple[str, str]] = {}
@@ -1045,6 +1109,18 @@ def _lower_procedure(
         accepted[envelope.identity] = (envelope.path, envelope.artifact_digest)
     for duplicate_identity in duplicates:
         accepted.pop(duplicate_identity, None)
+    candidate_artifacts: dict[str, tuple[str, str]] = {}
+    if candidate_identities:
+        candidate_parsed = parse_projection_tree(
+            base_tree,
+            registry=projection_registry_for_compiler(base.compiler),
+        )
+        for envelope in candidate_parsed.envelopes:
+            if envelope.identity in candidate_identities:
+                candidate_artifacts[envelope.identity] = (
+                    envelope.path,
+                    envelope.artifact_digest,
+                )
     owned_contracts = (
         {contract.identity.name: contract for contract in payload.owned_contracts}
         if isinstance(payload, ProcedureAuthoringPayloadV2)
@@ -1053,16 +1129,22 @@ def _lower_procedure(
     resolved_definition = _resolve_authoring_references(
         payload.definition,
         accepted=accepted,
+        candidates=candidate_artifacts,
+        candidate_identities=candidate_identities,
         owned_contracts=owned_contracts,
     )
     try:
         definition = ProcedureDefinitionV3.model_validate(resolved_definition)
-    except ValidationError as exc:
+    except (ProcedureGraphFormatError, ValidationError) as exc:
+        message = (
+            str(exc)
+            if isinstance(exc, ProcedureGraphFormatError)
+            else " | ".join(_validation_error_lines(exc, root="definition"))
+        )
         _refuse(
             "playbill.authoring.procedure_definition_invalid",
             "definition",
-            "The lowered graph-v3 Procedure definition is invalid: "
-            + " | ".join(_validation_error_lines(exc, root="definition")),
+            "The lowered graph-v3 Procedure definition is invalid: " + message,
             repair_kind="replace_definition",
             repair_description="Repair the indicated graph-v3 definition field.",
         )
@@ -1159,6 +1241,128 @@ def _lower_procedure(
     )
 
 
+def _render_non_procedure_member(
+    payload: SubjectAuthoringPayloadV1
+    | QueryDefinitionAuthoringPayloadV1
+    | ApprovalPolicyAuthoringPayloadV1,
+) -> tuple[str, bytes, str]:
+    if isinstance(payload, SubjectAuthoringPayloadV1):
+        shell = payload.subject
+        return (
+            subject_path(shell.subject_kind, shell.subject_id),
+            render_subject(shell),
+            subject_digest(shell).tagged,
+        )
+    if isinstance(payload, QueryDefinitionAuthoringPayloadV1):
+        query = payload.query_definition
+        return (
+            query_definition_path(query.identity.name),
+            render_query_definition(query),
+            query_definition_digest(query).tagged,
+        )
+    return (
+        APPROVAL_POLICY_PATH,
+        render_approval_policy(payload.approval_policy),
+        approval_policy_digest(payload.approval_policy).tagged,
+    )
+
+
+def _lower_non_procedure(
+    *,
+    payload: SubjectAuthoringPayloadV1
+    | QueryDefinitionAuthoringPayloadV1
+    | ApprovalPolicyAuthoringPayloadV1,
+    base_tree: dict[str, bytes],
+) -> LoweredAuthoring:
+    path, content, digest = _render_non_procedure_member(payload)
+    candidate_tree = dict(base_tree)
+    candidate_tree[path] = content
+    changed = () if base_tree.get(path) == content else ((path, content),)
+    return LoweredAuthoring(
+        proposed_tree=candidate_tree,
+        resolved_authoring={
+            "artifact_digest": digest,
+            "changed_members": _encoded_members(changed),
+            "identity": authoring_member_identity(payload),
+        },
+        changed_members=changed,
+    )
+
+
+def _lower_change_set(
+    *,
+    intent: AuthoringIntentV1,
+    base: AcceptedProjectionCoordinate,
+    base_tree: dict[str, bytes],
+) -> LoweredAuthoring:
+    payload = intent.payload
+    assert isinstance(payload, ChangeSetAuthoringPayloadV1)
+    if any(isinstance(member, ApprovalPolicyAuthoringPayloadV1) for member in payload.members):
+        _refuse(
+            "playbill.authoring.approval_policy_singleton_required",
+            "members",
+            "ApprovalPolicy authoring must be submitted as a singleton payload.",
+            repair_kind="split_change_set",
+            repair_description=(
+                "Author and accept the ApprovalPolicy separately from the change set."
+            ),
+        )
+    staged_tree = dict(base_tree)
+    member_paths: set[str] = set()
+    resolved: list[dict[str, object]] = []
+    candidate_identities = frozenset(
+        authoring_member_identity(member)
+        for member in payload.members
+        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
+    )
+    for member in payload.members:
+        if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+            continue
+        path, content, digest = _render_non_procedure_member(member)
+        member_paths.add(path)
+        staged_tree[path] = content
+        resolved.append(
+            {
+                "artifact_digest": digest,
+                "identity": authoring_member_identity(member),
+                "path": path,
+            }
+        )
+    for member in payload.members:
+        if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+            continue
+        path = procedure_path(str(member.definition["name"]))
+        member_paths.add(path)
+        lowered = _lower_procedure(
+            intent=intent.model_copy(update={"payload": member}),
+            base=base,
+            base_tree=staged_tree,
+            accepted_reference_tree=base_tree,
+            candidate_identities=candidate_identities,
+        )
+        staged_tree = lowered.proposed_tree
+        member_resolved = dict(lowered.resolved_authoring)
+        member_resolved["identity"] = authoring_member_identity(member)
+        member_resolved["path"] = path
+        resolved.append(member_resolved)
+    changed = tuple(
+        (path, staged_tree[path])
+        for path in sorted(member_paths, key=lambda item: item.encode("utf-8"))
+        if base_tree.get(path) != staged_tree[path]
+    )
+    return LoweredAuthoring(
+        proposed_tree=staged_tree,
+        resolved_authoring={
+            "changed_members": _encoded_members(changed),
+            "members": sorted(
+                resolved,
+                key=lambda item: str(item["identity"]).encode("utf-8"),
+            ),
+        },
+        changed_members=changed,
+    )
+
+
 def _encoded_members(members: tuple[tuple[str, bytes], ...]) -> list[dict[str, object]]:
     return [
         {
@@ -1192,7 +1396,11 @@ def lower_authoring(
             base=base,
             base_tree=base_tree,
         )
-    return _lower_procedure(intent=intent, base=base, base_tree=base_tree)
+    if isinstance(intent.payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
+        return _lower_procedure(intent=intent, base=base, base_tree=base_tree)
+    if isinstance(intent.payload, ChangeSetAuthoringPayloadV1):
+        return _lower_change_set(intent=intent, base=base, base_tree=base_tree)
+    return _lower_non_procedure(payload=intent.payload, base_tree=base_tree)
 
 
 __all__ = [

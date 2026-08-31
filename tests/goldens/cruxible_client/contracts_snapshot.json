@@ -8,7 +8,6 @@
     },
     "PlaybillAuthoringExampleName": {
       "values": [
-        "claim-type",
         "claim-existing-capture",
         "claim-flow-a",
         "claim-self-source",
@@ -16,7 +15,9 @@
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
-        "query-claims-by-type"
+        "query-claims-by-type",
+        "subject",
+        "approval-policy"
       ]
     },
     "PlaybillHostStatus": {
@@ -47,7 +48,24 @@
         "document_modified",
         "claim_cites_retired",
         "retired_claim_source_stale",
-        "unregistered_projection_block"
+        "unregistered_projection_block",
+        "projection_marker_invalid"
+      ]
+    },
+    "PlaybillPolicyKind": {
+      "values": [
+        "approval_policy",
+        "source_acquisition_policy",
+        "claim_evidence_admission_policy",
+        "claim_admission_policy",
+        "claim_resolution_policy",
+        "claim_evidence_freshness_policy",
+        "claim_attestation_consequence_policy",
+        "capture_retention_erasure_policy",
+        "query_evaluation_policy",
+        "document_activation_policy",
+        "procedure_activation_policy",
+        "line_trigger_policy"
       ]
     },
     "RuntimeCredentialPermissionMode": {
@@ -2610,7 +2628,6 @@
           "required": true,
           "schema": {
             "enum": [
-              "claim-type",
               "claim-existing-capture",
               "claim-flow-a",
               "claim-self-source",
@@ -2618,7 +2635,9 @@
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
-              "query-claims-by-type"
+              "query-claims-by-type",
+              "subject",
+              "approval-policy"
             ],
             "title": "Name",
             "type": "string"
@@ -2630,9 +2649,38 @@
           "json_name": "payload",
           "required": true,
           "schema": {
-            "additionalProperties": true,
-            "title": "Payload",
-            "type": "object"
+            "discriminator": {
+              "mapping": {
+                "approval_policy": "#/$defs/ApprovalPolicyInput",
+                "change_set": "#/$defs/ChangeSetInput",
+                "claim": "#/$defs/ClaimInput",
+                "procedure": "#/$defs/ProcedureInput",
+                "query_definition": "#/$defs/QueryDefinitionInput",
+                "subject": "#/$defs/SubjectInput"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ClaimInput"
+              },
+              {
+                "$ref": "#/$defs/ProcedureInput"
+              },
+              {
+                "$ref": "#/$defs/SubjectInput"
+              },
+              {
+                "$ref": "#/$defs/QueryDefinitionInput"
+              },
+              {
+                "$ref": "#/$defs/ApprovalPolicyInput"
+              },
+              {
+                "$ref": "#/$defs/ChangeSetInput"
+              }
+            ],
+            "title": "Payload"
           }
         },
         "tag": {
@@ -2651,12 +2699,2101 @@
         }
       },
       "json_schema": {
+        "$defs": {
+          "ApprovalPolicyInput": {
+            "additionalProperties": false,
+            "properties": {
+              "approval_policy": {
+                "$ref": "#/$defs/ApprovalPolicyV1"
+              },
+              "kind": {
+                "const": "approval_policy",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "approval_policy"
+            ],
+            "title": "ApprovalPolicyInput",
+            "type": "object"
+          },
+          "ApprovalPolicyV1": {
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "enum": [
+                  "self_approval_allowed",
+                  "independent_approval_required"
+                ],
+                "title": "Mode",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-approval-policy-v1",
+                "default": "playbill-approval-policy-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "title": "ApprovalPolicyV1",
+            "type": "object"
+          },
+          "ArtifactIdentity": {
+            "additionalProperties": false,
+            "description": "Kind-qualified stable identity shared by new Playbill artifact families.",
+            "properties": {
+              "kind": {
+                "title": "Kind",
+                "type": "string"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "name"
+            ],
+            "title": "ArtifactIdentity",
+            "type": "object"
+          },
+          "ArtifactLifecycle": {
+            "additionalProperties": false,
+            "properties": {
+              "predecessor_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Predecessor Digest"
+              },
+              "state": {
+                "default": "live",
+                "enum": [
+                  "live",
+                  "retired"
+                ],
+                "title": "State",
+                "type": "string"
+              }
+            },
+            "title": "ArtifactLifecycle",
+            "type": "object"
+          },
+          "ArtifactPin": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_digest": {
+                "title": "Artifact Digest",
+                "type": "string"
+              },
+              "role": {
+                "title": "Role",
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              }
+            },
+            "required": [
+              "role",
+              "target",
+              "artifact_digest"
+            ],
+            "title": "ArtifactPin",
+            "type": "object"
+          },
+          "CanonicalDurationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "microseconds": {
+                "minimum": 0,
+                "title": "Microseconds",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-duration-v1",
+                "default": "playbill-duration-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "microseconds"
+            ],
+            "title": "CanonicalDurationV1",
+            "type": "object"
+          },
+          "CarriedContractInput": {
+            "additionalProperties": false,
+            "properties": {
+              "allow_extra": {
+                "default": false,
+                "title": "Allow Extra",
+                "type": "boolean"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "fields": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/PropertySchema"
+                },
+                "title": "Fields",
+                "type": "object"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "fields"
+            ],
+            "title": "CarriedContractInput",
+            "type": "object"
+          },
+          "ChangeSetInput": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "change_set",
+                "title": "Kind",
+                "type": "string"
+              },
+              "members": {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "approval_policy": "#/$defs/ApprovalPolicyInput",
+                      "procedure": "#/$defs/ProcedureInput",
+                      "query_definition": "#/$defs/QueryDefinitionInput",
+                      "subject": "#/$defs/SubjectInput"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/SubjectInput"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryDefinitionInput"
+                    },
+                    {
+                      "$ref": "#/$defs/ApprovalPolicyInput"
+                    },
+                    {
+                      "$ref": "#/$defs/ProcedureInput"
+                    }
+                  ]
+                },
+                "minItems": 2,
+                "title": "Members",
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "members"
+            ],
+            "title": "ChangeSetInput",
+            "type": "object"
+          },
+          "ClaimDispositionInput": {
+            "additionalProperties": false,
+            "properties": {
+              "claim_id": {
+                "title": "Claim Id",
+                "type": "string"
+              },
+              "disposition": {
+                "enum": [
+                  "not_tested",
+                  "support",
+                  "contradict",
+                  "unsure"
+                ],
+                "title": "Disposition",
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_id",
+              "disposition"
+            ],
+            "title": "ClaimDispositionInput",
+            "type": "object"
+          },
+          "ClaimInput": {
+            "additionalProperties": false,
+            "properties": {
+              "citation_role": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "evidence",
+                      "copy"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Citation Role"
+              },
+              "claim_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Claim Id"
+              },
+              "dispositions": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ClaimDispositionInput"
+                },
+                "title": "Dispositions",
+                "type": "array"
+              },
+              "effective_from": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Effective From"
+              },
+              "effective_until": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Effective Until"
+              },
+              "kind": {
+                "const": "claim",
+                "title": "Kind",
+                "type": "string"
+              },
+              "object": {
+                "discriminator": {
+                  "mapping": {
+                    "exact_content": "#/$defs/ExactContentObjectInput",
+                    "literal": "#/$defs/LiteralObjectInput",
+                    "subject": "#/$defs/SubjectObjectInput"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/LiteralObjectInput"
+                  },
+                  {
+                    "$ref": "#/$defs/SubjectObjectInput"
+                  },
+                  {
+                    "$ref": "#/$defs/ExactContentObjectInput"
+                  }
+                ],
+                "title": "Object"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "qualifier": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Qualifier"
+              },
+              "rationale": {
+                "title": "Rationale",
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "normative",
+                  "observation",
+                  "environment_binding",
+                  "derivation"
+                ],
+                "title": "Role",
+                "type": "string"
+              },
+              "source": {
+                "discriminator": {
+                  "mapping": {
+                    "existing_capture": "#/$defs/ExistingCaptureInput",
+                    "self_source": "#/$defs/SelfSourceInput",
+                    "working_selection": "#/$defs/WorkingSelectionInput"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/SelfSourceInput"
+                  },
+                  {
+                    "$ref": "#/$defs/WorkingSelectionInput"
+                  },
+                  {
+                    "$ref": "#/$defs/ExistingCaptureInput"
+                  }
+                ],
+                "title": "Source"
+              },
+              "subject": {
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "subject",
+              "predicate",
+              "object",
+              "role",
+              "rationale",
+              "source"
+            ],
+            "title": "ClaimInput",
+            "type": "object"
+          },
+          "ExactContentObjectInput": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "exact_content",
+                "title": "Kind",
+                "type": "string"
+              },
+              "text": {
+                "title": "Text",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "title": "ExactContentObjectInput",
+            "type": "object"
+          },
+          "ExistingCaptureInput": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_digest": {
+                "title": "Capture Digest",
+                "type": "string"
+              },
+              "kind": {
+                "const": "existing_capture",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "capture_digest"
+            ],
+            "title": "ExistingCaptureInput",
+            "type": "object"
+          },
+          "LiteralObjectInput": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "literal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "title": "LiteralObjectInput",
+            "type": "object"
+          },
+          "ProcedureInput": {
+            "additionalProperties": false,
+            "properties": {
+              "activation_policy": {
+                "enum": [
+                  "drain",
+                  "abort",
+                  "snapshot",
+                  "epoch-check"
+                ],
+                "title": "Activation Policy",
+                "type": "string"
+              },
+              "contracts": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/CarriedContractInput"
+                },
+                "title": "Contracts",
+                "type": "array"
+              },
+              "definition": {
+                "additionalProperties": true,
+                "title": "Definition",
+                "type": "object"
+              },
+              "kind": {
+                "const": "procedure",
+                "title": "Kind",
+                "type": "string"
+              },
+              "retire": {
+                "default": false,
+                "title": "Retire",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "definition",
+              "activation_policy"
+            ],
+            "title": "ProcedureInput",
+            "type": "object"
+          },
+          "PropertySchema": {
+            "description": "One owner-carried Contract field, byte-compatible with the deferred family.",
+            "properties": {
+              "default": {
+                "anyOf": [
+                  {},
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Default"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "enum": {
+                "anyOf": [
+                  {
+                    "items": {},
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Enum"
+              },
+              "enum_ref": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Enum Ref"
+              },
+              "indexed": {
+                "default": false,
+                "title": "Indexed",
+                "type": "boolean"
+              },
+              "item_fields": {
+                "anyOf": [
+                  {
+                    "additionalProperties": {
+                      "$ref": "#/$defs/PropertySchema"
+                    },
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Item Fields"
+              },
+              "json_schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Json Schema"
+              },
+              "optional": {
+                "default": false,
+                "title": "Optional",
+                "type": "boolean"
+              },
+              "primary_key": {
+                "default": false,
+                "title": "Primary Key",
+                "type": "boolean"
+              },
+              "required": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Required"
+              },
+              "type": {
+                "default": "string",
+                "enum": [
+                  "string",
+                  "int",
+                  "integer",
+                  "float",
+                  "number",
+                  "bool",
+                  "date",
+                  "datetime",
+                  "json",
+                  "list"
+                ],
+                "title": "Type",
+                "type": "string"
+              }
+            },
+            "title": "PropertySchema",
+            "type": "object"
+          },
+          "QueryBudgetsV1": {
+            "additionalProperties": false,
+            "description": "Explicit result, depth, and path budgets; an unbounded read is never declarable.",
+            "properties": {
+              "max_paths": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Paths"
+              },
+              "max_paths_per_result": {
+                "anyOf": [
+                  {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Max Paths Per Result"
+              },
+              "max_results": {
+                "minimum": 1,
+                "title": "Max Results",
+                "type": "integer"
+              },
+              "max_traversal_depth": {
+                "minimum": 0,
+                "title": "Max Traversal Depth",
+                "type": "integer"
+              },
+              "tag": {
+                "const": "playbill-query-budgets-v1",
+                "default": "playbill-query-budgets-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "max_results",
+              "max_traversal_depth"
+            ],
+            "title": "QueryBudgetsV1",
+            "type": "object"
+          },
+          "QueryClaimPresenceFilterV1": {
+            "additionalProperties": false,
+            "description": "Whether the bound Subject carries any Claim of one exact predicate.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim_presence",
+                "default": "claim_presence",
+                "title": "Kind",
+                "type": "string"
+              },
+              "negated": {
+                "default": false,
+                "title": "Negated",
+                "type": "boolean"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-claim-presence-filter-v1",
+                "default": "playbill-query-claim-presence-filter-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding",
+              "predicate"
+            ],
+            "title": "QueryClaimPresenceFilterV1",
+            "type": "object"
+          },
+          "QueryClaimValueRefV1": {
+            "additionalProperties": false,
+            "description": "The object of a bound Subject's Claim for one exact predicate.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "kind": {
+                "const": "claim_value",
+                "default": "claim_value",
+                "title": "Kind",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-claim-value-ref-v1",
+                "default": "playbill-query-claim-value-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding",
+              "predicate"
+            ],
+            "title": "QueryClaimValueRefV1",
+            "type": "object"
+          },
+          "QueryComparisonFilterV1": {
+            "additionalProperties": false,
+            "description": "One typed comparison; the declared value type is never inferred at run time.",
+            "properties": {
+              "kind": {
+                "const": "comparison",
+                "default": "comparison",
+                "title": "Kind",
+                "type": "string"
+              },
+              "left": {
+                "discriminator": {
+                  "mapping": {
+                    "claim_value": "#/$defs/QueryClaimValueRefV1",
+                    "evaluation_time": "#/$defs/QueryEvaluationTimeRefV1",
+                    "literal": "#/$defs/QueryLiteralRefV1",
+                    "parameter": "#/$defs/QueryParameterRefV1",
+                    "subject_field": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/QueryLiteralRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryParameterRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimValueRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryEvaluationTimeRefV1"
+                  }
+                ],
+                "title": "Left"
+              },
+              "operator": {
+                "enum": [
+                  "eq",
+                  "ne",
+                  "gt",
+                  "gte",
+                  "lt",
+                  "lte"
+                ],
+                "title": "Operator",
+                "type": "string"
+              },
+              "right": {
+                "discriminator": {
+                  "mapping": {
+                    "claim_value": "#/$defs/QueryClaimValueRefV1",
+                    "evaluation_time": "#/$defs/QueryEvaluationTimeRefV1",
+                    "literal": "#/$defs/QueryLiteralRefV1",
+                    "parameter": "#/$defs/QueryParameterRefV1",
+                    "subject_field": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/QueryLiteralRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryParameterRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimValueRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryEvaluationTimeRefV1"
+                  }
+                ],
+                "title": "Right"
+              },
+              "tag": {
+                "const": "playbill-query-comparison-filter-v1",
+                "default": "playbill-query-comparison-filter-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value_type": {
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "decimal",
+                  "timestamp",
+                  "subject_reference"
+                ],
+                "title": "Value Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "left",
+              "operator",
+              "right",
+              "value_type"
+            ],
+            "title": "QueryComparisonFilterV1",
+            "type": "object"
+          },
+          "QueryConjunctionFilterV1": {
+            "additionalProperties": false,
+            "description": "Deterministic all-of composition over canonically ordered operands.",
+            "properties": {
+              "filters": {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "all_of": "#/$defs/QueryConjunctionFilterV1",
+                      "any_of": "#/$defs/QueryDisjunctionFilterV1",
+                      "claim_presence": "#/$defs/QueryClaimPresenceFilterV1",
+                      "comparison": "#/$defs/QueryComparisonFilterV1",
+                      "membership": "#/$defs/QueryMembershipFilterV1",
+                      "not": "#/$defs/QueryNegationFilterV1"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/QueryComparisonFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryMembershipFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryClaimPresenceFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryConjunctionFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryDisjunctionFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryNegationFilterV1"
+                    }
+                  ]
+                },
+                "title": "Filters",
+                "type": "array"
+              },
+              "kind": {
+                "const": "all_of",
+                "default": "all_of",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-conjunction-filter-v1",
+                "default": "playbill-query-conjunction-filter-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "filters"
+            ],
+            "title": "QueryConjunctionFilterV1",
+            "type": "object"
+          },
+          "QueryDefinitionInput": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "query_definition",
+                "title": "Kind",
+                "type": "string"
+              },
+              "query_definition": {
+                "$ref": "#/$defs/QueryDefinitionV1"
+              }
+            },
+            "required": [
+              "kind",
+              "query_definition"
+            ],
+            "title": "QueryDefinitionInput",
+            "type": "object"
+          },
+          "QueryDefinitionV1": {
+            "additionalProperties": false,
+            "description": "One governed, digest-pinned, Claim-native canonical query declaration.",
+            "properties": {
+              "artifact_format": {
+                "const": "playbill-query-definition-v1",
+                "default": "playbill-query-definition-v1",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "dedupe": {
+                "enum": [
+                  "subject",
+                  "path",
+                  "none"
+                ],
+                "title": "Dedupe",
+                "type": "string"
+              },
+              "default_budgets": {
+                "$ref": "#/$defs/QueryBudgetsV1"
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Description"
+              },
+              "entry": {
+                "$ref": "#/$defs/QueryEntryV1"
+              },
+              "evaluation_policy": {
+                "$ref": "#/$defs/QueryEvaluationPolicyV1"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "includes": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryIncludeV1"
+                },
+                "title": "Includes",
+                "type": "array"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "maximum_budgets": {
+                "$ref": "#/$defs/QueryBudgetsV1"
+              },
+              "orderings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryOrderingV1"
+                },
+                "title": "Orderings",
+                "type": "array"
+              },
+              "parameters": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryParameterDeclarationV1"
+                },
+                "title": "Parameters",
+                "type": "array"
+              },
+              "pins": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Pins",
+                "type": "array"
+              },
+              "projection": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryProjectionV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "result_binding": {
+                "title": "Result Binding",
+                "type": "string"
+              },
+              "result_cardinality": {
+                "enum": [
+                  "one",
+                  "many"
+                ],
+                "title": "Result Cardinality",
+                "type": "string"
+              },
+              "result_shape": {
+                "enum": [
+                  "subject",
+                  "relation_claim",
+                  "path"
+                ],
+                "title": "Result Shape",
+                "type": "string"
+              },
+              "traversal": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryTraversalStepV1"
+                },
+                "title": "Traversal",
+                "type": "array"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilterV1",
+                        "any_of": "#/$defs/QueryDisjunctionFilterV1",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilterV1",
+                        "comparison": "#/$defs/QueryComparisonFilterV1",
+                        "membership": "#/$defs/QueryMembershipFilterV1",
+                        "not": "#/$defs/QueryNegationFilterV1"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilterV1"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "identity",
+              "entry",
+              "result_binding",
+              "result_shape",
+              "result_cardinality",
+              "dedupe",
+              "evaluation_policy",
+              "default_budgets",
+              "maximum_budgets"
+            ],
+            "title": "QueryDefinitionV1",
+            "type": "object"
+          },
+          "QueryDisjunctionFilterV1": {
+            "additionalProperties": false,
+            "description": "Deterministic any-of composition over canonically ordered operands.",
+            "properties": {
+              "filters": {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "all_of": "#/$defs/QueryConjunctionFilterV1",
+                      "any_of": "#/$defs/QueryDisjunctionFilterV1",
+                      "claim_presence": "#/$defs/QueryClaimPresenceFilterV1",
+                      "comparison": "#/$defs/QueryComparisonFilterV1",
+                      "membership": "#/$defs/QueryMembershipFilterV1",
+                      "not": "#/$defs/QueryNegationFilterV1"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/QueryComparisonFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryMembershipFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryClaimPresenceFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryConjunctionFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryDisjunctionFilterV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryNegationFilterV1"
+                    }
+                  ]
+                },
+                "title": "Filters",
+                "type": "array"
+              },
+              "kind": {
+                "const": "any_of",
+                "default": "any_of",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-disjunction-filter-v1",
+                "default": "playbill-query-disjunction-filter-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "filters"
+            ],
+            "title": "QueryDisjunctionFilterV1",
+            "type": "object"
+          },
+          "QueryEntryV1": {
+            "additionalProperties": false,
+            "description": "The Subject-kind addressed entry row set for one query.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "subject_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/QueryParameterRefV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "subject_kinds": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Subject Kinds",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-query-entry-v1",
+                "default": "playbill-query-entry-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding",
+              "subject_kinds"
+            ],
+            "title": "QueryEntryV1",
+            "type": "object"
+          },
+          "QueryEvaluationPolicyV1": {
+            "additionalProperties": false,
+            "description": "The visibility, conflict, coordinate, and time law of one canonical query.\n\nVerdict and currency vocabulary is the accepted evidence-relative Claim\nvocabulary; this policy never introduces a parallel verdict scale.",
+            "properties": {
+              "conflict_behavior": {
+                "enum": [
+                  "surface_conflicts",
+                  "refuse_on_conflict"
+                ],
+                "title": "Conflict Behavior",
+                "type": "string"
+              },
+              "requires_accepted_coordinate": {
+                "const": true,
+                "default": true,
+                "title": "Requires Accepted Coordinate",
+                "type": "boolean"
+              },
+              "requires_explicit_evaluation_time": {
+                "const": true,
+                "default": true,
+                "title": "Requires Explicit Evaluation Time",
+                "type": "boolean"
+              },
+              "result_expiry": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDurationV1"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tag": {
+                "const": "playbill-query-evaluation-policy-v1",
+                "default": "playbill-query-evaluation-policy-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "visible_currency": {
+                "items": {
+                  "enum": [
+                    "current",
+                    "stale",
+                    "not_applicable"
+                  ],
+                  "type": "string"
+                },
+                "title": "Visible Currency",
+                "type": "array"
+              },
+              "visible_verdicts": {
+                "items": {
+                  "enum": [
+                    "supported",
+                    "uncovered",
+                    "stale",
+                    "contradicted",
+                    "unresolved"
+                  ],
+                  "type": "string"
+                },
+                "title": "Visible Verdicts",
+                "type": "array"
+              }
+            },
+            "required": [
+              "visible_verdicts",
+              "visible_currency",
+              "conflict_behavior"
+            ],
+            "title": "QueryEvaluationPolicyV1",
+            "type": "object"
+          },
+          "QueryEvaluationTimeRefV1": {
+            "additionalProperties": false,
+            "description": "The run's explicit evaluation time; never an implicit wall clock.",
+            "properties": {
+              "kind": {
+                "const": "evaluation_time",
+                "default": "evaluation_time",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-evaluation-time-ref-v1",
+                "default": "playbill-query-evaluation-time-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "title": "QueryEvaluationTimeRefV1",
+            "type": "object"
+          },
+          "QueryIncludeV1": {
+            "additionalProperties": false,
+            "description": "One bounded one-hop side context attached to each primary row.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "forward",
+                  "reverse"
+                ],
+                "title": "Direction",
+                "type": "string"
+              },
+              "from_binding": {
+                "title": "From Binding",
+                "type": "string"
+              },
+              "many": {
+                "default": false,
+                "title": "Many",
+                "type": "boolean"
+              },
+              "max_items": {
+                "minimum": 1,
+                "title": "Max Items",
+                "type": "integer"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "orderings": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/QueryOrderingV1"
+                },
+                "title": "Orderings",
+                "type": "array"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-include-v1",
+                "default": "playbill-query-include-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilterV1",
+                        "any_of": "#/$defs/QueryDisjunctionFilterV1",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilterV1",
+                        "comparison": "#/$defs/QueryComparisonFilterV1",
+                        "membership": "#/$defs/QueryMembershipFilterV1",
+                        "not": "#/$defs/QueryNegationFilterV1"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilterV1"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "name",
+              "binding",
+              "from_binding",
+              "predicate",
+              "direction",
+              "max_items"
+            ],
+            "title": "QueryIncludeV1",
+            "type": "object"
+          },
+          "QueryLiteralRefV1": {
+            "additionalProperties": false,
+            "description": "One canonical constant supplied by the accepted declaration itself.",
+            "properties": {
+              "kind": {
+                "const": "literal",
+                "default": "literal",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-literal-ref-v1",
+                "default": "playbill-query-literal-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "default": null,
+                "title": "Value"
+              }
+            },
+            "title": "QueryLiteralRefV1",
+            "type": "object"
+          },
+          "QueryMembershipFilterV1": {
+            "additionalProperties": false,
+            "description": "Set membership over an explicit, nonempty, canonically ordered value list.",
+            "properties": {
+              "kind": {
+                "const": "membership",
+                "default": "membership",
+                "title": "Kind",
+                "type": "string"
+              },
+              "left": {
+                "discriminator": {
+                  "mapping": {
+                    "claim_value": "#/$defs/QueryClaimValueRefV1",
+                    "evaluation_time": "#/$defs/QueryEvaluationTimeRefV1",
+                    "literal": "#/$defs/QueryLiteralRefV1",
+                    "parameter": "#/$defs/QueryParameterRefV1",
+                    "subject_field": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/QueryLiteralRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryParameterRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimValueRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryEvaluationTimeRefV1"
+                  }
+                ],
+                "title": "Left"
+              },
+              "negated": {
+                "default": false,
+                "title": "Negated",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-query-membership-filter-v1",
+                "default": "playbill-query-membership-filter-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value_type": {
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "decimal",
+                  "timestamp",
+                  "subject_reference"
+                ],
+                "title": "Value Type",
+                "type": "string"
+              },
+              "values": {
+                "items": {
+                  "discriminator": {
+                    "mapping": {
+                      "claim_value": "#/$defs/QueryClaimValueRefV1",
+                      "evaluation_time": "#/$defs/QueryEvaluationTimeRefV1",
+                      "literal": "#/$defs/QueryLiteralRefV1",
+                      "parameter": "#/$defs/QueryParameterRefV1",
+                      "subject_field": "#/$defs/QuerySubjectFieldRefV1"
+                    },
+                    "propertyName": "kind"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/$defs/QueryLiteralRefV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryParameterRefV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryClaimValueRefV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QuerySubjectFieldRefV1"
+                    },
+                    {
+                      "$ref": "#/$defs/QueryEvaluationTimeRefV1"
+                    }
+                  ]
+                },
+                "title": "Values",
+                "type": "array"
+              }
+            },
+            "required": [
+              "left",
+              "values",
+              "value_type"
+            ],
+            "title": "QueryMembershipFilterV1",
+            "type": "object"
+          },
+          "QueryNegationFilterV1": {
+            "additionalProperties": false,
+            "description": "Negation of exactly one operand; refusal semantics never widen a result.",
+            "properties": {
+              "kind": {
+                "const": "not",
+                "default": "not",
+                "title": "Kind",
+                "type": "string"
+              },
+              "operand": {
+                "discriminator": {
+                  "mapping": {
+                    "all_of": "#/$defs/QueryConjunctionFilterV1",
+                    "any_of": "#/$defs/QueryDisjunctionFilterV1",
+                    "claim_presence": "#/$defs/QueryClaimPresenceFilterV1",
+                    "comparison": "#/$defs/QueryComparisonFilterV1",
+                    "membership": "#/$defs/QueryMembershipFilterV1",
+                    "not": "#/$defs/QueryNegationFilterV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/QueryComparisonFilterV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryMembershipFilterV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimPresenceFilterV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryConjunctionFilterV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryDisjunctionFilterV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryNegationFilterV1"
+                  }
+                ],
+                "title": "Operand"
+              },
+              "tag": {
+                "const": "playbill-query-negation-filter-v1",
+                "default": "playbill-query-negation-filter-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operand"
+            ],
+            "title": "QueryNegationFilterV1",
+            "type": "object"
+          },
+          "QueryOrderingV1": {
+            "additionalProperties": false,
+            "description": "One typed ordering key; canonical address bytes remain the final tiebreak.",
+            "properties": {
+              "direction": {
+                "default": "ascending",
+                "enum": [
+                  "ascending",
+                  "descending"
+                ],
+                "title": "Direction",
+                "type": "string"
+              },
+              "key": {
+                "discriminator": {
+                  "mapping": {
+                    "claim_value": "#/$defs/QueryClaimValueRefV1",
+                    "evaluation_time": "#/$defs/QueryEvaluationTimeRefV1",
+                    "literal": "#/$defs/QueryLiteralRefV1",
+                    "parameter": "#/$defs/QueryParameterRefV1",
+                    "subject_field": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/QueryLiteralRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryParameterRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimValueRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryEvaluationTimeRefV1"
+                  }
+                ],
+                "title": "Key"
+              },
+              "tag": {
+                "const": "playbill-query-ordering-v1",
+                "default": "playbill-query-ordering-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value_type": {
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "decimal",
+                  "timestamp",
+                  "subject_reference"
+                ],
+                "title": "Value Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "value_type"
+            ],
+            "title": "QueryOrderingV1",
+            "type": "object"
+          },
+          "QueryParameterDeclarationV1": {
+            "additionalProperties": false,
+            "description": "One typed caller parameter; unresolved references refuse fail-closed.",
+            "properties": {
+              "default": {
+                "default": null,
+                "title": "Default"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "required": {
+                "default": true,
+                "title": "Required",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-query-parameter-v1",
+                "default": "playbill-query-parameter-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value_type": {
+                "enum": [
+                  "string",
+                  "integer",
+                  "boolean",
+                  "decimal",
+                  "timestamp",
+                  "subject_reference"
+                ],
+                "title": "Value Type",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "value_type"
+            ],
+            "title": "QueryParameterDeclarationV1",
+            "type": "object"
+          },
+          "QueryParameterRefV1": {
+            "additionalProperties": false,
+            "description": "One caller-bound parameter declared by the owning QueryDefinition.",
+            "properties": {
+              "kind": {
+                "const": "parameter",
+                "default": "parameter",
+                "title": "Kind",
+                "type": "string"
+              },
+              "parameter": {
+                "title": "Parameter",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-parameter-ref-v1",
+                "default": "playbill-query-parameter-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "parameter"
+            ],
+            "title": "QueryParameterRefV1",
+            "type": "object"
+          },
+          "QueryProjectionFieldV1": {
+            "additionalProperties": false,
+            "description": "One named projected value drawn from bound Subjects and their Claims.",
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-projection-field-v1",
+                "default": "playbill-query-projection-field-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "value": {
+                "discriminator": {
+                  "mapping": {
+                    "claim_value": "#/$defs/QueryClaimValueRefV1",
+                    "evaluation_time": "#/$defs/QueryEvaluationTimeRefV1",
+                    "literal": "#/$defs/QueryLiteralRefV1",
+                    "parameter": "#/$defs/QueryParameterRefV1",
+                    "subject_field": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/QueryLiteralRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryParameterRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryClaimValueRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QuerySubjectFieldRefV1"
+                  },
+                  {
+                    "$ref": "#/$defs/QueryEvaluationTimeRefV1"
+                  }
+                ],
+                "title": "Value"
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "title": "QueryProjectionFieldV1",
+            "type": "object"
+          },
+          "QueryProjectionV1": {
+            "additionalProperties": false,
+            "description": "The complete projected row shape; absent projection means whole Subject views.",
+            "properties": {
+              "fields": {
+                "items": {
+                  "$ref": "#/$defs/QueryProjectionFieldV1"
+                },
+                "title": "Fields",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-query-projection-v1",
+                "default": "playbill-query-projection-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "fields"
+            ],
+            "title": "QueryProjectionV1",
+            "type": "object"
+          },
+          "QuerySubjectFieldRefV1": {
+            "additionalProperties": false,
+            "description": "A bound Subject's own stable identity, never a Claim-carried property.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "field": {
+                "enum": [
+                  "subject_id",
+                  "subject_kind"
+                ],
+                "title": "Field",
+                "type": "string"
+              },
+              "kind": {
+                "const": "subject_field",
+                "default": "subject_field",
+                "title": "Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-query-subject-field-ref-v1",
+                "default": "playbill-query-subject-field-ref-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "binding",
+              "field"
+            ],
+            "title": "QuerySubjectFieldRefV1",
+            "type": "object"
+          },
+          "QueryTraversalStepV1": {
+            "additionalProperties": false,
+            "description": "One relation-Claim hop from an earlier binding to a new bound Subject.",
+            "properties": {
+              "binding": {
+                "title": "Binding",
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "forward",
+                  "reverse"
+                ],
+                "title": "Direction",
+                "type": "string"
+              },
+              "from_binding": {
+                "title": "From Binding",
+                "type": "string"
+              },
+              "predicate": {
+                "title": "Predicate",
+                "type": "string"
+              },
+              "required": {
+                "default": true,
+                "title": "Required",
+                "type": "boolean"
+              },
+              "tag": {
+                "const": "playbill-query-traversal-step-v1",
+                "default": "playbill-query-traversal-step-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "target_subject_kinds": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Target Subject Kinds",
+                "type": "array"
+              },
+              "where": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "all_of": "#/$defs/QueryConjunctionFilterV1",
+                        "any_of": "#/$defs/QueryDisjunctionFilterV1",
+                        "claim_presence": "#/$defs/QueryClaimPresenceFilterV1",
+                        "comparison": "#/$defs/QueryComparisonFilterV1",
+                        "membership": "#/$defs/QueryMembershipFilterV1",
+                        "not": "#/$defs/QueryNegationFilterV1"
+                      },
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/QueryComparisonFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryMembershipFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryClaimPresenceFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryConjunctionFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryDisjunctionFilterV1"
+                      },
+                      {
+                        "$ref": "#/$defs/QueryNegationFilterV1"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Where"
+              }
+            },
+            "required": [
+              "binding",
+              "from_binding",
+              "predicate",
+              "direction"
+            ],
+            "title": "QueryTraversalStepV1",
+            "type": "object"
+          },
+          "SelfSourceInput": {
+            "additionalProperties": false,
+            "properties": {
+              "body": {
+                "title": "Body",
+                "type": "string"
+              },
+              "kind": {
+                "const": "self_source",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "body"
+            ],
+            "title": "SelfSourceInput",
+            "type": "object"
+          },
+          "SubjectInput": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "$ref": "#/$defs/SubjectShell"
+              }
+            },
+            "required": [
+              "kind",
+              "subject"
+            ],
+            "title": "SubjectInput",
+            "type": "object"
+          },
+          "SubjectObjectInput": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "subject",
+                "title": "Kind",
+                "type": "string"
+              },
+              "subject": {
+                "title": "Subject",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "subject"
+            ],
+            "title": "SubjectObjectInput",
+            "type": "object"
+          },
+          "SubjectShell": {
+            "additionalProperties": false,
+            "description": "A stable referent with no mutable properties or free metadata.",
+            "properties": {
+              "artifact_format": {
+                "const": "playbill-subject-v1",
+                "default": "playbill-subject-v1",
+                "title": "Artifact Format",
+                "type": "string"
+              },
+              "identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "lifecycle": {
+                "$ref": "#/$defs/ArtifactLifecycle",
+                "default": {
+                  "predecessor_digest": null,
+                  "state": "live"
+                }
+              },
+              "pins": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Pins",
+                "type": "array"
+              },
+              "subject_id": {
+                "title": "Subject Id",
+                "type": "string"
+              },
+              "subject_kind": {
+                "title": "Subject Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "subject_kind",
+              "subject_id"
+            ],
+            "title": "SubjectShell",
+            "type": "object"
+          },
+          "WorkingSelectionInput": {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "working_selection",
+                "title": "Kind",
+                "type": "string"
+              },
+              "source_id": {
+                "title": "Source Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "source_id"
+            ],
+            "title": "WorkingSelectionInput",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "description": "One model-constructed, executable authoring input example.",
         "properties": {
           "name": {
             "enum": [
-              "claim-type",
               "claim-existing-capture",
               "claim-flow-a",
               "claim-self-source",
@@ -2664,15 +4801,46 @@
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
-              "query-claims-by-type"
+              "query-claims-by-type",
+              "subject",
+              "approval-policy"
             ],
             "title": "Name",
             "type": "string"
           },
           "payload": {
-            "additionalProperties": true,
-            "title": "Payload",
-            "type": "object"
+            "discriminator": {
+              "mapping": {
+                "approval_policy": "#/$defs/ApprovalPolicyInput",
+                "change_set": "#/$defs/ChangeSetInput",
+                "claim": "#/$defs/ClaimInput",
+                "procedure": "#/$defs/ProcedureInput",
+                "query_definition": "#/$defs/QueryDefinitionInput",
+                "subject": "#/$defs/SubjectInput"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/ClaimInput"
+              },
+              {
+                "$ref": "#/$defs/ProcedureInput"
+              },
+              {
+                "$ref": "#/$defs/SubjectInput"
+              },
+              {
+                "$ref": "#/$defs/QueryDefinitionInput"
+              },
+              {
+                "$ref": "#/$defs/ApprovalPolicyInput"
+              },
+              {
+                "$ref": "#/$defs/ChangeSetInput"
+              }
+            ],
+            "title": "Payload"
           },
           "tag": {
             "const": "playbill-authoring-example-result-v1",
@@ -11457,6 +13625,393 @@
         "unobserved_domains"
       ]
     },
+    "PlaybillPolicyInForce": {
+      "fields": {
+        "declaring_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "declaring_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Declaring Artifact Digest",
+            "type": "string"
+          }
+        },
+        "declaring_artifact_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "declaring_artifact_identity",
+          "required": true,
+          "schema": {
+            "title": "Declaring Artifact Identity",
+            "type": "string"
+          }
+        },
+        "declaring_artifact_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "declaring_artifact_kind",
+          "required": true,
+          "schema": {
+            "title": "Declaring Artifact Kind",
+            "type": "string"
+          }
+        },
+        "field_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "field_path",
+          "required": true,
+          "schema": {
+            "title": "Field Path",
+            "type": "string"
+          }
+        },
+        "path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": true,
+          "schema": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "placement": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "placement",
+          "required": true,
+          "schema": {
+            "enum": [
+              "embedded",
+              "standalone"
+            ],
+            "title": "Placement",
+            "type": "string"
+          }
+        },
+        "policy": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "policy",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Policy",
+            "type": "object"
+          }
+        },
+        "policy_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "policy_kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "approval_policy",
+              "source_acquisition_policy",
+              "claim_evidence_admission_policy",
+              "claim_admission_policy",
+              "claim_resolution_policy",
+              "claim_evidence_freshness_policy",
+              "claim_attestation_consequence_policy",
+              "capture_retention_erasure_policy",
+              "query_evaluation_policy",
+              "document_activation_policy",
+              "procedure_activation_policy",
+              "line_trigger_policy"
+            ],
+            "title": "Policy Kind",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-policy-in-force-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-policy-in-force-v1",
+            "default": "playbill-policy-in-force-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "declaring_artifact_digest": {
+            "title": "Declaring Artifact Digest",
+            "type": "string"
+          },
+          "declaring_artifact_identity": {
+            "title": "Declaring Artifact Identity",
+            "type": "string"
+          },
+          "declaring_artifact_kind": {
+            "title": "Declaring Artifact Kind",
+            "type": "string"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "placement": {
+            "enum": [
+              "embedded",
+              "standalone"
+            ],
+            "title": "Placement",
+            "type": "string"
+          },
+          "policy": {
+            "additionalProperties": true,
+            "title": "Policy",
+            "type": "object"
+          },
+          "policy_kind": {
+            "enum": [
+              "approval_policy",
+              "source_acquisition_policy",
+              "claim_evidence_admission_policy",
+              "claim_admission_policy",
+              "claim_resolution_policy",
+              "claim_evidence_freshness_policy",
+              "claim_attestation_consequence_policy",
+              "capture_retention_erasure_policy",
+              "query_evaluation_policy",
+              "document_activation_policy",
+              "procedure_activation_policy",
+              "line_trigger_policy"
+            ],
+            "title": "Policy Kind",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-policy-in-force-v1",
+            "default": "playbill-policy-in-force-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "placement",
+          "policy_kind",
+          "declaring_artifact_identity",
+          "declaring_artifact_kind",
+          "declaring_artifact_digest",
+          "path",
+          "field_path",
+          "policy"
+        ],
+        "title": "PlaybillPolicyInForce",
+        "type": "object"
+      },
+      "required_fields": [
+        "declaring_artifact_digest",
+        "declaring_artifact_identity",
+        "declaring_artifact_kind",
+        "field_path",
+        "path",
+        "placement",
+        "policy",
+        "policy_kind"
+      ]
+    },
+    "PlaybillPolicyInForceList": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "policies": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "policies",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillPolicyInForce"
+            },
+            "title": "Policies",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-policy-in-force-list-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-policy-in-force-list-v1",
+            "default": "playbill-policy-in-force-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillPolicyInForce": {
+            "additionalProperties": false,
+            "properties": {
+              "declaring_artifact_digest": {
+                "title": "Declaring Artifact Digest",
+                "type": "string"
+              },
+              "declaring_artifact_identity": {
+                "title": "Declaring Artifact Identity",
+                "type": "string"
+              },
+              "declaring_artifact_kind": {
+                "title": "Declaring Artifact Kind",
+                "type": "string"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "placement": {
+                "enum": [
+                  "embedded",
+                  "standalone"
+                ],
+                "title": "Placement",
+                "type": "string"
+              },
+              "policy": {
+                "additionalProperties": true,
+                "title": "Policy",
+                "type": "object"
+              },
+              "policy_kind": {
+                "enum": [
+                  "approval_policy",
+                  "source_acquisition_policy",
+                  "claim_evidence_admission_policy",
+                  "claim_admission_policy",
+                  "claim_resolution_policy",
+                  "claim_evidence_freshness_policy",
+                  "claim_attestation_consequence_policy",
+                  "capture_retention_erasure_policy",
+                  "query_evaluation_policy",
+                  "document_activation_policy",
+                  "procedure_activation_policy",
+                  "line_trigger_policy"
+                ],
+                "title": "Policy Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-policy-in-force-v1",
+                "default": "playbill-policy-in-force-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement",
+              "policy_kind",
+              "declaring_artifact_identity",
+              "declaring_artifact_kind",
+              "declaring_artifact_digest",
+              "path",
+              "field_path",
+              "policy"
+            ],
+            "title": "PlaybillPolicyInForce",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "policies": {
+            "items": {
+              "$ref": "#/$defs/PlaybillPolicyInForce"
+            },
+            "title": "Policies",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-policy-in-force-list-v1",
+            "default": "playbill-policy-in-force-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "policies"
+        ],
+        "title": "PlaybillPolicyInForceList",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "policies"
+      ]
+    },
     "PlaybillPrincipalList": {
       "fields": {
         "coordinate": {
@@ -11673,6 +14228,10 @@
               "coordinate": {
                 "$ref": "#/$defs/PlaybillAcceptedCoordinate"
               },
+              "definition_digest": {
+                "title": "Definition Digest",
+                "type": "string"
+              },
               "evaluation_time": {
                 "title": "Evaluation Time",
                 "type": "string"
@@ -11727,6 +14286,7 @@
               "evaluation_time",
               "procedure_identity",
               "procedure_artifact_digest",
+              "definition_digest",
               "state",
               "required_slots",
               "unsupported_nodes",
@@ -11809,6 +14369,16 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "definition_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "definition_digest",
+          "required": true,
+          "schema": {
+            "title": "Definition Digest",
+            "type": "string"
           }
         },
         "evaluation_time": {
@@ -11957,6 +14527,10 @@
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
+          "definition_digest": {
+            "title": "Definition Digest",
+            "type": "string"
+          },
           "evaluation_time": {
             "title": "Evaluation Time",
             "type": "string"
@@ -12011,6 +14585,7 @@
           "evaluation_time",
           "procedure_identity",
           "procedure_artifact_digest",
+          "definition_digest",
           "state",
           "required_slots",
           "unsupported_nodes",
@@ -12021,6 +14596,7 @@
       },
       "required_fields": [
         "coordinate",
+        "definition_digest",
         "evaluation_time",
         "next_operation",
         "procedure_artifact_digest",

@@ -9,25 +9,16 @@ from pydantic import BaseModel, ConfigDict
 from cruxible_client.contracts.artifacts import parse_artifact_identity
 from cruxible_client.contracts.errors import ProposalIntegrityError, SubjectNotFoundError
 from cruxible_client.contracts.subjects import (
-    SubjectShell,
     parse_subject,
-    render_subject,
     subject_digest,
     subject_path,
 )
-from cruxible_core.playbill.actor_context import TransportCapability
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_subjects import SubjectProjectionView
-from cruxible_core.playbill.proposals import (
-    AuthenticatedActor,
-    ProposalAdmissionRequest,
-)
 from cruxible_core.playbill.service.documents import (
     PlaybillAcceptedCoordinate,
-    PlaybillProposalInspection,
 )
-from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
 
 
 class _StrictSubjectServiceModel(BaseModel):
@@ -89,37 +80,6 @@ def _resolve_coordinate(
         semantic_root=at.semantic_root,
         generation_root=at.generation_root,
         compiler_digest=at.compiler_digest,
-    )
-
-
-def service_propose_playbill_subject(
-    instance: PlaybillInstance,
-    *,
-    shell: SubjectShell,
-    actor_id: str,
-    proposal_name: str,
-    timestamp: str,
-    base: PlaybillAcceptedCoordinate | None = None,
-    capabilities: tuple[TransportCapability, ...] = ("propose",),
-) -> PlaybillProposalInspection:
-    proposed_base = _resolve_coordinate(instance, base)
-    candidate_tree = instance.tree_at(proposed_base.git_oid)
-    candidate_tree[subject_path(shell.subject_kind, shell.subject_id)] = render_subject(shell)
-    ref_name = canonical_playbill_proposal_name(proposal_name, family="subject")
-    result = instance.proposal_service().submit(
-        actor=AuthenticatedActor(actor_id=actor_id, capabilities=capabilities),
-        request=ProposalAdmissionRequest(
-            target_ref=f"refs/proposals/{actor_id}/{ref_name}",
-            proposed_base_oid=proposed_base.git_oid,
-        ),
-        candidate_tree=candidate_tree,
-        timestamp=timestamp,
-    )
-    return PlaybillProposalInspection(
-        proposal=result,
-        accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
-            instance.accepted_coordinate()
-        ),
     )
 
 
@@ -215,5 +175,4 @@ __all__ = [
     "service_get_playbill_subject",
     "service_list_playbill_subjects",
     "service_playbill_subject_history",
-    "service_propose_playbill_subject",
 ]

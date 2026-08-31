@@ -2,20 +2,35 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
-from cruxible_client.authoring.examples import procedure_example
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+import pytest
+
+from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
+from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
+    ApprovalPolicyAuthoringPayloadV1,
+    ChangeSetAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    QueryDefinitionAuthoringPayloadV1,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
-from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureOwnedContractV1,
+    parse_procedure,
+    procedure_path,
+)
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.models import (
+    GuardNodeV3,
+    GuardPredicateV1,
+    HaltNodeV3,
+    PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureHardCapsV3,
@@ -24,11 +39,33 @@ from cruxible_client.contracts.procedures.models import (
     ProjectNodeV3,
     StateTapNodeV3,
 )
+from cruxible_client.contracts.procedures.results import (
+    ProcedureHaltTerminalV1,
+    ProcedureRunReceiptV3,
+)
+from cruxible_client.contracts.query.definitions import (
+    QueryDefinitionV1,
+    query_definition_digest,
+)
+from cruxible_client.contracts.query.grammar import QueryProjectionV1
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.preflight import compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
+from cruxible_core.playbill.keys import GeneratedKeyMaterial
 from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.service.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
+from cruxible_core.service.playbill_procedure_runs import (
+    ProcedureReadinessRequestV1,
+    ProcedureRunRequestV2,
+    service_playbill_procedure_readiness,
+    service_run_playbill_procedure,
+)
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
@@ -92,6 +129,40 @@ def _slot_definition() -> ProcedureDefinitionV3:
         ),
         terminal_capability=1,
     )
+
+
+def _layout_slot_definition(*, halt_before_return: bool) -> ProcedureDefinitionV3:
+    base = _slot_definition()
+    query = ProcedurePinSlotRefV1(slot_name="query")
+    contract_out = ProcedurePinSlotRefV1(slot_name="contract-out")
+    read = StateTapNodeV3(
+        node_id="read",
+        query=query,
+        parameters={},
+        as_="rows",
+        next="gate",
+    )
+    gate = GuardNodeV3(
+        node_id="gate",
+        predicate=GuardPredicateV1(
+            left=PredicateOperandV1(kind="count", alias="rows"),
+            operator="gt",
+            right=PredicateOperandV1(kind="literal", value=0),
+        ),
+        on_true="result",
+        on_false="stop",
+        refusal_code="rows.empty",
+        message="No rows are available.",
+    )
+    result = ProjectNodeV3(
+        node_id="result",
+        fields={"rows": "$steps.rows"},
+        contract_out=contract_out,
+        as_="result",
+    )
+    stop = HaltNodeV3(node_id="stop", reason="No rows are available.")
+    tail = (stop, result) if halt_before_return else (result, stop)
+    return base.model_copy(update={"nodes": (read, gate, *tail)})
 
 
 def _coordinator(tmp_path: Path) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
@@ -162,6 +233,178 @@ def _carried_definition() -> dict[str, object]:
         },
         "terminal_capability": 1,
     }
+
+
+def _change_set_query() -> QueryDefinitionV1:
+    example = query_claims_by_type_example().query_definition
+    assert example.projection is not None
+    return example.model_copy(
+        update={
+            "pins": (),
+            "projection": QueryProjectionV1(fields=(example.projection.fields[0],)),
+        }
+    )
+
+
+def _change_set_payload(query: QueryDefinitionV1) -> ChangeSetAuthoringPayloadV1:
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+    definition["nodes"][0]["query"] = {  # type: ignore[index]
+        "tag": "playbill-authoring-candidate-reference-v1",
+        "role": "query",
+        "target": query.identity.model_dump(mode="json"),
+        "resolution": "candidate_in_change_set",
+    }
+    definition["pin_slots"] = [
+        slot
+        for slot in definition["pin_slots"]
+        if slot["slot_name"] != "query"  # type: ignore[index]
+    ]
+    return ChangeSetAuthoringPayloadV1(
+        members=(
+            ProcedureAuthoringPayloadV1(
+                definition=definition,
+                activation_policy="drain",
+            ),
+            QueryDefinitionAuthoringPayloadV1(query_definition=query),
+        )
+    )
+
+
+def _with_accepted_query_reference(
+    payload: ChangeSetAuthoringPayloadV1,
+) -> ChangeSetAuthoringPayloadV1:
+    procedure = payload.members[0]
+    query = payload.members[1]
+    assert isinstance(procedure, ProcedureAuthoringPayloadV1)
+    assert isinstance(query, QueryDefinitionAuthoringPayloadV1)
+    definition = dict(procedure.definition)
+    nodes = [dict(node) for node in definition["nodes"]]  # type: ignore[arg-type]
+    nodes[0]["query"] = {
+        "tag": "playbill-authoring-artifact-reference-v1",
+        "role": "query",
+        "target": query.query_definition.identity.model_dump(mode="json"),
+        "resolution": "accepted_at_intent_base",
+    }
+    definition["nodes"] = nodes
+    return payload.model_copy(
+        update={
+            "members": (
+                procedure.model_copy(update={"definition": definition}),
+                query,
+            )
+        }
+    )
+
+
+def _runnable_change_set_payload(
+    query: QueryDefinitionV1,
+    *,
+    description: str,
+) -> ChangeSetAuthoringPayloadV1:
+    definition: dict[str, object] = {
+        "graph_format": 3,
+        "name": "candidate-query-run",
+        "description": description,
+        "contract_in": {
+            "kind": "carried_contract",
+            "name": "empty-input",
+            "role": "contract-in",
+        },
+        "contract_out": {
+            "kind": "carried_contract",
+            "name": "query-output",
+            "role": "contract-out",
+        },
+        "nodes": [
+            {
+                "kind": "state_tap",
+                "node_id": "read",
+                "query": {
+                    "tag": "playbill-authoring-candidate-reference-v1",
+                    "role": "query",
+                    "target": query.identity.model_dump(mode="json"),
+                    "resolution": "candidate_in_change_set",
+                },
+                "parameters": {},
+                "as": "rows",
+            },
+            {
+                "kind": "project",
+                "node_id": "result",
+                "fields": {"rows": "$steps.rows"},
+                "contract_out": {
+                    "kind": "carried_contract",
+                    "name": "query-output",
+                    "role": "contract-out",
+                },
+                "as": "result",
+            },
+        ],
+        "returns": "result",
+        "budget": {
+            "wall_clock": {"microseconds": 1_000_000},
+            "max_provider_calls": 0,
+            "max_capture_bytes": 0,
+        },
+        "hard_caps": {
+            "max_wall_clock": {"microseconds": 2_000_000},
+            "max_provider_calls": 0,
+            "max_capture_bytes": 0,
+            "max_items": 100,
+            "max_repeat_attempts": 1,
+        },
+        "terminal_capability": 1,
+    }
+    return ChangeSetAuthoringPayloadV1(
+        members=(
+            ProcedureAuthoringPayloadV2(
+                definition=definition,
+                activation_policy="snapshot",
+                owned_contracts=(
+                    _carried_contract("empty-input", PropertySchema(type="json")),
+                    _carried_contract("query-output", PropertySchema(type="json")),
+                ),
+            ),
+            QueryDefinitionAuthoringPayloadV1(query_definition=query),
+        )
+    )
+
+
+def _submit_approve_activate(
+    coordinator: AuthoringIntentCoordinator,
+    *,
+    actor: AuthenticatedActor,
+    owner: GeneratedKeyMaterial,
+    payload: ChangeSetAuthoringPayloadV1,
+    timestamp: str,
+) -> None:
+    created = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=timestamp,
+    ).intent
+    preflight = compute_preflight(coordinator.instance, intent=created, actor=actor)
+    assert preflight.result.verdict == "passed", preflight.result.frontier
+    submitted = coordinator.submit(created.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    approval = _sign(
+        owner,
+        submitted.status.candidate_digest,
+        coordinator.instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        coordinator.instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    activated = service_activate_playbill_proposal(
+        coordinator.instance,
+        proposal_id=submitted.status.proposal_id,
+        activated_by="owner",
+    )
+    assert activated.status == "accepted"
 
 
 def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
@@ -235,6 +478,356 @@ def test_served_procedure_example_reaches_all_six_typed_specs(tmp_path: Path) ->
     assert result.verdict == "passed"
 
 
+def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    tokens = iter(f"{value:032x}" for value in range(1, 20))
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(
+            instance.root / instance.descriptor.storage.exhaust,
+            token_factory=lambda: next(tokens),
+        ),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    query = _change_set_query()
+    accepted_spelling_for_new_candidate = coordinator.compile(
+        actor=actor,
+        payload=_with_accepted_query_reference(_change_set_payload(query)),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert accepted_spelling_for_new_candidate.verdict == "refused"
+    assert accepted_spelling_for_new_candidate.frontier.diagnostics[0].code == (
+        "playbill.authoring.artifact_reference_unresolved"
+    )
+    first = coordinator.compile(
+        actor=actor,
+        payload=_change_set_payload(query),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert first.verdict == "passed", first.frontier
+    initial_intent = coordinator.list_pending(actor=actor).intents[-1]
+    initial = compute_preflight(
+        coordinator.instance,
+        intent=initial_intent,
+        actor=actor,
+    ).lowered
+    assert initial is not None
+    resolved_identities = [member["identity"] for member in initial.resolved_authoring["members"]]
+    assert resolved_identities == sorted(resolved_identities, key=lambda item: item.encode())
+    assert all(isinstance(identity, str) for identity in resolved_identities)
+    _accept_tree(
+        coordinator.instance,
+        owner,
+        initial.proposed_tree,
+        timestamp=TIMESTAMP,
+        proposal_name="initial-query-and-procedure",
+    )
+
+    successor_query = query.model_copy(
+        update={
+            "description": "A revised governed query.",
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=query_definition_digest(query).tagged
+            ),
+        }
+    )
+    successor_tokens = iter(f"{value:032x}" for value in range(20, 40))
+    successor = AuthoringIntentCoordinator(
+        instance=coordinator.instance,
+        store=AuthoringIntentStore(
+            coordinator.instance.root / coordinator.instance.descriptor.storage.exhaust,
+            token_factory=lambda: next(successor_tokens),
+        ),
+    )
+    compiled = successor.compile(
+        actor=actor,
+        payload=_change_set_payload(successor_query),
+        canonical_timestamp="2026-08-21T12:01:00.000000Z",
+    )
+    assert compiled.verdict == "passed", compiled.frontier
+    intent = successor.list_pending(actor=actor).intents[-1]
+    lowered = compute_preflight(
+        coordinator.instance,
+        intent=intent,
+        actor=actor,
+    ).lowered
+    assert lowered is not None
+    accepted_procedure = parse_procedure(
+        lowered.proposed_tree[procedure_path("triage")],
+        path=procedure_path("triage"),
+    )
+    query_pin = next(pin for pin in accepted_procedure.pins if pin.role == "query")
+    assert query_pin.artifact_digest == query_definition_digest(successor_query).tagged
+
+    accepted_payload = _with_accepted_query_reference(_change_set_payload(successor_query))
+    accepted_payload_procedure = accepted_payload.members[0]
+    assert isinstance(accepted_payload_procedure, ProcedureAuthoringPayloadV1)
+    accepted_definition = dict(accepted_payload_procedure.definition)
+    accepted_definition["description"] = "A semantic Procedure revision using the base query."
+    accepted_payload = accepted_payload.model_copy(
+        update={
+            "members": (
+                accepted_payload_procedure.model_copy(update={"definition": accepted_definition}),
+                accepted_payload.members[1],
+            )
+        }
+    )
+    accepted_spelling = successor.compile(
+        actor=actor,
+        payload=accepted_payload,
+        canonical_timestamp="2026-08-21T12:02:00.000000Z",
+    )
+    assert accepted_spelling.verdict == "passed", accepted_spelling.frontier
+    accepted_intent = successor.list_pending(actor=actor).intents[-1]
+    accepted_lowered = compute_preflight(
+        coordinator.instance,
+        intent=accepted_intent,
+        actor=actor,
+    ).lowered
+    assert accepted_lowered is not None
+    accepted_spelling_procedure = parse_procedure(
+        accepted_lowered.proposed_tree[procedure_path("triage")],
+        path=procedure_path("triage"),
+    )
+    accepted_query_pin = next(
+        pin for pin in accepted_spelling_procedure.pins if pin.role == "query"
+    )
+    assert accepted_query_pin.artifact_digest == query_definition_digest(query).tagged
+
+
+def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    query_v1 = _change_set_query()
+    _submit_approve_activate(
+        coordinator,
+        actor=actor,
+        owner=owner,
+        payload=_runnable_change_set_payload(query_v1, description="Read query v1."),
+        timestamp=TIMESTAMP,
+    )
+    accepted_v1 = parse_procedure(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[
+            procedure_path("candidate-query-run")
+        ],
+        path=procedure_path("candidate-query-run"),
+    )
+    query_v1_pin = next(pin for pin in accepted_v1.pins if pin.role == "query")
+    assert query_v1_pin.artifact_digest == query_definition_digest(query_v1).tagged
+
+    query_v2 = query_v1.model_copy(
+        update={
+            "description": "The accepted query v2.",
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=query_definition_digest(query_v1).tagged
+            ),
+        }
+    )
+    incomplete = coordinator.compile(
+        actor=actor,
+        payload=QueryDefinitionAuthoringPayloadV1(query_definition=query_v2),
+        canonical_timestamp="2026-08-21T12:01:00.000000Z",
+    )
+    assert incomplete.verdict == "refused"
+    assert "playbill.change_set.incomplete_closure" in {
+        item.code for item in incomplete.frontier.diagnostics
+    }
+
+    _submit_approve_activate(
+        coordinator,
+        actor=actor,
+        owner=owner,
+        payload=_runnable_change_set_payload(query_v2, description="Read query v2."),
+        timestamp="2026-08-21T12:02:00.000000Z",
+    )
+    query_v2_digest = query_definition_digest(query_v2).tagged
+    accepted_v2 = parse_procedure(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[
+            procedure_path("candidate-query-run")
+        ],
+        path=procedure_path("candidate-query-run"),
+    )
+    query_v2_pin = next(pin for pin in accepted_v2.pins if pin.role == "query")
+    assert query_v2_pin.artifact_digest == query_v2_digest
+
+    evaluation_time = datetime(2026, 8, 21, 12, 5, tzinfo=UTC)
+    readiness = service_playbill_procedure_readiness(
+        instance,
+        name="candidate-query-run",
+        request=ProcedureReadinessRequestV1(evaluation_time=evaluation_time),
+    )
+    assert readiness.state == "ready"
+    assert readiness.definition_digest == accepted_v2.definition_digest
+    result = service_run_playbill_procedure(
+        instance,
+        name="candidate-query-run",
+        request=ProcedureRunRequestV2(evaluation_time=evaluation_time, input={}),
+        actor_context=GovernedActorContext(
+            actor_type="human_user",
+            actor_id="owner",
+            org_id=instance.descriptor.instance_id,
+            operation_id="candidate-query-v2-run",
+            timestamp=evaluation_time,
+        ),
+    )
+
+    assert result.status == "succeeded", result
+    assert isinstance(result.receipt, ProcedureRunReceiptV3)
+    validated_query = next(pin for pin in result.receipt.validated_pins if pin.role == "query")
+    assert validated_query.artifact_digest == query_v2_digest
+    assert [item["query_definition_digest"] for item in result.receipt.admitted_inputs] == [
+        query_v2_digest
+    ]
+
+
+def test_approval_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    policy_payload = ApprovalPolicyAuthoringPayloadV1(
+        approval_policy=ApprovalPolicyV1(mode="independent_approval_required")
+    )
+    singleton = coordinator.compile(
+        actor=actor,
+        payload=policy_payload,
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert singleton.verdict == "passed", singleton.frontier
+
+    mixed_coordinator = AuthoringIntentCoordinator(
+        instance=coordinator.instance,
+        store=AuthoringIntentStore(
+            coordinator.instance.root / coordinator.instance.descriptor.storage.exhaust,
+            token_factory=lambda: "4" * 32,
+        ),
+    )
+    mixed = mixed_coordinator.compile(
+        actor=actor,
+        payload=ChangeSetAuthoringPayloadV1(
+            members=(
+                policy_payload,
+                QueryDefinitionAuthoringPayloadV1(query_definition=_change_set_query()),
+            )
+        ),
+        canonical_timestamp="2026-08-21T12:01:00.000000Z",
+    )
+    assert mixed.verdict == "refused"
+    diagnostic = mixed.frontier.diagnostics[0]
+    assert diagnostic.code == "playbill.authoring.approval_policy_singleton_required"
+    assert diagnostic.offending_element == "members"
+    assert diagnostic.repairs[0].kind == "split_change_set"
+
+
+def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) -> None:
+    query = _change_set_query()
+    with pytest.raises(ValueError, match="at least 2 items"):
+        ChangeSetAuthoringPayloadV1(
+            members=(QueryDefinitionAuthoringPayloadV1(query_definition=query),)
+        )
+    with pytest.raises(ValueError, match="sorted by semantic identity"):
+        ChangeSetAuthoringPayloadV1(members=tuple(reversed(_change_set_payload(query).members)))
+
+    coordinator, actor = _coordinator(tmp_path)
+    created = coordinator.create(
+        actor=actor,
+        payload=_change_set_payload(query),
+        canonical_timestamp=TIMESTAMP,
+    )
+    renamed_values = query.model_dump(mode="json")
+    renamed_values["identity"] = {"kind": "QueryDefinition", "name": "renamed"}
+    renamed = QueryDefinitionV1.model_validate(renamed_values)
+    with pytest.raises(ValueError, match="cannot change member identity"):
+        coordinator.replace_payload(
+            created.intent.intent_id,
+            actor=actor,
+            payload=_change_set_payload(renamed),
+        )
+
+    outside_root = tmp_path / "outside"
+    outside_root.mkdir()
+    coordinator, actor = _coordinator(outside_root)
+    outside = _change_set_payload(query)
+    procedure = outside.members[0]
+    assert isinstance(procedure, ProcedureAuthoringPayloadV1)
+    definition = dict(procedure.definition)
+    nodes = [dict(node) for node in definition["nodes"]]  # type: ignore[arg-type]
+    nodes[0]["query"] = {
+        "tag": "playbill-authoring-candidate-reference-v1",
+        "role": "query",
+        "target": {"kind": "QueryDefinition", "name": "outside"},
+        "resolution": "candidate_in_change_set",
+    }
+    definition["nodes"] = nodes
+    refused = coordinator.compile(
+        actor=actor,
+        payload=outside.model_copy(
+            update={
+                "members": (
+                    procedure.model_copy(update={"definition": definition}),
+                    outside.members[1],
+                )
+            }
+        ),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert refused.verdict == "refused"
+    assert refused.frontier.diagnostics[0].code == (
+        "playbill.authoring.candidate_reference_outside_change_set"
+    )
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected_code"),
+    (
+        (
+            {
+                "tag": "playbill-authoring-candidate-reference-v1",
+                "role": "procedure",
+                "target": {"kind": "Procedure", "name": "other"},
+                "resolution": "candidate_in_change_set",
+            },
+            "playbill.authoring.candidate_procedure_reference_forbidden",
+        ),
+        (
+            {
+                "tag": "playbill-authoring-candidate-reference-v1",
+                "target": {"kind": "QueryDefinition", "name": "claims-by-type"},
+                "resolution": "candidate_in_change_set",
+            },
+            "playbill.authoring.candidate_reference_invalid",
+        ),
+    ),
+)
+def test_change_set_candidate_reference_shape_refusals_are_reachable(
+    tmp_path: Path,
+    reference: dict[str, object],
+    expected_code: str,
+) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    payload = _change_set_payload(_change_set_query())
+    procedure = payload.members[0]
+    assert isinstance(procedure, ProcedureAuthoringPayloadV1)
+    definition = dict(procedure.definition)
+    definition["contract_in"] = reference
+    refused = coordinator.compile(
+        actor=actor,
+        payload=payload.model_copy(
+            update={
+                "members": (
+                    procedure.model_copy(update={"definition": definition}),
+                    payload.members[1],
+                )
+            }
+        ),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert refused.verdict == "refused"
+    assert refused.frontier.diagnostics[0].code == expected_code
+
+
 def test_invalid_definition_message_excludes_pydantic_metadata(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
     definition = _slot_definition().model_dump(mode="json", by_alias=True)
@@ -253,6 +846,134 @@ def test_invalid_definition_message_excludes_pydantic_metadata(tmp_path: Path) -
     assert "input_value=" not in message
     assert "input_type=" not in message
     assert "errors.pydantic.dev" not in message
+
+
+@pytest.mark.parametrize(
+    ("invalid_graph", "expected_cause"),
+    (
+        (
+            "nonreturn_leaf",
+            "Procedure leaf 'unused' neither halts, emits typed egress, nor returns",
+        ),
+        (
+            "terminal_guard",
+            "Procedure guard 'gate' with omitted on_true must name a forward true target",
+        ),
+    ),
+)
+def test_graph_law_failures_use_typed_definition_refusal(
+    tmp_path: Path,
+    invalid_graph: str,
+    expected_cause: str,
+) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+    contract_out = definition["contract_out"]
+    if invalid_graph == "nonreturn_leaf":
+        definition["nodes"] = [
+            definition["nodes"][0],  # type: ignore[index]
+            {
+                "kind": "guard",
+                "node_id": "gate",
+                "predicate": {
+                    "left": {"kind": "literal", "value": True},
+                    "operator": "eq",
+                    "right": {"kind": "literal", "value": True},
+                },
+                "on_true": "result",
+                "on_false": "unused",
+                "refusal_code": "guard.false",
+                "message": "The guard refused.",
+            },
+            {
+                "kind": "project",
+                "node_id": "result",
+                "fields": {"rows": "$steps.rows"},
+                "contract_out": contract_out,
+                "as": "result",
+            },
+            {
+                "kind": "project",
+                "node_id": "unused",
+                "fields": {"rows": "$steps.rows"},
+                "contract_out": contract_out,
+                "as": "unused",
+            },
+        ]
+    else:
+        definition["nodes"] = [
+            {
+                "kind": "project",
+                "node_id": "result",
+                "fields": {"rows": []},
+                "contract_out": contract_out,
+                "as": "result",
+            },
+            {
+                "kind": "guard",
+                "node_id": "gate",
+                "predicate": {
+                    "left": {"kind": "literal", "value": True},
+                    "operator": "eq",
+                    "right": {"kind": "literal", "value": True},
+                },
+                "on_false": "$abort",
+                "refusal_code": "guard.false",
+                "message": "The guard refused.",
+            },
+        ]
+
+    result = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "refused"
+    diagnostic = result.frontier.diagnostics[0]
+    assert diagnostic.code == "playbill.authoring.procedure_definition_invalid"
+    assert diagnostic.stage == "lowering"
+    assert diagnostic.offending_element == "definition"
+    assert expected_cause in diagnostic.message
+    assert diagnostic.repairs[0].kind == "replace_definition"
+    assert diagnostic.repairs[0].description == ("Repair the indicated graph-v3 definition field.")
+    assert "errors.pydantic.dev" not in diagnostic.message
+
+
+def test_layout_only_procedure_successor_refuses_in_coordinator(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    definition = _layout_slot_definition(halt_before_return=False)
+    first = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition.model_dump(mode="json", by_alias=True)),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert first.verdict == "passed"
+    seed = coordinator.list_pending(actor=actor).intents[0]
+    lowered = compute_preflight(instance, intent=seed, actor=actor).lowered
+    assert lowered is not None
+    _accept_tree(
+        instance,
+        owner,
+        lowered.proposed_tree,
+        timestamp=TIMESTAMP,
+        proposal_name="seed-layout-procedure",
+    )
+    reordered = _layout_slot_definition(halt_before_return=True)
+
+    result = coordinator.compile(
+        actor=actor,
+        payload=_payload(reordered.model_dump(mode="json", by_alias=True)),
+        canonical_timestamp="2026-08-21T12:01:00.000000Z",
+    )
+
+    assert result.verdict == "refused"
+    assert result.frontier.diagnostics[0].code == "playbill.proposal.non_singleton_scope"
+    assert result.frontier.diagnostics[0].message == (
+        "The proposal changes no registered semantic member."
+    )
 
 
 def test_invalid_artifact_reference_message_excludes_pydantic_metadata(
@@ -385,3 +1106,122 @@ def test_a_procedure_revision_submits_without_reaching_the_claim_revision_marker
     # The marker is a Claim concept; a Procedure carries the default.
     assert submitted.identity_stable is False
     assert submitted.claim_revision is None
+
+
+def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    reason = "No eligible work remains."
+    payload = ProcedureAuthoringPayloadV2(
+        definition={
+            "graph_format": 3,
+            "name": "halt-with-reason",
+            "contract_in": {
+                "kind": "carried_contract",
+                "name": "empty-input",
+                "role": "contract-in",
+            },
+            "contract_out": {
+                "kind": "carried_contract",
+                "name": "halt-output",
+                "role": "contract-out",
+            },
+            "nodes": [
+                {
+                    "kind": "guard",
+                    "node_id": "gate",
+                    "predicate": {
+                        "left": {"kind": "literal", "value": False},
+                        "operator": "eq",
+                        "right": {"kind": "literal", "value": True},
+                    },
+                    "on_true": "result",
+                    "on_false": "stop",
+                    "refusal_code": "work.exhausted",
+                    "message": reason,
+                },
+                {
+                    "kind": "project",
+                    "node_id": "result",
+                    "fields": {},
+                    "contract_out": {
+                        "kind": "carried_contract",
+                        "name": "halt-output",
+                        "role": "contract-out",
+                    },
+                    "as": "result",
+                },
+                {"kind": "halt", "node_id": "stop", "reason": reason},
+            ],
+            "returns": "result",
+            "budget": {
+                "wall_clock": {"microseconds": 1_000_000},
+                "max_provider_calls": 0,
+                "max_capture_bytes": 0,
+            },
+            "hard_caps": {
+                "max_wall_clock": {"microseconds": 2_000_000},
+                "max_provider_calls": 0,
+                "max_capture_bytes": 0,
+                "max_items": 1,
+                "max_repeat_attempts": 1,
+            },
+            "terminal_capability": 1,
+        },
+        activation_policy="snapshot",
+        owned_contracts=(
+            _carried_contract("empty-input", PropertySchema(type="json")),
+            _carried_contract("halt-output", PropertySchema(type="json")),
+        ),
+    )
+    created = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    preflight = compute_preflight(instance, intent=created, actor=actor)
+    assert preflight.result.verdict == "passed", preflight.result.frontier
+    submitted = coordinator.submit(created.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    approval = _sign(
+        owner,
+        submitted.status.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    service_activate_playbill_proposal(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        activated_by="owner",
+    )
+
+    result = service_run_playbill_procedure(
+        instance,
+        name="halt-with-reason",
+        request=ProcedureRunRequestV2(
+            evaluation_time=datetime(2026, 8, 21, 12, 5, tzinfo=UTC),
+            input={},
+        ),
+        actor_context=GovernedActorContext(
+            actor_type="human_user",
+            actor_id="owner",
+            org_id=instance.descriptor.instance_id,
+            operation_id="coordinator-halt-reason",
+            timestamp=datetime(2026, 8, 21, 12, 5, tzinfo=UTC),
+        ),
+    )
+
+    assert result.status == "halted"
+    assert isinstance(result.terminal, ProcedureHaltTerminalV1)
+    assert result.terminal.reason == reason
+    assert isinstance(result.receipt, ProcedureRunReceiptV3)
+    assert result.receipt.terminal == result.terminal

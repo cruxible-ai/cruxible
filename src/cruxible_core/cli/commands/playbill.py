@@ -31,7 +31,7 @@ from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_NAMES,
     AuthoringExampleName,
     authoring_example,
-    query_claims_by_type_example,
+    document_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.authoring.sources import (
@@ -51,6 +51,7 @@ from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     DocumentNotFoundError,
+    PlaybillDeprecatedWriteError,
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.primitives import canonical_json
@@ -71,10 +72,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.playbill.claim_type_inputs import (
-    ClaimTypeInputV1,
-    defaulted_claim_type_input_example,
-)
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
@@ -248,12 +246,6 @@ _CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdap
     ClaimTypeMigrationRequest
 )
 _CLAIM_RETIRE_ADAPTER = TypeAdapter(ClaimRetireRequestV1)
-
-
-def _cli_claim_type_input_example() -> ClaimTypeInputV1:
-    """Give CLI authors the same supported-by-default source rule as the SDK."""
-
-    return defaulted_claim_type_input_example()
 
 
 def _claim_retire_example() -> ClaimRetireRequestV1:
@@ -512,11 +504,27 @@ def document_group() -> None:
 
 
 @document_group.command("propose")
-@click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--envelope", type=click.Path(exists=True, dir_okay=False))
+@click.option("--example", type=click.Choice(["document"]))
 @click.option("--name", "proposal_name")
 @json_option
 @handle_errors
-def propose_document(envelope: str, proposal_name: str, output_json: bool) -> None:
+def propose_document(
+    envelope: str | None,
+    example: str | None,
+    proposal_name: str | None,
+    output_json: bool,
+) -> None:
+    if (envelope is None) == (example is None):
+        raise click.UsageError("choose exactly one of --envelope or --example")
+    if example is not None:
+        if proposal_name is not None:
+            raise click.UsageError("--name applies only when --envelope is supplied")
+        _emit_json(document_example().model_dump(mode="json"))
+        return
+    if proposal_name is None:
+        raise click.UsageError("--name is required with --envelope")
+    assert envelope is not None
     shell = _read_model(envelope, DocumentShell)
     result = _server_call(
         lambda client, instance_id: client.propose_playbill_document(
@@ -1144,16 +1152,10 @@ def subject_group() -> None:
 @json_option
 @handle_errors
 def propose_subject(envelope: str, proposal_name: str, output_json: bool) -> None:
-    shell = _read_mapping(envelope)
-    result = _server_call(
-        lambda client, instance_id: client.propose_playbill_subject(
-            instance_id,
-            shell=shell,
-            proposal_name=proposal_name,
-        ),
-        command_name="playbill subject propose",
+    del envelope, proposal_name, output_json
+    raise PlaybillDeprecatedWriteError(
+        replacement="the authoring coordinator with payload kind 'subject'"
     )
-    _emit_json(result.model_dump(mode="json"))
 
 
 @subject_group.command("list")
@@ -1210,35 +1212,17 @@ def claim_type_group() -> None:
 @claim_type_group.command("propose")
 @click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--envelope", type=click.Path(exists=True, dir_okay=False), hidden=True)
-@click.option("--example", is_flag=True, help="Print the model-generated ClaimType input.")
 @click.option("--name", "proposal_name")
 @json_option
 @handle_errors
 def propose_claim_type(
     input_path: str | None,
     envelope: str | None,
-    example: bool,
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
-    choices = (input_path is not None, envelope is not None, example)
-    if sum(choices) != 1:
-        raise click.UsageError("provide exactly one of --input or --example")
-    if example:
-        click.echo(
-            "# Edit anticipated_source_ids and evidence_admission_policy.rules for the "
-            "source contracts this type admits.",
-            err=True,
-        )
-        click.echo(
-            json.dumps(
-                _cli_claim_type_input_example().model_dump(mode="json"),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-        )
-        return
+    if (input_path is None) == (envelope is None):
+        raise click.UsageError("provide exactly one ClaimType input with --input")
     if envelope is not None:
         envelope_payload = _read_mapping(envelope)
         resolved_name = proposal_name or envelope_payload.get("predicate")
@@ -1264,7 +1248,8 @@ def propose_claim_type(
                 f"{_validation_path(tuple(item['loc']))}: {item['msg']}"
                 for item in exc.errors(include_url=False)
             )
-            + ". Matching example: playbill claim-type propose --example"
+            + ". Pass a complete ClaimTypeInputV1 whose evidence_admission_policy.rules "
+            "match its capture contracts"
         ) from exc
     input_result = _server_call(
         lambda client, instance_id: client.propose_playbill_claim_type_input(
@@ -1538,10 +1523,10 @@ def create_authoring_intent(
     """Create a durable authoring intent or print a schema-derived example.
 
     \b
-    Input kind family: claim | procedure (tagless).
+    Input kind family: claim | procedure | subject | query_definition |
+    approval_policy | change_set (tagless).
 
-    Use --example claim-flow-a|claim-self-source|procedure for a
-    model-generated starting point.
+    Use --example for a model-generated starting point.
     """
 
     if (payload is None) == (example_name is None):
@@ -2118,6 +2103,29 @@ def repin_projection(
     click.echo(f"Repinned {source_id}#{block_id} at generation {stamp.declared_generation}.")
 
 
+@playbill_group.group("policy")
+def policy_group() -> None:
+    """Read governed policies in force."""
+
+
+@policy_group.command("list")
+@json_option
+@handle_errors
+def list_policies_in_force(output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.list_playbill_policies_in_force(instance_id),
+        command_name="playbill policy list",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for policy in result.policies:
+        click.echo(
+            f"{policy.declaring_artifact_identity}  {policy.field_path}  {policy.policy_kind}"
+        )
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
 @playbill_group.group("query")
 def query_group() -> None:
     """Propose, read, and execute governed named entrypoints."""
@@ -2135,26 +2143,10 @@ def propose_query_definition(
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
-    if (envelope is None) == (example is None):
-        raise click.UsageError("choose exactly one of --envelope or --example")
-    if example is not None:
-        if proposal_name is not None:
-            raise click.UsageError("--name applies only when --envelope is supplied")
-        _emit_json(query_claims_by_type_example().model_dump(mode="json"))
-        return
-    if proposal_name is None:
-        raise click.UsageError("--name is required with --envelope")
-    assert envelope is not None
-    definition = _read_mapping(envelope)
-    result = _server_call(
-        lambda client, instance_id: client.propose_playbill_query_definition(
-            instance_id,
-            query=definition,
-            proposal_name=proposal_name,
-        ),
-        command_name="playbill query propose",
+    del envelope, example, proposal_name, output_json
+    raise PlaybillDeprecatedWriteError(
+        replacement="the authoring coordinator with payload kind 'query_definition'"
     )
-    _emit_json(result.model_dump(mode="json"))
 
 
 @query_group.command("list")

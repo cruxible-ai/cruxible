@@ -129,6 +129,9 @@
   "/api/v1/{instance_id}/playbill/next": {
     "POST": "PlaybillNextResult"
   },
+  "/api/v1/{instance_id}/playbill/policies": {
+    "GET": "PlaybillPolicyInForceList"
+  },
   "/api/v1/{instance_id}/playbill/principals": {
     "GET": "PlaybillPrincipalList"
   },

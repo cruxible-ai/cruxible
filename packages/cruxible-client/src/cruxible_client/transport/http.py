@@ -25,7 +25,10 @@ from cruxible_client.contracts.claim_attestations import (
     ClaimAttestationAppendResultV1,
 )
 from cruxible_client.contracts.claims import ClaimRetireRequestV1
-from cruxible_client.contracts.errors import PlaybillSinceRequestInvalid
+from cruxible_client.contracts.errors import (
+    PlaybillDeprecatedWriteError,
+    PlaybillSinceRequestInvalid,
+)
 from cruxible_client.errors import (
     ConfigError,
     CoreError,
@@ -540,13 +543,10 @@ class CruxibleClient:
         proposal_name: str,
         base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillProposalInspection:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/subjects/proposals",
-            json=self._playbill_proposal_payload(
-                proposal_name=proposal_name, base=base, shell=dict(shell)
-            ),
+        del instance_id, shell, proposal_name, base
+        raise PlaybillDeprecatedWriteError(
+            replacement="the authoring coordinator with payload kind 'subject'"
         )
-        return self._parse_model(response, contracts.PlaybillProposalInspection)
 
     def list_playbill_subjects(
         self,
@@ -981,13 +981,10 @@ class CruxibleClient:
         proposal_name: str,
         base: contracts.PlaybillAcceptedCoordinate | Mapping[str, Any] | None = None,
     ) -> contracts.PlaybillProposalInspection:
-        response = self._client.post(
-            f"/api/v1/{instance_id}/playbill/queries/proposals",
-            json=self._playbill_proposal_payload(
-                proposal_name=proposal_name, base=base, query=dict(query)
-            ),
+        del instance_id, query, proposal_name, base
+        raise PlaybillDeprecatedWriteError(
+            replacement="the authoring coordinator with payload kind 'query_definition'"
         )
-        return self._parse_model(response, contracts.PlaybillProposalInspection)
 
     def list_playbill_query_definitions(
         self,
@@ -1000,6 +997,13 @@ class CruxibleClient:
             params=self._playbill_coordinate_params(at),
         )
         return self._parse_model(response, contracts.PlaybillQueryDefinitionList)
+
+    def list_playbill_policies_in_force(
+        self,
+        instance_id: str,
+    ) -> contracts.PlaybillPolicyInForceList:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/policies")
+        return self._parse_model(response, contracts.PlaybillPolicyInForceList)
 
     def get_playbill_query_definition(
         self,

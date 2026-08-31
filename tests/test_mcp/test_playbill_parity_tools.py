@@ -3,20 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
 from cruxible_client import contracts
-from cruxible_client.authoring.examples import authoring_example
+from cruxible_client.authoring.examples import AuthoringExampleName, authoring_example
 from cruxible_client.authoring.inputs import ClaimInput
-from cruxible_core.cli.commands.playbill import _cli_claim_type_input_example
-from cruxible_core.errors import DataValidationError
 from cruxible_core.mcp import handlers
-from cruxible_core.playbill.claim_type_inputs import (
-    claim_type_input_example,
-    defaulted_claim_type_input_example,
-)
+from cruxible_core.mcp.tool_prompts import tool_description
+from tests.test_playbill._claim_type_support import claim_type_input_example
 
 
 def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
@@ -31,26 +27,27 @@ def _coordinate() -> contracts.PlaybillAcceptedCoordinate:
 def test_examples_are_the_model_factories_not_copied_literals() -> None:
     result = handlers.handle_playbill_authoring_example("claim-flow-a")
 
-    assert result.payload == authoring_example("claim-flow-a").model_dump(mode="json")
+    assert result.payload == authoring_example("claim-flow-a")
     assert result.name == "claim-flow-a"
 
 
 def test_governed_query_example_has_mcp_client_factory_parity() -> None:
     result = handlers.handle_playbill_authoring_example("query-claims-by-type")
 
-    assert result.payload == authoring_example("query-claims-by-type").model_dump(mode="json")
-    assert result.payload["artifact_format"] == "playbill-query-definition-v1"
+    assert result.payload == authoring_example("query-claims-by-type")
+    assert result.payload.kind == "query_definition"
+    assert result.payload.query_definition.artifact_format == "playbill-query-definition-v1"
     assert result.name == "query-claims-by-type"
 
 
-def test_claim_type_example_has_cli_mcp_factory_parity() -> None:
-    result = handlers.handle_playbill_authoring_example("claim-type")
+def test_public_example_vocabulary_exactly_matches_authoring_input_examples() -> None:
+    assert get_args(contracts.PlaybillAuthoringExampleName) == get_args(AuthoringExampleName)
 
-    assert result.payload == defaulted_claim_type_input_example().model_dump(mode="json")
-    assert result.payload == _cli_claim_type_input_example().model_dump(mode="json")
-    assert result.payload["predicate"] == authoring_example("claim-flow-a").predicate
-    assert result.payload["anticipated_source_ids"] == ["repo.replace-me"]
-    assert result.name == "claim-type"
+
+def test_claim_type_uses_typed_proposal_input_not_a_coordinator_example() -> None:
+    assert "claim-type" not in get_args(contracts.PlaybillAuthoringExampleName)
+    assert "ClaimType" not in tool_description("cruxible_playbill_authoring_example")
+    assert "ClaimTypeInputV1" in tool_description("cruxible_playbill_propose_claim_type")
 
 
 def test_attestation_door_example_hints_have_mcp_client_parity() -> None:
@@ -65,7 +62,7 @@ def test_attestation_door_example_hints_have_mcp_client_parity() -> None:
         "claim-cite-supporting-evidence",
         claim_id=claim_id,
         capture_digest=capture_digest,
-    ).model_dump(mode="json")
+    )
     with pytest.raises(ValueError, match="require claim_id and capture_digest"):
         authoring_example("claim-cite-supporting-evidence")
     with pytest.raises(ValueError, match="require claim_id and capture_digest"):
@@ -81,12 +78,6 @@ def test_attestation_door_example_hints_have_mcp_client_parity() -> None:
     with pytest.raises(ValueError, match="apply only"):
         handlers.handle_playbill_authoring_example(
             "claim-flow-a",
-            claim_id=claim_id,
-            capture_digest=capture_digest,
-        )
-    with pytest.raises(DataValidationError, match="does not accept"):
-        handlers.handle_playbill_authoring_example(
-            "claim-type",
             claim_id=claim_id,
             capture_digest=capture_digest,
         )

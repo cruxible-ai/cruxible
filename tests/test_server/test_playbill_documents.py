@@ -9,6 +9,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from cruxible_client.authoring.examples import (
+    query_claims_by_type_example,
+    subject_example,
+)
 from cruxible_client.contracts.attestations import ApprovalStatement
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
@@ -184,16 +188,87 @@ def test_principal_display_name_is_sanitized_and_invalid_ref_is_a_typed_400(
     "entrypoint",
     (
         playbill_api.playbill_propose_document,
-        playbill_api.playbill_propose_subject,
         playbill_api.playbill_propose_claim_type,
         playbill_api.playbill_propose_claim_type_input,
-        playbill_api.playbill_propose_query_definition,
     ),
 )
 def test_every_proposal_route_keeps_the_typed_validation_boundary(
     entrypoint: object,
 ) -> None:
     assert "_proposal_validation_boundary(" in getsource(entrypoint)
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "replacement"),
+    (
+        (playbill_api.playbill_propose_subject, "payload kind 'subject'"),
+        (
+            playbill_api.playbill_propose_query_definition,
+            "payload kind 'query_definition'",
+        ),
+    ),
+)
+def test_converged_proposal_routes_are_typed_deprecation_shims(
+    entrypoint: object,
+    replacement: str,
+) -> None:
+    source = getsource(entrypoint)
+    assert "PlaybillDeprecatedWriteError(" in source
+    assert replacement in source
+
+
+def test_converged_writes_and_policy_read_are_real_http_behaviors(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key_path = playbill_http
+
+    policies = client.get(f"/api/v1/{instance_id}/playbill/policies")
+    assert policies.status_code == 200, policies.text
+    assert [item["policy_kind"] for item in policies.json()["policies"]] == ["approval_policy"]
+
+    requests = (
+        (
+            f"/api/v1/{instance_id}/playbill/subjects/proposals",
+            {
+                "shell": subject_example().subject.model_dump(mode="json"),
+                "proposal_name": "removed-subject-writer",
+            },
+            "payload kind 'subject'",
+        ),
+        (
+            f"/api/v1/{instance_id}/playbill/queries/proposals",
+            {
+                "query": query_claims_by_type_example().query_definition.model_dump(mode="json"),
+                "proposal_name": "removed-query-writer",
+            },
+            "payload kind 'query_definition'",
+        ),
+    )
+    for path, payload, repair in requests:
+        response = client.post(path, json=payload)
+        assert response.status_code == 400, response.text
+        assert response.json()["error_code"] == "playbill.write_surface_deprecated"
+        assert repair in response.json()["message"]
+        assert "cruxible playbill" not in response.json()["message"]
+
+
+def test_friendly_change_set_duplicate_is_a_typed_http_400(
+    playbill_http: tuple[TestClient, str, Path],
+) -> None:
+    client, instance_id, _private_key_path = playbill_http
+    query = query_claims_by_type_example().model_dump(mode="json")
+
+    response = client.post(
+        f"/api/v1/{instance_id}/playbill/authoring/intents",
+        json={
+            "tag": "playbill-authoring-input-create-request-v1",
+            "input": {"kind": "change_set", "members": [query, query]},
+        },
+    )
+
+    assert response.status_code == 400, response.text
+    assert response.json()["error_type"] == "AuthoringInputError"
+    assert response.json()["error_code"] == ("playbill.authoring.change_set_duplicate_identity")
 
 
 def test_residual_proposal_ref_validation_is_a_typed_http_400(

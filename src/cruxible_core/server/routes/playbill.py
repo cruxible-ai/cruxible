@@ -73,6 +73,14 @@ from cruxible_core.service.playbill_procedure_runs import (
 router = APIRouter(prefix="/api/v1", tags=["playbill"])
 
 
+@router.get(
+    "/{instance_id}/playbill/policies",
+    response_model=contracts.PlaybillPolicyInForceList,
+)
+async def list_policies_in_force(instance_id: str) -> contracts.PlaybillPolicyInForceList:
+    return playbill_api.playbill_policies_in_force(resolve_server_instance_id(instance_id))
+
+
 def _coordinate(
     git_oid: str | None,
     semantic_root: str | None,

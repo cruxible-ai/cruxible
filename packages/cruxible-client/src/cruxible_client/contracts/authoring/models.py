@@ -18,6 +18,10 @@ from pydantic import (
     model_validator,
 )
 
+from cruxible_client.contracts.approval_policy import (
+    APPROVAL_POLICY_IDENTITY,
+    ApprovalPolicyV1,
+)
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.candidates import validate_candidate_timestamp
 from cruxible_client.contracts.canonical import (
@@ -36,6 +40,7 @@ from cruxible_client.contracts.declared_blocks import (
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalReceiveLimits
+from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
@@ -54,6 +59,7 @@ AUTHORING_FRONTIER_DIGEST_DOMAIN = "playbill-authoring-frontier-v1"
 AUTHORING_INSTANCE_DESCRIPTOR_DIGEST_DOMAIN = "playbill-instance-descriptor-v1"
 AUTHORING_PREFLIGHT_CERTIFICATE_DIGEST_DOMAIN = "playbill-authoring-preflight-certificate-v1"
 AUTHORING_REFERENCE_EXPECTATIONS_DIGEST_DOMAIN = "playbill-authoring-reference-expectations-v1"
+AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN = "playbill-authoring-change-set-membership-v1"
 AUTHORING_PROGRAM_DIGEST_DOMAIN = "playbill-sdk-authoring-program-v1"
 AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-operation-v1"
 # Before this lineage's first public release, a version's digest may be re-pinned
@@ -61,7 +67,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:684f50a33ed0198ffbd0fd97c83f5ace0def34a71a4116d22779e7c7344b9040"
+    "sha256:701644f8ded0cc05fd182d6523e4efae886200ee6d4bbe3b8b89ccdb2b3bbdc4"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -745,6 +751,34 @@ class AuthoringArtifactReferenceV1(_StrictAuthoringModel):
         return value
 
 
+class AuthoringCandidateReferenceV1(_StrictAuthoringModel):
+    tag: Literal["playbill-authoring-candidate-reference-v1"] = (
+        "playbill-authoring-candidate-reference-v1"
+    )
+    role: str
+    target: ArtifactIdentity
+    resolution: Literal["candidate_in_change_set"] = "candidate_in_change_set"
+
+
+class SubjectAuthoringPayloadV1(_StrictAuthoringModel):
+    tag: Literal["playbill-subject-authoring-payload-v1"] = "playbill-subject-authoring-payload-v1"
+    subject: SubjectShell
+
+
+class QueryDefinitionAuthoringPayloadV1(_StrictAuthoringModel):
+    tag: Literal["playbill-query-definition-authoring-payload-v1"] = (
+        "playbill-query-definition-authoring-payload-v1"
+    )
+    query_definition: QueryDefinitionV1
+
+
+class ApprovalPolicyAuthoringPayloadV1(_StrictAuthoringModel):
+    tag: Literal["playbill-approval-policy-authoring-payload-v1"] = (
+        "playbill-approval-policy-authoring-payload-v1"
+    )
+    approval_policy: ApprovalPolicyV1
+
+
 class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
     tag: Literal["playbill-procedure-authoring-payload-v1"] = (
         "playbill-procedure-authoring-payload-v1"
@@ -784,12 +818,63 @@ class ProcedureAuthoringPayloadV2(_StrictAuthoringModel):
         return cast(dict[str, object], normalized)
 
 
+AuthoringChangeSetMemberV1: TypeAlias = Annotated[
+    SubjectAuthoringPayloadV1
+    | QueryDefinitionAuthoringPayloadV1
+    | ApprovalPolicyAuthoringPayloadV1
+    | ProcedureAuthoringPayloadV1
+    | ProcedureAuthoringPayloadV2,
+    Field(discriminator="tag"),
+]
+
+
+def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
+    if isinstance(payload, SubjectAuthoringPayloadV1):
+        return f"Subject:{payload.subject.subject_kind}/{payload.subject.subject_id}"
+    if isinstance(payload, QueryDefinitionAuthoringPayloadV1):
+        return payload.query_definition.identity.qualified
+    if isinstance(payload, ApprovalPolicyAuthoringPayloadV1):
+        return APPROVAL_POLICY_IDENTITY
+    return f"Procedure:{payload.definition['name']}"
+
+
+def authoring_change_set_membership(
+    members: tuple[AuthoringChangeSetMemberV1, ...],
+) -> tuple[tuple[str, str], ...]:
+    identities = tuple(authoring_member_identity(member) for member in members)
+    return tuple((identity.partition(":")[0], identity) for identity in identities)
+
+
+class ChangeSetAuthoringPayloadV1(_StrictAuthoringModel):
+    tag: Literal["playbill-change-set-authoring-payload-v1"] = (
+        "playbill-change-set-authoring-payload-v1"
+    )
+    members: tuple[AuthoringChangeSetMemberV1, ...] = Field(min_length=2)
+
+    @field_validator("members")
+    @classmethod
+    def _members(
+        cls,
+        value: tuple[AuthoringChangeSetMemberV1, ...],
+    ) -> tuple[AuthoringChangeSetMemberV1, ...]:
+        identities = tuple(authoring_member_identity(member) for member in value)
+        if len(set(identities)) != len(identities):
+            raise ValueError("change-set member identities must be unique")
+        if identities != tuple(sorted(identities, key=lambda item: item.encode("utf-8"))):
+            raise ValueError("change-set members must be sorted by semantic identity")
+        return value
+
+
 AuthoringPayloadV1 = Annotated[
     ClaimAuthoringPayloadV1
     | ClaimAuthoringPayloadV2
     | ClaimAuthoringPayloadV3
     | ProcedureAuthoringPayloadV1
-    | ProcedureAuthoringPayloadV2,
+    | ProcedureAuthoringPayloadV2
+    | SubjectAuthoringPayloadV1
+    | QueryDefinitionAuthoringPayloadV1
+    | ApprovalPolicyAuthoringPayloadV1
+    | ChangeSetAuthoringPayloadV1,
     Field(discriminator="tag"),
 ]
 
@@ -1520,10 +1605,24 @@ class AuthoringIntentV1(_StrictAuthoringModel):
                     raise ValueError("insertion expectation ID does not reproduce")
                 if self.insertion_expectation.target != self.payload.insertion_target:
                     raise ValueError("publication expectation changes its frozen target")
-        elif self.semantic_identity != f"Procedure:{self.payload.definition['name']}":
-            raise ValueError("Procedure AuthoringIntent identity differs from its definition")
-        elif self.insertion_expectation is not None:
-            raise ValueError("Procedure AuthoringIntent cannot own an insertion expectation")
+        else:
+            if isinstance(self.payload, ChangeSetAuthoringPayloadV1):
+                membership = authoring_change_set_membership(self.payload.members)
+                expected_identity = "ChangeSet:" + typed_digest(
+                    Sha256Value,
+                    AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
+                    {
+                        "members": [
+                            {"kind": kind, "identity": identity} for kind, identity in membership
+                        ]
+                    },
+                ).tagged.removeprefix("sha256:")
+            else:
+                expected_identity = authoring_member_identity(self.payload)
+            if self.semantic_identity != expected_identity:
+                raise ValueError("AuthoringIntent identity differs from its payload")
+            if self.insertion_expectation is not None:
+                raise ValueError("non-Claim AuthoringIntent cannot own an insertion expectation")
         return self
 
 
@@ -1778,6 +1877,8 @@ __all__ = [
     "PUBLICATION_BLOCK_ID_DOMAIN",
     "AcceptanceConditionV1",
     "AuthoringArtifactReferenceV1",
+    "AuthoringCandidateReferenceV1",
+    "AuthoringChangeSetMemberV1",
     "AuthoringClaimStatementV1",
     "AuthoringDiagnosticV1",
     "AuthoringExactContentObjectV1",
@@ -1806,6 +1907,7 @@ __all__ = [
     "ClaimAuthoringPayloadV1",
     "ClaimAuthoringPayloadV2",
     "ClaimAuthoringPayloadV3",
+    "ChangeSetAuthoringPayloadV1",
     "ClaimAuthoringSourceV3",
     "ClaimDependencyDraftsV1",
     "DiagnosticFrontierLimitsV1",
@@ -1830,6 +1932,9 @@ __all__ = [
     "PreflightResultV1",
     "ProcedureAuthoringPayloadV1",
     "ProcedureAuthoringPayloadV2",
+    "ApprovalPolicyAuthoringPayloadV1",
+    "QueryDefinitionAuthoringPayloadV1",
+    "SubjectAuthoringPayloadV1",
     "RepairAlternativeV1",
     "ExistingCaptureCitationSourceV1",
     "SelfSourceBodyV1",
@@ -1838,6 +1943,8 @@ __all__ = [
     "WorkingGitBlobCoordinateV1",
     "WorkingSelectionObservationV1",
     "authoring_create_fingerprint",
+    "authoring_change_set_membership",
+    "authoring_member_identity",
     "authoring_payload_digest",
     "authoring_program_digest",
     "authoring_program_stamp_operation_key",

@@ -102,6 +102,7 @@ def test_nested_queue_vocabulary_adds_exactly_the_ratified_projection_variants()
         "floor_invalid",
         "projection_dirty",
         "projection_backing_stale",
+        "projection_marker_invalid",
         "self_published_source_stale",
         "claim_dependency_stale",
         "claim_attestation_threshold_met",

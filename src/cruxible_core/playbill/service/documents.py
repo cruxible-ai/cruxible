@@ -279,7 +279,16 @@ def _candidate_for_proposal(
     inspection = service_inspect_playbill_proposal(instance, proposal_id=proposal_id)
     candidate = inspection.proposal.candidate
     if candidate is None:
-        raise ProposalIntegrityError("refused proposal has no approvable candidate")
+        diagnostics = inspection.proposal.evaluation.diagnostics
+        if not diagnostics:
+            raise ProposalIntegrityError(
+                "stored refused proposal has no diagnostic; proposal evidence is corrupt"
+            )
+        raise ProposalIntegrityError(
+            "refused proposal has no approvable candidate; run "
+            f"`playbill proposal refusal {proposal_id}` for refusal code "
+            f"{diagnostics[0].code}"
+        )
     return inspection.proposal, candidate
 
 

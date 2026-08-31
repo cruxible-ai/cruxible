@@ -24,6 +24,7 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     ProposalEvaluationIntegrityError,
+    ProposalIntegrityError,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
@@ -39,12 +40,11 @@ from cruxible_core.playbill.service.claim_types import (
     service_propose_playbill_claim_type,
     service_propose_playbill_claim_type_input,
 )
-from cruxible_core.playbill.service.documents import service_propose_playbill_document
-from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
-from cruxible_core.playbill.service.query_definitions import (
-    service_propose_playbill_query_definition,
+from cruxible_core.playbill.service.documents import (
+    _candidate_for_proposal,
+    service_propose_playbill_document,
 )
-from cruxible_core.playbill.service.subjects import service_propose_playbill_subject
+from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
 from cruxible_core.service.playbill_evidence import service_propose_claim_attestation
 from tests.test_playbill._support import initialize_local
 
@@ -157,6 +157,16 @@ def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None
     assert len(list((exhaust / "evaluations").glob("*.json"))) == 1
     assert list((exhaust / "candidates").glob("*.json")) == []
 
+    with pytest.raises(
+        ProposalIntegrityError,
+        match=(
+            r"refused proposal has no approvable candidate; run "
+            rf"`playbill proposal refusal {result.admission.proposal_id}` for refusal code "
+            r"playbill\.document\.body_missing"
+        ),
+    ):
+        _candidate_for_proposal(instance, result.admission.proposal_id)
+
 
 def test_internal_evaluation_model_failure_uses_the_narrow_integrity_class(
     tmp_path: Path,
@@ -205,8 +215,6 @@ def test_request_model_refuses_non_proposal_namespaces(target_ref: str) -> None:
     (
         ("document", service_propose_playbill_document),
         ("claim attestation", service_propose_claim_attestation),
-        ("query definition", service_propose_playbill_query_definition),
-        ("subject", service_propose_playbill_subject),
         ("claim type", service_propose_playbill_claim_type),
         ("claim type input", service_propose_playbill_claim_type_input),
     ),

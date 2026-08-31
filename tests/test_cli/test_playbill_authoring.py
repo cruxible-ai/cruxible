@@ -14,23 +14,19 @@ from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.blocks import render_projection_opening
 from cruxible_client.authoring.examples import claim_flow_a_example, claim_self_source_example
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    capture_contract_digest,
-)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
-from cruxible_core.playbill.claim_type_inputs import claim_type_input_example
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
 from cruxible_core.server.registry import get_registry, reset_registry
 from tests.test_client.test_playbill_authoring import OBSERVATION
+from tests.test_playbill._claim_type_support import claim_type_input_example
 
 COORDINATE = contracts.PlaybillAcceptedCoordinate(
     git_oid="1" * 64,
@@ -166,22 +162,18 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
 def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     runner = CliRunner()
 
-    claim_type = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
+    claim_type_help = runner.invoke(cli, ["playbill", "claim-type", "propose", "--help"])
+    claim_type_example = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
+    claim_type_missing = runner.invoke(cli, ["playbill", "claim-type", "propose"])
     retirement = runner.invoke(cli, ["playbill", "claim", "retire", "--example"])
     create_help = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
 
-    assert claim_type.exit_code == 0, claim_type.output
-    claim_type_payload = json.loads(claim_type.stdout)
-    (rule,) = claim_type_payload["evidence_admission_policy"]["rules"]
-    assert rule["evidence_kinds"] == ["self_asserted"]
-    assert (
-        capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
-        in rule["capture_contract_digests"]
-    )
-    assert claim_type_payload["predicate"] == "project.work_item.status"
-    assert claim_type_payload["anticipated_source_ids"] == ["repo.replace-me"]
-    assert "evidence_admission_policy.rules" in claim_type.stderr
-    assert "anticipated_source_ids" in claim_type.stderr
+    assert claim_type_help.exit_code == 0, claim_type_help.output
+    assert "--example" not in claim_type_help.output
+    assert claim_type_example.exit_code == 2
+    assert "No such option: --example" in claim_type_example.output
+    assert claim_type_missing.exit_code == 2
+    assert "provide exactly one ClaimType input with --input" in claim_type_missing.output
 
     assert retirement.exit_code == 0, retirement.output
     retirement_payload = json.loads(retirement.stdout)
@@ -538,13 +530,29 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     runner = CliRunner()
     help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
     assert help_result.exit_code == 0
-    assert "Input kind family: claim | procedure" in help_result.output
+    assert "Input kind family: claim | procedure | subject | query_definition" in (
+        help_result.output
+    )
 
-    for name in ("claim-existing-capture", "claim-flow-a", "claim-self-source", "procedure"):
+    for name in (
+        "claim-existing-capture",
+        "claim-flow-a",
+        "claim-self-source",
+        "procedure",
+        "subject",
+        "approval-policy",
+        "query-claims-by-type",
+    ):
         result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
-        assert payload["kind"] in {"claim", "procedure"}
+        assert payload["kind"] in {
+            "claim",
+            "procedure",
+            "subject",
+            "approval_policy",
+            "query_definition",
+        }
         assert "tag" not in payload
         if name == "procedure":
             assert [node["spec"]["tag"] for node in payload["definition"]["nodes"]] == [
@@ -556,6 +564,27 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
                 "playbill-transform-aggregate-items-spec-v1",
             ]
         assert result.stderr == ""
+
+
+def test_subject_propose_is_a_typed_deprecation_shim(tmp_path: Path) -> None:
+    envelope = tmp_path / "subject.json"
+    envelope.write_text("{}\n")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "playbill",
+            "subject",
+            "propose",
+            "--envelope",
+            str(envelope),
+            "--name",
+            "old-path",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "playbill.write_surface_deprecated" in result.output
+    assert "authoring coordinator with payload kind 'subject'" in result.output
 
 
 @pytest.mark.parametrize(

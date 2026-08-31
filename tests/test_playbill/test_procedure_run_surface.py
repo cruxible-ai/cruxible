@@ -45,9 +45,6 @@ from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import ProcedureExhaustWriter, parse_journal_payload
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
-from cruxible_core.playbill.service.query_definitions import (
-    service_propose_playbill_query_definition,
-)
 from cruxible_core.service.playbill_procedure_runs import (
     DirectProcedureReceiptReducer,
     ProcedureBindingTargetV1,
@@ -60,6 +57,7 @@ from cruxible_core.service.playbill_procedure_runs import (
     service_playbill_procedure_readiness,
     service_run_playbill_procedure,
 )
+from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._knowledge_loop_support import (
     QUERY_NAME,
     TIMESTAMP,
@@ -88,7 +86,7 @@ def test_genesis_evaluation_time_comes_from_the_signed_commit(tmp_path: Path) ->
 def _world(tmp_path: Path):  # type: ignore[no-untyped-def]
     instance, owner = seed_claims(tmp_path)
     query = work_item_query()
-    inspection = service_propose_playbill_query_definition(
+    inspection = submit_query_definition_candidate(
         instance,
         query=query,
         actor_id="owner",
@@ -195,6 +193,7 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     )
 
     assert readiness.state == "ready"
+    assert readiness.definition_digest == procedure.definition_digest
     assert readiness.next_operation.kind == "run"
     assert readiness.required_slots == ()
     assert readiness.unsupported_nodes == ()
@@ -250,9 +249,12 @@ def test_explicit_historical_coordinate_uses_read_only_replay_lane(tmp_path: Pat
     historical = instance.accepted_coordinate()
     successor = procedure.model_copy(
         update={
+            "activation_policy": (
+                "snapshot" if procedure.activation_policy != "snapshot" else "drain"
+            ),
             "lifecycle": procedure.lifecycle.model_copy(
                 update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
-            )
+            ),
         }
     )
     _activate_procedure(
@@ -596,7 +598,7 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
     instance, owner = seed_claims(tmp_path)
     query = work_item_query()
     query_digest = query_definition_digest(query).tagged
-    inspection = service_propose_playbill_query_definition(
+    inspection = submit_query_definition_candidate(
         instance,
         query=query,
         actor_id="owner",
@@ -669,6 +671,7 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
 
     assert result.accepted_digest == procedure_artifact_digest(abstract).tagged
     assert result.accepted_readiness.state == "binding_required"
+    assert result.accepted_readiness.definition_digest == abstract.definition_digest
     assert result.accepted_readiness.procedure_identity == ArtifactIdentity(
         kind="Procedure", name=abstract.identity.name
     )

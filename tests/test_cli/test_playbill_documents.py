@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from click.testing import CliRunner
 
 from cruxible_client import contracts
@@ -85,3 +87,21 @@ def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> Non
     assert result.exit_code == 0, result.output
     assert "document:design  documents/design.yaml" in result.stdout
     assert f"Coordinate: {COORDINATE.git_oid}" in result.stdout
+
+
+def test_document_example_is_local_and_model_constructed(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: (_ for _ in ()).throw(AssertionError("example must not call the daemon")),
+    )
+    result = CliRunner().invoke(
+        cli,
+        ["playbill", "document", "propose", "--example", "document"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["identity"] == "document:replace-me"
+    assert payload["body_digest"] == "sha256:" + "0" * 64
+    assert payload["governance_scope"]
+    assert payload["lifecycle"]["revision"] == 1

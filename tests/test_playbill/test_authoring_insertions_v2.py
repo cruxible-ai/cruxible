@@ -254,6 +254,57 @@ def _final_source(intent_id: str, prepared, preimage: bytes) -> bytes:  # type: 
     return final
 
 
+def _prepared_publication_next_request(tmp_path: Path):  # type: ignore[no-untyped-def]
+    instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
+        tmp_path
+    )
+    prepared = coordinator.prepare_publication(
+        intent_id,
+        actor=actor,
+        observation=_observation(preimage),
+    )
+    assert prepared.expectation.state == "prepared"
+    assert prepared.preparation is not None
+    landed = apply_playbill_publication(
+        preimage,
+        intent_id=intent_id,
+        expectation=prepared.expectation.model_dump(mode="json"),
+        retained_body=b"status: ready\n",
+    )
+    markers = tuple(
+        block.summary()
+        for block in parse_projection_blocks(
+            landed.content,
+            source_id=prepared.preparation.source_id,
+        )
+    )
+    request = PlaybillNextRequestV1(
+        at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+        evaluation_time=datetime(2026, 8, 23, 12, tzinfo=UTC),
+        access_profile=CoverageAccessProfileV1(
+            profile_id="publication-orphan-test",
+            permitted_access_classes=("instance", "public"),
+        ),
+        workspace_observation=PlaybillNextWorkspaceObservationV1(
+            source_observations=(
+                PlaybillNextSourceObservationV3(
+                    tag="playbill-next-source-observation-v3",
+                    source_id="repo.work-items",
+                    observed_source_digest=_digest(landed.content),
+                    byte_length=len(landed.content),
+                    marker_summaries=markers,
+                    occurrences=(),
+                    scanned_commitment_digests=(),
+                    scan_complete=True,
+                    scan_notes=(),
+                    marker_notes=(),
+                ),
+            )
+        ),
+    )
+    return instance, coordinator, actor, intent_id, prepared, landed, request
+
+
 def test_v2_target_and_source_observation_digest_exact_bytes() -> None:
     target = _target()
     source = PublicationSourceObservationV2(
@@ -730,7 +781,7 @@ def test_pin_15_prepared_status_never_passively_terminalizes_and_exact_confirm_r
     assert all(citation.origin != "self_published" for citation in accepted_claim.backing.citations)
 
 
-def test_prepared_publication_can_be_abandoned_without_observing_the_source(
+def test_only_confirmed_publication_registration_suppresses_next_orphan_repair(
     tmp_path: Path,
 ) -> None:
     _instance, _owner, coordinator, actor, intent_id, preimage, _clock = _submitted_publication(
@@ -782,15 +833,75 @@ def test_prepared_publication_can_be_abandoned_without_observing_the_source(
             )
         ),
     )
+    prepared_orphaned = tuple(
+        item
+        for item in service_playbill_next(_instance, request=request).items
+        if item.reason == "unregistered_projection_block"
+    )
+    assert len(prepared_orphaned) == 1
+    assert prepared_orphaned[0].severity == "warning"
+    assert prepared_orphaned[0].repair.operation == "playbill.document.propose"
+    assert prepared_orphaned[0].repair.required_change == ("remove_or_register_projection_block")
+    assert prepared_orphaned[0].repair.arguments == {
+        "source_id": "repo.work-items",
+        "block_id": prepared.preparation.block_id,
+    }
+    assert (
+        prepared.preparation.source_id,
+        prepared.preparation.block_id,
+    ) not in (_registered_publication_blocks(_instance) or frozenset())
+
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(landed.content),
+    )
+    assert confirmation is not None
+    confirmed = coordinator.confirm_insertion(
+        intent_id,
+        actor=actor,
+        observation=confirmation,
+    )
+    assert confirmed.outcome == "bound"
+    assert (
+        prepared.preparation.source_id,
+        prepared.preparation.block_id,
+    ) in (_registered_publication_blocks(_instance) or frozenset())
     assert not [
         item
         for item in service_playbill_next(_instance, request=request).items
         if item.reason == "unregistered_projection_block"
     ]
 
-    # The sibling block-repin repair legitimately changes the stamp/body
-    # commitments. Registration follows the durable expectation identity, not
-    # the old marker bytes, so that repair cannot manufacture a false orphan.
+
+def test_prepared_then_abandoned_expectation_retains_terminal_tombstone_shape(
+    tmp_path: Path,
+) -> None:
+    _instance, coordinator, actor, intent_id, prepared, _landed, _request = (
+        _prepared_publication_next_request(tmp_path)
+    )
+
+    abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
+
+    assert prepared.expectation.state == "prepared"
+    assert abandoned.expectation.state == "abandoned"
+    assert abandoned.expectation.terminal_tombstone is not None
+    assert abandoned.expectation.terminal_tombstone.preparation_digest is None
+
+
+def test_block_repin_cannot_manufacture_a_false_publication_orphan(tmp_path: Path) -> None:
+    instance, coordinator, actor, intent_id, prepared, landed, request = (
+        _prepared_publication_next_request(tmp_path)
+    )
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(landed.content),
+    )
+    assert confirmation is not None
+    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+    assert bound.expectation.state == "bound"
+
     source_observation = request.workspace_observation.source_observations[0]
     repinned_markers = tuple(
         marker.model_copy(
@@ -815,20 +926,31 @@ def test_prepared_publication_can_be_abandoned_without_observing_the_source(
             )
         }
     )
+
+    assert (
+        prepared.preparation.source_id,
+        prepared.preparation.block_id,
+    ) in (_registered_publication_blocks(instance) or frozenset())
     assert not [
         item
-        for item in service_playbill_next(_instance, request=repinned_request).items
+        for item in service_playbill_next(instance, request=repinned_request).items
         if item.reason == "unregistered_projection_block"
     ]
 
-    abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
-    assert abandoned.expectation.state == "abandoned"
-    assert abandoned.expectation.terminal_tombstone is not None
-    assert abandoned.expectation.terminal_tombstone.preparation_digest is None
 
+def test_prepared_publication_can_be_abandoned_without_observing_the_source(
+    tmp_path: Path,
+) -> None:
+    instance, coordinator, actor, intent_id, prepared, _landed, request = (
+        _prepared_publication_next_request(tmp_path)
+    )
+
+    abandoned = coordinator.abandon_insertion(intent_id, actor=actor)
+
+    assert abandoned.expectation.state == "abandoned"
     orphaned = tuple(
         item
-        for item in service_playbill_next(_instance, request=repinned_request).items
+        for item in service_playbill_next(instance, request=request).items
         if item.reason == "unregistered_projection_block"
     )
     assert len(orphaned) == 1
@@ -840,12 +962,19 @@ def test_prepared_publication_can_be_abandoned_without_observing_the_source(
         "block_id": prepared.preparation.block_id,
     }
 
-    voluntary_marker = repinned_markers[0].model_copy(
-        update={"stamp": repinned_markers[0].stamp.model_copy(update={"block_id": "notes"})}
+
+def test_voluntary_projection_marker_is_not_a_publication_orphan(tmp_path: Path) -> None:
+    instance, _coordinator, _actor, _intent_id, _prepared, _landed, request = (
+        _prepared_publication_next_request(tmp_path)
     )
-    voluntary_request = repinned_request.model_copy(
+    source_observation = request.workspace_observation.source_observations[0]
+    (publication_marker,) = source_observation.marker_summaries
+    voluntary_marker = publication_marker.model_copy(
+        update={"stamp": publication_marker.stamp.model_copy(update={"block_id": "notes"})}
+    )
+    voluntary_request = request.model_copy(
         update={
-            "workspace_observation": repinned_request.workspace_observation.model_copy(
+            "workspace_observation": request.workspace_observation.model_copy(
                 update={
                     "source_observations": (
                         source_observation.model_copy(
@@ -856,9 +985,10 @@ def test_prepared_publication_can_be_abandoned_without_observing_the_source(
             )
         }
     )
+
     assert not [
         item
-        for item in service_playbill_next(_instance, request=voluntary_request).items
+        for item in service_playbill_next(instance, request=voluntary_request).items
         if item.reason == "unregistered_projection_block"
     ]
 

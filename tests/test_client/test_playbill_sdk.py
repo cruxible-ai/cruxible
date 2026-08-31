@@ -734,6 +734,32 @@ def test_sdk_retirement_submission_fast_path_is_lru_bounded(tmp_path: Path) -> N
     assert claim_ids[-1] in pb._retirement_submissions  # type: ignore[attr-defined]
 
 
+def test_subject_draft_prepares_through_the_authoring_coordinator(tmp_path: Path) -> None:
+    _workspace(tmp_path)
+    client = _Client()
+    pb = Playbill._from_client(  # type: ignore[arg-type]
+        client,
+        instance_id="inst_test",
+        workspace=tmp_path,
+        clock=lambda: datetime(2026, 8, 24, 12, tzinfo=UTC),
+    )
+    subject = pb.subject(
+        subject="secops.policy/patch-sla",
+        pins=(),
+        lifecycle=ArtifactLifecycle(),
+    )
+
+    prepared = subject.prepare()
+
+    assert prepared.intent_id == "AIT-" + "1" * 32
+    assert client.compiled is not None
+    assert client.compiled["payload"]["tag"] == "playbill-subject-authoring-payload-v1"
+    assert client.compiled["payload"]["subject"]["identity"] == {
+        "kind": "Subject",
+        "name": "secops.policy/patch-sla",
+    }
+
+
 def test_cold_claim_prepares_one_payload_with_dependencies_and_program_stamp(
     tmp_path: Path,
 ) -> None:

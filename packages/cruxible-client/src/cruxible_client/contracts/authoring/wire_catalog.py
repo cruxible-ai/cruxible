@@ -21,12 +21,14 @@ from cruxible_client.contracts.primitives import canonical_json
 
 AUTHORING_WIRE_CATALOG_VERSION = 1
 AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST = (
-    "sha256:8754692fa551cbed00be32b17653f1e7298143b959082074dd2ef66e57989b79"
+    "sha256:dd8232f67da288502f2f5a52e2e16d320dcc9d496dd78e3938c42d56d2a207a1"
 )
 
 AUTHORING_WIRE_MODEL_NAMES = (
     "AcceptanceConditionV1",
+    "ApprovalPolicyAuthoringPayloadV1",
     "AuthoringArtifactReferenceV1",
+    "AuthoringCandidateReferenceV1",
     "AuthoringClaimStatementV1",
     "AuthoringDiagnosticV1",
     "AuthoringExactContentObjectV1",
@@ -50,6 +52,7 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "AuthoringSubmitResultV1",
     "BlockedCheckV1",
     "CandidateStatusV1",
+    "ChangeSetAuthoringPayloadV1",
     "ClaimAuthoringPayloadV1",
     "ClaimAuthoringPayloadV2",
     "ClaimAuthoringPayloadV3",
@@ -75,8 +78,10 @@ AUTHORING_WIRE_MODEL_NAMES = (
     "PublicationPreparationV2",
     "PublicationPrepareWarningV1",
     "PublicationSourceObservationV2",
+    "QueryDefinitionAuthoringPayloadV1",
     "RepairAlternativeV1",
     "SelfSourceBodyV1",
+    "SubjectAuthoringPayloadV1",
     "WorkingAnchorWindowV1",
     "WorkingDigestCoordinateV1",
     "WorkingGitBlobCoordinateV1",

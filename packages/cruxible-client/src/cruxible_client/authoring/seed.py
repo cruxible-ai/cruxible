@@ -7,7 +7,7 @@ dependency-closed change set" -- and every word of that is a statement about
 existing machinery. This module adds no admission path, no operation, and no
 authority. It reads a bundle's bytes and answers exactly one question:
 
-    which of the propose operations that already exist, in which order, carrying
+    which of the served operations that already exist, in which order, carrying
     which entries, is the *fewest* proposals this bundle can legally become?
 
 Why the answer is not "one"
@@ -116,9 +116,9 @@ file: the layout *is* the manifest, and the plan below is its rendering."""
 
 SEED_GROUP_OPERATIONS: Final[Mapping[SeedEntryKind, str]] = {
     "claim_type": "playbill_propose_claim_type",
-    "subject": "playbill_propose_subject",
+    "subject": "playbill_authoring_submit",
     "document": "playbill_propose_document",
-    "query_definition": "playbill_propose_query_definition",
+    "query_definition": "playbill_authoring_submit",
     "procedure": "playbill_authoring_submit",
 }
 """The served operation each group submits through. Every one of these existed

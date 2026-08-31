@@ -12,7 +12,6 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
     foreign_source_capture_contract,
     parse_capture_contract,
@@ -139,63 +138,6 @@ def lower_claim_type_input(
         raise ClaimTypeInputValidationError(exc) from exc
 
 
-def claim_type_input_example() -> ClaimTypeInputV1:
-    """Return the validated tagless template consumed by claim-type propose."""
-
-    return ClaimTypeInputV1(
-        predicate="project.work_item.replace_me",
-        allowed_subject_kinds=("project.work_item",),
-        object_kind="literal",
-        literal_schema={"type": "string"},
-        cardinality="one",
-        permitted_roles=("normative", "observation"),
-        evidence_admission_policy={"rules": []},
-        admission_policy={
-            "corroboration_requirements": [],
-            "freeze_requirements": [],
-        },
-        resolution_policy={
-            "cardinality": "one",
-            "eligible_verdicts": ["supported"],
-            "required_basis_kinds": [],
-            "require_current": True,
-            "selector": "only_contender",
-            "conflict_result": "unresolved",
-        },
-    )
-
-
-def defaulted_claim_type_input_example() -> ClaimTypeInputV1:
-    """Return the point-of-use example paired with the shipped Flow-A example."""
-
-    example = claim_type_input_example()
-    source_id = "repo.replace-me"
-    contract_digests = sorted(
-        {
-            capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged,
-            capture_contract_digest(foreign_source_capture_contract(source_id)).tagged,
-        }
-    )
-    return example.model_copy(
-        update={
-            "predicate": "project.work_item.status",
-            "anticipated_source_ids": (source_id,),
-            "evidence_admission_policy": {
-                "rules": [
-                    {
-                        "rule_id": f"source-{source_id}",
-                        "claim_roles": sorted(example.permitted_roles),
-                        "capture_contract_digests": contract_digests,
-                        "evidence_kinds": ["self_asserted"],
-                        "admission": "direct",
-                        "subject_binding": "exact_claim_subject",
-                    }
-                ]
-            },
-        }
-    )
-
-
 def lint_claim_type_input(
     instance: PlaybillInstance,
     value: ClaimTypeInputV1 | ClaimType,
@@ -280,8 +222,6 @@ __all__ = [
     "ClaimTypeInputV1",
     "ClaimTypeLintWarningV1",
     "ClaimTypeProposalLintV1",
-    "claim_type_input_example",
-    "defaulted_claim_type_input_example",
     "lint_claim_type_input",
     "lower_claim_type_input",
 ]

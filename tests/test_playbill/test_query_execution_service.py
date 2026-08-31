@@ -23,9 +23,6 @@ from cruxible_core.playbill.exhaust.records import (
 from cruxible_core.playbill.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.playbill.query.engine import claim_query_result_digest
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
-from cruxible_core.playbill.service.query_definitions import (
-    service_propose_playbill_query_definition,
-)
 from cruxible_core.service.playbill_query import (
     DEFAULT_RECEIPT_PARTITION_ID,
     DEFAULT_RECEIPT_STREAM_ID,
@@ -33,6 +30,7 @@ from cruxible_core.service.playbill_query import (
     build_accepted_query_facts,
     service_run_playbill_query,
 )
+from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._knowledge_loop_support import (
     PREDICATE,
     QUERY_NAME,
@@ -47,7 +45,7 @@ READ_TIME = datetime(2026, 8, 16, 21, 0, tzinfo=UTC)
 
 def _instance_with_query(tmp_path: Path):
     instance, owner = seed_claims(tmp_path)
-    inspection = service_propose_playbill_query_definition(
+    inspection = submit_query_definition_candidate(
         instance,
         query=work_item_query(),
         actor_id="owner",

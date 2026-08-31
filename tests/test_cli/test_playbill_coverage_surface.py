@@ -38,6 +38,7 @@ from cruxible_client.contracts.authoring.inputs import (
     ClaimInput,
     LiteralObjectInput,
     SelfSourceInput,
+    SubjectInput,
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.captures import (
@@ -51,6 +52,7 @@ from cruxible_client.contracts.policies import (
 from cruxible_core.cli.main import cli
 from cruxible_core.playbill.coverage.render import BATCH_SUMMARY_PREFIX
 from tests.test_cli.test_playbill_knowledge_loop_smoke import (  # noqa: F401
+    _author_and_accept,
     _Cli,
     _proposal_id,
     _write,
@@ -102,16 +104,14 @@ def _govern_the_bytes(cruxible: _Cli, tmp_path: Path) -> str:
     )
     cruxible.accept(_proposal_id(proposed))
 
-    proposed_subject = cruxible.json(
-        "playbill",
-        "subject",
-        "propose",
-        "--envelope",
-        _write(tmp_path / "subject.json", subject_shell("wi-42").model_dump(mode="json")),
-        "--name",
-        "seed-subject",
+    _author_and_accept(
+        cruxible,
+        tmp_path / "subject-input.json",
+        SubjectInput(
+            kind="subject",
+            subject=subject_shell("wi-42"),
+        ).model_dump(mode="json"),
     )
-    cruxible.accept(_proposal_id(proposed_subject))
 
     authoring = ClaimInput(
         kind="claim",
@@ -190,16 +190,14 @@ def _govern_a_foreign_span(
     )
     cruxible.accept(_proposal_id(proposed))
 
-    proposed_subject = cruxible.json(
-        "playbill",
-        "subject",
-        "propose",
-        "--envelope",
-        _write(tmp_path / "foreign-subject.json", subject_shell("wi-77").model_dump(mode="json")),
-        "--name",
-        "seed-foreign-subject",
+    _author_and_accept(
+        cruxible,
+        tmp_path / "foreign-subject-input.json",
+        SubjectInput(
+            kind="subject",
+            subject=subject_shell("wi-77"),
+        ).model_dump(mode="json"),
     )
-    cruxible.accept(_proposal_id(proposed_subject))
 
     presented = tmp_path / "presented.md"
     presented.write_bytes(FOREIGN_BYTES)

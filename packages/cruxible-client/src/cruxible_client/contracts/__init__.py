@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
+from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.results import (
@@ -27,7 +28,6 @@ RuntimeCredentialPermissionMode = Literal[
 ]
 PlaybillHostStatus = Literal["created", "already_exists"]
 PlaybillAuthoringExampleName = Literal[
-    "claim-type",
     "claim-existing-capture",
     "claim-flow-a",
     "claim-self-source",
@@ -36,6 +36,22 @@ PlaybillAuthoringExampleName = Literal[
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
     "query-claims-by-type",
+    "subject",
+    "approval-policy",
+]
+PlaybillPolicyKind: TypeAlias = Literal[
+    "approval_policy",
+    "source_acquisition_policy",
+    "claim_evidence_admission_policy",
+    "claim_admission_policy",
+    "claim_resolution_policy",
+    "claim_evidence_freshness_policy",
+    "claim_attestation_consequence_policy",
+    "capture_retention_erasure_policy",
+    "query_evaluation_policy",
+    "document_activation_policy",
+    "procedure_activation_policy",
+    "line_trigger_policy",
 ]
 PlaybillNextReason: TypeAlias = Literal[
     "claim_conflicted",
@@ -59,6 +75,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "claim_cites_retired",
     "retired_claim_source_stale",
     "unregistered_projection_block",
+    "projection_marker_invalid",
 ]
 
 
@@ -689,7 +706,7 @@ class PlaybillAuthoringExampleResult(BaseModel):
 
     tag: Literal["playbill-authoring-example-result-v1"] = "playbill-authoring-example-result-v1"
     name: PlaybillAuthoringExampleName
-    payload: dict[str, Any]
+    payload: AuthoringInputV1
 
 
 class PlaybillAuthoringIntentList(BaseModel):
@@ -827,10 +844,33 @@ class PlaybillProcedureReadiness(BaseModel):
     evaluation_time: str
     procedure_identity: dict[str, Any]
     procedure_artifact_digest: str
+    definition_digest: str
     state: Literal["ready", "binding_required", "unsupported"]
     required_slots: list[str]
     unsupported_nodes: list[dict[str, Any]]
     next_operation: dict[str, Any]
+
+
+class PlaybillPolicyInForce(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-policy-in-force-v1"] = "playbill-policy-in-force-v1"
+    placement: Literal["embedded", "standalone"]
+    policy_kind: PlaybillPolicyKind
+    declaring_artifact_identity: str
+    declaring_artifact_kind: str
+    declaring_artifact_digest: str
+    path: str
+    field_path: str
+    policy: dict[str, Any]
+
+
+class PlaybillPolicyInForceList(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-policy-in-force-list-v1"] = "playbill-policy-in-force-list-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    policies: list[PlaybillPolicyInForce]
 
 
 class PlaybillProcedureBindResult(BaseModel):

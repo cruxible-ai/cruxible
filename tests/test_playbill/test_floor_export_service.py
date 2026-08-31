@@ -16,9 +16,6 @@ from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
-from cruxible_core.playbill.service.query_definitions import (
-    service_propose_playbill_query_definition,
-)
 from cruxible_core.service.playbill_floor import (
     COVERAGE_MANIFEST_PATH,
     MANIFEST_PATH,
@@ -30,6 +27,7 @@ from cruxible_core.service.playbill_floor import (
     render_floor_json_v2,
     service_export_playbill_floor,
 )
+from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._knowledge_loop_support import (
     PREDICATE,
     TIMESTAMP,
@@ -48,7 +46,7 @@ PROCEDURE_CARD_PATH = "procedures/triage.card.json"
 
 def _instance_with_query(tmp_path: Path):
     instance, owner = seed_claims(tmp_path)
-    inspection = service_propose_playbill_query_definition(
+    inspection = submit_query_definition_candidate(
         instance,
         query=work_item_query(),
         actor_id="owner",
@@ -232,7 +230,7 @@ def test_floor_is_pinned_to_the_requested_accepted_coordinate(tmp_path: Path) ->
 def test_floor_grows_with_accepted_state_rather_than_being_frozen(tmp_path: Path) -> None:
     instance, owner = seed_claims(tmp_path)
     before = service_export_playbill_floor(instance)
-    inspection = service_propose_playbill_query_definition(
+    inspection = submit_query_definition_candidate(
         instance,
         query=work_item_query(),
         actor_id="owner",

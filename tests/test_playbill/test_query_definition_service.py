@@ -16,8 +16,8 @@ from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.playbill.service.query_definitions import (
     service_get_playbill_query_definition,
     service_list_playbill_query_definitions,
-    service_propose_playbill_query_definition,
 )
+from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._knowledge_loop_support import (
     PREDICATE,
     QUERY_NAME,
@@ -30,7 +30,7 @@ from tests.test_playbill._knowledge_loop_support import (
 
 def _accept_query(tmp_path: Path):
     instance, owner = seed_claims(tmp_path)
-    inspection = service_propose_playbill_query_definition(
+    inspection = submit_query_definition_candidate(
         instance,
         query=work_item_query(),
         actor_id="owner",
@@ -85,7 +85,7 @@ def test_claim_type_pin_that_does_not_resolve_at_the_base_is_refused(tmp_path: P
         }
     )
 
-    refused = service_propose_playbill_query_definition(
+    refused = submit_query_definition_candidate(
         instance,
         query=stale,
         actor_id="owner",
