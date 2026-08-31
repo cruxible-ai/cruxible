@@ -407,6 +407,101 @@ def _repeat_transform_procedure(*, max_items: int = 100) -> AcceptedProcedureV1:
     return _accepted(definition, pins=(contract_in, contract_out))
 
 
+def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedureV1:
+    empty = _owned_contract("repeat-empty-input", {})
+    opaque = ProcedureOwnedContractV1(
+        identity=ArtifactIdentity(kind="Contract", name="repeat-opaque"),
+        schema=ContractSchema(fields={}, allow_extra=True),
+    )
+    list_input = ProcedureOwnedContractV1(
+        identity=ArtifactIdentity(kind="Contract", name="repeat-list-input"),
+        schema=ContractSchema(
+            fields={
+                "items": PropertySchema(
+                    type="list",
+                    item_fields={"id": PropertySchema(type="string")},
+                )
+            },
+            allow_extra=True,
+        ),
+    )
+    list_output = ProcedureOwnedContractV1(
+        identity=ArtifactIdentity(kind="Contract", name="repeat-list-output"),
+        schema=ContractSchema(
+            fields={
+                "items": PropertySchema(
+                    type="list",
+                    item_fields={"identifier": PropertySchema(type="string")},
+                )
+            },
+            allow_extra=True,
+        ),
+    )
+    entry_pin = _owned_pin("contract-in", empty)
+    return_pin = _owned_pin("contract-out", opaque)
+    body_input = _owned_pin(
+        "contract-in",
+        list_input if boundary == "contract-in" else opaque,
+    )
+    body_output = _owned_pin(
+        "contract-out",
+        list_output if boundary == "contract-out" else opaque,
+    )
+    definition = ProcedureDefinitionV3(
+        name=f"repeat-{boundary}-budget",
+        contract_in=entry_pin,
+        contract_out=return_pin,
+        nodes=(
+            RepeatNodeV3(
+                node_id="repeat",
+                max_attempts=1,
+                body=(
+                    RepeatBodyNodeV3(
+                        node_id="shape-body",
+                        operation="transform",
+                        transform_kind="shape_items",
+                        contract_in=body_input,
+                        contract_out=body_output,
+                        spec={
+                            "tag": "playbill-transform-shape-items-spec-v1",
+                            "items": [{"id": "a"}, {"id": "b"}],
+                            "fields": {"identifier": "$item.id"},
+                        },
+                        as_="shaped",
+                    ),
+                ),
+                until=GuardPredicateV1(
+                    left=PredicateOperandV1(kind="exists", alias="shaped"),
+                    operator="eq",
+                    right=PredicateOperandV1(kind="literal", value=True),
+                ),
+                as_="repeated",
+            ),
+        ),
+        returns="repeated",
+        budget=_budget(items=1),
+        hard_caps=_hard_caps(items=1),
+        terminal_capability=1,
+    )
+    contracts = tuple(
+        {contract.identity.name: contract for contract in (empty, opaque, list_input, list_output)}[
+            name
+        ]
+        for name in sorted(
+            {
+                empty.identity.name,
+                opaque.identity.name,
+                (list_input if boundary == "contract-in" else list_output).identity.name,
+            }
+        )
+    )
+    return _owned_accepted(
+        definition,
+        contracts=contracts,
+        pins=(entry_pin, return_pin, body_input, body_output),
+    )
+
+
 def _typed_transform_node(**values: object) -> TransformNodeV3:
     return TransformNodeV3.model_validate(values)
 
@@ -1077,6 +1172,50 @@ def test_repeat_body_does_not_charge_without_a_list_contract_path(tmp_path) -> N
     assert result.status == "succeeded"
     assert result.refusal is None
     assert result.output is not None
+
+
+@pytest.mark.parametrize(
+    ("boundary", "expected_boundary"),
+    (
+        ("contract-in", "contract-in:repeat-list-input"),
+        ("contract-out", "contract-out:repeat-list-output"),
+    ),
+)
+def test_repeat_body_owned_contracts_enforce_item_budget(
+    tmp_path: Path,
+    boundary: str,
+    expected_boundary: str,
+) -> None:
+    accepted = _owned_repeat_transform_boundary_procedure(boundary)
+    fixture = _fixture(tmp_path)
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=OwnedProcedureContractValidator(accepted),
+    ).execute(
+        _prepare(
+            accepted,
+            fixture,
+            _StateReader(),
+            invocation_input={},
+        ),
+        accepted,
+    )
+
+    assert result.status == "refused"
+    assert result.refusal is not None
+    assert result.refusal.code == "budget_max_items_exceeded"
+    assert result.refusal.details == {
+        "boundary": expected_boundary,
+        "dimension": "max_items",
+        "field_path": "items",
+        "limit": 1,
+        "observed": 2,
+    }
 
 
 @pytest.mark.parametrize(

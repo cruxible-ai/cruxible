@@ -432,6 +432,71 @@ def test_guard_arm_halt_layout_order_has_identical_graph_identity() -> None:
     )
 
 
+@pytest.mark.parametrize("explicit_halt", (False, True))
+def test_terminal_position_guard_requires_authored_true_target(explicit_halt: bool) -> None:
+    result = ProjectNodeV3(
+        node_id="result",
+        fields={"ok": True},
+        contract_out=_pin("contract-out", "Contract", "terminal-guard-result"),
+        as_="result",
+    )
+    gate = GuardNodeV3(
+        node_id="gate",
+        predicate=GuardPredicateV1(
+            left=PredicateOperandV1(kind="literal", value=True),
+            operator="eq",
+            right=PredicateOperandV1(kind="literal", value=True),
+        ),
+        on_false="stop" if explicit_halt else "$abort",
+        refusal_code="guard.false",
+        message="The guard refused.",
+    )
+    nodes: tuple[object, ...] = (
+        (result, HaltNodeV3(node_id="stop", reason="The guard refused."), gate)
+        if explicit_halt
+        else (result, gate)
+    )
+
+    with pytest.raises(ProcedureGraphFormatError) as raised:
+        _definition(nodes, returns="result", terminal_capability=1)
+
+    assert str(raised.value) == (
+        "Procedure guard 'gate' with omitted on_true must name a forward true target "
+        "or have its intended successor placed after the guard"
+    )
+
+
+def test_nonterminal_guard_keeps_implicit_true_fallthrough() -> None:
+    contract_out = _pin("contract-out", "Contract", "guard-fallthrough")
+    definition = _definition(
+        (
+            GuardNodeV3(
+                node_id="gate",
+                predicate=GuardPredicateV1(
+                    left=PredicateOperandV1(kind="literal", value=True),
+                    operator="eq",
+                    right=PredicateOperandV1(kind="literal", value=True),
+                ),
+                on_false="$abort",
+                refusal_code="guard.false",
+                message="The guard refused.",
+            ),
+            ProjectNodeV3(
+                node_id="result",
+                fields={"ok": True},
+                contract_out=contract_out,
+                as_="result",
+            ),
+        ),
+        returns="result",
+    )
+
+    assert analyze_procedure_v3(definition).edges["gate"] == {
+        "on_false": "$abort",
+        "on_true": "result",
+    }
+
+
 def test_guard_arm_halt_exposes_an_intervening_nonreturn_leaf() -> None:
     contract_out = _pin("contract-out", "Contract", "guard-tail-result")
     with pytest.raises(ProcedureGraphFormatError) as raised:

@@ -7,11 +7,13 @@ from pydantic import ValidationError
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
+    ArtifactLifecycle,
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedures.artifacts import (
+    AcceptedProcedureV1,
     ProcedureArtifactV1,
     ProcedureArtifactV2,
     ProcedureOwnedContractV1,
@@ -29,6 +31,10 @@ from cruxible_client.contracts.procedures.graph import (
     compute_procedure_node_digests_v3,
 )
 from cruxible_client.contracts.procedures.models import (
+    GuardNodeV3,
+    GuardPredicateV1,
+    HaltNodeV3,
+    PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureHardCapsV3,
@@ -134,6 +140,38 @@ def _artifact(definition: ProcedureDefinitionV3) -> ProcedureArtifactV1:
     )
 
 
+def _layout_definition(*, halt_before_return: bool) -> ProcedureDefinitionV3:
+    contract_out = _pin("contract-out", "Contract", "claim-rows")
+    read = StateTapNodeV3(
+        node_id="read",
+        query=_pin("query", "QueryDefinition", "claims-by-status"),
+        parameters={},
+        as_="rows",
+        next="gate",
+    )
+    gate = GuardNodeV3(
+        node_id="gate",
+        predicate=GuardPredicateV1(
+            left=PredicateOperandV1(kind="count", alias="rows"),
+            operator="gt",
+            right=PredicateOperandV1(kind="literal", value=0),
+        ),
+        on_true="result",
+        on_false="stop",
+        refusal_code="rows.empty",
+        message="No rows are available.",
+    )
+    result = ProjectNodeV3(
+        node_id="result",
+        fields={"rows": "$steps.rows"},
+        contract_out=contract_out,
+        as_="result",
+    )
+    stop = HaltNodeV3(node_id="stop", reason="No rows are available.")
+    tail = (stop, result) if halt_before_return else (result, stop)
+    return _definition(nodes=(read, gate, *tail))
+
+
 def test_procedure_v3_round_trip_digest_and_node_golden() -> None:
     definition = _definition()
     procedure = _artifact(definition)
@@ -164,6 +202,66 @@ def test_open_slot_procedure_is_acceptable_but_not_directly_runnable() -> None:
         predecessor=None,
     )
     assert result.verdict == "accepted"
+
+
+def test_layout_only_successor_changes_no_registered_semantic_member() -> None:
+    predecessor_procedure = _artifact(_layout_definition(halt_before_return=False))
+    predecessor = AcceptedProcedureV1(
+        path=procedure_path("triage"),
+        procedure=predecessor_procedure,
+        artifact_digest=procedure_artifact_digest(predecessor_procedure).tagged,
+    )
+    reordered_definition = _layout_definition(halt_before_return=True)
+    assert compute_procedure_definition_digest_v3(reordered_definition).tagged == (
+        predecessor_procedure.definition_digest
+    )
+    successor = _artifact(reordered_definition).model_copy(
+        update={"lifecycle": ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest)}
+    )
+
+    result = evaluate_procedure_law(
+        successor,
+        path=predecessor.path,
+        predecessor=predecessor,
+    )
+
+    assert result.verdict == "refused"
+    assert result.diagnostics[0].code == "playbill.proposal.non_singleton_scope"
+    assert result.diagnostics[0].message == ("The proposal changes no registered semantic member.")
+
+
+@pytest.mark.parametrize("change", ("activation", "retirement", "definition"))
+def test_procedure_semantic_successors_remain_accepted(change: str) -> None:
+    predecessor_procedure = _artifact(_definition())
+    predecessor = AcceptedProcedureV1(
+        path=procedure_path("triage"),
+        procedure=predecessor_procedure,
+        artifact_digest=procedure_artifact_digest(predecessor_procedure).tagged,
+    )
+    definition = predecessor_procedure.definition
+    activation_policy = predecessor_procedure.activation_policy
+    lifecycle = ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest)
+    if change == "activation":
+        activation_policy = "snapshot"
+    elif change == "retirement":
+        lifecycle = ArtifactLifecycle(
+            state="retired",
+            predecessor_digest=predecessor.artifact_digest,
+        )
+    else:
+        definition = definition.model_copy(update={"description": "A semantic revision."})
+    successor = _artifact(definition).model_copy(
+        update={"activation_policy": activation_policy, "lifecycle": lifecycle}
+    )
+
+    assert (
+        evaluate_procedure_law(
+            successor,
+            path=predecessor.path,
+            predecessor=predecessor,
+        ).verdict
+        == "accepted"
+    )
 
 
 def test_procedure_v2_closes_owned_contracts_but_keeps_query_slot_open() -> None:

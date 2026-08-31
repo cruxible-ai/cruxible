@@ -195,6 +195,7 @@ def test_readiness_and_idempotent_run_use_the_accepted_query_engine(tmp_path: Pa
     )
 
     assert readiness.state == "ready"
+    assert readiness.definition_digest == procedure.definition_digest
     assert readiness.next_operation.kind == "run"
     assert readiness.required_slots == ()
     assert readiness.unsupported_nodes == ()
@@ -250,9 +251,12 @@ def test_explicit_historical_coordinate_uses_read_only_replay_lane(tmp_path: Pat
     historical = instance.accepted_coordinate()
     successor = procedure.model_copy(
         update={
+            "activation_policy": (
+                "snapshot" if procedure.activation_policy != "snapshot" else "drain"
+            ),
             "lifecycle": procedure.lifecycle.model_copy(
                 update={"predecessor_digest": procedure_artifact_digest(procedure).tagged}
-            )
+            ),
         }
     )
     _activate_procedure(
@@ -669,6 +673,7 @@ def test_binding_proposes_same_identity_successor_with_exact_query_pin(tmp_path:
 
     assert result.accepted_digest == procedure_artifact_digest(abstract).tagged
     assert result.accepted_readiness.state == "binding_required"
+    assert result.accepted_readiness.definition_digest == abstract.definition_digest
     assert result.accepted_readiness.procedure_identity == ArtifactIdentity(
         kind="Procedure", name=abstract.identity.name
     )

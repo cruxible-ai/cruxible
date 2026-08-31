@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Literal
 
 from cruxible_client import contracts
 from cruxible_client.contracts.acquisition_policies import (
@@ -47,7 +48,7 @@ def _coordinate(
 
 def _row(
     *,
-    placement: str,
+    placement: Literal["embedded", "standalone"],
     policy_kind: contracts.PlaybillPolicyKind,
     identity: str,
     artifact_kind: str,
@@ -105,33 +106,33 @@ def list_playbill_policies_in_force(
         kind = registered_path_kind(path)
         content = tree[path]
         if kind == "approval-policy":
-            policy = parse_approval_policy(content, path=path)
+            approval_policy = parse_approval_policy(content, path=path)
             rows.append(
                 _row(
                     placement="standalone",
                     policy_kind="approval_policy",
                     identity=APPROVAL_POLICY_IDENTITY,
                     artifact_kind="ApprovalPolicy",
-                    digest=approval_policy_digest(policy).tagged,
+                    digest=approval_policy_digest(approval_policy).tagged,
                     path=path,
                     field_path="/",
-                    policy=policy.model_dump(mode="json"),
+                    policy=approval_policy.model_dump(mode="json"),
                 )
             )
         elif kind == "source-acquisition-policy":
-            policy = parse_acquisition_policy(content, path=path)
-            if policy.lifecycle.state != "live":
+            acquisition_policy = parse_acquisition_policy(content, path=path)
+            if acquisition_policy.lifecycle.state != "live":
                 continue
             rows.append(
                 _row(
                     placement="standalone",
                     policy_kind="source_acquisition_policy",
-                    identity=policy.identity.qualified,
-                    artifact_kind=policy.identity.kind,
-                    digest=acquisition_policy_digest(policy).tagged,
+                    identity=acquisition_policy.identity.qualified,
+                    artifact_kind=acquisition_policy.identity.kind,
+                    digest=acquisition_policy_digest(acquisition_policy).tagged,
                     path=path,
                     field_path="/",
-                    policy=policy.model_dump(mode="json"),
+                    policy=acquisition_policy.model_dump(mode="json"),
                 )
             )
         elif kind == "claim-type":

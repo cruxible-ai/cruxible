@@ -8,6 +8,7 @@
     },
     "PlaybillAuthoringExampleName": {
       "values": [
+        "approval-policy",
         "claim-type",
         "claim-existing-capture",
         "claim-flow-a",
@@ -16,7 +17,8 @@
         "claim-adjudicate-contradicting-evidence",
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
-        "query-claims-by-type"
+        "query-claims-by-type",
+        "subject"
       ]
     },
     "PlaybillHostStatus": {
@@ -47,7 +49,24 @@
         "document_modified",
         "claim_cites_retired",
         "retired_claim_source_stale",
-        "unregistered_projection_block"
+        "unregistered_projection_block",
+        "projection_marker_invalid"
+      ]
+    },
+    "PlaybillPolicyKind": {
+      "values": [
+        "approval_policy",
+        "source_acquisition_policy",
+        "claim_evidence_admission_policy",
+        "claim_admission_policy",
+        "claim_resolution_policy",
+        "claim_evidence_freshness_policy",
+        "claim_attestation_consequence_policy",
+        "capture_retention_erasure_policy",
+        "query_evaluation_policy",
+        "document_activation_policy",
+        "procedure_activation_policy",
+        "line_trigger_policy"
       ]
     },
     "RuntimeCredentialPermissionMode": {
@@ -2610,6 +2629,7 @@
           "required": true,
           "schema": {
             "enum": [
+              "approval-policy",
               "claim-type",
               "claim-existing-capture",
               "claim-flow-a",
@@ -2618,7 +2638,8 @@
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
-              "query-claims-by-type"
+              "query-claims-by-type",
+              "subject"
             ],
             "title": "Name",
             "type": "string"
@@ -2656,6 +2677,7 @@
         "properties": {
           "name": {
             "enum": [
+              "approval-policy",
               "claim-type",
               "claim-existing-capture",
               "claim-flow-a",
@@ -2664,7 +2686,8 @@
               "claim-adjudicate-contradicting-evidence",
               "claim-cite-supporting-evidence",
               "claim-adjudicate-unreviewed-evidence",
-              "query-claims-by-type"
+              "query-claims-by-type",
+              "subject"
             ],
             "title": "Name",
             "type": "string"
@@ -11457,6 +11480,393 @@
         "unobserved_domains"
       ]
     },
+    "PlaybillPolicyInForce": {
+      "fields": {
+        "declaring_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "declaring_artifact_digest",
+          "required": true,
+          "schema": {
+            "title": "Declaring Artifact Digest",
+            "type": "string"
+          }
+        },
+        "declaring_artifact_identity": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "declaring_artifact_identity",
+          "required": true,
+          "schema": {
+            "title": "Declaring Artifact Identity",
+            "type": "string"
+          }
+        },
+        "declaring_artifact_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "declaring_artifact_kind",
+          "required": true,
+          "schema": {
+            "title": "Declaring Artifact Kind",
+            "type": "string"
+          }
+        },
+        "field_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "field_path",
+          "required": true,
+          "schema": {
+            "title": "Field Path",
+            "type": "string"
+          }
+        },
+        "path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": true,
+          "schema": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "placement": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "placement",
+          "required": true,
+          "schema": {
+            "enum": [
+              "embedded",
+              "standalone"
+            ],
+            "title": "Placement",
+            "type": "string"
+          }
+        },
+        "policy": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "policy",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Policy",
+            "type": "object"
+          }
+        },
+        "policy_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "policy_kind",
+          "required": true,
+          "schema": {
+            "enum": [
+              "approval_policy",
+              "source_acquisition_policy",
+              "claim_evidence_admission_policy",
+              "claim_admission_policy",
+              "claim_resolution_policy",
+              "claim_evidence_freshness_policy",
+              "claim_attestation_consequence_policy",
+              "capture_retention_erasure_policy",
+              "query_evaluation_policy",
+              "document_activation_policy",
+              "procedure_activation_policy",
+              "line_trigger_policy"
+            ],
+            "title": "Policy Kind",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-policy-in-force-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-policy-in-force-v1",
+            "default": "playbill-policy-in-force-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "declaring_artifact_digest": {
+            "title": "Declaring Artifact Digest",
+            "type": "string"
+          },
+          "declaring_artifact_identity": {
+            "title": "Declaring Artifact Identity",
+            "type": "string"
+          },
+          "declaring_artifact_kind": {
+            "title": "Declaring Artifact Kind",
+            "type": "string"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "placement": {
+            "enum": [
+              "embedded",
+              "standalone"
+            ],
+            "title": "Placement",
+            "type": "string"
+          },
+          "policy": {
+            "additionalProperties": true,
+            "title": "Policy",
+            "type": "object"
+          },
+          "policy_kind": {
+            "enum": [
+              "approval_policy",
+              "source_acquisition_policy",
+              "claim_evidence_admission_policy",
+              "claim_admission_policy",
+              "claim_resolution_policy",
+              "claim_evidence_freshness_policy",
+              "claim_attestation_consequence_policy",
+              "capture_retention_erasure_policy",
+              "query_evaluation_policy",
+              "document_activation_policy",
+              "procedure_activation_policy",
+              "line_trigger_policy"
+            ],
+            "title": "Policy Kind",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-policy-in-force-v1",
+            "default": "playbill-policy-in-force-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "placement",
+          "policy_kind",
+          "declaring_artifact_identity",
+          "declaring_artifact_kind",
+          "declaring_artifact_digest",
+          "path",
+          "field_path",
+          "policy"
+        ],
+        "title": "PlaybillPolicyInForce",
+        "type": "object"
+      },
+      "required_fields": [
+        "declaring_artifact_digest",
+        "declaring_artifact_identity",
+        "declaring_artifact_kind",
+        "field_path",
+        "path",
+        "placement",
+        "policy",
+        "policy_kind"
+      ]
+    },
+    "PlaybillPolicyInForceList": {
+      "fields": {
+        "coordinate": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "coordinate",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "policies": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "policies",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillPolicyInForce"
+            },
+            "title": "Policies",
+            "type": "array"
+          }
+        },
+        "tag": {
+          "default": "playbill-policy-in-force-list-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-policy-in-force-list-v1",
+            "default": "playbill-policy-in-force-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillAcceptedCoordinate": {
+            "additionalProperties": false,
+            "properties": {
+              "compiler_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Compiler Digest",
+                "type": "string"
+              },
+              "generation_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Generation Root",
+                "type": "string"
+              },
+              "git_oid": {
+                "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+                "title": "Git Oid",
+                "type": "string"
+              },
+              "semantic_root": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "title": "Semantic Root",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-accepted-coordinate-v1",
+                "default": "playbill-accepted-coordinate-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "git_oid",
+              "semantic_root",
+              "generation_root",
+              "compiler_digest"
+            ],
+            "title": "PlaybillAcceptedCoordinate",
+            "type": "object"
+          },
+          "PlaybillPolicyInForce": {
+            "additionalProperties": false,
+            "properties": {
+              "declaring_artifact_digest": {
+                "title": "Declaring Artifact Digest",
+                "type": "string"
+              },
+              "declaring_artifact_identity": {
+                "title": "Declaring Artifact Identity",
+                "type": "string"
+              },
+              "declaring_artifact_kind": {
+                "title": "Declaring Artifact Kind",
+                "type": "string"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "placement": {
+                "enum": [
+                  "embedded",
+                  "standalone"
+                ],
+                "title": "Placement",
+                "type": "string"
+              },
+              "policy": {
+                "additionalProperties": true,
+                "title": "Policy",
+                "type": "object"
+              },
+              "policy_kind": {
+                "enum": [
+                  "approval_policy",
+                  "source_acquisition_policy",
+                  "claim_evidence_admission_policy",
+                  "claim_admission_policy",
+                  "claim_resolution_policy",
+                  "claim_evidence_freshness_policy",
+                  "claim_attestation_consequence_policy",
+                  "capture_retention_erasure_policy",
+                  "query_evaluation_policy",
+                  "document_activation_policy",
+                  "procedure_activation_policy",
+                  "line_trigger_policy"
+                ],
+                "title": "Policy Kind",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-policy-in-force-v1",
+                "default": "playbill-policy-in-force-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "placement",
+              "policy_kind",
+              "declaring_artifact_identity",
+              "declaring_artifact_kind",
+              "declaring_artifact_digest",
+              "path",
+              "field_path",
+              "policy"
+            ],
+            "title": "PlaybillPolicyInForce",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "coordinate": {
+            "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          },
+          "policies": {
+            "items": {
+              "$ref": "#/$defs/PlaybillPolicyInForce"
+            },
+            "title": "Policies",
+            "type": "array"
+          },
+          "tag": {
+            "const": "playbill-policy-in-force-list-v1",
+            "default": "playbill-policy-in-force-list-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinate",
+          "policies"
+        ],
+        "title": "PlaybillPolicyInForceList",
+        "type": "object"
+      },
+      "required_fields": [
+        "coordinate",
+        "policies"
+      ]
+    },
     "PlaybillPrincipalList": {
       "fields": {
         "coordinate": {
@@ -11673,6 +12083,10 @@
               "coordinate": {
                 "$ref": "#/$defs/PlaybillAcceptedCoordinate"
               },
+              "definition_digest": {
+                "title": "Definition Digest",
+                "type": "string"
+              },
               "evaluation_time": {
                 "title": "Evaluation Time",
                 "type": "string"
@@ -11727,6 +12141,7 @@
               "evaluation_time",
               "procedure_identity",
               "procedure_artifact_digest",
+              "definition_digest",
               "state",
               "required_slots",
               "unsupported_nodes",
@@ -11809,6 +12224,16 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
+          }
+        },
+        "definition_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "definition_digest",
+          "required": true,
+          "schema": {
+            "title": "Definition Digest",
+            "type": "string"
           }
         },
         "evaluation_time": {
@@ -11957,6 +12382,10 @@
           "coordinate": {
             "$ref": "#/$defs/PlaybillAcceptedCoordinate"
           },
+          "definition_digest": {
+            "title": "Definition Digest",
+            "type": "string"
+          },
           "evaluation_time": {
             "title": "Evaluation Time",
             "type": "string"
@@ -12011,6 +12440,7 @@
           "evaluation_time",
           "procedure_identity",
           "procedure_artifact_digest",
+          "definition_digest",
           "state",
           "required_slots",
           "unsupported_nodes",
@@ -12021,6 +12451,7 @@
       },
       "required_fields": [
         "coordinate",
+        "definition_digest",
         "evaluation_time",
         "next_operation",
         "procedure_artifact_digest",

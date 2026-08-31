@@ -95,7 +95,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.graph import (
+    ProcedureGraphFormatError,
+    compute_procedure_definition_digest_v3,
+)
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3, iter_pin_bindings
 from cruxible_client.contracts.providers import parse_provider, provider_digest, provider_path
 from cruxible_client.contracts.query.definitions import (
@@ -1115,12 +1118,16 @@ def _lower_procedure(
     )
     try:
         definition = ProcedureDefinitionV3.model_validate(resolved_definition)
-    except ValidationError as exc:
+    except (ProcedureGraphFormatError, ValidationError) as exc:
+        message = (
+            str(exc)
+            if isinstance(exc, ProcedureGraphFormatError)
+            else " | ".join(_validation_error_lines(exc, root="definition"))
+        )
         _refuse(
             "playbill.authoring.procedure_definition_invalid",
             "definition",
-            "The lowered graph-v3 Procedure definition is invalid: "
-            + " | ".join(_validation_error_lines(exc, root="definition")),
+            "The lowered graph-v3 Procedure definition is invalid: " + message,
             repair_kind="replace_definition",
             repair_description="Repair the indicated graph-v3 definition field.",
         )

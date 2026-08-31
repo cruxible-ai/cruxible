@@ -233,7 +233,12 @@ def analyze_procedure_v3(definition: ProcedureDefinitionV3) -> ProcedureGraphV3:
     for index, node in enumerate(definition.nodes):
         declared = _declared_edges(node)
         fallthrough = node_ids[index + 1] if index + 1 < len(node_ids) else None
-        if isinstance(node, GuardNodeV3) and "on_true" not in declared and fallthrough:
+        if isinstance(node, GuardNodeV3) and "on_true" not in declared:
+            if fallthrough is None:
+                raise ProcedureGraphFormatError(
+                    f"Procedure guard {node.node_id!r} with omitted on_true must name a "
+                    "forward true target or have its intended successor placed after the guard"
+                )
             declared["on_true"] = fallthrough
         elif (
             node.kind not in TERMINAL_NODE_KINDS

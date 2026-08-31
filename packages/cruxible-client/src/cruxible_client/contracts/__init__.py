@@ -844,6 +844,7 @@ class PlaybillProcedureReadiness(BaseModel):
     evaluation_time: str
     procedure_identity: dict[str, Any]
     procedure_artifact_digest: str
+    definition_digest: str
     state: Literal["ready", "binding_required", "unsupported"]
     required_slots: list[str]
     unsupported_nodes: list[dict[str, Any]]

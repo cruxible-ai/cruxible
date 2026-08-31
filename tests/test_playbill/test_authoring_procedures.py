@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,10 @@ from cruxible_client.contracts.procedures.artifacts import (
 )
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.models import (
+    GuardNodeV3,
+    GuardPredicateV1,
+    HaltNodeV3,
+    PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
     ProcedureHardCapsV3,
@@ -32,16 +37,30 @@ from cruxible_client.contracts.procedures.models import (
     ProjectNodeV3,
     StateTapNodeV3,
 )
+from cruxible_client.contracts.procedures.results import (
+    ProcedureHaltTerminalV1,
+    ProcedureRunReceiptV3,
+)
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
     query_definition_digest,
 )
 from cruxible_client.contracts.query.grammar import QueryProjectionV1
+from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.preflight import compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.service.documents import (
+    service_activate_playbill_proposal,
+    service_submit_playbill_approval,
+)
+from cruxible_core.service.playbill_procedure_runs import (
+    ProcedureRunRequestV2,
+    service_run_playbill_procedure,
+)
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_resolution_contracts import _accept_tree
 
 TIMESTAMP = "2026-08-21T12:00:00.000000Z"
@@ -105,6 +124,40 @@ def _slot_definition() -> ProcedureDefinitionV3:
         ),
         terminal_capability=1,
     )
+
+
+def _layout_slot_definition(*, halt_before_return: bool) -> ProcedureDefinitionV3:
+    base = _slot_definition()
+    query = ProcedurePinSlotRefV1(slot_name="query")
+    contract_out = ProcedurePinSlotRefV1(slot_name="contract-out")
+    read = StateTapNodeV3(
+        node_id="read",
+        query=query,
+        parameters={},
+        as_="rows",
+        next="gate",
+    )
+    gate = GuardNodeV3(
+        node_id="gate",
+        predicate=GuardPredicateV1(
+            left=PredicateOperandV1(kind="count", alias="rows"),
+            operator="gt",
+            right=PredicateOperandV1(kind="literal", value=0),
+        ),
+        on_true="result",
+        on_false="stop",
+        refusal_code="rows.empty",
+        message="No rows are available.",
+    )
+    result = ProjectNodeV3(
+        node_id="result",
+        fields={"rows": "$steps.rows"},
+        contract_out=contract_out,
+        as_="result",
+    )
+    stop = HaltNodeV3(node_id="stop", reason="No rows are available.")
+    tail = (stop, result) if halt_before_return else (result, stop)
+    return base.model_copy(update={"nodes": (read, gate, *tail)})
 
 
 def _coordinator(tmp_path: Path) -> tuple[AuthoringIntentCoordinator, AuthenticatedActor]:
@@ -431,6 +484,83 @@ def test_invalid_definition_message_excludes_pydantic_metadata(tmp_path: Path) -
     assert "errors.pydantic.dev" not in message
 
 
+@pytest.mark.parametrize("invalid_graph", ("nonreturn_leaf", "terminal_guard"))
+def test_graph_law_failures_use_typed_definition_refusal(
+    tmp_path: Path,
+    invalid_graph: str,
+) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+    if invalid_graph == "nonreturn_leaf":
+        definition["nodes"] = definition["nodes"][:1]  # type: ignore[index]
+    else:
+        definition["nodes"] = [
+            {
+                "kind": "guard",
+                "node_id": "gate",
+                "predicate": {
+                    "left": {"kind": "literal", "value": True},
+                    "operator": "eq",
+                    "right": {"kind": "literal", "value": True},
+                },
+                "on_false": "$abort",
+                "refusal_code": "guard.false",
+                "message": "The guard refused.",
+            }
+        ]
+
+    result = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition),
+        canonical_timestamp=TIMESTAMP,
+    )
+
+    assert result.verdict == "refused"
+    diagnostic = result.frontier.diagnostics[0]
+    assert diagnostic.code == "playbill.authoring.procedure_definition_invalid"
+    assert diagnostic.stage == "lowering"
+    assert diagnostic.offending_element == "definition"
+    assert diagnostic.repairs[0].kind == "replace_definition"
+    assert diagnostic.repairs[0].description == ("Repair the indicated graph-v3 definition field.")
+    assert "errors.pydantic.dev" not in diagnostic.message
+
+
+def test_layout_only_procedure_successor_refuses_in_coordinator(tmp_path: Path) -> None:
+    instance, owner = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    definition = _layout_slot_definition(halt_before_return=False)
+    first = coordinator.compile(
+        actor=actor,
+        payload=_payload(definition.model_dump(mode="json", by_alias=True)),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert first.verdict == "passed"
+    seed = coordinator.list_pending(actor=actor).intents[0]
+    lowered = compute_preflight(instance, intent=seed, actor=actor).lowered
+    assert lowered is not None
+    _accept_tree(
+        instance,
+        owner,
+        lowered.proposed_tree,
+        timestamp=TIMESTAMP,
+        proposal_name="seed-layout-procedure",
+    )
+    reordered = _layout_slot_definition(halt_before_return=True)
+
+    result = coordinator.compile(
+        actor=actor,
+        payload=_payload(reordered.model_dump(mode="json", by_alias=True)),
+        canonical_timestamp="2026-08-21T12:01:00.000000Z",
+    )
+
+    assert result.verdict == "refused"
+    assert result.frontier.diagnostics[0].code == "playbill.proposal.non_singleton_scope"
+    assert result.frontier.diagnostics[0].message == (
+        "The proposal changes no registered semantic member."
+    )
+
+
 def test_invalid_artifact_reference_message_excludes_pydantic_metadata(
     tmp_path: Path,
 ) -> None:
@@ -561,3 +691,122 @@ def test_a_procedure_revision_submits_without_reaching_the_claim_revision_marker
     # The marker is a Claim concept; a Procedure carries the default.
     assert submitted.identity_stable is False
     assert submitted.claim_revision is None
+
+
+def test_coordinator_authored_halt_reason_reaches_terminal_and_receipt(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    reason = "No eligible work remains."
+    payload = ProcedureAuthoringPayloadV2(
+        definition={
+            "graph_format": 3,
+            "name": "halt-with-reason",
+            "contract_in": {
+                "kind": "carried_contract",
+                "name": "empty-input",
+                "role": "contract-in",
+            },
+            "contract_out": {
+                "kind": "carried_contract",
+                "name": "halt-output",
+                "role": "contract-out",
+            },
+            "nodes": [
+                {
+                    "kind": "guard",
+                    "node_id": "gate",
+                    "predicate": {
+                        "left": {"kind": "literal", "value": False},
+                        "operator": "eq",
+                        "right": {"kind": "literal", "value": True},
+                    },
+                    "on_true": "result",
+                    "on_false": "stop",
+                    "refusal_code": "work.exhausted",
+                    "message": reason,
+                },
+                {
+                    "kind": "project",
+                    "node_id": "result",
+                    "fields": {},
+                    "contract_out": {
+                        "kind": "carried_contract",
+                        "name": "halt-output",
+                        "role": "contract-out",
+                    },
+                    "as": "result",
+                },
+                {"kind": "halt", "node_id": "stop", "reason": reason},
+            ],
+            "returns": "result",
+            "budget": {
+                "wall_clock": {"microseconds": 1_000_000},
+                "max_provider_calls": 0,
+                "max_capture_bytes": 0,
+            },
+            "hard_caps": {
+                "max_wall_clock": {"microseconds": 2_000_000},
+                "max_provider_calls": 0,
+                "max_capture_bytes": 0,
+                "max_items": 1,
+                "max_repeat_attempts": 1,
+            },
+            "terminal_capability": 1,
+        },
+        activation_policy="snapshot",
+        owned_contracts=(
+            _carried_contract("empty-input", PropertySchema(type="json")),
+            _carried_contract("halt-output", PropertySchema(type="json")),
+        ),
+    )
+    created = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    preflight = compute_preflight(instance, intent=created, actor=actor)
+    assert preflight.result.verdict == "passed", preflight.result.frontier
+    submitted = coordinator.submit(created.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    assert submitted.status.candidate_digest is not None
+    approval = _sign(
+        owner,
+        submitted.status.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    service_activate_playbill_proposal(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        activated_by="owner",
+    )
+
+    result = service_run_playbill_procedure(
+        instance,
+        name="halt-with-reason",
+        request=ProcedureRunRequestV2(
+            evaluation_time=datetime(2026, 8, 21, 12, 5, tzinfo=UTC),
+            input={},
+        ),
+        actor_context=GovernedActorContext(
+            actor_type="human_user",
+            actor_id="owner",
+            org_id=instance.descriptor.instance_id,
+            operation_id="coordinator-halt-reason",
+            timestamp=datetime(2026, 8, 21, 12, 5, tzinfo=UTC),
+        ),
+    )
+
+    assert result.status == "halted"
+    assert isinstance(result.terminal, ProcedureHaltTerminalV1)
+    assert result.terminal.reason == reason
+    assert isinstance(result.receipt, ProcedureRunReceiptV3)
+    assert result.receipt.terminal == result.terminal

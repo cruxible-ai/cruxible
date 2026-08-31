@@ -179,6 +179,7 @@ class ProcedureReadinessResultV1(_StrictProcedureSurfaceModel):
     evaluation_time: datetime
     procedure_identity: ArtifactIdentity
     procedure_artifact_digest: str
+    definition_digest: str
     state: Literal["ready", "binding_required", "unsupported"]
     required_slots: tuple[str, ...]
     unsupported_nodes: tuple[ProcedureUnsupportedNodeV1, ...]
@@ -376,6 +377,7 @@ def _readiness(
         evaluation_time=evaluation_time,
         procedure_identity=accepted.procedure.identity,
         procedure_artifact_digest=accepted.artifact_digest,
+        definition_digest=accepted.procedure.definition_digest,
         state=state,
         required_slots=slots,
         unsupported_nodes=unsupported,

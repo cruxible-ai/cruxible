@@ -392,6 +392,16 @@ def evaluate_procedure_law(
                 "Procedure successor does not pin its exact predecessor.",
                 path=path,
             )
+        if (
+            procedure.definition_digest == predecessor.procedure.definition_digest
+            and procedure.activation_policy == predecessor.procedure.activation_policy
+            and procedure.lifecycle.state == predecessor.procedure.lifecycle.state
+        ):
+            return _refusal(
+                "playbill.proposal.non_singleton_scope",
+                "The proposal changes no registered semantic member.",
+                path=path,
+            )
     return ProcedureLawResultV1(
         verdict="accepted",
         artifact_digest=procedure_artifact_digest(procedure).tagged,

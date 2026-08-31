@@ -184,16 +184,33 @@ def test_principal_display_name_is_sanitized_and_invalid_ref_is_a_typed_400(
     "entrypoint",
     (
         playbill_api.playbill_propose_document,
-        playbill_api.playbill_propose_subject,
         playbill_api.playbill_propose_claim_type,
         playbill_api.playbill_propose_claim_type_input,
-        playbill_api.playbill_propose_query_definition,
     ),
 )
 def test_every_proposal_route_keeps_the_typed_validation_boundary(
     entrypoint: object,
 ) -> None:
     assert "_proposal_validation_boundary(" in getsource(entrypoint)
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "replacement"),
+    (
+        (playbill_api.playbill_propose_subject, "authoring create --example subject"),
+        (
+            playbill_api.playbill_propose_query_definition,
+            "authoring create --example query-claims-by-type",
+        ),
+    ),
+)
+def test_converged_proposal_routes_are_typed_deprecation_shims(
+    entrypoint: object,
+    replacement: str,
+) -> None:
+    source = getsource(entrypoint)
+    assert "PlaybillDeprecatedWriteError(" in source
+    assert replacement in source
 
 
 def test_residual_proposal_ref_validation_is_a_typed_http_400(
