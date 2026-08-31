@@ -429,6 +429,10 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
         identity=ArtifactIdentity(kind="Contract", name="repeat-list-output"),
         schema=ContractSchema(
             fields={
+                "auxiliary": PropertySchema(
+                    type="list",
+                    item_fields={"label": PropertySchema(type="string")},
+                ),
                 "items": PropertySchema(
                     type="list",
                     item_fields={"identifier": PropertySchema(type="string")},
@@ -447,6 +451,22 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
         "contract-out",
         list_output if boundary == "contract-out" else opaque,
     )
+    transform_kind = "adapter" if boundary == "contract-out" else "shape_items"
+    spec = (
+        {
+            "tag": "playbill-transform-adapter-spec-v1",
+            "value": {
+                "auxiliary": [],
+                "items": [{"identifier": "a"}, {"identifier": "b"}],
+            },
+        }
+        if boundary == "contract-out"
+        else {
+            "tag": "playbill-transform-shape-items-spec-v1",
+            "items": [{"id": "a"}, {"id": "b"}],
+            "fields": {"identifier": "$item.id"},
+        }
+    )
     definition = ProcedureDefinitionV3(
         name=f"repeat-{boundary}-budget",
         contract_in=entry_pin,
@@ -459,14 +479,10 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
                     RepeatBodyNodeV3(
                         node_id="shape-body",
                         operation="transform",
-                        transform_kind="shape_items",
+                        transform_kind=transform_kind,
                         contract_in=body_input,
                         contract_out=body_output,
-                        spec={
-                            "tag": "playbill-transform-shape-items-spec-v1",
-                            "items": [{"id": "a"}, {"id": "b"}],
-                            "fields": {"identifier": "$item.id"},
-                        },
+                        spec=spec,
                         as_="shaped",
                     ),
                 ),
@@ -1188,6 +1204,10 @@ def test_repeat_body_owned_contracts_enforce_item_budget(
 ) -> None:
     accepted = _owned_repeat_transform_boundary_procedure(boundary)
     fixture = _fixture(tmp_path)
+    validator = OwnedProcedureContractValidator(accepted)
+    if boundary == "contract-out":
+        body = accepted.procedure.definition.nodes[0].body[0]  # type: ignore[union-attr]
+        assert validator.unique_list_field_path(body.contract_out) is None
 
     result = ProcedureExecutor(
         journal=fixture.journal,
@@ -1195,7 +1215,7 @@ def test_repeat_body_owned_contracts_enforce_item_budget(
         run_index=fixture.run_index,
         fencing_token="writer",
         activation_authority=_Authority(accepted.artifact_digest),
-        contract_validator=OwnedProcedureContractValidator(accepted),
+        contract_validator=validator,
     ).execute(
         _prepare(
             accepted,

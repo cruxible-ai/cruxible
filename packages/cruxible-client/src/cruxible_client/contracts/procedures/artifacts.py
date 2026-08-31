@@ -395,7 +395,13 @@ def evaluate_procedure_law(
         if (
             procedure.definition_digest == predecessor.procedure.definition_digest
             and procedure.activation_policy == predecessor.procedure.activation_policy
+            and procedure.artifact_format == predecessor.procedure.artifact_format
             and procedure.pins == predecessor.procedure.pins
+            and (
+                not isinstance(procedure, ProcedureArtifactV2)
+                or not isinstance(predecessor.procedure, ProcedureArtifactV2)
+                or procedure.owned_contracts == predecessor.procedure.owned_contracts
+            )
             and procedure.lifecycle.state == predecessor.procedure.lifecycle.state
         ):
             return _refusal(
