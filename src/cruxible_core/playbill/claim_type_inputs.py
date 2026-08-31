@@ -12,7 +12,6 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
     foreign_source_capture_contract,
     parse_capture_contract,
@@ -113,6 +112,8 @@ class ClaimTypeInputProposalResultV1(_StrictClaimTypeInputModel):
 def claim_type_input_template() -> ClaimTypeInputV1:
     """Return the complete literal ClaimType input shown by the CLI template surface."""
 
+    source_id = "repo.replace-me"
+    contract = foreign_source_capture_contract(source_id)
     return ClaimTypeInputV1(
         predicate="project.work_item.status",
         allowed_subject_kinds=("project.work_item",),
@@ -123,11 +124,9 @@ def claim_type_input_template() -> ClaimTypeInputV1:
         evidence_admission_policy={
             "rules": [
                 {
-                    "rule_id": "direct-self-asserted",
+                    "rule_id": f"source-{source_id}",
                     "claim_roles": ["normative", "observation"],
-                    "capture_contract_digests": [
-                        capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
-                    ],
+                    "capture_contract_digests": [capture_contract_digest(contract).tagged],
                     "evidence_kinds": ["self_asserted"],
                     "admission": "direct",
                     "subject_binding": "exact_claim_subject",
@@ -146,6 +145,7 @@ def claim_type_input_template() -> ClaimTypeInputV1:
             "selector": "only_contender",
             "conflict_result": "unresolved",
         },
+        anticipated_source_ids=(source_id,),
     )
 
 
@@ -187,15 +187,18 @@ def lint_claim_type_input(
 ) -> ClaimTypeProposalLintV1:
     tree = instance.tree_at(coordinate.git_oid)
     accepted_contracts: dict[str, str] = {}
-    # The daemon's frozen direct-self-asserted contract is a resolvable built-in
-    # profile, not an accepted artifact. It validates an explicit template rule,
-    # but it must not make an otherwise empty policy look as though a governed
-    # CaptureContract is waiting to be selected.
-    resolvable_contracts: dict[str, str] = {
-        capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged: (
-            DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.qualified
+    source_ids = set(anticipated_source_ids)
+    if isinstance(value, ClaimTypeInputV1):
+        source_ids.update(value.anticipated_source_ids)
+    # Flow-A binding derives this exact deterministic contract and carries it in
+    # the governed Claim candidate. The dormant direct-self-asserted constant has
+    # no production producer or acceptor, so it is intentionally not resolvable.
+    resolvable_contracts: dict[str, str] = {}
+    for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
+        contract = foreign_source_capture_contract(source_id)
+        resolvable_contracts[capture_contract_digest(contract).tagged] = (
+            contract.identity.qualified
         )
-    }
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("capture-contracts/"):
             continue
@@ -233,7 +236,7 @@ def lint_claim_type_input(
                         },
                     )
                 )
-    if not admitted.intersection(accepted_contracts) and accepted_contracts and not warnings:
+    if not admitted.intersection(resolvable_contracts) and accepted_contracts and not warnings:
         contract_digest = sorted(accepted_contracts)[0]
         warnings.append(
             ClaimTypeLintWarningV1(
@@ -244,9 +247,6 @@ def lint_claim_type_input(
                 replacement_rule_fragment={"capture_contract_digests": [contract_digest]},
             )
         )
-    source_ids = set(anticipated_source_ids)
-    if isinstance(value, ClaimTypeInputV1):
-        source_ids.update(value.anticipated_source_ids)
     for source_id in sorted(source_ids, key=lambda item: item.encode("utf-8")):
         contract = foreign_source_capture_contract(source_id)
         contract_digest = capture_contract_digest(contract).tagged

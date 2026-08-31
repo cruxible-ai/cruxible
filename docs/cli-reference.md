@@ -126,11 +126,14 @@ A ClaimType is the governed interface a predicate must satisfy before any Claim
 may state it. `propose --input` accepts a complete `ClaimTypeInputV1`; ClaimType
 is not part of the authoring coordinator's example vocabulary. `propose
 --template` prints a complete literal `project.work_item.status` input with a
-direct-self-asserted evidence rule and does not contact the daemon. That rule
-names the daemon's built-in direct-self-asserted capture profile, so it is
-lint-clean in a fresh instance and does not require a separately accepted
-CaptureContract. Replace it with governed source-specific contracts when the
-predicate needs stronger provenance. The input command lowers the tagless form
+`repo.replace-me` foreign-source evidence rule and does not contact the daemon.
+Replace `anticipated_source_ids` with the logical source used by `authoring bind`;
+the source-intent lint then names the deterministic foreign-source
+CaptureContract digest to place in the rule. Flow-A binding carries that exact
+contract into the governed Claim candidate, so accepting the bound Claim accepts
+the contract and gives the rule a shipped evidence producer. The dormant
+direct-self-asserted constant has no production producer or acceptance surface
+and is not a template prerequisite. The input command lowers the tagless form
 and returns nonblocking policy/source lint beside the proposal. The optional,
 sorted `anticipated_source_ids` input supplies
 source-specific repair suggestions without entering the governed ClaimType.

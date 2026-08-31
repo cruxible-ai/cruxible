@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
 from cruxible_client.authoring.inputs import (
     AuthoringInputError,
@@ -21,6 +23,12 @@ from cruxible_client.authoring.inputs import (
     WorkingSelectionInput,
     lower_authoring_input,
 )
+from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.captures import (
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
+    capture_contract_digest,
+    foreign_source_capture_contract,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimAttestationConsequenceRuleV1,
@@ -33,6 +41,7 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_owned_contract_digest,
 )
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
+from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.lowering import lower_authoring
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
@@ -45,7 +54,11 @@ from cruxible_core.playbill.claim_type_inputs import (
 )
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.claim_types import service_propose_playbill_claim_type_input
+from cruxible_core.playbill.service.documents import service_inspect_playbill_proposal
+from cruxible_core.service.playbill_evidence import service_evaluate_playbill_claim_verdict
+from tests.test_playbill._candidate_support import submit_subject_candidate
 from tests.test_playbill._claim_type_support import claim_type_input_example
+from tests.test_playbill._knowledge_loop_support import accept_proposal
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_authoring_preflight import (
     TIMESTAMP,
@@ -384,20 +397,122 @@ def test_claim_type_template_proposes_without_policy_lint_in_a_fresh_world(
 
     assert result.proposal.proposal.candidate is not None
     assert result.lint.warnings == ()
+    template = claim_type_input_template()
+    source_id = template.anticipated_source_ids[0]
+    assert template.evidence_admission_policy["rules"][0]["capture_contract_digests"] == [
+        capture_contract_digest(foreign_source_capture_contract(source_id)).tagged
+    ]
 
 
-def test_builtin_template_profile_does_not_pose_as_an_accepted_contract(
+def test_dead_direct_self_asserted_profile_remains_an_unresolved_contract(
     tmp_path: Path,
 ) -> None:
     instance, _owner = initialize_local(tmp_path)
+    example = claim_type_input_example().model_copy(
+        update={
+            "evidence_admission_policy": {
+                "rules": [
+                    {
+                        "rule_id": "dead-direct-self-asserted",
+                        "claim_roles": ["normative", "observation"],
+                        "capture_contract_digests": [
+                            capture_contract_digest(
+                                DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT
+                            ).tagged
+                        ],
+                        "evidence_kinds": ["self_asserted"],
+                        "admission": "direct",
+                        "subject_binding": "exact_claim_subject",
+                    }
+                ]
+            }
+        }
+    )
 
     lint = lint_claim_type_input(
         instance,
-        claim_type_input_example(),
+        example,
         coordinate=instance.accepted_coordinate(),
     )
 
-    assert lint.warnings == ()
+    assert [item.code for item in lint.warnings] == [
+        "playbill.claim_type.evidence_policy_admits_no_accepted_contract"
+    ]
+
+
+def test_fresh_template_claim_reaches_supported_through_flow_a(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    template = claim_type_input_template()
+    claim_type_proposal = service_propose_playbill_claim_type_input(
+        instance,
+        input=template,
+        actor_id="owner",
+        proposal_name="template-claim-type",
+        timestamp=TIMESTAMP,
+    )
+    assert claim_type_proposal.lint.warnings == ()
+    accept_proposal(instance, owner, claim_type_proposal.proposal)
+
+    shell = SubjectShell(
+        identity=ArtifactIdentity(kind="Subject", name="project.work_item/replace-me"),
+        subject_kind="project.work_item",
+        subject_id="replace-me",
+    )
+    accept_proposal(
+        instance,
+        owner,
+        submit_subject_candidate(
+            instance,
+            shell=shell,
+            actor_id="owner",
+            proposal_name="template-subject",
+            timestamp="2026-08-21T12:00:01.000000Z",
+        ),
+    )
+
+    payload = bind_working_selection_input(
+        ClaimInput(
+            kind="claim",
+            subject="project.work_item/replace-me",
+            predicate=template.predicate,
+            object=LiteralObjectInput(kind="literal", value="ready"),
+            role="observation",
+            rationale="The accepted work source reports ready.",
+            source=WorkingSelectionInput(
+                kind="working_selection",
+                source_id=template.anticipated_source_ids[0],
+            ),
+            citation_role="evidence",
+        ),
+        content=b"status: ready\n",
+        anchor="status: ready",
+    )
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=payload,
+        canonical_timestamp="2026-08-21T12:00:02.000000Z",
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None
+    accept_proposal(
+        instance,
+        owner,
+        service_inspect_playbill_proposal(
+            instance,
+            proposal_id=submitted.status.proposal_id,
+        ),
+    )
+
+    verdict = service_evaluate_playbill_claim_verdict(
+        instance,
+        claim_identity=intent.semantic_identity.removeprefix("Claim:"),
+        evaluation_time=datetime(2026, 8, 21, 12, 1, tzinfo=UTC),
+    )
+    assert verdict.verdict.verdict == "supported"
 
 
 def test_claim_type_input_lowers_freshness_into_the_existing_v3_artifact() -> None:
