@@ -1222,7 +1222,7 @@ def propose_claim_type(
     output_json: bool,
 ) -> None:
     if (input_path is None) == (envelope is None):
-        raise click.UsageError("provide exactly one ClaimType input")
+        raise click.UsageError("provide exactly one ClaimType input with --input")
     if envelope is not None:
         envelope_payload = _read_mapping(envelope)
         resolved_name = proposal_name or envelope_payload.get("predicate")

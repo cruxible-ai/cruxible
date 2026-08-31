@@ -164,6 +164,7 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
 
     claim_type_help = runner.invoke(cli, ["playbill", "claim-type", "propose", "--help"])
     claim_type_example = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
+    claim_type_missing = runner.invoke(cli, ["playbill", "claim-type", "propose"])
     retirement = runner.invoke(cli, ["playbill", "claim", "retire", "--example"])
     create_help = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
 
@@ -171,6 +172,8 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     assert "--example" not in claim_type_help.output
     assert claim_type_example.exit_code == 2
     assert "No such option: --example" in claim_type_example.output
+    assert claim_type_missing.exit_code == 2
+    assert "provide exactly one ClaimType input with --input" in claim_type_missing.output
 
     assert retirement.exit_code == 0, retirement.output
     retirement_payload = json.loads(retirement.stdout)
