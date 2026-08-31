@@ -20,6 +20,11 @@ from cruxible_client.contracts.declared_blocks import (
 )
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_core.cli.main import cli
+from cruxible_core.playbill.claim_type_inputs import (
+    ClaimTypeInputV1,
+    claim_type_input_template,
+    lower_claim_type_input,
+)
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -159,6 +164,22 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
     assert json.loads(result.stdout)["lint"]["warnings"] == [warning]
 
 
+def test_cli_claim_type_template_is_complete_model_generated_and_local(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: (_ for _ in ()).throw(AssertionError("template must not contact the daemon")),
+    )
+
+    result = CliRunner().invoke(cli, ["playbill", "claim-type", "propose", "--template"])
+
+    assert result.exit_code == 0, result.output
+    rendered = ClaimTypeInputV1.model_validate(json.loads(result.stdout))
+    assert rendered == claim_type_input_template()
+    lowered = lower_claim_type_input(rendered, tree={})
+    assert lowered.identity.qualified == "ClaimType:project.work_item.status"
+    assert lowered.evidence_admission_policy.rules[0].rule_id == "direct-self-asserted"
+
+
 def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     runner = CliRunner()
 
@@ -169,11 +190,12 @@ def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     create_help = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
 
     assert claim_type_help.exit_code == 0, claim_type_help.output
+    assert "--template" in claim_type_help.output
     assert "--example" not in claim_type_help.output
     assert claim_type_example.exit_code == 2
     assert "No such option: --example" in claim_type_example.output
     assert claim_type_missing.exit_code == 2
-    assert "provide exactly one ClaimType input with --input" in claim_type_missing.output
+    assert "provide exactly one of --input or --template" in claim_type_missing.output
 
     assert retirement.exit_code == 0, retirement.output
     retirement_payload = json.loads(retirement.stdout)

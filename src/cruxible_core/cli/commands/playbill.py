@@ -72,7 +72,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, claim_type_input_template
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
@@ -1230,19 +1230,28 @@ def claim_type_group() -> None:
 @claim_type_group.command("propose")
 @click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--envelope", type=click.Path(exists=True, dir_okay=False), hidden=True)
+@click.option(
+    "--template",
+    is_flag=True,
+    help="Print one complete model-generated ClaimTypeInputV1 without contacting the daemon.",
+)
 @click.option("--name", "proposal_name")
 @json_option
 @handle_errors
 def propose_claim_type(
     input_path: str | None,
     envelope: str | None,
+    template: bool,
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
     """Use the sanctioned typed-input ClaimType proposal path."""
 
-    if (input_path is None) == (envelope is None):
-        raise click.UsageError("provide exactly one ClaimType input with --input")
+    if sum((input_path is not None, envelope is not None, template)) != 1:
+        raise click.UsageError("provide exactly one of --input or --template")
+    if template:
+        _emit_json(claim_type_input_template().model_dump(mode="json"))
+        return
     if envelope is not None:
         envelope_payload = _read_mapping(envelope)
         resolved_name = proposal_name or envelope_payload.get("predicate")

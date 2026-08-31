@@ -101,7 +101,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "cruxible_playbill_propose_claim_type": (
         "Use when you need a governed ClaimType before any Claim can state that predicate; "
-        "pass a complete ClaimTypeInputV1 whose evidence rules match its capture contracts."
+        "pass a complete ClaimTypeInputV1 whose evidence rules match its capture contracts. "
+        "Generate a lawful starting payload with "
+        "`cruxible playbill claim-type propose --template`."
     ),
     "cruxible_playbill_claim_type_migrate": (
         "Use when a ClaimType and all of its dependent Claim dispositions must change atomically."

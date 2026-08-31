@@ -12,6 +12,7 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import (
+    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
     capture_contract_digest,
     foreign_source_capture_contract,
     parse_capture_contract,
@@ -107,6 +108,45 @@ class ClaimTypeInputProposalResultV1(_StrictClaimTypeInputModel):
     )
     proposal: PlaybillProposalInspection
     lint: ClaimTypeProposalLintV1
+
+
+def claim_type_input_template() -> ClaimTypeInputV1:
+    """Return the complete literal ClaimType input shown by the CLI template surface."""
+
+    return ClaimTypeInputV1(
+        predicate="project.work_item.status",
+        allowed_subject_kinds=("project.work_item",),
+        object_kind="literal",
+        literal_schema={"type": "string"},
+        cardinality="one",
+        permitted_roles=("normative", "observation"),
+        evidence_admission_policy={
+            "rules": [
+                {
+                    "rule_id": "direct-self-asserted",
+                    "claim_roles": ["normative", "observation"],
+                    "capture_contract_digests": [
+                        capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
+                    ],
+                    "evidence_kinds": ["self_asserted"],
+                    "admission": "direct",
+                    "subject_binding": "exact_claim_subject",
+                }
+            ]
+        },
+        admission_policy={
+            "corroboration_requirements": [],
+            "freeze_requirements": [],
+        },
+        resolution_policy={
+            "cardinality": "one",
+            "eligible_verdicts": ["supported"],
+            "required_basis_kinds": [],
+            "require_current": True,
+            "selector": "only_contender",
+            "conflict_result": "unresolved",
+        },
+    )
 
 
 def lower_claim_type_input(
@@ -222,6 +262,7 @@ __all__ = [
     "ClaimTypeInputV1",
     "ClaimTypeLintWarningV1",
     "ClaimTypeProposalLintV1",
+    "claim_type_input_template",
     "lint_claim_type_input",
     "lower_claim_type_input",
 ]
