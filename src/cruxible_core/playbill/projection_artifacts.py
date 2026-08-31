@@ -24,9 +24,11 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
+    artifact_bytes_for_path,
     canonical_bytes,
     file_digest,
     normalize_canonical,
+    pretty_canonical_bytes,
 )
 from cruxible_client.contracts.claim_types import (
     ClaimTypeFormatError,
@@ -72,7 +74,7 @@ if TYPE_CHECKING:
     from cruxible_core.playbill.settlement import ChangeSetRecordAnyVersion
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
-PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
+P2_B0_ARTIFACT_KINDS = ArtifactKindRegistry(
     (
         ArtifactPathKind(
             "approval-policy",
@@ -152,6 +154,16 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
             "changeset",
             re.compile(r"^changesets/cs-[0-9]{20}\.json$"),
         ),
+    )
+)
+PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
+    tuple(
+        ArtifactPathKind(
+            entry.kind,
+            re.compile(entry.pattern.pattern.replace(r"\.yaml", r"\.json")),
+            entry.implemented,
+        )
+        for entry in P2_B0_ARTIFACT_KINDS.entries()
     )
 )
 
@@ -359,8 +371,12 @@ class ParsedProjectionTree:
     presentation_facts: tuple[ProjectionFact, ...]
 
 
-def registered_path_kind(path: str) -> RegisteredPathKind:
-    return cast(RegisteredPathKind, PLAYBILL_ARTIFACT_KINDS.resolve_path(path))
+def registered_path_kind(
+    path: str,
+    *,
+    artifact_kinds: ArtifactKindRegistry = PLAYBILL_ARTIFACT_KINDS,
+) -> RegisteredPathKind:
+    return cast(RegisteredPathKind, artifact_kinds.resolve_path(path))
 
 
 def projected_revision(
@@ -474,8 +490,9 @@ def _load_object(content: bytes, *, path: str) -> dict[str, object]:
     return payload
 
 
-def _canonical_model_bytes(model: BaseModel) -> bytes:
-    return canonical_bytes(model.model_dump(mode="json")) + b"\n"
+def _canonical_model_bytes(model: BaseModel, *, pretty: bool) -> bytes:
+    payload = model.model_dump(mode="json")
+    return pretty_canonical_bytes(payload) if pretty else canonical_bytes(payload) + b"\n"
 
 
 def _whole_semantic_mapping(
@@ -502,10 +519,20 @@ def _procedure_node_span(
     *,
     content_digest: str,
 ) -> ContentSpan:
-    encoded = canonical_bytes(node.model_dump(mode="json", by_alias=True))
-    start = content.find(encoded)
-    if start < 0 or content.find(encoded, start + 1) >= 0:
+    payload = node.model_dump(mode="json", by_alias=True)
+    compact = canonical_bytes(payload)
+    pretty = pretty_canonical_bytes(payload).removesuffix(b"\n").replace(
+        b"\n", b"\n      "
+    )
+    matches = [
+        (start, encoded)
+        for encoded in (compact, pretty)
+        if (start := content.find(encoded)) >= 0
+        and content.find(encoded, start + 1) < 0
+    ]
+    if len(matches) != 1:
         raise ProjectionFormatError("Procedure node bytes do not have one exact source occurrence")
+    start, encoded = matches[0]
     return ContentSpan(
         content_digest=content_digest,
         start_byte=start,
@@ -517,6 +544,7 @@ def parse_projection_tree(
     blobs: dict[str, bytes],
     *,
     registry: ProjectionExtensionRegistry,
+    artifact_kinds: ArtifactKindRegistry = PLAYBILL_ARTIFACT_KINDS,
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
     accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
@@ -550,7 +578,7 @@ def parse_projection_tree(
     change_sets: list[tuple[str, ChangeSetRecordAnyVersion]] = []
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
-        if registered_path_kind(path) != "changeset":
+        if registered_path_kind(path, artifact_kinds=artifact_kinds) != "changeset":
             continue
         content = blobs[path]
         payload = _load_object(content, path=path)
@@ -582,7 +610,7 @@ def parse_projection_tree(
 
     for path in sorted(blobs, key=lambda item: item.encode("utf-8")):
         content = blobs[path]
-        kind = registered_path_kind(path)
+        kind = registered_path_kind(path, artifact_kinds=artifact_kinds)
         payload = _load_object(content, path=path)
         try:
             if kind == "approval-policy":
@@ -633,7 +661,7 @@ def parse_projection_tree(
                 continue
             if kind == "principal":
                 principal = PrincipalRecord.model_validate(payload)
-                if render_principal(principal) != content:
+                if artifact_bytes_for_path(render_principal(principal), path) != content:
                     raise ProjectionFormatError(f"principal artifact is not canonical: {path}")
                 continue
             if kind == "changeset":
@@ -1913,7 +1941,12 @@ def parse_projection_tree(
                 continue
             if kind == "fixture":
                 artifact = FixtureArtifact.model_validate(payload)
-                if _canonical_model_bytes(artifact) != content:
+                if (
+                    _canonical_model_bytes(
+                        artifact, pretty=artifact_kinds is PLAYBILL_ARTIFACT_KINDS
+                    )
+                    != content
+                ):
                     raise ProjectionFormatError(f"fixture artifact is not canonical: {path}")
                 previous = identities.get(artifact.artifact_id)
                 if previous is not None:
@@ -1946,7 +1979,12 @@ def parse_projection_tree(
                 continue
 
             presentation = FixturePresentation.model_validate(payload)
-            if _canonical_model_bytes(presentation) != content:
+            if (
+                _canonical_model_bytes(
+                    presentation, pretty=artifact_kinds is PLAYBILL_ARTIFACT_KINDS
+                )
+                != content
+            ):
                 raise ProjectionFormatError(f"presentation artifact is not canonical: {path}")
             presentation_facts.append(
                 ProjectionFact(
@@ -2002,6 +2040,7 @@ __all__ = [
     "FixturePresentation",
     "ParsedProjectionTree",
     "PLAYBILL_ARTIFACT_KINDS",
+    "P2_B0_ARTIFACT_KINDS",
     "PLAYBILL_FORMAT_RESERVATIONS",
     "PinRow",
     "parse_projection_tree",

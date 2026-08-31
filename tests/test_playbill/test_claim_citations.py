@@ -221,7 +221,7 @@ def test_mixed_wire_succession_is_deterministic_and_citations_are_append_only(
     initial_tree = {
         **instance.tree_at(base.git_oid),
         subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.yaml": render_claim_type(claim_type),
+        "claim-types/project.work_item/status.json": render_claim_type(claim_type),
         capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
             render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
         ),

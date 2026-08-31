@@ -20,8 +20,11 @@ from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CasDigest,
     Sha256Value,
+    artifact_bytes_for_path,
+    artifact_path_matches,
     canonical_bytes,
     normalize_canonical,
+    pretty_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.cas_contracts import (
@@ -503,12 +506,12 @@ def capture_contract_is_self_asserted(contract: CaptureContractV1) -> bool:
 def capture_contract_path(contract_id: str) -> str:
     if not _CONTRACT_ID_RE.fullmatch(contract_id):
         raise CaptureFormatError("CaptureContract identity is not path-addressable")
-    return f"capture-contracts/{contract_id}.yaml"
+    return f"capture-contracts/{contract_id}.json"
 
 
 def validate_capture_contract_path(contract: CaptureContractV1, path: str) -> str:
     expected = capture_contract_path(contract.identity.name)
-    if path != expected:
+    if not artifact_path_matches(expected, path):
         raise CaptureFormatError(
             f"CaptureContract identity/path disagreement: {contract.identity.qualified!r} "
             f"requires {expected!r}"
@@ -517,7 +520,7 @@ def validate_capture_contract_path(contract: CaptureContractV1, path: str) -> st
 
 
 def render_capture_contract(contract: CaptureContractV1) -> bytes:
-    return canonical_bytes(contract.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(contract.model_dump(mode="json"))
 
 
 def parse_capture_contract(content: bytes, *, path: str) -> CaptureContractV1:
@@ -534,7 +537,7 @@ def parse_capture_contract(content: bytes, *, path: str) -> CaptureContractV1:
         contract = CaptureContractV1.model_validate(payload)
     except ValidationError as exc:
         raise CaptureFormatError("CaptureContract failed strict v1 validation") from exc
-    if render_capture_contract(contract) != content:
+    if artifact_bytes_for_path(render_capture_contract(contract), path) != content:
         raise CaptureFormatError("CaptureContract is not in canonical wire form")
     validate_capture_contract_path(contract, path)
     return contract

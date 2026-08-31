@@ -68,11 +68,11 @@ from cruxible_core.playbill.proposals import (
 from tests.test_playbill._support import initialize_local
 
 GOLDEN = Path(__file__).parents[1] / "goldens" / "playbill" / "query-definition-v1.json"
-QUERY_PATH = "query-definitions/project.active_work.yaml"
+QUERY_PATH = "query-definitions/project.active_work.json"
 STATUS_PREDICATE = "project.work_item.status"
 REVIEWER_PREDICATE = "project.work_item.reviewed_by"
-STATUS_CLAIM_TYPE_PATH = "claim-types/project.work_item/status.yaml"
-REVIEWER_CLAIM_TYPE_PATH = "claim-types/project.work_item/reviewed_by.yaml"
+STATUS_CLAIM_TYPE_PATH = "claim-types/project.work_item/status.json"
+REVIEWER_CLAIM_TYPE_PATH = "claim-types/project.work_item/reviewed_by.json"
 TIMESTAMP = "2026-08-16T14:00:00.000000Z"
 
 
@@ -272,7 +272,7 @@ def test_query_definition_refuses_noncanonical_wire_unknown_format_and_wrong_pat
     with pytest.raises(QueryDefinitionFormatError, match="strict JSON"):
         parse_query_definition(b"not json", path=QUERY_PATH)
     with pytest.raises(QueryDefinitionFormatError, match="identity/path disagreement"):
-        parse_query_definition(rendered, path="query-definitions/other.yaml")
+        parse_query_definition(rendered, path="query-definitions/other.json")
 
 
 def test_query_definition_identity_and_semantic_address_follow_the_pc_a1_grammar() -> None:
@@ -294,7 +294,7 @@ def test_pc_f_activates_the_query_definition_path_kind_and_fails_closed_elsewher
     assert registered_path_kind(QUERY_PATH) == "query-definition"
     assert "query-definition" in PLAYBILL_ARTIFACT_KINDS.implemented_kinds()
     with pytest.raises(ProjectionFormatError, match="no registered format"):
-        registered_path_kind("query-definitions/Project.yaml")
+        registered_path_kind("query-definitions/Project.json")
     with pytest.raises(ProjectionFormatError, match="no registered format"):
         registered_path_kind("queries/project.active_work.yaml")
     assert (
@@ -639,7 +639,7 @@ def test_query_definition_law_refuses_path_pin_and_predecessor_drift() -> None:
     codes: list[str] = []
 
     for candidate, kwargs in (
-        (query, {"path": "query-definitions/other.yaml"}),
+        (query, {"path": "query-definitions/other.json"}),
         (
             active_work_query(
                 lifecycle=ArtifactLifecycle(
@@ -772,7 +772,7 @@ def test_accepted_query_definition_refuses_a_digest_or_path_that_does_not_reprod
         )
     with pytest.raises(QueryDefinitionFormatError, match="identity/path disagreement"):
         AcceptedQueryDefinitionV1(
-            path="query-definitions/other.yaml",
+            path="query-definitions/other.json",
             query=query,
             artifact_digest=query_definition_digest(query).tagged,
         )

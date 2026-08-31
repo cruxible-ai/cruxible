@@ -64,7 +64,7 @@ def subject_shell(subject_id: str) -> SubjectShell:
 def subject_address(subject_id: str) -> SemanticAddress:
     """Return the whole-artifact address of one work-item Subject."""
 
-    return SemanticAddress.whole_artifact(f"subjects/{SUBJECT_KIND}/{subject_id}.yaml")
+    return SemanticAddress.whole_artifact(f"subjects/{SUBJECT_KIND}/{subject_id}.json")
 
 
 def authoring(subject_id: str, value: str, *, with_claim_type: bool) -> DirectClaimAuthoringV1:

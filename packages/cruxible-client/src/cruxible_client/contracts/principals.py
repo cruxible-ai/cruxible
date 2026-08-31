@@ -13,7 +13,7 @@ from cruxible_client.contracts.errors import PrincipalIntegrityError
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.types import PrincipalRecord
 
-_PRINCIPAL_PATH_RE = re.compile(r"^principals/([a-z][a-z0-9_.-]{0,127})\.yaml$")
+_PRINCIPAL_PATH_RE = re.compile(r"^principals/([a-z][a-z0-9_.-]{0,127})\.json$")
 
 
 class PrincipalRegistrySnapshot(BaseModel):
@@ -57,7 +57,7 @@ class PrincipalRegistrySnapshot(BaseModel):
 
     def key_history_reference(self, principal_id: str) -> str:
         self.require_active(principal_id)
-        return f"principals/{principal_id}.yaml@{self.semantic_root}"
+        return f"principals/{principal_id}.json@{self.semantic_root}"
 
 
 def principal_registry_from_tree(

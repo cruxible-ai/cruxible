@@ -22,8 +22,11 @@ from cruxible_client.contracts.canonical import (
     CanonicalValue,
     CasDigest,
     Sha256Value,
+    artifact_bytes_for_path,
+    artifact_path_matches,
     canonical_bytes,
     normalize_canonical,
+    pretty_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.captures import (
@@ -608,12 +611,12 @@ def new_claim_id() -> str:
 def claim_path(claim_id: str) -> str:
     if not _CLAIM_ID_RE.fullmatch(claim_id):
         raise ClaimFormatError("Claim ID must be CLM- plus 32 lowercase hexadecimal digits")
-    return f"claims/{claim_id[4:6]}/{claim_id}.yaml"
+    return f"claims/{claim_id[4:6]}/{claim_id}.json"
 
 
 def validate_claim_path(claim: ClaimArtifactAny, path: str) -> str:
     expected = claim_path(claim.identity.name)
-    if path != expected:
+    if not artifact_path_matches(expected, path):
         raise ClaimFormatError(
             f"Claim identity/path disagreement: {claim.identity.qualified!r} requires {expected!r}"
         )
@@ -621,7 +624,7 @@ def validate_claim_path(claim: ClaimArtifactAny, path: str) -> str:
 
 
 def render_claim(claim: ClaimArtifactAny) -> bytes:
-    return canonical_bytes(claim.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(claim.model_dump(mode="json"))
 
 
 def parse_claim(content: bytes, *, path: str) -> ClaimArtifactAny:
@@ -641,7 +644,7 @@ def parse_claim(content: bytes, *, path: str) -> ClaimArtifactAny:
         claim = model.model_validate(payload)
     except ValidationError as exc:
         raise ClaimFormatError(f"Claim failed strict {declared!r} validation") from exc
-    if render_claim(claim) != content:
+    if artifact_bytes_for_path(render_claim(claim), path) != content:
         raise ClaimFormatError("Claim is not in canonical wire form")
     validate_claim_path(claim, path)
     return claim

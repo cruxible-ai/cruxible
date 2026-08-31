@@ -13,7 +13,6 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import (
     Sha256Value,
-    canonical_bytes,
     normalize_canonical,
     typed_digest,
 )
@@ -337,7 +336,7 @@ def expand_claim_type_profile(request: ClaimTypeProfileInputV1) -> ClaimTypeExpa
         pins=request.pins,
         lifecycle=ArtifactLifecycle(),
     )
-    rendered = canonical_bytes(claim_type.model_dump(mode="json")) + b"\n"
+    rendered = render_claim_type(claim_type)
     return ClaimTypeExpansionResultV1(
         claim_type=claim_type,
         evidence=ClaimTypeExpansionEvidenceV1(

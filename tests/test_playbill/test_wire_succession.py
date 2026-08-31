@@ -69,7 +69,7 @@ from cruxible_core.playbill.settlement import (
 )
 from tests.test_playbill._support import initialize_local
 
-DOCUMENT_PATH = "documents/playbill-design.yaml"
+DOCUMENT_PATH = "documents/playbill-design.json"
 GOLDENS = Path(__file__).parents[1] / "goldens" / "playbill"
 CANDIDATE_GOLDEN = GOLDENS / "candidate-v2.json"
 SROOT_GOLDEN = GOLDENS / "sroot-v2.json"

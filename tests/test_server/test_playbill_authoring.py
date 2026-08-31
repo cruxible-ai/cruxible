@@ -73,7 +73,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
             "tag": "playbill-authoring-claim-statement-v1",
             "subject": {
                 "tag": "playbill-semantic-address-v1",
-                "artifact_path": "subjects/work_item/wi-42.yaml",
+                "artifact_path": "subjects/work_item/wi-42.json",
                 "selector": {"scheme": "artifact-v1", "value": ""},
             },
             "predicate": "work.status",

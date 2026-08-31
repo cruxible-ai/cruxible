@@ -22,7 +22,7 @@
   },
   "ledger_reference": {
     "address": {
-      "artifact_path": "documents/design.yaml",
+      "artifact_path": "documents/design.json",
       "selector": {
         "scheme": "artifact-v1",
         "value": ""
@@ -70,7 +70,7 @@
       "tag": "playbill-cas-source-reference-v1"
     },
     "subject": {
-      "artifact_path": "documents/design.yaml",
+      "artifact_path": "documents/design.json",
       "selector": {
         "scheme": "artifact-v1",
         "value": ""

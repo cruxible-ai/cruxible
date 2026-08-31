@@ -69,10 +69,10 @@ def _edge(
 
 
 EDGES: tuple[DependencyProofReferenceV1, ...] = (
-    _edge("claims/alpha.json", "subjects/alpha.yaml"),
-    _edge("claims/alpha.json", "claim-types/measure.yaml", role="claim-type", target="cc"),
-    _edge("claims/nested/deep/beta.json", "subjects/alpha.yaml", source="dd"),
-    _edge("documents/design.yaml", "subjects/alpha.yaml", role="referent", source="ee"),
+    _edge("claims/alpha.json", "subjects/alpha.json"),
+    _edge("claims/alpha.json", "claim-types/measure.json", role="claim-type", target="cc"),
+    _edge("claims/nested/deep/beta.json", "subjects/alpha.json", source="dd"),
+    _edge("documents/design.json", "subjects/alpha.json", role="referent", source="ee"),
 )
 
 
@@ -150,11 +150,11 @@ def test_only_members_with_outgoing_edges_become_leaves() -> None:
     assert set(tree.members()) == {
         "claims/alpha.json",
         "claims/nested/deep/beta.json",
-        "documents/design.yaml",
+        "documents/design.json",
     }
     # Pure targets are named by every edge that reaches them and still cost the
     # tree nothing: the edge set is fully described by its sources.
-    assert "subjects/alpha.yaml" not in tree.nodes
+    assert "subjects/alpha.json" not in tree.nodes
 
 
 def test_grouping_is_canonical_regardless_of_input_order() -> None:
@@ -173,7 +173,7 @@ def test_duplicate_edges_are_preserved_exactly_as_the_flat_edge_list_kept_them()
 
 def test_incremental_update_reuses_every_untouched_node_object() -> None:
     tree = build_dependency_edge_tree(EDGES)
-    replacement = (_edge("claims/alpha.json", "providers/feed.yaml", role="provider", target="f1"),)
+    replacement = (_edge("claims/alpha.json", "providers/feed.json", role="provider", target="f1"),)
     updated = update_dependency_edge_tree(tree, updated={"claims/alpha.json": replacement})
 
     changed = {ROOT_PREFIX, "claims", "claims/alpha.json"}
@@ -204,21 +204,21 @@ def test_removal_prunes_emptied_directories_and_leaves_siblings_untouched() -> N
 
 def test_a_member_losing_its_last_edge_loses_its_leaf() -> None:
     tree = build_dependency_edge_tree(EDGES)
-    emptied = update_dependency_edge_tree(tree, updated={"documents/design.yaml": ()})
-    assert "documents/design.yaml" not in emptied.nodes
+    emptied = update_dependency_edge_tree(tree, updated={"documents/design.json": ()})
+    assert "documents/design.json" not in emptied.nodes
     assert "documents" not in emptied.nodes
-    expected = tuple(edge for edge in EDGES if edge.source_path != "documents/design.yaml")
+    expected = tuple(edge for edge in EDGES if edge.source_path != "documents/design.json")
     assert emptied.root == build_dependency_edge_tree(expected).root
 
 
 def test_emptying_a_member_that_had_no_edges_is_the_no_op_it_describes() -> None:
     tree = build_dependency_edge_tree(EDGES)
-    unchanged = update_dependency_edge_tree(tree, updated={"lines/daily.yaml": ()})
+    unchanged = update_dependency_edge_tree(tree, updated={"lines/daily.json": ()})
     assert unchanged.root == tree.root
     assert unchanged.nodes == tree.nodes
     # An explicit removal is still strict: it asserts the member was there.
     with pytest.raises(CanonicalEncodingError, match="non-member path"):
-        update_dependency_edge_tree(tree, removed=["lines/daily.yaml"])
+        update_dependency_edge_tree(tree, removed=["lines/daily.json"])
 
 
 def test_removing_every_member_returns_the_defined_empty_root() -> None:
@@ -233,7 +233,7 @@ def test_an_update_may_not_smuggle_edges_belonging_to_another_member() -> None:
     with pytest.raises(ValueError, match="outside"):
         update_dependency_edge_tree(
             tree,
-            updated={"claims/alpha.json": (_edge("lines/daily.yaml", "procedures/scan.yaml"),)},
+            updated={"claims/alpha.json": (_edge("lines/daily.json", "procedures/scan.json"),)},
         )
 
 
@@ -287,10 +287,10 @@ _SOURCES = (
     "claims/a.json",
     "claims/b.json",
     "claims/nested/deep/c.json",
-    "documents/d.yaml",
-    "lines/e.yaml",
+    "documents/d.json",
+    "lines/e.json",
 )
-_TARGETS = ("subjects/f.yaml", "claim-types/g.yaml", "providers/h.yaml", "procedures/i.yaml")
+_TARGETS = ("subjects/f.json", "claim-types/g.json", "providers/h.json", "procedures/i.json")
 _ROLES = ("subject", "claim-type", "provider", "procedure", "referent")
 
 

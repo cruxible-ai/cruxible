@@ -22,7 +22,7 @@ def _mandate(*, settlement: str = "settle_named_deltas") -> StandingMandate:
     contract = capture_contract()
     provider_artifact = provider(contract)
     claim_type = _claim_type()
-    subject = SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.yaml")
+    subject = SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.json")
     operations = (
         ("compile_capture", "propose_change_set")
         if settlement == "propose_only"

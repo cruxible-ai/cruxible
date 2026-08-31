@@ -154,7 +154,7 @@ def capture(
     handle = None
     if with_handle:
         handle = SourceHandleV1(
-            subject=SemanticAddress.whole_artifact(f"subjects/project.note/{name}.yaml"),
+            subject=SemanticAddress.whole_artifact(f"subjects/project.note/{name}.json"),
             at=coordinate(),
             source=reference,
             commitment=evidence,

@@ -62,7 +62,7 @@ def _accepted(tmp_path: Path):
 def test_summary_and_evidence_preserve_coverage_without_body_leakage(tmp_path: Path) -> None:
     instance, proposal = _accepted(tmp_path)
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    subject = SemanticAddress.whole_artifact("documents/design.yaml")
+    subject = SemanticAddress.whole_artifact("documents/design.json")
 
     summary = service_explain_playbill_subject(
         instance,
@@ -111,7 +111,7 @@ def test_summary_and_evidence_preserve_coverage_without_body_leakage(tmp_path: P
 def test_proof_is_typed_deferred_and_coordinate_mixing_refuses(tmp_path: Path) -> None:
     instance, _proposal = _accepted(tmp_path)
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
-    subject = SemanticAddress.whole_artifact("documents/design.yaml")
+    subject = SemanticAddress.whole_artifact("documents/design.json")
 
     proof = service_explain_playbill_subject(
         instance,
@@ -143,6 +143,6 @@ def test_proof_is_typed_deferred_and_coordinate_mixing_refuses(tmp_path: Path) -
         )
     with pytest.raises(ValueError, match="unknown semantic selector"):
         SemanticAddress(
-            artifact_path="documents/design.yaml",
+            artifact_path="documents/design.json",
             selector=SemanticSelector(scheme="json-pointer-v1", value="/title"),
         )

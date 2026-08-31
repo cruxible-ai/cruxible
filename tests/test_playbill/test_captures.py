@@ -86,7 +86,7 @@ def test_cas_and_ledger_capture_commitments_verify_without_copying_ledger_bytes(
 
     ledger_body = b'{"policy":"approved"}\n'
     ledger_source = LedgerSourceReferenceV1(
-        address=SemanticAddress.whole_artifact("documents/release-policy.yaml"),
+        address=SemanticAddress.whole_artifact("documents/release-policy.json"),
         coordinate=_accepted_coordinate(),
     )
     ledger_result = build_ledger_capture(
@@ -255,7 +255,7 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
     assert (
         evaluate_capture_contract_law(
             contract,
-            path="capture-contracts/playbill.coordinator-self-source-v1.yaml",
+            path="capture-contracts/playbill.coordinator-self-source-v1.json",
             predecessor=None,
         ).verdict
         == "accepted"
@@ -263,7 +263,7 @@ def test_coordinator_self_source_profile_is_cas_only_and_claim_bound(tmp_path: P
     rewritten = contract.model_copy(update={"allowed_source_kinds": ("file",)})
     refused = evaluate_capture_contract_law(
         rewritten,
-        path="capture-contracts/playbill.coordinator-self-source-v1.yaml",
+        path="capture-contracts/playbill.coordinator-self-source-v1.json",
         predecessor=None,
     )
     assert refused.verdict == "refused"

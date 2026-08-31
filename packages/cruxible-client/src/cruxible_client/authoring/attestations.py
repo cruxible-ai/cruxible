@@ -285,9 +285,9 @@ def append_prepared_claim_attestation(
     def subject_shell_digest(address: Any) -> str:
         path = address.artifact_path
         prefix = "subjects/"
-        if not path.startswith(prefix) or not path.endswith(".yaml"):
+        if not path.startswith(prefix) or not path.endswith(".json"):
             raise ValueError("Claim subject address has no canonical Subject path")
-        kind, subject_id = path[len(prefix) : -len(".yaml")].split("/", maxsplit=1)
+        kind, subject_id = path[len(prefix) : -len(".json")].split("/", maxsplit=1)
         subject = client.get_playbill_subject(
             instance_id,
             kind,

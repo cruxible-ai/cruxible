@@ -36,7 +36,7 @@ from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 
 TIMESTAMP = "2026-08-16T16:00:00.000000Z"
-CLAIM_TYPE_PATH = "claim-types/project.work_item/status.yaml"
+CLAIM_TYPE_PATH = "claim-types/project.work_item/status.json"
 
 
 def claim_type() -> ClaimType:

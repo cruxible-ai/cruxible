@@ -1158,7 +1158,7 @@ def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
     legacy_tree = {
         path: content
         for path, content in accepted_tree.items()
-        if path != "governance/procedure-runtime-policy.yaml"
+        if path != "governance/procedure-runtime-policy.json"
     }
     monkeypatch.setattr(instance, "tree_at", lambda _git_oid: legacy_tree)
     refused = service_prepare_playbill_line_admission(
@@ -1266,7 +1266,7 @@ def test_line_v3_replay_key_includes_byte_inputs_and_excludes_provenance(tmp_pat
         {"selection_receipt_digest": _digest("other-selection-receipt")},
         {"occurrence_id": "OCC-other"},
         {"occurrence_evaluation_time": NOW + timedelta(days=1)},
-        {"procedure_path": "procedures/provenance-only.yaml"},
+        {"procedure_path": "procedures/provenance-only.json"},
     ):
         changed = admission.model_copy(update=update)
         assert procedure_semantic_replay_key_digest(changed) == baseline
@@ -1532,7 +1532,7 @@ def test_line_v3_replay_key_membership_is_closed(tmp_path) -> None:
         "actor": {
             "actor_context": admission.actor_context.model_copy(update={"operation_id": "other-op"})
         },
-        "Procedure path": {"procedure_path": "procedures/other.yaml"},
+        "Procedure path": {"procedure_path": "procedures/other.json"},
         "journal stream": {
             "journal_stream": JournalStreamIdentityV1(
                 instance_id=admission.instance_id,

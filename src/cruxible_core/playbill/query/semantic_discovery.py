@@ -437,7 +437,7 @@ def build_discovery_vocabulary(
                 lexical_terms=byte_sorted((line_spec.line.identity.name,)),
                 dependency_addresses=(
                     SemanticAddress.procedure_unit(
-                        f"procedures/{line_spec.line.procedure.target.name}.yaml"
+                        f"procedures/{line_spec.line.procedure.target.name}.json"
                     ),
                 ),
             )

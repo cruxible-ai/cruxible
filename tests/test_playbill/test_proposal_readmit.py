@@ -113,8 +113,8 @@ def test_readmit_cleanly_rebases_and_response_loss_retry_returns_one_admission(
     tree_oid = first.proposal.proposal.evaluation.evaluated_tree_oid
     assert tree_oid is not None
     assert set(instance.proposal_tree(tree_oid)) >= {
-        "documents/alpha.yaml",
-        "documents/beta.yaml",
+        "documents/alpha.json",
+        "documents/beta.json",
     }
     coordinate = first.proposal.accepted_coordinate
     assert (

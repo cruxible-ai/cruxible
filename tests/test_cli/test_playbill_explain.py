@@ -24,7 +24,7 @@ def test_cli_explain_binds_the_document_subject_to_its_coordinate(monkeypatch) -
                 coordinate=COORDINATE,
                 envelope={
                     "identity": identity,
-                    "path": "documents/design.yaml",
+                    "path": "documents/design.json",
                 },
                 facts=[],
             )
@@ -87,7 +87,7 @@ def test_cli_explain_binds_the_document_subject_to_its_coordinate(monkeypatch) -
             "instance_id": "inst_cli",
             "subject": {
                 "tag": "playbill-semantic-address-v1",
-                "artifact_path": "documents/design.yaml",
+                "artifact_path": "documents/design.json",
                 "selector": {"scheme": "artifact-v1", "value": ""},
             },
             "at": COORDINATE.model_dump(mode="json"),

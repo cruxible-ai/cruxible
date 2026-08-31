@@ -53,7 +53,7 @@ def _candidate(
         parent_semantic_root=parent,
         candidate_manifest_root="sha256:" + "22" * 32,
         semantic_diff_digest="sha256:" + "33" * 32,
-        scope=("documents/design.yaml",),
+        scope=("documents/design.json",),
         timestamp="2026-08-12T12:00:00.000000Z",
     )
     return CandidateRecord(
@@ -119,7 +119,7 @@ def test_exact_public_attestation_verifies_and_keeps_submitter_separate() -> Non
     assert verified.signer_id == "owner"
     assert verified.submission.submitted_by == "relay"
     assert verified.digest == approval_digest(submission.attestation)
-    assert verified.signer_key_history_ref == f"principals/owner.yaml@{ROOT}"
+    assert verified.signer_key_history_ref == f"principals/owner.json@{ROOT}"
     assert approval_statement_bytes(submission.attestation) == approval_statement_bytes(
         submission.attestation.statement
     )

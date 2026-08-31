@@ -377,7 +377,7 @@ def test_document_modified_names_a_reproposal_that_clears_the_row(tmp_path: Path
     )
     builder = _Builder(instance, owner)
     builder.accept(
-        {"documents/runbook.yaml": render_document(document)},
+        {"documents/runbook.json": render_document(document)},
         phase="document-next",
     )
     current = instance.__class__.open(instance.root, trust_root=instance.trust_root)

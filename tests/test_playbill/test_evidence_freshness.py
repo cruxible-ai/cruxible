@@ -178,7 +178,7 @@ def test_v3_freshness_succeeds_service_wires_and_next_queue(tmp_path: Path) -> N
 
     queried = service_query_playbill_claims(
         instance,
-        subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.yaml"),
+        subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.json"),
         predicate=_claim_type().predicate,
         evaluation_time=at_expiry,
     )

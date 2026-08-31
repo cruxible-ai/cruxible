@@ -205,7 +205,7 @@ def test_two_legacy_claims_carrying_different_claim_types_still_refuse() -> None
             del files[path]
     first = _legacy_claim_payload()
     second = _legacy_claim_payload()
-    second["statement"]["subject"]["artifact_path"] = "subjects/project.work_item/wi-43.yaml"
+    second["statement"]["subject"]["artifact_path"] = "subjects/project.work_item/wi-43.json"
     second["subject_shell"]["subject_id"] = "wi-43"
     assert isinstance(second["claim_type_artifact"], dict)
     second["claim_type_artifact"]["literal_schema"] = {

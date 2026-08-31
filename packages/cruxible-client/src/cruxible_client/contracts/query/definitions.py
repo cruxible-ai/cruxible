@@ -22,7 +22,13 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import (
+    ArtifactDigest,
+    artifact_bytes_for_path,
+    artifact_path_matches,
+    pretty_canonical_bytes,
+    typed_digest,
+)
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.claim_verdicts import EvidenceCurrency, EvidenceRelativeClaimVerdict
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
@@ -329,7 +335,7 @@ def query_definition_path(name: str) -> str:
 
     if not _QUERY_NAME_RE.fullmatch(name):
         raise QueryDefinitionFormatError("QueryDefinition identity is not path-addressable")
-    return f"query-definitions/{name}.yaml"
+    return f"query-definitions/{name}.json"
 
 
 def query_definition_address(path: str) -> SemanticAddress:
@@ -340,7 +346,7 @@ def query_definition_address(path: str) -> SemanticAddress:
 
 def validate_query_definition_path(query: QueryDefinitionV1, path: str) -> str:
     expected = query_definition_path(query.identity.name)
-    if path != expected:
+    if not artifact_path_matches(expected, path):
         raise QueryDefinitionFormatError(
             f"QueryDefinition identity/path disagreement: {query.identity.qualified!r} "
             f"requires {expected!r}"
@@ -349,7 +355,7 @@ def validate_query_definition_path(query: QueryDefinitionV1, path: str) -> str:
 
 
 def render_query_definition(query: QueryDefinitionV1) -> bytes:
-    return canonical_bytes(query.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(query.model_dump(mode="json"))
 
 
 def parse_query_definition(content: bytes, *, path: str) -> QueryDefinitionV1:
@@ -371,7 +377,7 @@ def parse_query_definition(content: bytes, *, path: str) -> QueryDefinitionV1:
         raise QueryDefinitionFormatError(
             "QueryDefinition failed strict playbill-query-definition-v1 validation"
         ) from exc
-    if render_query_definition(query) != content:
+    if artifact_bytes_for_path(render_query_definition(query), path) != content:
         raise QueryDefinitionFormatError("QueryDefinition is not in canonical wire form")
     validate_query_definition_path(query, path)
     return query

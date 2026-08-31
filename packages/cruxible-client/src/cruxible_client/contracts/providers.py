@@ -14,7 +14,13 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import (
+    ArtifactDigest,
+    artifact_bytes_for_path,
+    artifact_path_matches,
+    pretty_canonical_bytes,
+    typed_digest,
+)
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -154,11 +160,11 @@ class ProviderV1(_StrictProviderModel):
 def provider_path(name: str) -> str:
     if not _PROVIDER_NAME_RE.fullmatch(name):
         raise ProviderFormatError("Provider identity is not path-addressable")
-    return f"providers/{name}.yaml"
+    return f"providers/{name}.json"
 
 
 def render_provider(provider: ProviderV1) -> bytes:
-    return canonical_bytes(provider.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(provider.model_dump(mode="json"))
 
 
 def parse_provider(content: bytes, *, path: str) -> ProviderV1:
@@ -166,9 +172,9 @@ def parse_provider(content: bytes, *, path: str) -> ProviderV1:
         provider = ProviderV1.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProviderFormatError("Provider failed strict v1 validation") from exc
-    if path != provider_path(provider.identity.name):
+    if not artifact_path_matches(provider_path(provider.identity.name), path):
         raise ProviderFormatError("Provider identity/path disagreement")
-    if render_provider(provider) != content:
+    if artifact_bytes_for_path(render_provider(provider), path) != content:
         raise ProviderFormatError("Provider is not in canonical wire form")
     return provider
 

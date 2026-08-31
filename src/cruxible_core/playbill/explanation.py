@@ -262,7 +262,7 @@ def accepted_artifact_explanation_facts(
                 "attestation_digest": {"$digest": digest},
                 "key_history_ref": {
                     "principal_path": {
-                        "$path": f"principals/{submission.attestation.signer_id}.yaml"
+                        "$path": f"principals/{submission.attestation.signer_id}.json"
                     },
                     "semantic_root": {"$digest": submission.attestation.signing_semantic_root},
                 },

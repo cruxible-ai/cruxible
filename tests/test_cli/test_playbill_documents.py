@@ -61,7 +61,7 @@ def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> Non
                         coordinate=COORDINATE,
                         envelope={
                             "identity": "document:design",
-                            "path": "documents/design.yaml",
+                            "path": "documents/design.json",
                         },
                         facts=[],
                     )
@@ -85,7 +85,7 @@ def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> Non
         ],
     )
     assert result.exit_code == 0, result.output
-    assert "document:design  documents/design.yaml" in result.stdout
+    assert "document:design  documents/design.json" in result.stdout
     assert f"Coordinate: {COORDINATE.git_oid}" in result.stdout
 
 

@@ -426,11 +426,11 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     page = cruxible.json("playbill", "discover", "--query", "wi-42", "--profile", "all")
     assert page["vocabulary_entry_count"] > 0
     assert any(
-        hit["address"]["artifact_path"] == f"subjects/{SUBJECT_KIND}/wi-42.yaml"
+        hit["address"]["artifact_path"] == f"subjects/{SUBJECT_KIND}/wi-42.json"
         for hit in page["page"]["hits"]
     )
 
-    capsule = cruxible.json("playbill", "expand", f"subjects/{SUBJECT_KIND}/wi-42.yaml")
+    capsule = cruxible.json("playbill", "expand", f"subjects/{SUBJECT_KIND}/wi-42.json")
     assert capsule["tag"] == "playbill-context-capsule-v1"
     assert capsule["at"] == coordinate
     assert capsule["canonical_summary"]["identity"] == f"Subject:{SUBJECT_KIND}/wi-42"

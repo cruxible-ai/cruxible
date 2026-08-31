@@ -31,8 +31,8 @@ from cruxible_client.contracts.errors import CanonicalEncodingError
 PROPERTY_SEED = 20260818
 GENERATIONS = 40
 
-NFC_PATH = unicodedata.normalize("NFC", "documents/café.yaml")
-NFD_PATH = unicodedata.normalize("NFD", "documents/café.yaml")
+NFC_PATH = unicodedata.normalize("NFC", "documents/café.json")
+NFD_PATH = unicodedata.normalize("NFD", "documents/café.json")
 
 
 def _cold(tree: dict[str, bytes]) -> Manifest:
@@ -45,9 +45,9 @@ def _member(rng: random.Random) -> bytes:
 
 def _ordinary_paths() -> tuple[str, ...]:
     return (
-        *(f"documents/d{index:03d}.yaml" for index in range(12)),
-        *(f"documents/nested/deep/d{index:03d}.yaml" for index in range(6)),
-        *(f"subjects/s{index:03d}.yaml" for index in range(6)),
+        *(f"documents/d{index:03d}.json" for index in range(12)),
+        *(f"documents/nested/deep/d{index:03d}.json" for index in range(6)),
+        *(f"subjects/s{index:03d}.json" for index in range(6)),
     )
 
 
@@ -146,13 +146,13 @@ def test_the_seeded_walk_is_reproducible_across_independent_runs() -> None:
 
 def test_carrying_hashes_only_the_members_whose_bytes_changed(monkeypatch) -> None:
     tree = {
-        f"documents/d{index:04d}.yaml": b"revision: 1\nindex: %d\n" % index for index in range(200)
+        f"documents/d{index:04d}.json": b"revision: 1\nindex: %d\n" % index for index in range(200)
     }
     manifest = _cold(tree)
     successor = dict(tree)
     for index in range(3):
-        successor[f"documents/d{index:04d}.yaml"] = b"revision: 2\nindex: %d\n" % index
-    successor["documents/d9999.yaml"] = b"revision: 1\nindex: 9999\n"
+        successor[f"documents/d{index:04d}.json"] = b"revision: 2\nindex: %d\n" % index
+    successor["documents/d9999.json"] = b"revision: 1\nindex: 9999\n"
 
     hashed: list[bytes] = []
 
@@ -173,15 +173,15 @@ def test_carrying_hashes_only_the_members_whose_bytes_changed(monkeypatch) -> No
 
 
 def test_changed_bytes_are_rehashed_even_when_a_stale_digest_is_carried() -> None:
-    tree = {"documents/d.yaml": b"revision: 1\n"}
-    stale: Manifest = {"documents/d.yaml": file_digest(b"revision: 1\n").value}
-    successor = {"documents/d.yaml": b"revision: 2\n"}
+    tree = {"documents/d.json": b"revision: 1\n"}
+    stale: Manifest = {"documents/d.json": file_digest(b"revision: 1\n").value}
+    successor = {"documents/d.json": b"revision: 2\n"}
     members = manifest_for_tree_carrying(
         semantic_projection(successor),
         previous_tree=tree,
         previous_manifest=stale,
     )
-    assert members == {"documents/d.yaml": file_digest(b"revision: 2\n").value}
+    assert members == {"documents/d.json": file_digest(b"revision: 2\n").value}
 
 
 def test_a_late_nfc_path_collision_is_refused_exactly_as_a_cold_build_refuses_it() -> None:
@@ -200,9 +200,9 @@ def test_a_late_nfc_path_collision_is_refused_exactly_as_a_cold_build_refuses_it
 
 
 def test_a_late_case_fold_sibling_collision_is_refused_by_the_carried_build() -> None:
-    tree = {"documents/Alpha/x.yaml": b"revision: 1\n"}
+    tree = {"documents/Alpha/x.json": b"revision: 1\n"}
     manifest = _cold(tree)
-    successor = {**tree, "documents/alpha/y.yaml": b"revision: 1\n"}
+    successor = {**tree, "documents/alpha/y.json": b"revision: 1\n"}
 
     with pytest.raises(CanonicalEncodingError, match="case-fold-colliding siblings"):
         manifest_for_tree(semantic_projection(successor))
@@ -215,9 +215,9 @@ def test_a_late_case_fold_sibling_collision_is_refused_by_the_carried_build() ->
 
 
 def test_a_late_non_canonical_path_is_refused_by_the_carried_build() -> None:
-    tree = {"documents/d.yaml": b"revision: 1\n"}
+    tree = {"documents/d.json": b"revision: 1\n"}
     manifest = _cold(tree)
-    successor = {**tree, "documents/../escape.yaml": b"revision: 1\n"}
+    successor = {**tree, "documents/../escape.json": b"revision: 1\n"}
 
     with pytest.raises(CanonicalEncodingError):
         manifest_for_tree_carrying(
@@ -228,7 +228,7 @@ def test_a_late_non_canonical_path_is_refused_by_the_carried_build() -> None:
 
 
 def test_an_empty_carry_reproduces_the_cold_manifest_exactly() -> None:
-    tree = {f"documents/d{index:03d}.yaml": b"index: %d\n" % index for index in range(32)}
+    tree = {f"documents/d{index:03d}.json": b"index: %d\n" % index for index in range(32)}
     assert manifest_for_tree_carrying(tree, previous_tree={}, previous_manifest={}) == (
         manifest_for_tree(tree)
     )

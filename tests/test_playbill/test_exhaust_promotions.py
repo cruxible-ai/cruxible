@@ -225,7 +225,7 @@ def test_promotion_passes_proposal_replay_and_projects_canonical_output(tmp_path
     instance, owner = initialize_local(tmp_path)
     base_procedure = _accepted().procedure.model_copy(update={})
     accepted_procedure = AcceptedProcedureV1(
-        path="procedures/measured-procedure.yaml",
+        path="procedures/measured-procedure.json",
         procedure=base_procedure,
         artifact_digest=procedure_artifact_digest(base_procedure).tagged,
     )

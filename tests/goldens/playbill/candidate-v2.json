@@ -4,21 +4,21 @@
     "parent_semantic_root": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "scope": [
       "claims/alpha.json",
-      "subjects/alpha.yaml"
+      "subjects/alpha.json"
     ],
     "semantic_diff_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
     "tag": "playbill-candidate-v2",
     "timestamp": "2026-08-19T09:15:00.000000Z"
   },
   "candidate_digest": "sha256:51a434d458f76043243fac47e038abe4d0fb002e2797cf088dfca5293fee6062",
-  "canonical_preimage": "{\"candidate_manifest_root\":\"merkle-sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"parent_semantic_root\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"scope\":[\"claims/alpha.json\",\"subjects/alpha.yaml\"],\"semantic_diff_digest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"tag\":\"playbill-candidate-v2\",\"timestamp\":\"2026-08-19T09:15:00.000000Z\"}",
+  "canonical_preimage": "{\"candidate_manifest_root\":\"merkle-sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"parent_semantic_root\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"scope\":[\"claims/alpha.json\",\"subjects/alpha.json\"],\"semantic_diff_digest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"tag\":\"playbill-candidate-v2\",\"timestamp\":\"2026-08-19T09:15:00.000000Z\"}",
   "flat_rooted_v1_sibling": {
     "candidate": {
       "candidate_manifest_root": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "parent_semantic_root": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "scope": [
         "claims/alpha.json",
-        "subjects/alpha.yaml"
+        "subjects/alpha.json"
       ],
       "semantic_diff_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "tag": "playbill-candidate-v1",

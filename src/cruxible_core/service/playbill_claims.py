@@ -387,9 +387,9 @@ def _accepted_claim_ids(
 ) -> tuple[str, ...]:
     tree = instance.tree_at(coordinate.git_oid)
     return tuple(
-        path.rsplit("/", 1)[-1].removesuffix(".yaml")
+        path.rsplit("/", 1)[-1].removesuffix(".json")
         for path in tree
-        if path.startswith("claims/") and path.endswith(".yaml")
+        if path.startswith("claims/") and path.endswith(".json")
     )
 
 

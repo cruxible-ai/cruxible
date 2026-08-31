@@ -187,7 +187,7 @@ def test_claim_identity_sharding_and_three_digest_layers(tmp_path: Path) -> None
     instance, _owner = initialize_local(tmp_path)
     claim_id = new_claim_id()
     assert claim_id.startswith("CLM-") and len(claim_id) == 36
-    assert claim_path(claim_id) == f"claims/{claim_id[4:6]}/{claim_id}.yaml"
+    assert claim_path(claim_id) == f"claims/{claim_id[4:6]}/{claim_id}.json"
     capture = build_direct_claim_capture(
         store=instance.body_store(),
         actor_id="owner",
@@ -349,7 +349,7 @@ def test_subject_claim_type_capture_contract_and_claim_form_one_atomic_candidate
     tree = {
         **instance.tree_at(base.git_oid),
         subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.yaml": render_claim_type(claim_type),
+        "claim-types/project.work_item/status.json": render_claim_type(claim_type),
         capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
             render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
         ),
@@ -409,7 +409,7 @@ def test_v2_claim_successor_preserves_the_base_accepted_authority_change_shape(
     tree = {
         **instance.tree_at(base.git_oid),
         subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.yaml": render_claim_type(_claim_type()),
+        "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
         capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
             render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
         ),
@@ -472,7 +472,7 @@ def test_service_claim_history_returns_each_accepted_lineage_entry(tmp_path: Pat
     tree = {
         **instance.tree_at(base.git_oid),
         subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.yaml": render_claim_type(_claim_type()),
+        "claim-types/project.work_item/status.json": render_claim_type(_claim_type()),
         capture_contract_path(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.name): (
             render_capture_contract(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT)
         ),

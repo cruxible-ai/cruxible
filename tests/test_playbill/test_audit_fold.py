@@ -439,17 +439,17 @@ def test_rank_order_is_score_then_every_integer_factor_then_claim_path() -> None
             self.claim_path = path
 
     rows = (
-        Row(20, 2, 5, 2, "claims/z.yaml"),
-        Row(20, 4, 1, 5, "claims/a.yaml"),
-        Row(20, 4, 1, 5, "claims/b.yaml"),
-        Row(21, 1, 1, 21, "claims/c.yaml"),
+        Row(20, 2, 5, 2, "claims/z.json"),
+        Row(20, 4, 1, 5, "claims/a.json"),
+        Row(20, 4, 1, 5, "claims/b.json"),
+        Row(21, 1, 1, 21, "claims/c.json"),
     )
     ordered = sorted(rows, key=audit_row_order)  # type: ignore[arg-type]
     assert [item.claim_path for item in ordered] == [
-        "claims/c.yaml",
-        "claims/a.yaml",
-        "claims/b.yaml",
-        "claims/z.yaml",
+        "claims/c.json",
+        "claims/a.json",
+        "claims/b.json",
+        "claims/z.json",
     ]
 
 
@@ -512,12 +512,12 @@ def test_factor_fold_exposes_raw_counts_flags_and_exact_integer_score(
         AuditDependentRefV1(
             kind="Claim",
             identity=ArtifactIdentity(kind="Claim", name="CLM-dependent"),
-            path="claims/CLM-dependent.yaml",
+            path="claims/CLM-dependent.json",
         ),
         AuditDependentRefV1(
             kind="Procedure",
             identity=ArtifactIdentity(kind="Procedure", name="triage"),
-            path="procedures/triage.yaml",
+            path="procedures/triage.json",
         ),
     )
 

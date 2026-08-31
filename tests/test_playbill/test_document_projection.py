@@ -30,7 +30,7 @@ from cruxible_core.storage.playbill_projection import bind_projection
 from tests.test_playbill._projection_support import MemoryLedger, accepted_coordinate
 from tests.test_playbill._support import initialize_local
 
-DOCUMENT_PATH = "documents/playbill-design.yaml"
+DOCUMENT_PATH = "documents/playbill-design.json"
 TIMESTAMP = "2026-08-11T12:30:00.000000Z"
 
 

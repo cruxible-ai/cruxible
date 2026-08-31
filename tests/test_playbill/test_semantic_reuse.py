@@ -37,7 +37,7 @@ def coordinate() -> AcceptedCoordinate:
 
 def proposal(*, identity: str = "project.work_item.state") -> ProposedSemanticInterfaceV1:
     return ProposedSemanticInterfaceV1(
-        address=SemanticAddress.whole_artifact("claim-types/project.work_item/state.yaml"),
+        address=SemanticAddress.whole_artifact("claim-types/project.work_item/state.json"),
         identity=ArtifactIdentity(kind="ClaimType", name=identity),
         kind="claim-type",
         label="Work item state",
@@ -52,7 +52,7 @@ def existing(
     structure: str = OTHER_STRUCTURE,
 ) -> SemanticReuseInterfaceV1:
     return SemanticReuseInterfaceV1(
-        address=SemanticAddress.whole_artifact("claim-types/project.work_item/status.yaml"),
+        address=SemanticAddress.whole_artifact("claim-types/project.work_item/status.json"),
         identity=ArtifactIdentity(kind="ClaimType", name=identity),
         kind="claim-type",
         label="Work item status",
@@ -141,7 +141,7 @@ def test_new_distinct_succeeds_only_when_no_blocking_candidate_exists_in_pc_a2()
 def test_new_distinct_requires_the_exact_persisted_relation_for_each_blocker() -> None:
     blocker = existing(structure=STRUCTURE)
     relation = DistinctRelationMemberV1(
-        claim_address=SemanticAddress.claim_statement("claims/aa/CLM-" + "aa" * 16 + ".yaml"),
+        claim_address=SemanticAddress.claim_statement("claims/aa/CLM-" + "aa" * 16 + ".json"),
         claim_artifact_digest="sha256:" + "ab" * 32,
         subject=proposal().address,
         object=blocker.address,
@@ -159,7 +159,7 @@ def test_new_distinct_requires_the_exact_persisted_relation_for_each_blocker() -
 
     wrong_target = relation.model_copy(
         update={
-            "object": SemanticAddress.whole_artifact("claim-types/project.work_item/priority.yaml")
+            "object": SemanticAddress.whole_artifact("claim-types/project.work_item/priority.json")
         }
     )
     refused = evaluate_vocabulary_reuse(

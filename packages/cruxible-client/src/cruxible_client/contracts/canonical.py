@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from typing import ClassVar, TypeVar, cast
 
 from cruxible_client.contracts.errors import CanonicalEncodingError
-from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.primitives import canonical_json, pretty_json
 
 CanonicalScalar = None | bool | int | str
 CanonicalValue = CanonicalScalar | list["CanonicalValue"] | dict[str, "CanonicalValue"]
@@ -79,6 +80,30 @@ def canonical_bytes(value: object) -> bytes:
     """Encode one normalized value as whitespace-free UTF-8 JSON."""
 
     return canonical_json(normalize_canonical(value)).encode("utf-8")
+
+
+def pretty_canonical_bytes(value: object) -> bytes:
+    """Encode one normalized value as sorted indent-2 JSON with one final LF."""
+
+    return pretty_json(normalize_canonical(value)).encode("utf-8") + b"\n"
+
+
+def artifact_bytes_for_path(rendered_current: bytes, path: str) -> bytes:
+    """Return current pretty bytes or the frozen pre-PC-HR compact spelling."""
+
+    if path.endswith(".json"):
+        return rendered_current
+    if path.endswith(".yaml"):
+        return canonical_bytes(json.loads(rendered_current)) + b"\n"
+    raise CanonicalEncodingError("artifact path has no supported JSON codec suffix")
+
+
+def artifact_path_matches(current_path: str, actual_path: str) -> bool:
+    """Match the current JSON path or its frozen pre-PC-HR YAML spelling."""
+
+    return (
+        actual_path == current_path or actual_path == current_path.removesuffix(".json") + ".yaml"
+    )
 
 
 def canonical_digest(domain: str, payload: Mapping[str, object]) -> str:
@@ -413,6 +438,8 @@ def semantic_diff(
 
 __all__ = [
     "ArtifactDigest",
+    "artifact_bytes_for_path",
+    "artifact_path_matches",
     "AcceptanceLawDigest",
     "ApprovalDigest",
     "BootstrapRoot",
@@ -440,6 +467,7 @@ __all__ = [
     "normalize_canonical",
     "normalize_ledger_path",
     "normalize_manifest_paths",
+    "pretty_canonical_bytes",
     "semantic_diff",
     "semantic_diff_from_members",
     "semantic_projection",

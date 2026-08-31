@@ -19,8 +19,10 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     CasDigest,
-    canonical_bytes,
+    artifact_bytes_for_path,
+    artifact_path_matches,
     normalize_ledger_path,
+    pretty_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
@@ -240,7 +242,7 @@ class DocumentArtifactAdapter:
 
 
 def document_path(document_id: str) -> str:
-    return f"documents/{_identifier(document_id, label='document_id')}.yaml"
+    return f"documents/{_identifier(document_id, label='document_id')}.json"
 
 
 def validate_document_path(shell: DocumentShell, path: str) -> str:
@@ -249,7 +251,7 @@ def validate_document_path(shell: DocumentShell, path: str) -> str:
     except CanonicalEncodingError as exc:
         raise DocumentFormatError("Document path is not a canonical ledger path") from exc
     expected = document_path(shell.document_id)
-    if normalized != path or path != expected:
+    if normalized != path or not artifact_path_matches(expected, path):
         raise DocumentFormatError(
             f"Document identity/path disagreement: {shell.identity!r} requires {expected!r}"
         )
@@ -257,7 +259,7 @@ def validate_document_path(shell: DocumentShell, path: str) -> str:
 
 
 def render_document(shell: DocumentShell) -> bytes:
-    return canonical_bytes(shell.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(shell.model_dump(mode="json"))
 
 
 def parse_document(content: bytes, *, path: str) -> DocumentShell:
@@ -274,7 +276,7 @@ def parse_document(content: bytes, *, path: str) -> DocumentShell:
         shell = DocumentShell.model_validate(payload)
     except ValidationError as exc:
         raise DocumentFormatError("Document shell failed strict v1 validation") from exc
-    if render_document(shell) != content:
+    if artifact_bytes_for_path(render_document(shell), path) != content:
         raise DocumentFormatError("Document shell is not in canonical wire form")
     validate_document_path(shell, path)
     return shell

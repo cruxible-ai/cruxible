@@ -549,7 +549,7 @@ def test_derived_activation_remains_bound_to_its_accepting_generation(tmp_path) 
     )
     second_tree = {
         **instance.tree_at(accepting_coordinate.git_oid),
-        "documents/unrelated.yaml": render_document(document),
+        "documents/unrelated.json": render_document(document),
     }
     _accept_tree(
         instance,

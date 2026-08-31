@@ -55,7 +55,7 @@ from cruxible_core.playbill.witness import WitnessRecord
 from ._support import FIXED_TIMESTAMP, generate_client
 
 TIMESTAMP = "2026-08-12T14:00:00.000000Z"
-DOCUMENT_PATH = "documents/design.yaml"
+DOCUMENT_PATH = "documents/design.json"
 
 
 def _instance(tmp_path: Path):

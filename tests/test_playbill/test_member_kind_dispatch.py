@@ -31,10 +31,10 @@ from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_change_set_closure import claim_type, subject
 
 TIMESTAMP = "2026-08-16T14:00:00.000000Z"
-DOCUMENT_PATH = "documents/dispatch.yaml"
-SUBJECT_PATH = "subjects/project.work_item/wi-closure.yaml"
-CLAIM_TYPE_PATH = "claim-types/project.work_item/status.yaml"
-PRINCIPAL_PATH = "principals/owner.yaml"
+DOCUMENT_PATH = "documents/dispatch.json"
+SUBJECT_PATH = "subjects/project.work_item/wi-closure.json"
+CLAIM_TYPE_PATH = "claim-types/project.work_item/status.json"
+PRINCIPAL_PATH = "principals/owner.json"
 
 
 def _document(instance: object) -> bytes:
@@ -166,7 +166,7 @@ def test_a_malformed_member_is_a_format_refusal_not_an_escaping_parse_error(
         DOCUMENT_PATH: "playbill.document.format_invalid",
         SUBJECT_PATH: "playbill.subject.format_invalid",
         CLAIM_TYPE_PATH: "playbill.claim_type.format_invalid",
-        "providers/dispatch.yaml": "playbill.proposal.member_format_invalid",
+        "providers/dispatch.json": "playbill.proposal.member_format_invalid",
     }
     for path, code in expected.items():
         assert _codes(instance, base, {**base, path: b"not-json\n"}) == [code]

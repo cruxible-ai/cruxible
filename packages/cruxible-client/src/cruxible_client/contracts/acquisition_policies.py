@@ -17,8 +17,11 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
     Sha256Value,
+    artifact_bytes_for_path,
+    artifact_path_matches,
     canonical_bytes,
     normalize_canonical,
+    pretty_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.capture_journal import CaptureLandingEventV1
@@ -200,11 +203,11 @@ def acquisition_policy_digest(policy: SourceAcquisitionPolicyV1) -> ArtifactDige
 def acquisition_policy_path(name: str) -> str:
     if not _POLICY_NAME_RE.fullmatch(name):
         raise SourceAcquisitionPolicyError("SourceAcquisitionPolicy is not path-addressable")
-    return f"source-acquisition-policies/{name}.yaml"
+    return f"source-acquisition-policies/{name}.json"
 
 
 def render_acquisition_policy(policy: SourceAcquisitionPolicyV1) -> bytes:
-    return canonical_bytes(policy.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(policy.model_dump(mode="json"))
 
 
 def parse_acquisition_policy(content: bytes, *, path: str) -> SourceAcquisitionPolicyV1:
@@ -214,9 +217,9 @@ def parse_acquisition_policy(content: bytes, *, path: str) -> SourceAcquisitionP
         raise SourceAcquisitionPolicyError(
             "SourceAcquisitionPolicy failed strict v1 validation"
         ) from exc
-    if path != acquisition_policy_path(policy.identity.name):
+    if not artifact_path_matches(acquisition_policy_path(policy.identity.name), path):
         raise SourceAcquisitionPolicyError("SourceAcquisitionPolicy identity/path disagreement")
-    if render_acquisition_policy(policy) != content:
+    if artifact_bytes_for_path(render_acquisition_policy(policy), path) != content:
         raise SourceAcquisitionPolicyError("SourceAcquisitionPolicy is not canonical")
     return policy
 

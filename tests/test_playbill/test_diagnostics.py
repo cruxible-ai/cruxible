@@ -14,7 +14,7 @@ from cruxible_client.contracts.semantic import ContentSpan, SemanticAddress
 
 
 def _subject(name: str) -> SemanticAddress:
-    return SemanticAddress.whole_artifact(f"documents/{name}.yaml")
+    return SemanticAddress.whole_artifact(f"documents/{name}.json")
 
 
 def test_diagnostic_code_and_related_subjects_survive_message_rewording() -> None:
@@ -57,7 +57,7 @@ def test_local_edits_can_name_only_exact_unaccepted_draft_bytes() -> None:
     }
     assert LocalDraftEdit.model_validate(payload).draft_id == "draft-1"
     for forbidden in (
-        {"path": "documents/accepted.yaml"},
+        {"path": "documents/accepted.json"},
         {"git_oid": "a" * 40},
         {"semantic_root": "sha256:" + "33" * 32},
         {"generation_root": "sha256:" + "44" * 32},

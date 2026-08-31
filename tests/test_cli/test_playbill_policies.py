@@ -23,7 +23,7 @@ def _result() -> contracts.PlaybillPolicyInForceList:
                 declaring_artifact_identity="ApprovalPolicy:instance",
                 declaring_artifact_kind="ApprovalPolicy",
                 declaring_artifact_digest="sha256:" + "5" * 64,
-                path="governance/approval-policy.yaml",
+                path="governance/approval-policy.json",
                 field_path="/",
                 policy={"tag": "playbill-approval-policy-v1", "mode": "self_approval_allowed"},
             )

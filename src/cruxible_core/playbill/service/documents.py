@@ -215,7 +215,7 @@ def service_propose_playbill_principal_change(
 
     proposed_base = _resolve_coordinate(instance, base)
     candidate_tree = instance.tree_at(proposed_base.git_oid)
-    candidate_tree[f"principals/{principal.principal_id}.yaml"] = render_principal(principal)
+    candidate_tree[f"principals/{principal.principal_id}.json"] = render_principal(principal)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="principal")
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),

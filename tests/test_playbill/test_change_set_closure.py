@@ -42,7 +42,7 @@ from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 
 TIMESTAMP = "2026-08-16T14:00:00.000000Z"
-SUBJECT_PATH = "subjects/project.work_item/wi-closure.yaml"
+SUBJECT_PATH = "subjects/project.work_item/wi-closure.json"
 
 
 def subject(*, lifecycle: ArtifactLifecycle = ArtifactLifecycle()) -> SubjectShell:
@@ -95,7 +95,7 @@ def test_multi_kind_candidate_scope_member_and_closure_paths_are_identical(
             ),
         ),
     )
-    claim_type_path = "claim-types/project.work_item/status.yaml"
+    claim_type_path = "claim-types/project.work_item/status.json"
     candidate_tree = {
         **base_tree,
         SUBJECT_PATH: render_subject(shell),
@@ -142,8 +142,8 @@ def test_changed_dependency_reports_exact_sorted_missing_dependents() -> None:
         target=original.identity,
         artifact_digest=subject_digest(original).tagged,
     )
-    status_path = "claim-types/project.work_item/status.yaml"
-    priority_path = "claim-types/project.work_item/priority.yaml"
+    status_path = "claim-types/project.work_item/status.json"
+    priority_path = "claim-types/project.work_item/priority.json"
     parent = {
         SUBJECT_PATH: render_subject(original),
         status_path: render_claim_type(claim_type("project.work_item.status", pins=(pin,))),
@@ -179,9 +179,9 @@ def test_changed_dependency_reports_exact_sorted_missing_dependents() -> None:
 
 
 def test_three_way_rebase_drops_noop_and_reports_all_exact_conflict_digests() -> None:
-    old = {"documents/a.yaml": b"old", "documents/b.yaml": b"stable"}
-    proposed = {"documents/a.yaml": b"proposed", "documents/b.yaml": b"same-new"}
-    new = {"documents/a.yaml": b"concurrent", "documents/b.yaml": b"same-new"}
+    old = {"documents/a.json": b"old", "documents/b.json": b"stable"}
+    proposed = {"documents/a.json": b"proposed", "documents/b.json": b"same-new"}
+    new = {"documents/a.json": b"concurrent", "documents/b.json": b"same-new"}
 
     result = deterministic_rebase_v2(
         old_parent_tree=old,
@@ -189,13 +189,13 @@ def test_three_way_rebase_drops_noop_and_reports_all_exact_conflict_digests() ->
         proposed_tree=proposed,
     )
 
-    assert tuple(item.path for item in result.conflicts) == ("documents/a.yaml",)
+    assert tuple(item.path for item in result.conflicts) == ("documents/a.json",)
     conflict = result.conflicts[0]
     assert conflict.code == "playbill.rebase.member_conflict"
     assert conflict.old_parent_digest is not None
     assert conflict.proposed_digest is not None
     assert conflict.new_parent_digest is not None
-    assert result.tree["documents/b.yaml"] == b"same-new"
+    assert result.tree["documents/b.json"] == b"same-new"
     assert result.approvals_invalidated is True
 
 
@@ -205,8 +205,8 @@ def test_candidate_tree_reuse_lookup_blocks_two_simultaneous_adjacent_types(
     instance, _owner = initialize_local(tmp_path)
     current = instance.accepted_coordinate()
     base_tree = instance.tree_at(current.git_oid)
-    first_path = "claim-types/ops.work_item/status.yaml"
-    second_path = "claim-types/project.work_item/status.yaml"
+    first_path = "claim-types/ops.work_item/status.json"
+    second_path = "claim-types/project.work_item/status.json"
     candidate_tree = {
         **base_tree,
         first_path: render_claim_type(claim_type("ops.work_item.status")),
@@ -241,7 +241,7 @@ def test_multi_member_malformed_artifact_is_a_typed_refusal(tmp_path: Path) -> N
         proposed_tree={
             **base_tree,
             SUBJECT_PATH: render_subject(subject()),
-            "claim-types/project.work_item/status.yaml": b"not-json\n",
+            "claim-types/project.work_item/status.json": b"not-json\n",
         },
         current=current,
         bodies=instance.body_store(),
@@ -262,7 +262,7 @@ def test_claim_type_rebase_reports_exact_conflict_evidence_and_no_candidate(
     instance, _owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
     base_tree = instance.tree_at(base.git_oid)
-    path = "claim-types/project.work_item/status.yaml"
+    path = "claim-types/project.work_item/status.json"
     proposed = {**base_tree, path: render_claim_type(claim_type("project.work_item.status"))}
     concurrent = {
         **base_tree,
@@ -313,7 +313,7 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
             ),
         ),
     )
-    claim_path = "claim-types/project.work_item/status.yaml"
+    claim_path = "claim-types/project.work_item/status.json"
     initial = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
         request=ProposalAdmissionRequest(

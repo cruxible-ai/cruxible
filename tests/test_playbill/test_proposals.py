@@ -49,7 +49,7 @@ from cruxible_core.service.playbill_evidence import service_propose_claim_attest
 from tests.test_playbill._support import initialize_local
 
 TIMESTAMP = "2026-08-11T12:30:00.000000Z"
-DOCUMENT_PATH = "documents/playbill-design.yaml"
+DOCUMENT_PATH = "documents/playbill-design.json"
 
 
 def _shell(body_digest: str, *, title: str = "Playbill design") -> DocumentShell:
@@ -359,7 +359,7 @@ def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Pat
     )
     current_tree = {
         **base_tree,
-        "documents/unrelated.yaml": render_document(unrelated),
+        "documents/unrelated.json": render_document(unrelated),
     }
     moved = AcceptedProjectionCoordinate(
         **{
@@ -402,7 +402,7 @@ def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Pat
         proposed_tree=proposed_tree,
     )
     assert not conflicts
-    assert rebased_tree["documents/unrelated.yaml"] == render_document(unrelated)
+    assert rebased_tree["documents/unrelated.json"] == render_document(unrelated)
 
 
 def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
@@ -437,7 +437,7 @@ def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
     with pytest.raises(ValidationError, match="does not reproduce"):
         CandidateRecord.model_validate({**values, "candidate_digest": "sha256:" + "99" * 32})
     with pytest.raises(ValidationError, match="closure"):
-        CandidateRecord.model_validate({**values, "closure_paths": ("documents/other.yaml",)})
+        CandidateRecord.model_validate({**values, "closure_paths": ("documents/other.json",)})
 
 
 def test_candidate_record_refuses_law_mapping_or_member_substitution() -> None:

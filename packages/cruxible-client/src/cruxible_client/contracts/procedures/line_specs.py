@@ -16,8 +16,10 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import (
     ArtifactDigest,
-    canonical_bytes,
+    artifact_bytes_for_path,
+    artifact_path_matches,
     normalize_canonical,
+    pretty_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
@@ -245,11 +247,11 @@ def _trigger_pin_requirements(
 def line_spec_path(name: str) -> str:
     if not _LINE_NAME_RE.fullmatch(name):
         raise LineSpecFormatError("Line identity is not path-addressable")
-    return f"lines/{name}.yaml"
+    return f"lines/{name}.json"
 
 
 def render_line_spec(line: LineSpecV1) -> bytes:
-    return canonical_bytes(line.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(line.model_dump(mode="json"))
 
 
 def parse_line_spec(content: bytes, *, path: str) -> LineSpecV1:
@@ -257,9 +259,9 @@ def parse_line_spec(content: bytes, *, path: str) -> LineSpecV1:
         line = LineSpecV1.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise LineSpecFormatError("LineSpec failed strict playbill-line-v1 validation") from exc
-    if path != line_spec_path(line.identity.name):
+    if not artifact_path_matches(line_spec_path(line.identity.name), path):
         raise LineSpecFormatError("LineSpec identity/path disagreement")
-    if render_line_spec(line) != content:
+    if artifact_bytes_for_path(render_line_spec(line), path) != content:
         raise LineSpecFormatError("LineSpec is not in canonical wire form")
     return line
 

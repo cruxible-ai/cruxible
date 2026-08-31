@@ -250,7 +250,7 @@ def _current_claim(instance, *, subject_id: str = "wi-42"):  # type: ignore[no-u
         for claim in (
             _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
         )
-        if claim.statement.subject.artifact_path.endswith(f"/{subject_id}.yaml")
+        if claim.statement.subject.artifact_path.endswith(f"/{subject_id}.json")
     )
 
 
@@ -1054,7 +1054,7 @@ def _document_modified(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
         lifecycle=DocumentLifecycle(revision=1),
     )
     _Builder(instance, owner).accept(
-        {"documents/runbook.yaml": render_document(document)},
+        {"documents/runbook.json": render_document(document)},
         phase="closed-loop-document",
     )
     instance.refresh()

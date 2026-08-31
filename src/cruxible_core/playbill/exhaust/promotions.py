@@ -19,8 +19,11 @@ from cruxible_client.contracts.canonical import (
     CanonicalValue,
     CasDigest,
     Sha256Value,
+    artifact_bytes_for_path,
+    artifact_path_matches,
     canonical_bytes,
     normalize_canonical,
+    pretty_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.errors import (
@@ -261,11 +264,11 @@ class ExhaustPromotionV1(_StrictPromotionModel):
 def exhaust_promotion_path(name: str) -> str:
     if not _PROMOTION_NAME_RE.fullmatch(name):
         raise ExhaustPromotionError("ExhaustPromotion identity is not path-addressable")
-    return f"exhaust-promotions/{name}.yaml"
+    return f"exhaust-promotions/{name}.json"
 
 
 def render_exhaust_promotion(promotion: ExhaustPromotionV1) -> bytes:
-    return canonical_bytes(promotion.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(promotion.model_dump(mode="json"))
 
 
 def parse_exhaust_promotion(content: bytes, *, path: str) -> ExhaustPromotionV1:
@@ -273,9 +276,9 @@ def parse_exhaust_promotion(content: bytes, *, path: str) -> ExhaustPromotionV1:
         promotion = ExhaustPromotionV1.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ExhaustPromotionError("ExhaustPromotion failed strict v1 validation") from exc
-    if path != exhaust_promotion_path(promotion.identity.name):
+    if not artifact_path_matches(exhaust_promotion_path(promotion.identity.name), path):
         raise ExhaustPromotionError("ExhaustPromotion identity/path disagreement")
-    if render_exhaust_promotion(promotion) != content:
+    if artifact_bytes_for_path(render_exhaust_promotion(promotion), path) != content:
         raise ExhaustPromotionError("ExhaustPromotion is not in canonical wire form")
     return promotion
 
