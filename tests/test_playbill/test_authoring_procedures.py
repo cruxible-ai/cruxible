@@ -514,9 +514,7 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
         actor=actor,
     ).lowered
     assert initial is not None
-    resolved_identities = [
-        member["identity"] for member in initial.resolved_authoring["members"]
-    ]
+    resolved_identities = [member["identity"] for member in initial.resolved_authoring["members"]]
     assert resolved_identities == sorted(resolved_identities, key=lambda item: item.encode())
     assert all(isinstance(identity, str) for identity in resolved_identities)
     _accept_tree(
@@ -571,9 +569,7 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
     accepted_payload = accepted_payload.model_copy(
         update={
             "members": (
-                accepted_payload_procedure.model_copy(
-                    update={"definition": accepted_definition}
-                ),
+                accepted_payload_procedure.model_copy(update={"definition": accepted_definition}),
                 accepted_payload.members[1],
             )
         }
@@ -924,7 +920,7 @@ def test_graph_law_failures_use_typed_definition_refusal(
                 "on_false": "$abort",
                 "refusal_code": "guard.false",
                 "message": "The guard refused.",
-            }
+            },
         ]
 
     result = coordinator.compile(

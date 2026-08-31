@@ -224,9 +224,7 @@ def test_converged_writes_and_policy_read_are_real_http_behaviors(
 
     policies = client.get(f"/api/v1/{instance_id}/playbill/policies")
     assert policies.status_code == 200, policies.text
-    assert [item["policy_kind"] for item in policies.json()["policies"]] == [
-        "approval_policy"
-    ]
+    assert [item["policy_kind"] for item in policies.json()["policies"]] == ["approval_policy"]
 
     requests = (
         (
@@ -270,9 +268,7 @@ def test_friendly_change_set_duplicate_is_a_typed_http_400(
 
     assert response.status_code == 400, response.text
     assert response.json()["error_type"] == "AuthoringInputError"
-    assert response.json()["error_code"] == (
-        "playbill.authoring.change_set_duplicate_identity"
-    )
+    assert response.json()["error_code"] == ("playbill.authoring.change_set_duplicate_identity")
 
 
 def test_residual_proposal_ref_validation_is_a_typed_http_400(

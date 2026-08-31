@@ -436,7 +436,7 @@ def _owned_repeat_transform_boundary_procedure(boundary: str) -> AcceptedProcedu
                 "items": PropertySchema(
                     type="list",
                     item_fields={"identifier": PropertySchema(type="string")},
-                )
+                ),
             },
             allow_extra=True,
         ),

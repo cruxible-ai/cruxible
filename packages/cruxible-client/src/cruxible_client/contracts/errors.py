@@ -115,9 +115,7 @@ class PlaybillDeprecatedWriteError(PlaybillFormatError):
 
     def __init__(self, *, replacement: str) -> None:
         self.replacement = replacement
-        super().__init__(
-            f"{self.error_code}: this write surface was removed; use {replacement}"
-        )
+        super().__init__(f"{self.error_code}: this write surface was removed; use {replacement}")
 
 
 class PlaybillBootstrapError(PlaybillError):

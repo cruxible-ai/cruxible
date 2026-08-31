@@ -790,9 +790,7 @@ def test_only_confirmed_publication_registration_suppresses_next_orphan_repair(
     assert len(prepared_orphaned) == 1
     assert prepared_orphaned[0].severity == "warning"
     assert prepared_orphaned[0].repair.operation == "playbill.document.propose"
-    assert prepared_orphaned[0].repair.required_change == (
-        "remove_or_register_projection_block"
-    )
+    assert prepared_orphaned[0].repair.required_change == ("remove_or_register_projection_block")
     assert prepared_orphaned[0].repair.arguments == {
         "source_id": "repo.work-items",
         "block_id": prepared.preparation.block_id,
