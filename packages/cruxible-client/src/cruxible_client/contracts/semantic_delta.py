@@ -9,8 +9,11 @@ from cruxible_client.contracts import (
     PlaybillSemanticFieldValue,
 )
 from cruxible_client.contracts.canonical import CanonicalValue, normalize_canonical
+from cruxible_client.contracts.errors import SemanticDeltaLimitError
 
 _MISSING: Final = object()
+MAX_SEMANTIC_DELTA_DEPTH: Final = 64
+MAX_SEMANTIC_DELTA_ROWS: Final = 4096
 
 
 def _pointer(parent: str, key: str) -> str:
@@ -24,6 +27,39 @@ def _side(value: CanonicalValue | object) -> PlaybillSemanticFieldValue:
     return PlaybillSemanticFieldValue(state="present", value=cast(CanonicalValue, value))
 
 
+def _require_bounded_depth(value: object, *, depth: int = 0) -> None:
+    if depth > MAX_SEMANTIC_DELTA_DEPTH:
+        raise SemanticDeltaLimitError(
+            f"{SemanticDeltaLimitError.error_code}: maximum object depth is "
+            f"{MAX_SEMANTIC_DELTA_DEPTH}"
+        )
+    if isinstance(value, dict):
+        for item in value.values():
+            _require_bounded_depth(item, depth=depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            _require_bounded_depth(item, depth=depth + 1)
+
+
+def _same_canonical_value(left: CanonicalValue, right: CanonicalValue) -> bool:
+    """Compare JSON values without Python's bool/int numeric aliasing."""
+
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        right_map = cast(dict[str, CanonicalValue], right)
+        return left.keys() == right_map.keys() and all(
+            _same_canonical_value(value, right_map[key]) for key, value in left.items()
+        )
+    if isinstance(left, list):
+        right_list = cast(list[CanonicalValue], right)
+        return len(left) == len(right_list) and all(
+            _same_canonical_value(left_item, right_item)
+            for left_item, right_item in zip(left, right_list, strict=True)
+        )
+    return left == right
+
+
 def semantic_field_delta(
     before: dict[str, object],
     after: dict[str, object],
@@ -34,6 +70,8 @@ def semantic_field_delta(
     atomic. Empty containers and object/scalar type replacements are leaves.
     """
 
+    _require_bounded_depth(before)
+    _require_bounded_depth(after)
     before_value = normalize_canonical(before)
     after_value = normalize_canonical(after)
     if not isinstance(before_value, dict) or not isinstance(after_value, dict):
@@ -41,7 +79,11 @@ def semantic_field_delta(
     rows: list[PlaybillSemanticFieldDelta] = []
 
     def visit(path: str, left: CanonicalValue | object, right: CanonicalValue | object) -> None:
-        if left is not _MISSING and right is not _MISSING and left == right:
+        if (
+            left is not _MISSING
+            and right is not _MISSING
+            and _same_canonical_value(cast(CanonicalValue, left), cast(CanonicalValue, right))
+        ):
             return
         left_object = isinstance(left, dict)
         right_object = isinstance(right, dict)
@@ -68,6 +110,11 @@ def semantic_field_delta(
             for key in sorted(left_map, key=lambda item: item.encode("utf-8")):
                 visit(_pointer(path, key), left_map[key], _MISSING)
             return
+        if len(rows) >= MAX_SEMANTIC_DELTA_ROWS:
+            raise SemanticDeltaLimitError(
+                f"{SemanticDeltaLimitError.error_code}: maximum row count is "
+                f"{MAX_SEMANTIC_DELTA_ROWS}"
+            )
         rows.append(
             PlaybillSemanticFieldDelta(
                 field_path=path,
@@ -81,4 +128,8 @@ def semantic_field_delta(
     return tuple(rows)
 
 
-__all__ = ["semantic_field_delta"]
+__all__ = [
+    "MAX_SEMANTIC_DELTA_DEPTH",
+    "MAX_SEMANTIC_DELTA_ROWS",
+    "semantic_field_delta",
+]

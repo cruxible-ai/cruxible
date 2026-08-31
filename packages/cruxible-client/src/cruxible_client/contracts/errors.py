@@ -120,6 +120,12 @@ class PlaybillReseedRequired(PlaybillFormatError):
         )
 
 
+class SemanticDeltaLimitError(PlaybillFormatError):
+    """A semantic delta exceeds its deterministic served-response budget."""
+
+    error_code = "playbill.semantic_delta.limit_exceeded"
+
+
 class PlaybillDeprecatedWriteError(PlaybillFormatError):
     """A removed bespoke writer names a transport-neutral replacement."""
 
@@ -256,6 +262,7 @@ __all__ = [
     "ProjectionIntegrityError",
     "ProjectionPublicationError",
     "ReplayCheckpointError",
+    "SemanticDeltaLimitError",
     "SettlementIntegrityError",
     "SubjectFormatError",
     "SubjectNotFoundError",
