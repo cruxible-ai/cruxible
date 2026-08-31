@@ -623,6 +623,7 @@ class AuthoringIntentCoordinator:
             return AuthoringSubmitResultV1(
                 intent=current.model_copy(update={"candidate_status": reduced}),
                 status=reduced,
+                workspace_advertisement=self.instance.advertise_workspace(),
                 identity_stable=idempotent_existing,
                 claim_revision=revision,
             )
@@ -637,6 +638,7 @@ class AuthoringIntentCoordinator:
                 return AuthoringSubmitResultV1(
                     intent=current.model_copy(update={"candidate_status": reduced}),
                     status=reduced,
+                    workspace_advertisement=self.instance.advertise_workspace(),
                 )
 
         computed, preflighted = self._compute_and_bind_preflight(intent_id, actor=actor)
@@ -647,6 +649,7 @@ class AuthoringIntentCoordinator:
             return AuthoringSubmitResultV1(
                 intent=preflighted.model_copy(update={"candidate_status": status}),
                 status=status,
+                workspace_advertisement=self.instance.advertise_workspace(),
             )
         if computed.lowered is not None and computed.lowered.idempotent:
             accepted = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
@@ -681,6 +684,7 @@ class AuthoringIntentCoordinator:
             return AuthoringSubmitResultV1(
                 intent=accepted_intent,
                 status=accepted_intent.candidate_status,
+                workspace_advertisement=self.instance.advertise_workspace(),
                 identity_stable=True,
                 claim_revision=claim_revision,
             )
@@ -716,6 +720,7 @@ class AuthoringIntentCoordinator:
             return AuthoringSubmitResultV1(
                 intent=preflighted.model_copy(update={"candidate_status": status}),
                 status=status,
+                workspace_advertisement=result.workspace_advertisement,
             )
         if result.candidate.candidate_digest != computed.evaluation.candidate.candidate_digest:
             raise RuntimeError("submit candidate differs from its binding preflight")
@@ -784,6 +789,7 @@ class AuthoringIntentCoordinator:
         return AuthoringSubmitResultV1(
             intent=submitted,
             status=submitted.candidate_status,
+            workspace_advertisement=result.workspace_advertisement,
             identity_stable=identity_stable,
             claim_revision=claim_revision,
         )

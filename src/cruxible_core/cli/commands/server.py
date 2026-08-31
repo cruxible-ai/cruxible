@@ -4,8 +4,8 @@ This group holds both the daemon-launch verb and the client RPCs:
 
 * ``start`` LAUNCHES the daemon in the foreground. It takes no ``--server-url``;
   it is the process that becomes the daemon. ``--host`` / ``--port`` /
-  ``--state-dir`` mirror ``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` /
-  ``CRUXIBLE_SERVER_STATE_DIR`` (env vars are honored as defaults).
+  ``--state-root`` mirror ``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` /
+  ``CRUXIBLE_STATE_ROOT`` (env vars are honored as defaults).
 * ``status`` / ``info`` / ``restart`` are CLIENT RPCs that talk to an
   already-running daemon. They require a transport (``--server-url`` /
   ``--server-socket``, or the ``CRUXIBLE_SERVER_URL`` / ``CRUXIBLE_SERVER_SOCKET``
@@ -144,9 +144,9 @@ def server_group() -> None:
     help="Bind port (default: CRUXIBLE_PORT or 8100). Ignored when --socket is set.",
 )
 @click.option(
-    "--state-dir",
+    "--state-root",
     default=None,
-    help="Server-owned state directory (default: CRUXIBLE_SERVER_STATE_DIR or ~/.cruxible/server).",
+    help="Server-owned state root (default: CRUXIBLE_STATE_ROOT or ~/.cruxible).",
 )
 @click.option(
     "--socket",
@@ -174,7 +174,7 @@ def server_group() -> None:
 def server_start_cmd(
     host: str | None,
     port: int | None,
-    state_dir: str | None,
+    state_root: str | None,
     socket_path: str | None,
     capability_ceiling: str | None,
     bootstrap_secret_file: str | None,
@@ -184,10 +184,10 @@ def server_start_cmd(
     This becomes the long-running daemon process; it is NOT a client of an
     existing one, so it takes no `--server-url`. Flags override the matching
     environment variables (`CRUXIBLE_HOST`, `CRUXIBLE_PORT`,
-    `CRUXIBLE_SERVER_STATE_DIR`, `CRUXIBLE_SERVER_SOCKET`, `CRUXIBLE_MODE`);
+    `CRUXIBLE_STATE_ROOT`, `CRUXIBLE_SERVER_SOCKET`, `CRUXIBLE_MODE`);
     unset flags fall back to the env value or the built-in default. The
     capability ceiling is fixed for the daemon process lifetime. Use a durable
-    `--state-dir` (e.g. `~/.cruxible/server`), not a volatile temp path. Stop
+    `--state-root` (e.g. `~/.cruxible`), not a volatile temp path. Stop
     with Ctrl-C.
     """
     _prepare_generated_bootstrap_secret(bootstrap_secret_file)
@@ -199,7 +199,7 @@ def server_start_cmd(
     run_server(
         host=host,
         port=port,
-        state_dir=state_dir,
+        state_root=state_root,
         socket_path=socket_path,
         capability_ceiling=capability_ceiling,
     )
@@ -209,7 +209,7 @@ def server_start_cmd(
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
 def server_status_cmd(output_json: bool) -> None:
-    """Report a running daemon's version, state dir, transport, and instances.
+    """Report a running daemon's version, state root, transport, and instances.
 
     A CLIENT command: it queries an already-running daemon over the configured
     transport (`--server-url` / `--server-socket` or the matching env vars). If
@@ -227,7 +227,7 @@ def server_status_cmd(output_json: bool) -> None:
         return
     click.echo(f"Daemon: reachable ({transport})")
     click.echo(f"Version: {result.version}")
-    click.echo(f"State dir: {result.state_dir}")
+    click.echo(f"State root: {result.state_root}")
     click.echo(f"Instances: {result.instance_count}")
     click.echo(f"Auth enabled: {'yes' if result.auth_enabled else 'no'}")
     click.echo(f"Auth required: {'yes' if result.auth_required else 'no'}")
@@ -249,7 +249,7 @@ def server_info_cmd(output_json: bool) -> None:
     click.echo(f"Server required: {'yes' if result.server_required else 'no'}")
     click.echo(f"Auth enabled: {'yes' if result.auth_enabled else 'no'}")
     click.echo(f"Auth required: {'yes' if result.auth_required else 'no'}")
-    click.echo(f"State dir: {result.state_dir}")
+    click.echo(f"State root: {result.state_root}")
     click.echo(f"Instances: {result.instance_count}")
 
 
@@ -294,7 +294,7 @@ def server_restart_cmd(output_json: bool, no_wait: bool, timeout: float) -> None
         return
 
     click.echo(f"Restart scheduled (was version {result.version}).")
-    click.echo(f"State dir: {result.state_dir}")
+    click.echo(f"State root: {result.state_root}")
     if no_wait:
         click.echo("Not waiting for the daemon to come back (--no-wait).")
     else:

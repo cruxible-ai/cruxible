@@ -25,7 +25,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CRUXIBLE_HOST=0.0.0.0 \
     CRUXIBLE_PORT=8100 \
     CRUXIBLE_SERVER_AUTH=true \
-    CRUXIBLE_SERVER_STATE_DIR=/var/lib/cruxible/server
+    CRUXIBLE_STATE_ROOT=/var/lib/cruxible/server
 
 RUN groupadd --system cruxible \
     && useradd \

@@ -71,7 +71,6 @@ def _workspace(tmp_path: Path) -> Path:
                 "tag": "playbill-coverage-workspace-config-v2",
                 "floor_output": {
                     "tag": "playbill-floor-output-v1",
-                    "path": "playbill-floor",
                     "format": "playbill-floor-export-v2",
                 },
             }
@@ -101,6 +100,7 @@ def _install_client(
                 activated_by="owner",
                 status=status,
                 accepted_coordinate=_coordinate() if status == "accepted" else None,
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
             )
 
         def export_playbill_floor(
@@ -121,7 +121,7 @@ def test_accepted_activation_exactly_replaces_the_declared_floor(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
-    old = workspace / "playbill-floor"
+    old = workspace / ".playbill/floor"
     old.mkdir()
     (old / "retired-card.json").write_text("stale", encoding="utf-8")
     _install_client(monkeypatch, tmp_path)
@@ -152,7 +152,7 @@ def test_invalid_refresh_preserves_the_old_floor_and_reports_both_truths(
     tmp_path: Path,
 ) -> None:
     workspace = _workspace(tmp_path)
-    old = workspace / "playbill-floor"
+    old = workspace / ".playbill/floor"
     old.mkdir()
     (old / "keep.json").write_text("old", encoding="utf-8")
     _install_client(monkeypatch, tmp_path, corrupt=True)
@@ -203,7 +203,7 @@ def test_lost_cas_retry_safely_refreshes_the_current_floor(
     payload = json.loads(result.stdout)
     assert payload["status"] == "lost_cas"
     assert payload["floor_refresh"]["status"] == "refreshed"
-    assert (workspace / "playbill-floor/cards/fresh.json").exists()
+    assert (workspace / ".playbill/floor/cards/fresh.json").exists()
 
 
 def test_activation_renders_malformed_proposal_id_as_typed_refusal(
@@ -242,7 +242,7 @@ def test_floor_symlink_may_not_escape_the_workspace(
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "keep.json").write_text("outside", encoding="utf-8")
-    (workspace / "playbill-floor").symlink_to(outside, target_is_directory=True)
+    (workspace / ".playbill/floor").symlink_to(outside, target_is_directory=True)
     _install_client(monkeypatch, tmp_path)
 
     result = CliRunner().invoke(

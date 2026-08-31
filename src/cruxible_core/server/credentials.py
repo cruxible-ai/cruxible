@@ -20,7 +20,7 @@ from cruxible_core.errors import (
     RuntimeCredentialNotFoundError,
 )
 from cruxible_core.runtime.permissions import PermissionMode
-from cruxible_core.server.config import get_server_state_dir
+from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 
 _TOKEN_PREFIX = "crt"
@@ -800,7 +800,7 @@ def get_runtime_credential_store() -> RuntimeCredentialStore:
     global _runtime_credential_store
     if _runtime_credential_store is None:
         _runtime_credential_store = RuntimeCredentialStore(
-            get_server_state_dir() / "runtime_credentials.db"
+            get_server_state_root() / "daemon" / "runtime_credentials.db"
         )
     return _runtime_credential_store
 

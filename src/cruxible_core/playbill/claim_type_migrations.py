@@ -950,6 +950,7 @@ def _service_migrate_claim_type_v1(
         dependents=normalized,
         proposal=PlaybillProposalInspection(
             proposal=proposal,
+            workspace_advertisement=proposal.workspace_advertisement,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
             ),
@@ -1046,6 +1047,7 @@ def _service_migrate_claim_type_v2(
         dependents=normalized,
         proposal=PlaybillProposalInspection(
             proposal=proposal,
+            workspace_advertisement=proposal.workspace_advertisement,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
             ),
@@ -1142,6 +1144,7 @@ def _service_migrate_claim_type_v3(
         dependents=normalized,
         proposal=PlaybillProposalInspection(
             proposal=proposal,
+            workspace_advertisement=proposal.workspace_advertisement,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
             ),

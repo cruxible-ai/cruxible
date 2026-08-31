@@ -213,55 +213,56 @@ def _review_members(
     if not isinstance(candidate, CandidateRecord):
         evidence_by_path = {item.path: item for item in candidate.law_evidence}
         reviewed: list[PlaybillReviewedMember] = []
-        for member in candidate.members:
-            base_artifact = semantic_artifact(base_tree.get(member.path))
-            candidate_artifact = semantic_artifact(candidate_tree.get(member.path))
+        for versioned_member in candidate.members:
+            base_artifact = semantic_artifact(base_tree.get(versioned_member.path))
+            candidate_artifact = semantic_artifact(candidate_tree.get(versioned_member.path))
             reviewed.append(
                 PlaybillReviewedMember(
-                    path=member.path,
-                    artifact_kind=member.artifact_kind,
-                    disposition=member.disposition,
-                    closure_role=member.closure_role,
-                    predecessor_artifact_digest=member.predecessor_artifact_digest,
-                    candidate_artifact_digest=member.candidate_artifact_digest,
+                    path=versioned_member.path,
+                    artifact_kind=versioned_member.artifact_kind,
+                    disposition=versioned_member.disposition,
+                    closure_role=versioned_member.closure_role,
+                    predecessor_artifact_digest=versioned_member.predecessor_artifact_digest,
+                    candidate_artifact_digest=versioned_member.candidate_artifact_digest,
                     base_semantic_artifact=base_artifact,
                     candidate_semantic_artifact=candidate_artifact,
                     semantic_delta=member_delta(base_artifact, candidate_artifact),
-                    law_identifier=member.law_identifier,
-                    law_digest=member.law_digest,
-                    law_evidence=evidence_by_path[member.path].model_dump(mode="json"),
+                    law_identifier=versioned_member.law_identifier,
+                    law_digest=versioned_member.law_digest,
+                    law_evidence=evidence_by_path[versioned_member.path].model_dump(mode="json"),
                     dependency_proof_refs=tuple(
-                        item.model_dump(mode="json") for item in member.dependency_proof_refs
+                        item.model_dump(mode="json")
+                        for item in versioned_member.dependency_proof_refs
                     ),
                 )
             )
         return tuple(reviewed)
-    reviewed = []
-    for member in candidate.members:
-        base_artifact = semantic_artifact(base_tree.get(member.path))
-        candidate_artifact = semantic_artifact(candidate_tree.get(member.path))
-        reviewed.append(
+    legacy_reviewed: list[PlaybillReviewedMember] = []
+    for legacy_member in candidate.members:
+        base_artifact = semantic_artifact(base_tree.get(legacy_member.path))
+        candidate_artifact = semantic_artifact(candidate_tree.get(legacy_member.path))
+        legacy_reviewed.append(
             PlaybillReviewedMember(
-                path=member.path,
-                artifact_kind=member.artifact_kind,
-                disposition=member.disposition,
+                path=legacy_member.path,
+                artifact_kind=legacy_member.artifact_kind,
+                disposition=legacy_member.disposition,
                 closure_role="authored",
                 predecessor_artifact_digest=None,
-                candidate_artifact_digest=member.artifact_digest,
+                candidate_artifact_digest=legacy_member.artifact_digest,
                 base_semantic_artifact=base_artifact,
                 candidate_semantic_artifact=candidate_artifact,
                 semantic_delta=member_delta(base_artifact, candidate_artifact),
-                law_identifier=member.law_identifier,
-                law_digest=candidate.law_digests[member.law_identifier],
+                law_identifier=legacy_member.law_identifier,
+                law_digest=candidate.law_digests[legacy_member.law_identifier],
                 law_evidence={
-                    "artifact_digest": member.artifact_digest,
-                    "governance_operation": member.governance_operation,
+                    "artifact_digest": legacy_member.artifact_digest,
+                    "governance_operation": legacy_member.governance_operation,
                     "tag": "playbill-singleton-law-evidence-v1",
                 },
                 dependency_proof_refs=(),
             )
         )
-    return tuple(reviewed)
+    return tuple(legacy_reviewed)
 
 
 def service_review_playbill_proposal(

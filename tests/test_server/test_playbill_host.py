@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from cruxible_client.contracts.errors import PlaybillReseedRequired
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -20,7 +22,7 @@ def host_client(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestClient:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
@@ -59,6 +61,27 @@ def test_host_allocation_is_idempotent_and_creates_no_semantic_state(
     assert not Path(record.location).exists()
 
 
+def test_remote_http_host_cannot_attach_a_daemon_local_workspace(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+
+    refused = host_client.post(
+        "/api/v1/runtime/instances",
+        json={"instance_id": "inst_remote_path", "workspace_root": str(workspace)},
+    )
+
+    assert refused.status_code == 400
+    assert "CRUXIBLE_SERVER_SOCKET" in refused.text
+    assert get_registry().get("inst_remote_path") is None
+
+
 def test_transport_credentials_do_not_initialize_playbill_or_a_legacy_graph(
     host_client: TestClient,
 ) -> None:
@@ -81,6 +104,14 @@ def test_transport_credentials_do_not_initialize_playbill_or_a_legacy_graph(
     assert not Path(record.location).exists()
 
 
+def test_pre_pc_hr_nested_instance_requires_reseed(host_client: TestClient) -> None:
+    registered = get_registry().create_governed_instance_with_id("inst_legacy_nested")
+    (Path(registered.record.location) / ".cruxible/playbill-v1").mkdir(parents=True)
+
+    with pytest.raises(PlaybillReseedRequired, match="playbill.instance.reseed_required"):
+        get_playbill_manager().get("inst_legacy_nested")
+
+
 def test_playbill_bootstrap_is_the_first_semantic_write(
     host_client: TestClient,
     tmp_path: Path,
@@ -92,7 +123,7 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
     instance_id = created.json()["instance_id"]
     record = get_registry().get(instance_id)
     assert record is not None
-    managed_root = Path(record.location) / ".cruxible" / "playbill-v1"
+    managed_root = Path(record.location)
     assert not managed_root.exists()
 
     owner = generate_client_principal_key(
@@ -109,7 +140,54 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
     assert initialized.json()["instance_id"] == instance_id
     assert initialized.json()["approval_policy_mode"] == "self_approval_allowed"
     assert managed_root.is_dir()
-    assert not (Path(record.location) / ".cruxible" / "state.db").exists()
+    assert not (managed_root / ".cruxible" / "state.db").exists()
+    assert (tmp_path / "server-state" / "trust" / "inst_dp0b_bootstrap.json").is_file()
+
+
+def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
+    host_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_SERVER_SOCKET", str(tmp_path / "cruxible.sock"))
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    created = host_client.post(
+        "/api/v1/runtime/instances",
+        json={"instance_id": "inst_attached", "workspace_root": str(workspace)},
+    )
+    assert created.status_code == 200, created.text
+    # Filesystem attachment is admitted only by a local Unix-socket daemon.
+    record = get_registry().get("inst_attached")
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "attached-owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(workspace,),
+    )
+
+    initialized = host_client.post(
+        "/api/v1/inst_attached/playbill/init",
+        json={"principals": [owner.principal.model_dump(mode="json")]},
+    )
+
+    assert initialized.status_code == 200, initialized.text
+    assert get_playbill_manager().get("inst_attached").descriptor.git_object_format == "sha1"
+    advertised = initialized.json()["workspace_advertisement"]
+    assert advertised["status"] == "updated"
+    assert advertised["advertised_refs"] == ["refs/remotes/playbill/main"]
+    remote_url = subprocess.run(
+        ["git", "-C", str(workspace), "remote", "get-url", "playbill"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert remote_url.endswith("ledger.git")
 
 
 def test_independent_approval_init_requires_and_accepts_a_second_ordinary_principal(
@@ -121,7 +199,7 @@ def test_independent_approval_init_requires_and_accepts_a_second_ordinary_princi
     ).json()["instance_id"]
     solo_record = get_registry().get(solo_id)
     assert solo_record is not None
-    solo_root = Path(solo_record.location) / ".cruxible" / "playbill-v1"
+    solo_root = Path(solo_record.location)
     owner = generate_client_principal_key(
         tmp_path / "solo-owner-custody",
         principal_id="operator",
@@ -143,7 +221,7 @@ def test_independent_approval_init_requires_and_accepts_a_second_ordinary_princi
     ).json()["instance_id"]
     governed_record = get_registry().get(governed_id)
     assert governed_record is not None
-    governed_root = Path(governed_record.location) / ".cruxible" / "playbill-v1"
+    governed_root = Path(governed_record.location)
     reviewer = generate_client_principal_key(
         tmp_path / "independent-reviewer-custody",
         principal_id="reviewer",
@@ -173,7 +251,7 @@ def test_authenticated_bootstrap_binds_owner_to_credential_identity(
 ) -> None:
     state_dir = tmp_path / "authenticated-server-state"
     bootstrap_secret = "one-time-bootstrap-secret"
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_dir))
     monkeypatch.setenv("CRUXIBLE_SERVER_AUTH", "true")
     monkeypatch.setenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", bootstrap_secret)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
@@ -202,7 +280,7 @@ def test_authenticated_bootstrap_binds_owner_to_credential_identity(
 
     record = get_registry().get(instance_id)
     assert record is not None
-    managed_root = Path(record.location) / ".cruxible" / "playbill-v1"
+    managed_root = Path(record.location)
     owner = generate_client_principal_key(
         tmp_path / "authenticated-owner-custody",
         principal_id="bootstrap-admin",
@@ -227,4 +305,4 @@ def test_authenticated_bootstrap_binds_owner_to_credential_identity(
     )
     assert initialized.status_code == 200, initialized.text
     assert managed_root.is_dir()
-    assert not (Path(record.location) / ".cruxible" / "state.db").exists()
+    assert not (managed_root / ".cruxible" / "state.db").exists()

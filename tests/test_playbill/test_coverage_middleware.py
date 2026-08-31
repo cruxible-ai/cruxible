@@ -118,15 +118,15 @@ def _config(**overrides: object) -> CoverageWorkspaceConfigV1:
 
 def _floor_config(**overrides: object) -> CoverageWorkspaceConfigV2:
     base: dict[str, object] = {
-        "floor_output": FloorOutputV1(path="playbill-floor"),
+        "floor_output": FloorOutputV1(),
     }
     base.update(overrides)
     return CoverageWorkspaceConfigV2(**base)  # type: ignore[arg-type]
 
 
 def _write_floor_manifest(workspace: Path) -> None:
-    floor = workspace / "playbill-floor"
-    floor.mkdir(exist_ok=True)
+    floor = workspace / ".playbill/floor"
+    floor.mkdir(parents=True, exist_ok=True)
     (floor / "manifest.json").write_text(
         json.dumps(
             {
@@ -260,7 +260,6 @@ def test_v2_config_adds_only_the_optional_normalized_floor_output(workspace: Pat
                 "tag": "playbill-coverage-workspace-config-v2",
                 "floor_output": {
                     "tag": "playbill-floor-output-v1",
-                    "path": "playbill-floor",
                     "format": "playbill-floor-export-v2",
                 },
             }
@@ -271,16 +270,12 @@ def test_v2_config_adds_only_the_optional_normalized_floor_output(workspace: Pat
     loaded = load_coverage_config(workspace)
 
     assert isinstance(loaded, CoverageWorkspaceConfigV2)
-    assert loaded.floor_output == FloorOutputV1(path="playbill-floor")
+    assert loaded.floor_output == FloorOutputV1()
 
 
-@pytest.mark.parametrize(
-    "path",
-    ("", ".", "/tmp/floor", "../floor", "a/../floor", ".playbill/floor", "a\\floor"),
-)
-def test_floor_output_refuses_non_normalized_or_reserved_paths(path: str) -> None:
+def test_floor_output_refuses_the_obsolete_path_field() -> None:
     with pytest.raises(ValueError):
-        FloorOutputV1(path=path)
+        FloorOutputV1(path="legacy-floor")
 
 
 def test_the_declared_path_bound_clips_how_many_sources_one_event_observes(
@@ -502,7 +497,7 @@ def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
     config = _floor_config(
         rules=(
             CoveragePathPrefixRuleV1(
-                path_prefix="playbill-floor/",
+                path_prefix=".playbill/floor/",
                 plane="external",
                 identity_prefix="floor.",
             ),
@@ -521,7 +516,7 @@ def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
     delivery = middleware.after_tool(
         HarnessToolEventV1(
             kind="read",
-            paths=("playbill-floor/manifest.json", "playbill-floor/other.json"),
+            paths=(".playbill/floor/manifest.json", ".playbill/floor/other.json"),
             original_output="floor bytes",
         )
     )
@@ -529,8 +524,8 @@ def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
     assert recorder.calls == []
     assert delivery.lines == ("floor at generation 2, current 4; re-export required",)
     assert delivery.unbound_paths == (
-        "playbill-floor/manifest.json",
-        "playbill-floor/other.json",
+        ".playbill/floor/manifest.json",
+        ".playbill/floor/other.json",
     )
     assert delivery.spliced() == (
         "floor bytes\nfloor at generation 2, current 4; re-export required"
@@ -541,7 +536,7 @@ def test_current_floor_is_silent_and_invalid_floor_is_explicitly_unavailable(
     workspace: Path,
 ) -> None:
     _write_floor_manifest(workspace)
-    event = HarnessToolEventV1(kind="grep", paths=("playbill-floor/manifest.json",))
+    event = HarnessToolEventV1(kind="grep", paths=(".playbill/floor/manifest.json",))
     current = coverage_middleware(
         root=workspace,
         config=_floor_config(),
@@ -553,7 +548,7 @@ def test_current_floor_is_silent_and_invalid_floor_is_explicitly_unavailable(
     ).after_tool(event)
     assert current.lines == ()
 
-    (workspace / "playbill-floor/manifest.json").write_text("{}", encoding="utf-8")
+    (workspace / ".playbill/floor/manifest.json").write_text("{}", encoding="utf-8")
     unavailable = coverage_middleware(
         root=workspace,
         config=_floor_config(),

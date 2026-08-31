@@ -203,7 +203,7 @@ def run_server(
     *,
     host: str | None = None,
     port: int | None = None,
-    state_dir: str | None = None,
+    state_root: str | None = None,
     socket_path: str | None = None,
     capability_ceiling: str | None = None,
 ) -> None:
@@ -211,7 +211,7 @@ def run_server(
 
     This is the single daemon-launch path, invoked by ``cruxible server start``.
     Explicit arguments override the corresponding environment variables
-    (``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` / ``CRUXIBLE_SERVER_STATE_DIR`` /
+    (``CRUXIBLE_HOST`` / ``CRUXIBLE_PORT`` / ``CRUXIBLE_STATE_ROOT`` /
     ``CRUXIBLE_SERVER_SOCKET`` / ``CRUXIBLE_MODE``); when an argument is ``None``
     the env default is used. Overrides are applied to ``os.environ`` before any
     config is resolved so the registry, credential store, permission ceiling,
@@ -223,8 +223,8 @@ def run_server(
         os.environ["CRUXIBLE_HOST"] = host
     if port is not None:
         os.environ["CRUXIBLE_PORT"] = str(port)
-    if state_dir is not None:
-        os.environ["CRUXIBLE_SERVER_STATE_DIR"] = state_dir
+    if state_root is not None:
+        os.environ["CRUXIBLE_STATE_ROOT"] = state_root
     if socket_path is not None:
         os.environ["CRUXIBLE_SERVER_SOCKET"] = socket_path
     if capability_ceiling is not None:

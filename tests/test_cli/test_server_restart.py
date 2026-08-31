@@ -43,7 +43,7 @@ def test_server_restart_waits_for_daemon_and_reports_version(monkeypatch, runner
         def server_restart(self) -> contracts.ServerRestartResult:
             self.restart_calls += 1
             return contracts.ServerRestartResult(
-                scheduled=True, version="0.1.5", state_dir="/srv/state"
+                scheduled=True, version="0.1.5", state_root="/srv/state"
             )
 
         def version(self) -> str:
@@ -71,7 +71,7 @@ def test_server_restart_no_wait_skips_polling(monkeypatch, runner: CliRunner):
 
         def server_restart(self) -> contracts.ServerRestartResult:
             return contracts.ServerRestartResult(
-                scheduled=True, version="0.1.5", state_dir="/srv/state"
+                scheduled=True, version="0.1.5", state_root="/srv/state"
             )
 
         def version(self) -> str:
@@ -91,7 +91,7 @@ def test_server_restart_json_output(monkeypatch, runner: CliRunner):
     class StubClient:
         def server_restart(self) -> contracts.ServerRestartResult:
             return contracts.ServerRestartResult(
-                scheduled=True, version="0.1.5", state_dir="/srv/state"
+                scheduled=True, version="0.1.5", state_root="/srv/state"
             )
 
         def version(self) -> str:
@@ -104,7 +104,7 @@ def test_server_restart_json_output(monkeypatch, runner: CliRunner):
     payload = json.loads(result.output)
     assert payload["scheduled"] is True
     assert payload["version"] == "0.1.5"
-    assert payload["state_dir"] == "/srv/state"
+    assert payload["state_root"] == "/srv/state"
     assert payload["waited"] is True
     assert payload["confirmed_version"] == "0.1.6"
 
@@ -113,7 +113,7 @@ def test_server_restart_times_out_when_daemon_never_returns(monkeypatch, runner:
     class StubClient:
         def server_restart(self) -> contracts.ServerRestartResult:
             return contracts.ServerRestartResult(
-                scheduled=True, version="0.1.5", state_dir="/srv/state"
+                scheduled=True, version="0.1.5", state_root="/srv/state"
             )
 
         def version(self) -> str:

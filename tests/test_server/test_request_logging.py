@@ -63,7 +63,7 @@ def request_log_buffer() -> io.StringIO:
 
 @pytest.fixture
 def app_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
@@ -193,7 +193,7 @@ def test_playbill_write_logs_credential_actor_and_operation(
         instance_id=instance_id,
         permission_mode=PermissionMode.ADMIN,
     )
-    managed_root = Path(get_registry().get(instance_id).location) / ".cruxible" / "playbill-v1"
+    managed_root = Path(get_registry().get(instance_id).location)
     owner = generate_client_principal_key(
         tmp_path / "request-log-owner-custody",
         principal_id="admin_credential",
@@ -238,7 +238,7 @@ def test_activation_receipt_and_request_log_name_the_credential_actor(
         instance_id=instance_id,
         permission_mode=PermissionMode.ADMIN,
     )
-    managed_root = Path(get_registry().get(instance_id).location) / ".cruxible" / "playbill-v1"
+    managed_root = Path(get_registry().get(instance_id).location)
     owner = generate_client_principal_key(
         tmp_path / "request-log-activation-owner",
         principal_id="admin_credential",
@@ -374,7 +374,7 @@ def test_configure_request_logging_writes_to_default_durable_log(
     request_log_buffer: io.StringIO,
 ) -> None:
     state_dir = tmp_path / "server-state"
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_dir))
     monkeypatch.delenv("CRUXIBLE_SERVER_LOG_PATH", raising=False)
 
     log_path = configure_request_logging()
@@ -384,7 +384,7 @@ def test_configure_request_logging_writes_to_default_durable_log(
         auth_context=None,
     )
 
-    assert log_path == (state_dir / "logs" / "server.log").resolve()
+    assert log_path == (state_dir / "daemon" / "logs" / "server.log").resolve()
     payload = json.loads(log_path.read_text().splitlines()[-1])
     assert payload["event"] == "runtime_request"
     assert payload["method"] == "GET"

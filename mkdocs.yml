@@ -65,6 +65,7 @@ nav:
       - Quickstart: quickstart.md
       - Concepts: concepts.md
       - Architecture: architecture.md
+      - Canonical repository layout: canonical-repository-layout.md
       - Modeling state: modeling-state.md
       - For AI agents: for-ai-agents.md
       - Family 1 Documents: playbill-family-1.md

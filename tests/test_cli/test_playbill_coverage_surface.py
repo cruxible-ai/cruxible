@@ -32,6 +32,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
 from cruxible_client.contracts.authoring.inputs import (
@@ -283,6 +284,7 @@ def _resolve(cruxible: _Cli, workspace: Path, *extra: str) -> tuple[str, dict[st
 def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
     served_cli: _Cli,  # noqa: F811
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cruxible = served_cli
     _bootstrap(cruxible, tmp_path)
@@ -290,8 +292,9 @@ def test_cli_delivers_coverage_for_a_governed_working_file_and_drops_it_on_edit(
 
     # 1. The floor exports its own coverage boundary beside the render manifest,
     #    enumerated like every other floor file.
-    floor = tmp_path / "floor"
-    exported = cruxible.json("playbill", "floor", "export", "--output", str(floor))
+    monkeypatch.chdir(tmp_path)
+    floor = tmp_path / ".playbill/floor"
+    exported = cruxible.json("playbill", "floor", "export")
     boundary = json.loads((floor / "coverage-manifest.json").read_text(encoding="utf-8"))
     assert "coverage-manifest.json" in {item["path"] for item in exported["files"]}
     assert boundary["format"] == "playbill-coverage-manifest-v2"

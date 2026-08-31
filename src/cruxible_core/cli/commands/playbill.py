@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ from cruxible_client import (
     CruxibleClient,
     activate_with_workspace_refresh,
     contracts,
+    materialize_playbill_floor,
     observe_playbill_next_workspace,
 )
 from cruxible_client.authoring.attestations import (
@@ -67,6 +69,7 @@ from cruxible_core.cli.commands._common import (
     _emit_brief,
     _emit_json,
     _require_instance_id,
+    _root_ctx_obj,
     and_activate_option,
     brief_option,
     json_option,
@@ -307,24 +310,25 @@ def _read_authoring_input(path: str) -> AuthoringInputV1:
         ) from exc
 
 
-def _write_floor(destination: Path, export: contracts.PlaybillFloorExport, *, force: bool) -> None:
-    """Materialize the floor bytes; the daemon never writes a client path."""
+def _local_git_workspace_root() -> Path | None:
+    """Resolve the containing worktree root without inventing a non-Git attachment."""
 
-    import base64
-
-    if destination.exists() and any(destination.iterdir()) and not force:
-        raise click.ClickException(
-            f"Refusing to write the floor into a non-empty directory: {destination}. "
-            "Pass --force to overwrite."
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
-    destination.mkdir(parents=True, exist_ok=True)
-    root = destination.resolve()
-    for item in export.files:
-        target = (destination / item.path).resolve()
-        if not target.is_relative_to(root):
-            raise click.ClickException(f"Refusing to write outside the export root: {item.path}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(base64.b64decode(item.content_base64, validate=True))
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        return Path(completed.stdout.strip()).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
 
 
 def _write_bundle(path: str, bundle: SourceCompilationBundle) -> None:
@@ -382,8 +386,17 @@ def host_group() -> None:
 def create_host(instance_id: str | None, output_json: bool) -> None:
     """Allocate an empty host and remember it as the active instance."""
 
+    git_workspace = _local_git_workspace_root()
+    workspace_root = (
+        str(git_workspace)
+        if git_workspace is not None and _root_ctx_obj().get("server_socket")
+        else None
+    )
     result = _dispatch_cli(
-        lambda client: client.create_playbill_host(instance_id=instance_id),
+        lambda client: client.create_playbill_host(
+            instance_id=instance_id,
+            **({"workspace_root": workspace_root} if workspace_root is not None else {}),
+        ),
         lambda: None,
         allow_local=False,
         command_name="playbill host create",
@@ -426,7 +439,8 @@ def init_playbill(
 ) -> None:
     """Create client custody and bootstrap the governed approval policy."""
 
-    workspace = Path.cwd().resolve()
+    git_workspace = _local_git_workspace_root()
+    workspace = git_workspace or Path.cwd().resolve()
     if require_independent_approval and reviewer_key_dir is None:
         raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
     owner = generate_client_principal_key(
@@ -462,14 +476,23 @@ def init_playbill(
             principals=[item.model_dump(mode="json") for item in principals],
             operating_profile=cast(Any, profile),
             require_independent_approval=require_independent_approval,
+            **(
+                {"workspace_root": str(git_workspace)}
+                if git_workspace is not None and _root_ctx_obj().get("server_socket")
+                else {}
+            ),
         ),
         command_name="playbill init",
     )
+    _activate_server_instance(result.instance_id)
     if output_json:
         _emit_json(result.model_dump(mode="json"))
         return
     click.echo(f"Playbill initialized at {result.coordinate.git_oid}")
     click.echo(f"Approval policy: {result.approval_policy_mode}")
+    click.echo(f"Workspace refs: {result.workspace_advertisement.status}")
+    if result.workspace_advertisement.failure_code is not None:
+        click.echo(f"Workspace ref failure: {result.workspace_advertisement.failure_code}")
     click.echo(f"Owner public key: {owner.principal.public_key}")
     click.echo(f"Owner private key retained locally at: {owner.private_key_path}")
     if reviewer is not None:
@@ -3048,12 +3071,10 @@ def floor_group() -> None:
 
 
 @floor_group.command("export")
-@click.option("--output", required=True, type=click.Path(file_okay=False))
-@click.option("--force", is_flag=True, help="Overwrite a non-empty output directory.")
+@click.option("--force", is_flag=True, help="Replace a non-empty .playbill/floor cache.")
 @json_option
 @handle_errors
 def export_floor(
-    output: str,
     force: bool,
     output_json: bool,
 ) -> None:
@@ -3063,12 +3084,11 @@ def export_floor(
         lambda client, instance_id: client.export_playbill_floor(instance_id),
         command_name="playbill floor export",
     )
-    destination = Path(output).expanduser()
-    _write_floor(destination, result, force=force)
+    written = materialize_playbill_floor(Path.cwd(), export=result, force=force)
     if output_json:
         _emit_json(result.manifest)
         return
-    click.echo(f"Wrote {len(result.files)} floor file(s) to {destination}")
+    click.echo(f"Wrote {len(result.files)} floor file(s) to {written.destination}")
     click.echo(f"Floor digest: {result.manifest['floor_digest']}")
     click.echo(f"Coordinate: {result.coordinate.git_oid}")
 

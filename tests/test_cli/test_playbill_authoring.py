@@ -720,14 +720,14 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     reset_permissions()
     reset_registry()
     get_playbill_manager().clear()
     registered = get_registry().create_governed_instance_with_id("inst_authoring_refusal")
     instance_id = registered.record.instance_id
-    managed = Path(registered.record.location) / ".cruxible" / "playbill-v1"
+    managed = Path(registered.record.location)
     owner = generate_client_principal_key(
         tmp_path / "owner-custody",
         principal_id="operator",

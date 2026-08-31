@@ -70,6 +70,7 @@ class _StubClient:
             activated_by="owner",
             status="accepted",
             accepted_coordinate=_coordinate(),
+            workspace_advertisement={"status": "not_attached", "workspace_path": None},
         )
 
     def export_playbill_floor(
@@ -102,7 +103,6 @@ def _workspace(tmp_path: Path) -> Path:
                 "tag": "playbill-coverage-workspace-config-v2",
                 "floor_output": {
                     "tag": "playbill-floor-output-v1",
-                    "path": "playbill-floor",
                     "format": "playbill-floor-export-v2",
                 },
             }
@@ -124,7 +124,7 @@ def test_activate_refreshes_the_operator_configured_workspace(
 
     assert result.status == "accepted"
     assert result.floor_refresh.status == "refreshed"
-    assert (workspace / "playbill-floor/cards/fresh.json").is_file()
+    assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
 
 
 def test_workspace_status_compares_the_installed_floor(
@@ -134,7 +134,7 @@ def test_workspace_status_compares_the_installed_floor(
     workspace = _workspace(tmp_path)
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
-    handlers.handle_playbill_workspace_floor_export("inst_test", "playbill-floor", force=False)
+    handlers.handle_playbill_workspace_floor_export("inst_test", force=False)
 
     status = handlers.handle_playbill_workspace_floor_status("inst_test")
 

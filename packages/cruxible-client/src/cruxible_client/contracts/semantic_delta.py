@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, cast
 
 from cruxible_client.contracts import (
     PlaybillSemanticFieldDelta,
@@ -21,7 +21,7 @@ def _pointer(parent: str, key: str) -> str:
 def _side(value: CanonicalValue | object) -> PlaybillSemanticFieldValue:
     if value is _MISSING:
         return PlaybillSemanticFieldValue(state="absent", value=None)
-    return PlaybillSemanticFieldValue(state="present", value=value)
+    return PlaybillSemanticFieldValue(state="present", value=cast(CanonicalValue, value))
 
 
 def semantic_field_delta(
@@ -46,8 +46,8 @@ def semantic_field_delta(
         left_object = isinstance(left, dict)
         right_object = isinstance(right, dict)
         if left_object and right_object:
-            left_map = left
-            right_map = right
+            left_map = cast(dict[str, CanonicalValue], left)
+            right_map = cast(dict[str, CanonicalValue], right)
             keys = sorted(set(left_map) | set(right_map), key=lambda item: item.encode("utf-8"))
             if not keys:
                 return
@@ -59,12 +59,14 @@ def semantic_field_delta(
                 )
             return
         if left is _MISSING and right_object and right:
-            for key in sorted(right, key=lambda item: item.encode("utf-8")):
-                visit(_pointer(path, key), _MISSING, right[key])
+            right_map = cast(dict[str, CanonicalValue], right)
+            for key in sorted(right_map, key=lambda item: item.encode("utf-8")):
+                visit(_pointer(path, key), _MISSING, right_map[key])
             return
         if right is _MISSING and left_object and left:
-            for key in sorted(left, key=lambda item: item.encode("utf-8")):
-                visit(_pointer(path, key), left[key], _MISSING)
+            left_map = cast(dict[str, CanonicalValue], left)
+            for key in sorted(left_map, key=lambda item: item.encode("utf-8")):
+                visit(_pointer(path, key), left_map[key], _MISSING)
             return
         rows.append(
             PlaybillSemanticFieldDelta(

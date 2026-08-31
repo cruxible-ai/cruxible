@@ -141,7 +141,7 @@ def test_the_arm_file_surface_is_floor_v2_artifacts_and_the_boundary(
 
     setups = arm_run["setups"]
     assert isinstance(setups, dict)
-    surface = setups[3].workspace / "playbill-floor"
+    surface = setups[3].workspace / ".playbill/floor"
     written = {
         path.relative_to(surface).as_posix() for path in surface.rglob("*") if path.is_file()
     }
@@ -278,7 +278,7 @@ def test_arms_one_and_two_carry_the_corpus_and_arm_two_carries_a_scratchpad(
     assert (second.workspace / "scratchpad/NOTES.md").is_file()
     # Neither control gets the Playbill surface or a binding configuration.
     for setup in (first, second):
-        assert not (setup.workspace / "playbill-floor").exists()
+        assert not (setup.workspace / ".playbill/floor").exists()
         assert not (setup.workspace / ".playbill").exists()
     # The task corpus is the same bytes in every arm, which is what makes the
     # comparison a comparison.

@@ -227,6 +227,10 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_reuse_signature,
 )
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    PlaybillWorkspaceAdvertisement,
+)
 from cruxible_core.playbill.closure import (
     ArtifactDependencyStateV1,
     ClosureEvaluationV2,
@@ -3195,6 +3199,7 @@ class ProposalService:
         current_coordinate: Callable[[], AcceptedProjectionCoordinate] | None = None,
         promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
         query_facts_provider: ClaimQueryFactsProvider | None = None,
+        workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -3204,6 +3209,7 @@ class ProposalService:
         self._current_coordinate = current_coordinate or (lambda: accepted)
         self.promotion_verifier = promotion_verifier
         self.query_facts_provider = query_facts_provider
+        self.workspace_advertiser = workspace_advertiser
 
     def submit(
         self,
@@ -3333,10 +3339,16 @@ class ProposalService:
             self.evidence.write_candidate(outcome.candidate)
         if self.transport.read_main() != current.git_oid:
             raise ProposalIntegrityError("proposal evaluation changed or raced accepted main")
+        advertisement = (
+            NOT_ATTACHED_ADVERTISEMENT
+            if self.workspace_advertiser is None
+            else self.workspace_advertiser()
+        )
         return ProposalResult(
             admission=admission,
             evaluation=evaluation,
             candidate=outcome.candidate,
+            workspace_advertisement=advertisement,
         )
 
 

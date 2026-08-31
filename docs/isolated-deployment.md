@@ -1,6 +1,6 @@
 # Isolated Playbill deployment
 
-Run the daemon with a durable state directory, explicit network boundary, and
+Run the daemon with a durable state root, explicit network boundary, and
 least-capable credentials.
 
 ## Local Unix socket
@@ -10,13 +10,13 @@ A Unix socket avoids exposing a TCP port:
 ~~~bash
 uv run cruxible server start \
   --socket /run/user/$UID/cruxible.sock \
-  --state-dir /srv/cruxible/playbill \
+  --state-root /srv/cruxible/playbill \
   --bootstrap-secret-file /secure/cruxible-bootstrap
 ~~~
 
 Clients select it with --server-socket or CRUXIBLE_SERVER_SOCKET.
 
-Protect the socket and state directory with operating-system ownership and
+Protect the socket and state root with operating-system ownership and
 permissions. The daemon state includes bearer credential records, Playbill Git
 ledgers, CAS objects, projections, and daemon signing keys.
 
@@ -29,7 +29,7 @@ provides the boundary:
 uv run cruxible server start \
   --host 127.0.0.1 \
   --port 8100 \
-  --state-dir /srv/cruxible/playbill \
+  --state-root /srv/cruxible/playbill \
   --capability-ceiling admin \
   --bootstrap-secret-file /secure/cruxible-bootstrap
 ~~~
@@ -49,7 +49,7 @@ owner/reviewer private keys.
 
 ## Key custody
 
-Daemon keys stay under the daemon-managed state directory. Owner, reviewer, and
+Daemon keys stay under the daemon-managed state root. Owner, reviewer, and
 recovery private keys must stay outside that directory and outside source
 workspaces.
 

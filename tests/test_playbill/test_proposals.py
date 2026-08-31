@@ -26,6 +26,7 @@ from cruxible_client.contracts.errors import (
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
 )
+from cruxible_client.contracts.workspace_advertisement import PlaybillWorkspaceAdvertisement
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
@@ -281,6 +282,43 @@ def test_daemon_metadata_change_refuses_before_proposal_ref_update(tmp_path: Pat
         )
 
     assert service.transport.read_proposal_ref(target) is None
+
+
+def test_submit_advertises_only_after_all_proposal_evidence_is_durable(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    evidence = instance.proposal_evidence()
+    calls: list[str] = []
+
+    def advertise() -> PlaybillWorkspaceAdvertisement:
+        assert tuple(evidence.proposals.glob("*.json"))
+        assert tuple(evidence.evaluations.glob("*.json"))
+        assert tuple(evidence.candidates.glob("*.json"))
+        calls.append("advertised")
+        return PlaybillWorkspaceAdvertisement(
+            status="failed",
+            workspace_path=str(tmp_path),
+            failure_code="remote_conflict",
+        )
+
+    instance.bind_workspace_advertiser(advertise)
+    body = instance.store_document_body(b"body")
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+    duplicate = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+
+    assert calls == ["advertised", "advertised"]
+    assert result.workspace_advertisement.status == "failed"
+    assert result.candidate is not None
+    assert duplicate.admission.proposal_id == result.admission.proposal_id
 
 
 def test_current_coordinate_provider_cannot_contradict_verified_base(tmp_path: Path) -> None:

@@ -165,11 +165,17 @@ class CruxibleClient:
         return self._parse_model(response, contracts.ServerRestartResult)
 
     def create_playbill_host(
-        self, *, instance_id: str | None = None
+        self,
+        *,
+        instance_id: str | None = None,
+        workspace_root: str | None = None,
     ) -> contracts.PlaybillHostResult:
+        payload = {"instance_id": instance_id}
+        if workspace_root is not None:
+            payload["workspace_root"] = workspace_root
         response = self._client.post(
             "/api/v1/runtime/instances",
-            json={"instance_id": instance_id},
+            json=payload,
         )
         return self._parse_model(response, contracts.PlaybillHostResult)
 
@@ -234,14 +240,18 @@ class CruxibleClient:
         principals: Sequence[Mapping[str, Any]],
         operating_profile: Literal["local", "cloud"] = "local",
         require_independent_approval: bool = False,
+        workspace_root: str | None = None,
     ) -> contracts.PlaybillInitResult:
+        payload: dict[str, Any] = {
+            "principals": [dict(item) for item in principals],
+            "operating_profile": operating_profile,
+            "require_independent_approval": require_independent_approval,
+        }
+        if workspace_root is not None:
+            payload["workspace_root"] = workspace_root
         response = self._client.post(
             f"/api/v1/{instance_id}/playbill/init",
-            json={
-                "principals": [dict(item) for item in principals],
-                "operating_profile": operating_profile,
-                "require_independent_approval": require_independent_approval,
-            },
+            json=payload,
         )
         return self._parse_model(response, contracts.PlaybillInitResult)
 

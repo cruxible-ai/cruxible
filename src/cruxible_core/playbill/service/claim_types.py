@@ -117,6 +117,7 @@ def service_propose_playbill_claim_type(
     )
     return PlaybillProposalInspection(
         proposal=result,
+        workspace_advertisement=result.workspace_advertisement,
         accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
             instance.accepted_coordinate()
         ),
@@ -151,6 +152,7 @@ def service_propose_playbill_claim_type_input(
     )
     inspection = PlaybillProposalInspection(
         proposal=result,
+        workspace_advertisement=result.workspace_advertisement,
         accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
             instance.accepted_coordinate()
         ),

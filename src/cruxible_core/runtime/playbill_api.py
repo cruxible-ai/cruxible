@@ -11,6 +11,7 @@ import base64
 import json
 from collections.abc import Callable, Mapping
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
 from pydantic import TypeAdapter, ValidationError
@@ -125,6 +126,7 @@ from cruxible_core.playbill.service.subjects import (
     service_list_playbill_subjects,
     service_playbill_subject_history,
 )
+from cruxible_core.playbill.workspace_advertisement import workspace_git_object_format
 from cruxible_core.runtime.permissions import check_permission, get_current_mode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.actor_identity import local_operator_actor_context
@@ -132,7 +134,8 @@ from cruxible_core.server.auth import (
     get_current_auth_context,
     set_current_operation_id,
 )
-from cruxible_core.server.config import is_server_auth_enabled
+from cruxible_core.server.config import is_server_auth_enabled, resolve_server_settings
+from cruxible_core.server.registry import get_registry
 from cruxible_core.service.playbill_audit import (
     PlaybillAuditRequestV1,
     service_playbill_audit,
@@ -313,6 +316,7 @@ def playbill_init(
     principals: tuple[PrincipalRecord, ...],
     operating_profile: OperatingProfile = "local",
     require_independent_approval: bool = False,
+    workspace_root: str | None = None,
 ) -> contracts.PlaybillInitResult:
     check_permission("cruxible_playbill_init", instance_id=instance_id)
     actor_id = _actor_id()
@@ -327,6 +331,16 @@ def playbill_init(
         raise AuthenticationError(
             "Playbill bootstrap requires an ordinary principal matching authenticated identity"
         )
+    if workspace_root is not None:
+        if resolve_server_settings().server_socket is None:
+            raise ConfigError(
+                "Workspace attachment requires a daemon served through CRUXIBLE_SERVER_SOCKET"
+            )
+        try:
+            workspace_git_object_format(Path(workspace_root))
+        except ValueError as exc:
+            raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+        get_registry().attach_governed_workspace(instance_id, workspace_root)
     instance = get_playbill_manager().initialize(
         instance_id,
         client_principals=principals,
@@ -341,6 +355,7 @@ def playbill_init(
         trust_root=instance.trust_root.model_dump(mode="json"),
         recovery_posture=instance.descriptor.recovery_posture,
         approval_policy_mode=instance.inspect().approval_policy_mode,
+        workspace_advertisement=instance.advertise_workspace(),
     )
 
 

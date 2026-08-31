@@ -253,6 +253,15 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "workspace_advertisement": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "workspace_advertisement",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement"
+          }
         }
       },
       "json_schema": {
@@ -295,6 +304,77 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -330,13 +410,17 @@
             "default": "playbill-activation-receipt-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "workspace_advertisement": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement"
           }
         },
         "required": [
           "proposal_id",
           "activated_by",
           "status",
-          "accepted_coordinate"
+          "accepted_coordinate",
+          "workspace_advertisement"
         ],
         "title": "PlaybillActivationReceipt",
         "type": "object"
@@ -345,7 +429,8 @@
         "accepted_coordinate",
         "activated_by",
         "proposal_id",
-        "status"
+        "status",
+        "workspace_advertisement"
       ]
     },
     "PlaybillApprovalChallenge": {
@@ -5409,6 +5494,24 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "workspace_advertisement": {
+          "default_json_serializable": false,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "workspace_advertisement",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+            "default": {
+              "advertised_refs": [],
+              "failure_code": null,
+              "remote_name": "playbill",
+              "status": "not_attached",
+              "tag": "playbill-workspace-advertisement-v1",
+              "workspace_path": null
+            }
+          }
         }
       },
       "json_schema": {
@@ -5530,6 +5633,77 @@
             ],
             "title": "PlaybillCandidateStatus",
             "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -5564,6 +5738,17 @@
             "default": "playbill-authoring-submit-result-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "workspace_advertisement": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+            "default": {
+              "advertised_refs": [],
+              "failure_code": null,
+              "remote_name": "playbill",
+              "status": "not_attached",
+              "tag": "playbill-workspace-advertisement-v1",
+              "workspace_path": null
+            }
           }
         },
         "required": [
@@ -8506,6 +8691,17 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "workspace_advertisement": {
+                "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+                "default": {
+                  "advertised_refs": [],
+                  "failure_code": null,
+                  "remote_name": "playbill",
+                  "status": "not_attached",
+                  "tag": "playbill-workspace-advertisement-v1",
+                  "workspace_path": null
+                }
               }
             },
             "required": [
@@ -8513,6 +8709,77 @@
               "accepted_coordinate"
             ],
             "title": "PlaybillProposalInspection",
+            "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
             "type": "object"
           }
         },
@@ -8703,6 +8970,17 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "workspace_advertisement": {
+                "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+                "default": {
+                  "advertised_refs": [],
+                  "failure_code": null,
+                  "remote_name": "playbill",
+                  "status": "not_attached",
+                  "tag": "playbill-workspace-advertisement-v1",
+                  "workspace_path": null
+                }
               }
             },
             "required": [
@@ -8710,6 +8988,77 @@
               "accepted_coordinate"
             ],
             "title": "PlaybillProposalInspection",
+            "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
             "type": "object"
           }
         },
@@ -9370,6 +9719,17 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "workspace_advertisement": {
+                "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+                "default": {
+                  "advertised_refs": [],
+                  "failure_code": null,
+                  "remote_name": "playbill",
+                  "status": "not_attached",
+                  "tag": "playbill-workspace-advertisement-v1",
+                  "workspace_path": null
+                }
               }
             },
             "required": [
@@ -9427,6 +9787,77 @@
               "value"
             ],
             "title": "PlaybillSemanticFieldValue",
+            "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
             "type": "object"
           }
         },
@@ -9688,6 +10119,17 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "workspace_advertisement": {
+                "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+                "default": {
+                  "advertised_refs": [],
+                  "failure_code": null,
+                  "remote_name": "playbill",
+                  "status": "not_attached",
+                  "tag": "playbill-workspace-advertisement-v1",
+                  "workspace_path": null
+                }
               }
             },
             "required": [
@@ -9745,6 +10187,77 @@
               "value"
             ],
             "title": "PlaybillSemanticFieldValue",
+            "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
             "type": "object"
           }
         },
@@ -10006,6 +10519,17 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "workspace_advertisement": {
+                "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+                "default": {
+                  "advertised_refs": [],
+                  "failure_code": null,
+                  "remote_name": "playbill",
+                  "status": "not_attached",
+                  "tag": "playbill-workspace-advertisement-v1",
+                  "workspace_path": null
+                }
               }
             },
             "required": [
@@ -10063,6 +10587,77 @@
               "value"
             ],
             "title": "PlaybillSemanticFieldValue",
+            "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
             "type": "object"
           }
         },
@@ -13197,6 +13792,15 @@
             "title": "Trust Root",
             "type": "object"
           }
+        },
+        "workspace_advertisement": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "workspace_advertisement",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement"
+          }
         }
       },
       "json_schema": {
@@ -13239,6 +13843,77 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -13272,6 +13947,9 @@
             "additionalProperties": true,
             "title": "Trust Root",
             "type": "object"
+          },
+          "workspace_advertisement": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement"
           }
         },
         "required": [
@@ -13279,7 +13957,8 @@
           "coordinate",
           "trust_root",
           "recovery_posture",
-          "approval_policy_mode"
+          "approval_policy_mode",
+          "workspace_advertisement"
         ],
         "title": "PlaybillInitResult",
         "type": "object"
@@ -13289,7 +13968,8 @@
         "coordinate",
         "instance_id",
         "recovery_posture",
-        "trust_root"
+        "trust_root",
+        "workspace_advertisement"
       ]
     },
     "PlaybillInsertionAbandonResult": {
@@ -14692,6 +15372,24 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "workspace_advertisement": {
+          "default_json_serializable": false,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "workspace_advertisement",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+            "default": {
+              "advertised_refs": [],
+              "failure_code": null,
+              "remote_name": "playbill",
+              "status": "not_attached",
+              "tag": "playbill-workspace-advertisement-v1",
+              "workspace_path": null
+            }
+          }
         }
       },
       "json_schema": {
@@ -14808,6 +15506,77 @@
             "title": "PlaybillProcedureReadiness",
             "type": "object"
           },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
+            "type": "object"
+          },
           "ProcedurePendingSuccessorV1": {
             "additionalProperties": false,
             "properties": {
@@ -14859,6 +15628,17 @@
             "default": "playbill-procedure-bind-result-v2",
             "title": "Tag",
             "type": "string"
+          },
+          "workspace_advertisement": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+            "default": {
+              "advertised_refs": [],
+              "failure_code": null,
+              "remote_name": "playbill",
+              "status": "not_attached",
+              "tag": "playbill-workspace-advertisement-v1",
+              "workspace_path": null
+            }
           }
         },
         "required": [
@@ -17735,6 +18515,24 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "workspace_advertisement": {
+          "default_json_serializable": false,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "workspace_advertisement",
+          "required": false,
+          "schema": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+            "default": {
+              "advertised_refs": [],
+              "failure_code": null,
+              "remote_name": "playbill",
+              "status": "not_attached",
+              "tag": "playbill-workspace-advertisement-v1",
+              "workspace_path": null
+            }
+          }
         }
       },
       "json_schema": {
@@ -17801,6 +18599,77 @@
             ],
             "title": "PlaybillClaimTypeProposalLint",
             "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -17829,6 +18698,17 @@
             "default": "playbill-proposal-inspection-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "workspace_advertisement": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+            "default": {
+              "advertised_refs": [],
+              "failure_code": null,
+              "remote_name": "playbill",
+              "status": "not_attached",
+              "tag": "playbill-workspace-advertisement-v1",
+              "workspace_path": null
+            }
           }
         },
         "required": [
@@ -18433,6 +19313,17 @@
                 "default": "playbill-proposal-inspection-v1",
                 "title": "Tag",
                 "type": "string"
+              },
+              "workspace_advertisement": {
+                "$ref": "#/$defs/PlaybillWorkspaceAdvertisement",
+                "default": {
+                  "advertised_refs": [],
+                  "failure_code": null,
+                  "remote_name": "playbill",
+                  "status": "not_attached",
+                  "tag": "playbill-workspace-advertisement-v1",
+                  "workspace_path": null
+                }
               }
             },
             "required": [
@@ -18440,6 +19331,77 @@
               "accepted_coordinate"
             ],
             "title": "PlaybillProposalInspection",
+            "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
             "type": "object"
           }
         },
@@ -22635,6 +23597,15 @@
             "title": "Tag",
             "type": "string"
           }
+        },
+        "workspace_advertisement": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "workspace_advertisement",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement"
+          }
         }
       },
       "json_schema": {
@@ -22751,6 +23722,77 @@
             ],
             "title": "PlaybillFloorRefreshResult",
             "type": "object"
+          },
+          "PlaybillWorkspaceAdvertisement": {
+            "additionalProperties": false,
+            "properties": {
+              "advertised_refs": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Advertised Refs",
+                "type": "array"
+              },
+              "failure_code": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workspace_missing",
+                      "workspace_not_git",
+                      "workspace_path_invalid",
+                      "remote_conflict",
+                      "object_format_mismatch",
+                      "fetch_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Failure Code"
+              },
+              "remote_name": {
+                "const": "playbill",
+                "default": "playbill",
+                "title": "Remote Name",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "updated",
+                  "not_attached",
+                  "failed"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-workspace-advertisement-v1",
+                "default": "playbill-workspace-advertisement-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "workspace_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Workspace Path"
+              }
+            },
+            "required": [
+              "status",
+              "workspace_path"
+            ],
+            "title": "PlaybillWorkspaceAdvertisement",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -22790,6 +23832,9 @@
             "default": "playbill-activation-receipt-v1",
             "title": "Tag",
             "type": "string"
+          },
+          "workspace_advertisement": {
+            "$ref": "#/$defs/PlaybillWorkspaceAdvertisement"
           }
         },
         "required": [
@@ -22797,6 +23842,7 @@
           "activated_by",
           "status",
           "accepted_coordinate",
+          "workspace_advertisement",
           "floor_refresh"
         ],
         "title": "PlaybillWorkspaceActivationResult",
@@ -22807,7 +23853,8 @@
         "activated_by",
         "floor_refresh",
         "proposal_id",
-        "status"
+        "status",
+        "workspace_advertisement"
       ]
     },
     "PlaybillWorkspaceFloorStatus": {
@@ -23763,13 +24810,13 @@
             "type": "boolean"
           }
         },
-        "state_dir": {
+        "state_root": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "state_dir",
+          "json_name": "state_root",
           "required": true,
           "schema": {
-            "title": "State Dir",
+            "title": "State Root",
             "type": "string"
           }
         },
@@ -23802,8 +24849,8 @@
             "title": "Server Required",
             "type": "boolean"
           },
-          "state_dir": {
-            "title": "State Dir",
+          "state_root": {
+            "title": "State Root",
             "type": "string"
           },
           "version": {
@@ -23813,7 +24860,7 @@
         },
         "required": [
           "server_required",
-          "state_dir",
+          "state_root",
           "version",
           "instance_count",
           "auth_enabled",
@@ -23827,7 +24874,7 @@
         "auth_required",
         "instance_count",
         "server_required",
-        "state_dir",
+        "state_root",
         "version"
       ]
     },
@@ -23843,13 +24890,13 @@
             "type": "boolean"
           }
         },
-        "state_dir": {
+        "state_root": {
           "has_default": false,
           "has_default_factory": false,
-          "json_name": "state_dir",
+          "json_name": "state_root",
           "required": true,
           "schema": {
-            "title": "State Dir",
+            "title": "State Root",
             "type": "string"
           }
         },
@@ -23870,8 +24917,8 @@
             "title": "Scheduled",
             "type": "boolean"
           },
-          "state_dir": {
-            "title": "State Dir",
+          "state_root": {
+            "title": "State Root",
             "type": "string"
           },
           "version": {
@@ -23882,14 +24929,14 @@
         "required": [
           "scheduled",
           "version",
-          "state_dir"
+          "state_root"
         ],
         "title": "ServerRestartResult",
         "type": "object"
       },
       "required_fields": [
         "scheduled",
-        "state_dir",
+        "state_root",
         "version"
       ]
     }

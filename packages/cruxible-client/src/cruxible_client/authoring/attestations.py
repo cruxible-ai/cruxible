@@ -193,7 +193,7 @@ def local_attestation_signer_from_environment(
         # cannot call it, but that transport limitation must not make the
         # attestation command unusable for an otherwise authorized actor.
         try:
-            daemon_state_root = Path(client.server_info().state_dir)
+            daemon_state_root = Path(client.server_info().state_root)
         except InstanceScopeError:
             daemon_state_root = None
         roots = tuple(root for root in (workspace_root, daemon_state_root) if root is not None)

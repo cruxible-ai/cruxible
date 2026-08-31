@@ -75,7 +75,7 @@ def test_start_passes_flags_to_run_server(
             "0.0.0.0",
             "--port",
             "8137",
-            "--state-dir",
+            "--state-root",
             "/var/lib/cruxible/server",
             "--capability-ceiling",
             "governed_write",
@@ -86,7 +86,7 @@ def test_start_passes_flags_to_run_server(
     assert captured == {
         "host": "0.0.0.0",
         "port": 8137,
-        "state_dir": "/var/lib/cruxible/server",
+        "state_root": "/var/lib/cruxible/server",
         "socket_path": None,
         "capability_ceiling": "governed_write",
     }
@@ -108,7 +108,7 @@ def test_start_defaults_are_none_so_env_wins(
     assert captured == {
         "host": None,
         "port": None,
-        "state_dir": None,
+        "state_root": None,
         "socket_path": None,
         "capability_ceiling": None,
     }

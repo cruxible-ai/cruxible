@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cruxible_client.contracts.captures import foreign_source_capture_contract
+from cruxible_client.contracts.workspace_advertisement import PlaybillWorkspaceAdvertisement
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.proposals import AuthenticatedActor
@@ -29,6 +30,18 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
         owner,
         contract=foreign_source_capture_contract("repo.work-items"),
     )
+    advertisements = 0
+
+    def advertise() -> PlaybillWorkspaceAdvertisement:
+        nonlocal advertisements
+        advertisements += 1
+        return PlaybillWorkspaceAdvertisement(
+            status="failed",
+            workspace_path=str(tmp_path),
+            failure_code="fetch_failed",
+        )
+
+    instance.bind_workspace_advertiser(advertise)
     coordinator = _coordinator(instance)
     actor = AuthenticatedActor(actor_id="owner")
     intent = coordinator.create(
@@ -41,6 +54,9 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     retry = coordinator.submit(intent.intent_id, actor=actor)
 
     assert retry.status == first.status
+    assert advertisements == 2
+    assert first.workspace_advertisement.failure_code == "fetch_failed"
+    assert retry.workspace_advertisement.failure_code == "fetch_failed"
     assert first.status.state == "ready_to_activate"
     assert first.status.proposal_id is not None
     assert first.status.candidate_digest is not None

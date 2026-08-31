@@ -439,16 +439,14 @@ def test_the_hook_marks_a_floor_from_an_older_generation_without_a_coverage_bind
     _govern_a_foreign_span(cruxible, tmp_path)
     current = cruxible.json("playbill", "orient")["orientation"]
     workspace = tmp_path / "workspace"
-    floor = workspace / "playbill-floor"
+    floor = workspace / ".playbill/floor"
     floor.mkdir(parents=True)
-    (workspace / ".playbill").mkdir()
     (workspace / CONFIG_RELATIVE_PATH).write_text(
         json.dumps(
             {
                 "tag": "playbill-coverage-workspace-config-v2",
                 "floor_output": {
                     "tag": "playbill-floor-output-v1",
-                    "path": "playbill-floor",
                     "format": "playbill-floor-export-v2",
                 },
             }

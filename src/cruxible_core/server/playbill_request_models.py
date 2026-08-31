@@ -65,6 +65,7 @@ class PlaybillInitRequest(_StrictPlaybillRequest):
     principals: tuple[PrincipalRecord, ...]
     operating_profile: OperatingProfile = "local"
     require_independent_approval: bool = False
+    workspace_root: str | None = None
 
 
 class PlaybillStoreBodyRequest(_StrictPlaybillRequest):

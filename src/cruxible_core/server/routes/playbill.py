@@ -114,6 +114,7 @@ async def playbill_init(
         principals=req.principals,
         operating_profile=req.operating_profile,
         require_independent_approval=req.require_independent_approval,
+        workspace_root=req.workspace_root,
     )
 
 

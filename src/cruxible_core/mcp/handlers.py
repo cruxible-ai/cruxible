@@ -1712,7 +1712,6 @@ def handle_playbill_export_floor(instance_id: str) -> contracts.PlaybillFloorExp
 
 def handle_playbill_workspace_floor_export(
     instance_id: str,
-    output_path: str,
     *,
     force: bool,
 ) -> contracts.PlaybillWorkspaceFloorWriteResult:
@@ -1720,7 +1719,6 @@ def handle_playbill_workspace_floor_export(
     export = handle_playbill_export_floor(instance_id)
     return materialize_playbill_floor(
         workspace,
-        relative_path=output_path,
         export=export,
         force=force,
     )

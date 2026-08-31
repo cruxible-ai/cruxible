@@ -10,7 +10,7 @@ from pathlib import Path
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.temporal import format_datetime, utc_now
 from cruxible_core.errors import ConfigError
-from cruxible_core.server.config import get_server_state_dir
+from cruxible_core.server.config import get_server_state_root
 
 LOCAL_FILESYSTEM_BACKEND = "local_filesystem"
 GOVERNED_DAEMON_BACKEND = "governed_daemon"
@@ -187,8 +187,8 @@ class InstanceRegistry:
     def governed_instance_location(self, instance_id: str) -> Path:
         """Return the server-owned governed instance path for a valid instance ID."""
         _validate_instance_id(instance_id)
-        state_dir = Path(get_server_state_dir())
-        return (state_dir / "instances" / instance_id).resolve()
+        state_root = get_server_state_root()
+        return (state_root / "instances" / instance_id).resolve()
 
     def create_governed_instance_with_id(
         self,
@@ -237,13 +237,44 @@ class InstanceRegistry:
         assert record is not None
         return record
 
+    def attach_governed_workspace(
+        self,
+        instance_id: str,
+        workspace_root: str | Path,
+    ) -> InstanceRecord:
+        """Attach one exact local workspace without replacing an existing attachment."""
+
+        _validate_instance_id(instance_id)
+        try:
+            resolved = str(Path(workspace_root).expanduser().resolve(strict=True))
+        except OSError as exc:
+            raise ConfigError("Attached workspace path does not exist") from exc
+        current = self.get(instance_id)
+        if current is None or current.backend != GOVERNED_DAEMON_BACKEND:
+            raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
+        if current.workspace_root is not None:
+            if current.workspace_root != resolved:
+                raise ConfigError("Playbill host is already attached to another workspace")
+            return current
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    "UPDATE instances SET workspace_root = ? WHERE instance_id = ?",
+                    (resolved, instance_id),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ConfigError("Workspace is already attached to another Playbill host") from exc
+        record = self.get(instance_id)
+        assert record is not None
+        return record
+
     def _create_governed_instance(
         self,
         *,
         workspace_root: str | None,
     ) -> RegisteredInstance:
         instance_id = new_id("inst", length=16, separator="_")
-        location = str((get_server_state_dir() / "instances" / instance_id).resolve())
+        location = str((get_server_state_root() / "instances" / instance_id).resolve())
         return self._insert_instance(
             backend=GOVERNED_DAEMON_BACKEND,
             location=location,
@@ -347,8 +378,8 @@ def get_registry() -> InstanceRegistry:
     """Return the process-global registry instance."""
     global _registry
     if _registry is None:
-        state_dir = get_server_state_dir()
-        _registry = InstanceRegistry(state_dir / "registry.db")
+        state_root = get_server_state_root()
+        _registry = InstanceRegistry(state_root / "daemon" / "registry.db")
     return _registry
 
 

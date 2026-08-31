@@ -51,7 +51,7 @@ def _seed_admin_state(
     instance_count: int = 1,
 ) -> tuple[Path, list[str]]:
     state_dir = tmp_path / "server-state"
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_dir))
     reset_registry()
     reset_runtime_credential_store()
     instance_ids: list[str] = []
@@ -70,7 +70,7 @@ def _seed_admin_state(
 
 
 def _credential_rows(state_dir: Path) -> list[sqlite3.Row]:
-    conn = sqlite3.connect(state_dir / "runtime_credentials.db")
+    conn = sqlite3.connect(state_dir / "daemon" / "runtime_credentials.db")
     conn.row_factory = sqlite3.Row
     try:
         return list(
@@ -87,7 +87,7 @@ def _credential_rows(state_dir: Path) -> list[sqlite3.Row]:
 
 
 def _recovery_event_rows(state_dir: Path) -> list[sqlite3.Row]:
-    conn = sqlite3.connect(state_dir / "runtime_credentials.db")
+    conn = sqlite3.connect(state_dir / "daemon" / "runtime_credentials.db")
     conn.row_factory = sqlite3.Row
     try:
         return list(
@@ -112,7 +112,7 @@ def test_recover_admin_mints_new_admin_and_records_audit(
 
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir), "--json"],
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
     )
 
     assert result.exit_code == 0, result.output
@@ -173,11 +173,11 @@ def test_recover_admin_refuses_non_owner_without_writing(
 
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir), "--json"],
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
     )
 
     assert result.exit_code == 2
-    assert "State dir must be owned by invoking uid 123456" in result.output
+    assert "State root must be owned by invoking uid 123456" in result.output
     assert len(_credential_rows(state_dir)) == 1
     assert _recovery_event_rows(state_dir) == []
 
@@ -191,7 +191,7 @@ def test_recover_admin_requires_instance_id_for_multi_instance_db(
 
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir)],
+        ["credential", "recover-admin", "--state-root", str(state_dir)],
     )
 
     assert result.exit_code == 2
@@ -215,7 +215,7 @@ def test_recover_admin_selects_instance_in_multi_instance_db(
         [
             "credential",
             "recover-admin",
-            "--state-dir",
+            "--state-root",
             str(state_dir),
             "--instance-id",
             target_instance_id,
@@ -240,7 +240,7 @@ def test_recover_admin_refuses_instance_without_admin_credential(
     tmp_path: Path,
 ) -> None:
     state_dir = tmp_path / "server-state"
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(state_dir))
     reset_registry()
     reset_runtime_credential_store()
     workspace_root = tmp_path / "workspace-no-admin"
@@ -255,7 +255,7 @@ def test_recover_admin_refuses_instance_without_admin_credential(
 
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir)],
+        ["credential", "recover-admin", "--state-root", str(state_dir)],
     )
 
     assert result.exit_code == 2
@@ -270,12 +270,12 @@ def test_recover_admin_refuses_busy_credentials_db(
     tmp_path: Path,
 ) -> None:
     state_dir, _ = _seed_admin_state(tmp_path, monkeypatch)
-    lock_conn = sqlite3.connect(state_dir / "runtime_credentials.db")
+    lock_conn = sqlite3.connect(state_dir / "daemon" / "runtime_credentials.db")
     lock_conn.execute("BEGIN IMMEDIATE")
     try:
         result = runner.invoke(
             cli,
-            ["credential", "recover-admin", "--state-dir", str(state_dir)],
+            ["credential", "recover-admin", "--state-root", str(state_dir)],
         )
     finally:
         lock_conn.rollback()
@@ -299,7 +299,7 @@ def test_recover_admin_refuses_server_mode_invocation(
             "http://server",
             "credential",
             "recover-admin",
-            "--state-dir",
+            "--state-root",
             str(tmp_path / "server-state"),
         ],
     )
@@ -317,7 +317,7 @@ def test_recovered_admin_token_authenticates_against_server(
     state_dir, _ = _seed_admin_state(tmp_path, monkeypatch)
     result = runner.invoke(
         cli,
-        ["credential", "recover-admin", "--state-dir", str(state_dir), "--json"],
+        ["credential", "recover-admin", "--state-root", str(state_dir), "--json"],
     )
     assert result.exit_code == 0, result.output
     token = json.loads(result.stdout)["token"]

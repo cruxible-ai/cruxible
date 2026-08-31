@@ -18,4 +18,7 @@ router = APIRouter(prefix="/api/v1", tags=["playbill-hosts"])
 )
 async def create_playbill_host(req: PlaybillHostCreateRequest) -> contracts.PlaybillHostResult:
     """Allocate an empty daemon-owned host; no config or state is adopted."""
-    return host_api.create_playbill_host(instance_id=req.instance_id)
+    return host_api.create_playbill_host(
+        instance_id=req.instance_id,
+        workspace_root=req.workspace_root,
+    )

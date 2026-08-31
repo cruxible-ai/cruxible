@@ -171,7 +171,7 @@ def _refuse_recover_admin_server_mode() -> None:
     if obj.get("server_url") or obj.get("server_socket") or obj.get("require_server"):
         raise click.UsageError(
             "credential recover-admin is local-only; unset --server-url/--server-socket "
-            "and run it directly against --state-dir with the daemon stopped."
+            "and run it directly against --state-root with the daemon stopped."
         )
 
 
@@ -218,11 +218,11 @@ def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
 
 @credential_group.command("recover-admin")
 @click.option(
-    "--state-dir",
+    "--state-root",
     required=True,
     type=click.Path(file_okay=False, path_type=Path),
     help=(
-        "Server state directory containing runtime_credentials.db. Stop the daemon "
+        "Server state root containing daemon/runtime_credentials.db. Stop the daemon "
         "first; the lock check only refuses a writer caught mid-transaction and "
         "does not detect an idle running daemon."
     ),
@@ -241,7 +241,7 @@ def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
 def recover_admin_cmd(
-    state_dir: Path,
+    state_root: Path,
     instance_id: str | None,
     label: str,
     output_json: bool,
@@ -249,7 +249,7 @@ def recover_admin_cmd(
     """Recover an ADMIN token by local filesystem ownership of server state.
 
     Trust model: this local-only command never contacts a Cruxible server. It
-    treats ownership of --state-dir and its runtime_credentials.db by the
+    treats ownership of --state-root and its daemon/runtime_credentials.db by the
     invoking uid as authority to mint one new ADMIN runtime credential directly
     in that DB. Stop the daemon first: the BEGIN IMMEDIATE check refuses a
     writer caught mid-transaction but cannot detect an idle running daemon,
@@ -257,13 +257,13 @@ def recover_admin_cmd(
     Existing credentials are not revoked automatically.
     """
     _refuse_recover_admin_server_mode()
-    resolved_state_dir = state_dir.expanduser().resolve()
-    db_path = resolved_state_dir / "runtime_credentials.db"
+    resolved_state_root = state_root.expanduser().resolve()
+    db_path = resolved_state_root / "daemon" / "runtime_credentials.db"
     uid = os.getuid()
-    _require_owned_path(resolved_state_dir, description="State dir", uid=uid, directory=True)
+    _require_owned_path(resolved_state_root, description="State root", uid=uid, directory=True)
     _require_owned_path(db_path, description="Runtime credentials DB", uid=uid, directory=False)
     resolved_instance_id = _select_recovery_instance_id(db_path, instance_id)
-    _common._echo_explicit_write_target(resolved_instance_id, resolved_state_dir)
+    _common._echo_explicit_write_target(resolved_instance_id, resolved_state_root)
 
     store = RuntimeCredentialStore(db_path, initialize=False)
     try:

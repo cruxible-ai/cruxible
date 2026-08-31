@@ -11,7 +11,7 @@ from typing import Any
 
 def generate_openapi_spec() -> dict[str, Any]:
     """Build the live FastAPI OpenAPI document for HTTP surface checks."""
-    os.environ.setdefault("CRUXIBLE_SERVER_STATE_DIR", tempfile.mkdtemp(prefix="crx-surface-"))
+    os.environ.setdefault("CRUXIBLE_STATE_ROOT", tempfile.mkdtemp(prefix="crx-surface-"))
     from cruxible_core.server.app import create_app
 
     return create_app().openapi()

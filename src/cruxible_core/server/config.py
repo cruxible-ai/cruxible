@@ -74,22 +74,27 @@ def resolve_server_settings(
     )
 
 
-def get_server_state_dir(environ: Mapping[str, str] | None = None) -> Path:
-    """Return the server-owned state directory."""
-    env = environ or os.environ
-    raw = env.get("CRUXIBLE_SERVER_STATE_DIR")
+def get_server_state_root(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the canonical server-owned state root."""
+    env = os.environ if environ is None else environ
+    if "CRUXIBLE_SERVER_STATE_DIR" in env:
+        raise ConfigError(
+            "CRUXIBLE_SERVER_STATE_DIR is obsolete; use CRUXIBLE_STATE_ROOT and re-seed "
+            "pre-PC-HR instances"
+        )
+    raw = env.get("CRUXIBLE_STATE_ROOT")
     if raw:
         return Path(raw).expanduser().resolve()
-    return (Path.home() / ".cruxible" / "server").resolve()
+    return (Path.home() / ".cruxible").resolve()
 
 
 def get_server_log_path(environ: Mapping[str, str] | None = None) -> Path:
     """Return the durable server request log path."""
-    env = environ or os.environ
+    env = os.environ if environ is None else environ
     raw = env.get("CRUXIBLE_SERVER_LOG_PATH")
     if raw:
         return Path(raw).expanduser().resolve()
-    return (get_server_state_dir(env) / "logs" / "server.log").resolve()
+    return (get_server_state_root(env) / "daemon" / "logs" / "server.log").resolve()
 
 
 def is_volatile_state_path(path: str | Path) -> bool:
@@ -108,12 +113,12 @@ def volatile_state_path_warnings(
     instance_locations: Iterable[tuple[str, str]] = (),
 ) -> list[str]:
     """Return startup warnings for durable state paths under volatile dirs."""
-    state_dir = get_server_state_dir(environ)
+    state_dir = get_server_state_root(environ)
     warnings: list[str] = []
     if is_volatile_state_path(state_dir):
         warnings.append(
-            "CRUXIBLE_SERVER_STATE_DIR resolves under a volatile temp path "
-            f"({state_dir}). Use a durable directory such as ~/.cruxible/server "
+            "CRUXIBLE_STATE_ROOT resolves under a volatile temp path "
+            f"({state_dir}). Use a durable directory such as ~/.cruxible "
             "or /var/lib/cruxible for long-lived daemon state."
         )
 

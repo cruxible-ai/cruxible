@@ -70,6 +70,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
     WorkingPathBindingV1,
@@ -257,20 +258,7 @@ class FloorOutputV1(_StrictMiddlewareModel):
     """A client-owned floor destination; the daemon never sees this path."""
 
     tag: Literal["playbill-floor-output-v1"] = "playbill-floor-output-v1"
-    path: str
     format: Literal["playbill-floor-export-v2"] = "playbill-floor-export-v2"
-
-    @field_validator("path")
-    @classmethod
-    def _normalized_relative_directory(cls, value: str) -> str:
-        if not value or value != value.strip() or "\\" in value:
-            raise ValueError("floor output path must be a non-empty normalized POSIX path")
-        path = PurePosixPath(value)
-        if path.is_absolute() or path.as_posix() != value or value == ".":
-            raise ValueError("floor output path must be a normalized relative POSIX directory")
-        if ".." in path.parts or path.parts[0] == ".playbill":
-            raise ValueError("floor output path may not traverse or enter .playbill")
-        return value
 
 
 class CoverageWorkspaceConfigV2(_StrictMiddlewareModel):
@@ -670,10 +658,10 @@ class CoverageMiddlewareV1:
         if not isinstance(self._config, CoverageWorkspaceConfigV2):
             return None
         floor_output = self._config.floor_output
-        if floor_output is None or not self._event_touches_floor(event, floor_output):
+        if floor_output is None or not self._event_touches_floor(event):
             return None
         try:
-            manifest = self._read_floor_manifest(floor_output)
+            manifest = self._read_floor_manifest()
             if self._resolve_floor_generations is None:
                 raise CoverageError("no floor generation resolver is installed")
             pair = self._resolve_floor_generations(manifest.coordinate)
@@ -686,15 +674,15 @@ class CoverageMiddlewareV1:
             f"{pair.current_generation}; re-export required"
         )
 
-    def _event_touches_floor(self, event: HarnessToolEventV1, floor: FloorOutputV1) -> bool:
+    def _event_touches_floor(self, event: HarnessToolEventV1) -> bool:
         named = {
             *event.paths,
             *(item.path for item in event.ranges),
             *(item.path for item in event.grep_hits),
         }
-        return any(self._is_floor_path(value, floor) for value in named)
+        return any(self._is_floor_path(value) for value in named)
 
-    def _is_floor_path(self, value: str, floor: FloorOutputV1) -> bool:
+    def _is_floor_path(self, value: str) -> bool:
         try:
             path = Path(value)
             if path.is_absolute():
@@ -703,13 +691,13 @@ class CoverageMiddlewareV1:
                 relative = PurePosixPath(value).as_posix()
         except (OSError, ValueError):
             return False
-        floor_parts = PurePosixPath(floor.path).parts
+        floor_parts = PurePosixPath(PLAYBILL_FLOOR_PATH).parts
         parts = PurePosixPath(relative).parts
         return parts[: len(floor_parts)] == floor_parts
 
-    def _read_floor_manifest(self, floor: FloorOutputV1) -> FloorFreshnessManifestV2:
+    def _read_floor_manifest(self) -> FloorFreshnessManifestV2:
         root = self._root.resolve()
-        floor_root = (self._root / floor.path).resolve()
+        floor_root = (self._root / PLAYBILL_FLOOR_PATH).resolve()
         if not floor_root.is_relative_to(root):
             raise CoverageError("floor output escapes the workspace root")
         path = floor_root / "manifest.json"
@@ -749,9 +737,7 @@ class CoverageMiddlewareV1:
             if isinstance(self._config, CoverageWorkspaceConfigV2)
             else None
         )
-        floor_paths = (
-            [] if floor is None else [path for path in named if self._is_floor_path(path, floor)]
-        )
+        floor_paths = [] if floor is None else [path for path in named if self._is_floor_path(path)]
         evidence_paths = [path for path in named if path not in floor_paths]
         bindings, unbound = self._config.bindings_for(evidence_paths)
         unbound = tuple(sorted((*unbound, *floor_paths)))
