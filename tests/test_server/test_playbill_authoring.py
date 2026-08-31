@@ -242,7 +242,7 @@ def test_http_create_flow_a_stub_surfaces_the_bind_refusal(
     )
 
 
-def test_http_authoring_openapi_and_runtime_reject_removed_brief_input(
+def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_input(
     playbill_http: tuple[TestClient, str, Path],
 ) -> None:
     client, instance_id, _private_key = playbill_http
@@ -250,7 +250,14 @@ def test_http_authoring_openapi_and_runtime_reject_removed_brief_input(
 
     for name in ("PlaybillAuthoringInputCreateRequest", "PlaybillAuthoringInputCompileRequest"):
         mapping = schemas[name]["properties"]["input"]["discriminator"]["mapping"]
-        assert set(mapping) == {"claim", "procedure"}
+        assert set(mapping) == {
+            "approval_policy",
+            "change_set",
+            "claim",
+            "procedure",
+            "query_definition",
+            "subject",
+        }
     assert "BriefInput" not in schemas
     assert "ClaimSlotPolicyV1" not in schemas
     assert schemas["ClaimType"]["properties"]["artifact_format"]["enum"] == [
