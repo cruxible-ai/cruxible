@@ -600,12 +600,20 @@ def test_propose_help_distinguishes_coordinator_shims_from_sanctioned_paths() ->
         assert "Deprecated" in shim.output
         assert "playbill authoring create" in shim.output
         assert "authoring submit" in shim.output
+        assert "``" not in shim.output
+        assert "--envelope FILE" in shim.output
+        assert "Deprecated and ignored by this compatibility shim" in " ".join(shim.output.split())
+        assert "--envelope FILE  [required]" not in shim.output
     assert document.exit_code == 0
     assert "sanctioned command-local Document proposal path" in document.output
     assert "Deprecated" not in document.output
     assert claim_type.exit_code == 0
     assert "sanctioned typed-input ClaimType proposal path" in claim_type.output
     assert "Deprecated" not in claim_type.output
+
+    bare_subject = runner.invoke(cli, ["playbill", "subject", "propose"])
+    assert bare_subject.exit_code != 0
+    assert "playbill.write_surface_deprecated" in bare_subject.output
 
 
 @pytest.mark.parametrize(

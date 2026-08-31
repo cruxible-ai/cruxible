@@ -1149,12 +1149,24 @@ def subject_group() -> None:
 
 
 @subject_group.command("propose")
-@click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--name", "proposal_name", required=True)
+@click.option(
+    "--envelope",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Deprecated and ignored by this compatibility shim.",
+)
+@click.option(
+    "--name",
+    "proposal_name",
+    help="Deprecated and ignored by this compatibility shim.",
+)
 @json_option
 @handle_errors
-def propose_subject(envelope: str, proposal_name: str, output_json: bool) -> None:
-    """Deprecated: use ``playbill authoring create`` then ``authoring submit``."""
+def propose_subject(
+    envelope: str | None,
+    proposal_name: str | None,
+    output_json: bool,
+) -> None:
+    """Deprecated: use playbill authoring create then authoring submit."""
 
     del envelope, proposal_name, output_json
     raise PlaybillDeprecatedWriteError(
@@ -2138,9 +2150,21 @@ def query_group() -> None:
 
 
 @query_group.command("propose")
-@click.option("--envelope", type=click.Path(exists=True, dir_okay=False))
-@click.option("--example", type=click.Choice(["query-claims-by-type"]))
-@click.option("--name", "proposal_name")
+@click.option(
+    "--envelope",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Deprecated and ignored by this compatibility shim.",
+)
+@click.option(
+    "--example",
+    type=click.Choice(["query-claims-by-type"]),
+    help="Deprecated and ignored by this compatibility shim.",
+)
+@click.option(
+    "--name",
+    "proposal_name",
+    help="Deprecated and ignored by this compatibility shim.",
+)
 @json_option
 @handle_errors
 def propose_query_definition(
@@ -2149,7 +2173,7 @@ def propose_query_definition(
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
-    """Deprecated: use ``playbill authoring create`` then ``authoring submit``."""
+    """Deprecated: use playbill authoring create then authoring submit."""
 
     del envelope, example, proposal_name, output_json
     raise PlaybillDeprecatedWriteError(
