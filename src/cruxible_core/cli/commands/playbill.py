@@ -1163,7 +1163,7 @@ def subject_group() -> None:
 def propose_subject(envelope: str, proposal_name: str, output_json: bool) -> None:
     del envelope, proposal_name, output_json
     raise PlaybillDeprecatedWriteError(
-        replacement="cruxible playbill authoring create --example subject"
+        replacement="the authoring coordinator with payload kind 'subject'"
     )
 
 
@@ -2171,7 +2171,7 @@ def propose_query_definition(
 ) -> None:
     del envelope, example, proposal_name, output_json
     raise PlaybillDeprecatedWriteError(
-        replacement="cruxible playbill authoring create --example query-claims-by-type"
+        replacement="the authoring coordinator with payload kind 'query_definition'"
     )
 
 

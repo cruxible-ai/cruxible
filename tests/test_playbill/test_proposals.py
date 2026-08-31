@@ -45,10 +45,6 @@ from cruxible_core.playbill.service.documents import (
     service_propose_playbill_document,
 )
 from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
-from cruxible_core.playbill.service.query_definitions import (
-    service_propose_playbill_query_definition,
-)
-from cruxible_core.playbill.service.subjects import service_propose_playbill_subject
 from cruxible_core.service.playbill_evidence import service_propose_claim_attestation
 from tests.test_playbill._support import initialize_local
 
@@ -219,8 +215,6 @@ def test_request_model_refuses_non_proposal_namespaces(target_ref: str) -> None:
     (
         ("document", service_propose_playbill_document),
         ("claim attestation", service_propose_claim_attestation),
-        ("query definition", service_propose_playbill_query_definition),
-        ("subject", service_propose_playbill_subject),
         ("claim type", service_propose_playbill_claim_type),
         ("claim type input", service_propose_playbill_claim_type_input),
     ),

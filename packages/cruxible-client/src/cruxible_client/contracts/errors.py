@@ -109,14 +109,14 @@ class PlaybillInstanceIncompatiblePrereleaseContent(PlaybillFormatError):
 
 
 class PlaybillDeprecatedWriteError(PlaybillFormatError):
-    """A removed bespoke writer names the coordinator replacement."""
+    """A removed bespoke writer names a transport-neutral replacement."""
 
     error_code = "playbill.write_surface_deprecated"
 
     def __init__(self, *, replacement: str) -> None:
         self.replacement = replacement
         super().__init__(
-            f"{self.error_code}: this write surface is deprecated; use `{replacement}`"
+            f"{self.error_code}: this write surface was removed; use {replacement}"
         )
 
 

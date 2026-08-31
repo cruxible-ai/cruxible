@@ -495,7 +495,7 @@ class SubjectDraft(_IntentDraft):
         from cruxible_client.contracts.errors import PlaybillDeprecatedWriteError
 
         raise PlaybillDeprecatedWriteError(
-            replacement="cruxible playbill authoring create --example subject"
+            replacement="the authoring coordinator with payload kind 'subject'"
         )
 
 

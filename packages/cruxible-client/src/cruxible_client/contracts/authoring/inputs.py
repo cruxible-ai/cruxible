@@ -207,6 +207,10 @@ class AuthoringInputError(PlaybillFormatError, ValueError):
     def __str__(self) -> str:
         return f"{self.code} at {self.field_path}: {self.message} Repair: {self.repair}"
 
+    @property
+    def error_code(self) -> str:
+        return self.code
+
 
 def _subject_address(shorthand: str, *, field_path: str) -> SemanticAddress:
     match = _SUBJECT_SHORTHAND_RE.fullmatch(shorthand)

@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeAlias
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from cruxible_client.contracts.approval_policy import ApprovalPolicyMode
+from cruxible_client.contracts.authoring.inputs import AuthoringInputV1
 from cruxible_client.contracts.canonical import Sha256Value
 from cruxible_client.contracts.primitives import canonical_json
 from cruxible_client.contracts.procedures.results import (
@@ -27,8 +28,6 @@ RuntimeCredentialPermissionMode = Literal[
 ]
 PlaybillHostStatus = Literal["created", "already_exists"]
 PlaybillAuthoringExampleName = Literal[
-    "approval-policy",
-    "claim-type",
     "claim-existing-capture",
     "claim-flow-a",
     "claim-self-source",
@@ -38,6 +37,7 @@ PlaybillAuthoringExampleName = Literal[
     "claim-adjudicate-unreviewed-evidence",
     "query-claims-by-type",
     "subject",
+    "approval-policy",
 ]
 PlaybillPolicyKind: TypeAlias = Literal[
     "approval_policy",
@@ -706,7 +706,7 @@ class PlaybillAuthoringExampleResult(BaseModel):
 
     tag: Literal["playbill-authoring-example-result-v1"] = "playbill-authoring-example-result-v1"
     name: PlaybillAuthoringExampleName
-    payload: dict[str, Any]
+    payload: AuthoringInputV1
 
 
 class PlaybillAuthoringIntentList(BaseModel):

@@ -35,9 +35,9 @@ from cruxible_core.playbill.service.subjects import (
     service_get_playbill_subject,
     service_list_playbill_subjects,
     service_playbill_subject_history,
-    service_propose_playbill_subject,
 )
 from cruxible_core.storage.playbill_projection import canonical_logical_export
+from tests.test_playbill._candidate_support import submit_subject_candidate
 from tests.test_playbill.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
 
@@ -58,7 +58,7 @@ def _shell(
 
 
 def _accept(instance, approver, shell: SubjectShell, *, name: str = "subject"):
-    inspection = service_propose_playbill_subject(
+    inspection = submit_subject_candidate(
         instance,
         shell=shell,
         actor_id="owner",
@@ -122,7 +122,7 @@ def test_subject_roles_are_dormant_but_transport_capability_remains_required(
 ) -> None:
     instance, _owner, _reviewer = _instance(tmp_path)
     capabilities: tuple[TransportCapability, ...] = ("administer", "propose")
-    accepted = service_propose_playbill_subject(
+    accepted = submit_subject_candidate(
         instance,
         shell=_shell(),
         actor_id="reviewer",
@@ -133,7 +133,7 @@ def test_subject_roles_are_dormant_but_transport_capability_remains_required(
     assert accepted.proposal.candidate is not None
 
     with pytest.raises(ProposalAdmissionError, match="propose capability"):
-        service_propose_playbill_subject(
+        submit_subject_candidate(
             instance,
             shell=_shell(),
             actor_id="owner",

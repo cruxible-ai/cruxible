@@ -687,7 +687,7 @@ def playbill_propose_subject(
 ) -> contracts.PlaybillProposalInspection:
     del instance_id, shell, proposal_name, base
     raise PlaybillDeprecatedWriteError(
-        replacement="cruxible playbill authoring create --example subject"
+        replacement="the authoring coordinator with payload kind 'subject'"
     )
 
 
@@ -1166,7 +1166,7 @@ def playbill_propose_query_definition(
 ) -> contracts.PlaybillProposalInspection:
     del instance_id, query, proposal_name, base
     raise PlaybillDeprecatedWriteError(
-        replacement="cruxible playbill authoring create --example query-claims-by-type"
+        replacement="the authoring coordinator with payload kind 'query_definition'"
     )
 
 

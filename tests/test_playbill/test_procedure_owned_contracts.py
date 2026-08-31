@@ -57,14 +57,12 @@ from cruxible_core.playbill.procedures.execution import (
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
-from cruxible_core.playbill.service.query_definitions import (
-    service_propose_playbill_query_definition,
-)
 from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_procedures import (
     PlaybillProcedureStateTapReader,
     service_execute_direct_procedure,
 )
+from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._knowledge_loop_support import (
     QUERY_NAME,
     TIMESTAMP,
@@ -300,7 +298,7 @@ def test_query_only_procedure_runs_through_daemon_query_without_provider(
 ) -> None:
     instance, owner = seed_claims(tmp_path)
     query = work_item_query()
-    inspection = service_propose_playbill_query_definition(
+    inspection = submit_query_definition_candidate(
         instance,
         query=query,
         actor_id="owner",

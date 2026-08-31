@@ -56,7 +56,6 @@ from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp.workspace import mcp_workspace_root, resolve_workspace_path
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
-    defaulted_claim_type_input_example,
 )
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import WorkingSourceObservationV1
@@ -773,16 +772,11 @@ def handle_playbill_authoring_example(
     claim_id: str | None = None,
     capture_digest: str | None = None,
 ) -> contracts.PlaybillAuthoringExampleResult:
-    if name == "claim-type":
-        if claim_id is not None or capture_digest is not None:
-            raise DataValidationError("claim-type does not accept claim_id or capture_digest hints")
-        payload = defaulted_claim_type_input_example().model_dump(mode="json")
-    else:
-        payload = authoring_example(
-            name,
-            claim_id=claim_id,
-            capture_digest=capture_digest,
-        ).model_dump(mode="json")
+    payload = authoring_example(
+        name,
+        claim_id=claim_id,
+        capture_digest=capture_digest,
+    )
     return contracts.PlaybillAuthoringExampleResult(name=name, payload=payload)
 
 

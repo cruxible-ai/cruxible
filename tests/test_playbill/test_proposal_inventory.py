@@ -10,9 +10,6 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
 )
 from cruxible_core.playbill.service.documents import service_propose_playbill_document
-from cruxible_core.playbill.service.query_definitions import (
-    service_propose_playbill_query_definition,
-)
 from cruxible_core.runtime import playbill_api
 from cruxible_core.runtime.permissions import PermissionMode
 from cruxible_core.server.auth import ResolvedAuthContext
@@ -20,6 +17,7 @@ from cruxible_core.service.playbill_proposals import (
     service_list_playbill_proposals,
     service_playbill_whoami,
 )
+from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
 from tests.test_playbill._knowledge_loop_support import (
     TIMESTAMP,
@@ -32,7 +30,7 @@ from tests.test_playbill._knowledge_loop_support import (
 
 def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Path) -> None:
     instance, owner = seed_claims(tmp_path)
-    stale = service_propose_playbill_query_definition(
+    stale = submit_query_definition_candidate(
         instance,
         query=work_item_query("stale-query"),
         actor_id="owner",
@@ -66,7 +64,7 @@ def test_proposal_inventory_reduces_open_accepted_refused_and_stale(tmp_path: Pa
         timestamp=TIMESTAMP,
     )
     assert refused.proposal.evaluation.verdict == "refused"
-    opened = service_propose_playbill_query_definition(
+    opened = submit_query_definition_candidate(
         instance,
         query=work_item_query("open-query"),
         actor_id="owner",

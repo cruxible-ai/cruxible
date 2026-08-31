@@ -29,7 +29,6 @@ from cruxible_core.playbill.curation import (
     replay_curation_items,
 )
 from cruxible_core.playbill.service.documents import service_propose_playbill_document
-from cruxible_core.playbill.service.subjects import service_propose_playbill_subject
 from cruxible_core.service.playbill_curation import (
     PlaybillCurationAcceptFixedRequestV1,
     PlaybillCurationListRequestV1,
@@ -38,6 +37,7 @@ from cruxible_core.service.playbill_curation import (
     service_accept_fixed_playbill_curation,
     service_list_playbill_curation,
 )
+from tests.test_playbill._candidate_support import submit_subject_candidate
 from tests.test_playbill._knowledge_loop_support import accept_proposal, subject_shell
 from tests.test_playbill._support import initialize_local
 
@@ -213,7 +213,7 @@ def test_dead_vocabulary_auto_resolves_to_the_accepted_retirement_changeset(
 ) -> None:
     instance, owner = initialize_local(tmp_path)
     initial = subject_shell("wi-dead")
-    first = service_propose_playbill_subject(
+    first = submit_subject_candidate(
         instance,
         shell=initial,
         actor_id="owner",
@@ -266,7 +266,7 @@ def test_dead_vocabulary_auto_resolves_to_the_accepted_retirement_changeset(
             )
         }
     )
-    retirement = service_propose_playbill_subject(
+    retirement = submit_subject_candidate(
         instance,
         shell=retired,
         actor_id="owner",
@@ -314,7 +314,7 @@ def test_dead_vocabulary_retirement_scan_loads_each_generation_once(
 ) -> None:
     instance, owner = initialize_local(tmp_path)
     initial = subject_shell("wi-dead")
-    first = service_propose_playbill_subject(
+    first = submit_subject_candidate(
         instance,
         shell=initial,
         actor_id="owner",
@@ -369,7 +369,7 @@ def test_dead_vocabulary_retirement_scan_loads_each_generation_once(
             )
         }
     )
-    retirement = service_propose_playbill_subject(
+    retirement = submit_subject_candidate(
         instance,
         shell=retired,
         actor_id="owner",

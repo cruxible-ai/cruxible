@@ -32,7 +32,6 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.query.engine import evaluate_claim_query
 from cruxible_core.playbill.service.query_definitions import (
     accepted_query_definition,
-    service_propose_playbill_query_definition,
 )
 from cruxible_core.service.playbill_claims import (
     _claim_from_view,
@@ -45,6 +44,7 @@ from cruxible_core.service.playbill_next import (
     service_playbill_next,
 )
 from cruxible_core.service.playbill_query import build_accepted_query_facts
+from tests.test_playbill._candidate_support import submit_query_definition_candidate
 from tests.test_playbill._claim_authoring_support import (
     DirectClaimAuthoringV1,
     ExistingStatementHandoffV1,
@@ -186,7 +186,7 @@ def test_clean_claim_and_query_backings_do_not_stale_on_coordinate_or_time_alone
     original_coordinate = instance.accepted_coordinate()
     original_rows = _projection_rows(instance, request)
 
-    unrelated = service_propose_playbill_query_definition(
+    unrelated = submit_query_definition_candidate(
         instance,
         query=work_item_query("project.unrelated_items"),
         actor_id="owner",
@@ -496,7 +496,7 @@ def test_query_backing_replays_actual_resolved_parameter_values(tmp_path: Path) 
             "parameters": (QueryParameterDeclarationV1(name="subject", value_type="string"),),
         }
     )
-    proposal = service_propose_playbill_query_definition(
+    proposal = submit_query_definition_candidate(
         instance,
         query=query,
         actor_id="owner",
