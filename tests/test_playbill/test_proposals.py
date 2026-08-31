@@ -24,6 +24,7 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import (
     ProposalAdmissionError,
     ProposalEvaluationIntegrityError,
+    ProposalIntegrityError,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
@@ -39,7 +40,10 @@ from cruxible_core.playbill.service.claim_types import (
     service_propose_playbill_claim_type,
     service_propose_playbill_claim_type_input,
 )
-from cruxible_core.playbill.service.documents import service_propose_playbill_document
+from cruxible_core.playbill.service.documents import (
+    _candidate_for_proposal,
+    service_propose_playbill_document,
+)
 from cruxible_core.playbill.service.proposal_names import canonical_playbill_proposal_name
 from cruxible_core.playbill.service.query_definitions import (
     service_propose_playbill_query_definition,
@@ -156,6 +160,16 @@ def test_refusal_keeps_evidence_but_creates_no_candidate(tmp_path: Path) -> None
     assert len(list((exhaust / "proposals").glob("*.json"))) == 1
     assert len(list((exhaust / "evaluations").glob("*.json"))) == 1
     assert list((exhaust / "candidates").glob("*.json")) == []
+
+    with pytest.raises(
+        ProposalIntegrityError,
+        match=(
+            r"refused proposal has no approvable candidate; run "
+            rf"`playbill proposal refusal {result.admission.proposal_id}` for refusal code "
+            r"playbill\.document\.body_missing"
+        ),
+    ):
+        _candidate_for_proposal(instance, result.admission.proposal_id)
 
 
 def test_internal_evaluation_model_failure_uses_the_narrow_integrity_class(

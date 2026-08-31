@@ -75,6 +75,7 @@ PlaybillNextReason: TypeAlias = Literal[
     "claim_cites_retired",
     "retired_claim_source_stale",
     "unregistered_projection_block",
+    "projection_marker_invalid",
 ]
 
 

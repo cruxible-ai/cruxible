@@ -267,14 +267,97 @@ def test_missing_hidden_or_incomplete_backing_omits_the_entire_block_without_dis
     for request in (
         _request(accepted_world, backing=(visible, hidden), dirty=True),
         _request(accepted_world, backing=(visible,), dirty=True, complete=False),
-        _request(
-            accepted_world,
-            backing=(visible,),
-            dirty=True,
-            marker_notes=("projection_marker_invalid",),
-        ),
     ):
         assert _projection_rows(accepted_world, request) == ()
+
+
+def test_invalid_projection_marker_surfaces_source_level_blocking_row(
+    accepted_world: PlaybillInstance,
+) -> None:
+    request = _request(
+        accepted_world,
+        backing=(_claim_backing(accepted_world),),
+        marker_notes=("projection_marker_invalid",),
+    )
+
+    (row,) = _projection_rows(accepted_world, request)
+
+    assert row.severity == "blocking"
+    assert row.reason == "projection_marker_invalid"
+    assert row.subject_identity == "corpus.runbook"
+    assert row.related_identities == ()
+    assert row.detail == {
+        "source_id": "corpus.runbook",
+        "error_code": "playbill.projection.marker_invalid",
+        "marker_status": "invalid",
+    }
+    assert row.repair.target == "corpus.runbook"
+    assert row.repair.required_change == "restore_projection_frame_then_repin"
+    assert row.repair.arguments == {"source_id": "corpus.runbook"}
+    assert row.repair.command is None
+
+
+def test_missing_registered_projection_marker_surfaces_runnable_block_row(
+    accepted_world: PlaybillInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _request(accepted_world, backing=(_claim_backing(accepted_world),))
+    source = request.workspace_observation.source_observations[0]
+    request = request.model_copy(
+        update={
+            "workspace_observation": request.workspace_observation.model_copy(
+                update={
+                    "source_observations": (source.model_copy(update={"marker_summaries": ()}),)
+                }
+            )
+        }
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next._registered_publication_blocks",
+        lambda _instance: frozenset({("corpus.runbook", "pub-status")}),
+    )
+
+    (row,) = _projection_rows(accepted_world, request)
+
+    assert row.severity == "blocking"
+    assert row.subject_identity == "corpus.runbook#pub-status"
+    assert row.detail == {
+        "source_id": "corpus.runbook",
+        "block_id": "pub-status",
+        "error_code": "playbill.projection.marker_invalid",
+        "marker_status": "registered_marker_missing",
+    }
+    assert row.repair.arguments == {
+        "source_id": "corpus.runbook",
+        "block_id": "pub-status",
+    }
+    assert row.repair.command == "cruxible playbill block repin corpus.runbook pub-status"
+
+
+def test_invalid_projection_marker_recovers_registered_block_identity(
+    accepted_world: PlaybillInstance,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = _request(
+        accepted_world,
+        backing=(_claim_backing(accepted_world),),
+        marker_notes=("projection_marker_invalid",),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.service.playbill_next._registered_publication_blocks",
+        lambda _instance: frozenset({("corpus.runbook", "pub-status")}),
+    )
+
+    (row,) = _projection_rows(accepted_world, request)
+
+    assert row.subject_identity == "corpus.runbook#pub-status"
+    assert row.detail == {
+        "source_id": "corpus.runbook",
+        "block_id": "pub-status",
+        "error_code": "playbill.projection.marker_invalid",
+        "marker_status": "invalid",
+    }
+    assert row.repair.command == "cruxible playbill block repin corpus.runbook pub-status"
 
 
 def test_subject_gated_claim_backing_omits_its_marker_under_instance_access(

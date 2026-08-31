@@ -465,7 +465,7 @@ class PlaybillNextRepairV1(_StrictNextModel):
     # Composed from the digested fields beside it, so it is a pure function of
     # them and stays deterministic inside the item_id and result_digest
     # preimages it necessarily joins.
-    command: str = ""
+    command: str | None = None
 
     @field_validator("arguments", mode="before")
     @classmethod
@@ -638,7 +638,7 @@ def _repair_command(
     operation: NextRepairOperation,
     *,
     arguments: object,
-) -> str:
+) -> str | None:
     """Compose the runnable invocation for one repair operation."""
 
     parts = ["cruxible", _REPAIR_COMMAND_PATHS[operation]]
@@ -648,6 +648,8 @@ def _repair_command(
         block_id = values.get("block_id")
         if isinstance(source_id, str) and isinstance(block_id, str):
             parts.extend([shlex.quote(source_id), shlex.quote(block_id)])
+        else:
+            return None
     elif operation == "playbill.claim.retire":
         claim_id = values.get("claim_id")
         if isinstance(claim_id, str):
@@ -2762,6 +2764,37 @@ def _registered_publication_blocks(
     return frozenset(registrations)
 
 
+def _projection_marker_invalid_item(
+    *,
+    source_id: str,
+    block_id: str | None,
+    marker_status: Literal["invalid", "registered_marker_missing"],
+) -> PlaybillNextItemV1:
+    target = f"{source_id}#{block_id}" if block_id is not None else source_id
+    detail: dict[str, str] = {
+        "source_id": source_id,
+        "error_code": "playbill.projection.marker_invalid",
+        "marker_status": marker_status,
+    }
+    arguments = {"source_id": source_id}
+    if block_id is not None:
+        detail["block_id"] = block_id
+        arguments["block_id"] = block_id
+    return _item(
+        severity="blocking",
+        reason="projection_marker_invalid",
+        subject_identity=target,
+        related_identities=(),
+        detail=detail,
+        repair=PlaybillNextRepairV1(
+            operation="playbill.block.repin",
+            target=target,
+            required_change="restore_projection_frame_then_repin",
+            arguments=arguments,
+        ),
+    )
+
+
 def _projection_items(
     instance: PlaybillInstance,
     *,
@@ -2778,7 +2811,7 @@ def _projection_items(
         or not access_profile.permits("instance")
     ):
         return ()
-    sources = tuple(
+    observed_sources = tuple(
         source
         for source in observation.source_observations
         if isinstance(
@@ -2793,13 +2826,44 @@ def _projection_items(
             if isinstance(source, PlaybillNextSourceObservationV4)
             else source.scan_complete
         )
-        and not source.marker_notes
-        and source.marker_summaries
     )
-    if not sources:
+    if not observed_sources:
         return ()
 
     registrations = _registered_publication_blocks(instance)
+    items: list[PlaybillNextItemV1] = []
+    for source in observed_sources:
+        observed_block_ids = {marker.stamp.block_id for marker in source.marker_summaries}
+        registered_block_ids = (
+            {block_id for source_id, block_id in registrations if source_id == source.source_id}
+            if registrations is not None
+            else set()
+        )
+        missing_block_ids = registered_block_ids - observed_block_ids
+        marker_invalid = "projection_marker_invalid" in source.marker_notes
+        if marker_invalid and not missing_block_ids:
+            items.append(
+                _projection_marker_invalid_item(
+                    source_id=source.source_id,
+                    block_id=None,
+                    marker_status="invalid",
+                )
+            )
+        for block_id in sorted(missing_block_ids, key=lambda value: value.encode("utf-8")):
+            items.append(
+                _projection_marker_invalid_item(
+                    source_id=source.source_id,
+                    block_id=block_id,
+                    marker_status=("invalid" if marker_invalid else "registered_marker_missing"),
+                )
+            )
+
+    sources = tuple(
+        source for source in observed_sources if not source.marker_notes and source.marker_summaries
+    )
+    if not sources:
+        return tuple(items)
+
     tree = instance.tree_at(coordinate.git_oid)
     facts = build_accepted_query_facts(instance, coordinate=coordinate)
     subjects = {subject.path: subject for subject in facts.subjects}
@@ -2811,7 +2875,6 @@ def _projection_items(
         at=PlaybillAcceptedCoordinate.from_internal(coordinate),
         evaluation_time=evaluation_time,
     )
-    items: list[PlaybillNextItemV1] = []
     for source in sources:
         for marker in source.marker_summaries:
             registration = (source.source_id, marker.stamp.block_id)
