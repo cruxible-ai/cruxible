@@ -1298,7 +1298,47 @@ def migrate_claim_type(request_file: str, output_json: bool) -> None:
         ),
         command_name="playbill claim-type migrate",
     )
-    _emit_json(result.model_dump(mode="json"))
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    if result.tag == "playbill-claim-type-migration-preflight-v1":
+        click.echo("ClaimType migration preflight")
+        click.echo(f"Coordinate: {result.coordinate.git_oid}")
+        click.echo(f"Successor: {result.successor_artifact_digest}")
+        click.echo(f"Blast radius: {len(result.dependents)} dependent(s)")
+        for dependent in result.dependents:
+            identity = dependent.get("identity", {})
+            identity_name = identity.get("name", dependent.get("claim_id", "<unknown>"))
+            click.echo(
+                f"  {identity.get('kind', 'Claim')}:{identity_name}"
+                f" ({dependent.get('artifact_kind', 'claim')})"
+            )
+    else:
+        click.echo("ClaimType migration proposal")
+        click.echo(f"Operation: {result.operation_digest}")
+        click.echo(f"Dependents: {len(result.dependents)}")
+        click.echo(f"Proposal: {result.proposal.proposal.get('proposal_id', '<submitted>')}")
+    click.echo("Semantic delta:")
+    if not result.semantic_delta:
+        click.echo("  (no semantic field changes)")
+    for row in result.semantic_delta:
+        before = (
+            "<absent>"
+            if row.before.state == "absent"
+            else json.dumps(row.before.value, sort_keys=True, ensure_ascii=False)
+        )
+        after = (
+            "<absent>"
+            if row.after.state == "absent"
+            else json.dumps(row.after.value, sort_keys=True, ensure_ascii=False)
+        )
+        click.echo(f"  {row.field_path or '/'}: {before} -> {after}")
+    click.echo("Lint:")
+    if result.lint is None or not result.lint.warnings:
+        click.echo("  none")
+    else:
+        for warning in result.lint.warnings:
+            click.echo(f"  {warning.get('field_path', '$')}: {warning.get('code', 'warning')}")
 
 
 @claim_type_group.command("list")

@@ -384,6 +384,7 @@ def test_http_migration_route_delegates_the_typed_request(
         seen.append((selected, request))
         return contracts.PlaybillClaimTypeMigrationResult(
             operation_digest="sha256:" + "1" * 64,
+            semantic_delta=[],
             dependents=[],
             proposal=contracts.PlaybillProposalInspection(
                 proposal={},
@@ -551,6 +552,7 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
                 coordinate=COORDINATE,
                 successor_artifact_digest="sha256:" + "9" * 64,
                 dependents=[],
+                semantic_delta=[],
                 lint=lint,
             ),
         )

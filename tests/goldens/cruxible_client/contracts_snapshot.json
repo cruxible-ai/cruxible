@@ -507,8 +507,7 @@
               },
               "members": {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/PlaybillReviewedMember"
                 },
                 "title": "Members",
                 "type": "array"
@@ -559,6 +558,173 @@
               "redactions"
             ],
             "title": "PlaybillProposalReview",
+            "type": "object"
+          },
+          "PlaybillReviewedMember": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_kind": {
+                "title": "Artifact Kind",
+                "type": "string"
+              },
+              "base_semantic_artifact": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Base Semantic Artifact"
+              },
+              "candidate_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Candidate Artifact Digest"
+              },
+              "candidate_semantic_artifact": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Candidate Semantic Artifact"
+              },
+              "closure_role": {
+                "enum": [
+                  "authored",
+                  "generated_successor",
+                  "invalidation"
+                ],
+                "title": "Closure Role",
+                "type": "string"
+              },
+              "dependency_proof_refs": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Dependency Proof Refs",
+                "type": "array"
+              },
+              "disposition": {
+                "title": "Disposition",
+                "type": "string"
+              },
+              "law_digest": {
+                "title": "Law Digest",
+                "type": "string"
+              },
+              "law_evidence": {
+                "additionalProperties": true,
+                "title": "Law Evidence",
+                "type": "object"
+              },
+              "law_identifier": {
+                "title": "Law Identifier",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "predecessor_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Predecessor Artifact Digest"
+              },
+              "semantic_delta": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+                },
+                "title": "Semantic Delta",
+                "type": "array"
+              }
+            },
+            "required": [
+              "path",
+              "artifact_kind",
+              "disposition",
+              "closure_role",
+              "predecessor_artifact_digest",
+              "candidate_artifact_digest",
+              "base_semantic_artifact",
+              "candidate_semantic_artifact",
+              "semantic_delta",
+              "law_identifier",
+              "law_digest",
+              "law_evidence",
+              "dependency_proof_refs"
+            ],
+            "title": "PlaybillReviewedMember",
+            "type": "object"
+          },
+          "PlaybillSemanticFieldDelta": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "before": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-semantic-field-delta-v1",
+                "default": "playbill-semantic-field-delta-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field_path",
+              "before",
+              "after"
+            ],
+            "title": "PlaybillSemanticFieldDelta",
+            "type": "object"
+          },
+          "PlaybillSemanticFieldValue": {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "absent",
+                  "present"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "state",
+              "value"
+            ],
+            "title": "PlaybillSemanticFieldValue",
             "type": "object"
           }
         },
@@ -8775,6 +8941,19 @@
             "default": null
           }
         },
+        "semantic_delta": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "semantic_delta",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
+          }
+        },
         "successor_artifact_digest": {
           "has_default": false,
           "has_default_factory": false,
@@ -8881,6 +9060,56 @@
             ],
             "title": "PlaybillClaimTypeProposalLint",
             "type": "object"
+          },
+          "PlaybillSemanticFieldDelta": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "before": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-semantic-field-delta-v1",
+                "default": "playbill-semantic-field-delta-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field_path",
+              "before",
+              "after"
+            ],
+            "title": "PlaybillSemanticFieldDelta",
+            "type": "object"
+          },
+          "PlaybillSemanticFieldValue": {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "absent",
+                  "present"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "state",
+              "value"
+            ],
+            "title": "PlaybillSemanticFieldValue",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -8907,6 +9136,13 @@
             ],
             "default": null
           },
+          "semantic_delta": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
+          },
           "successor_artifact_digest": {
             "title": "Successor Artifact Digest",
             "type": "string"
@@ -8930,7 +9166,8 @@
         "required": [
           "coordinate",
           "successor_artifact_digest",
-          "dependents"
+          "dependents",
+          "semantic_delta"
         ],
         "title": "PlaybillClaimTypeMigrationPreflight",
         "type": "object"
@@ -8938,6 +9175,7 @@
       "required_fields": [
         "coordinate",
         "dependents",
+        "semantic_delta",
         "successor_artifact_digest"
       ]
     },
@@ -8993,6 +9231,19 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillProposalInspection"
+          }
+        },
+        "semantic_delta": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "semantic_delta",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
           }
         },
         "tag": {
@@ -9127,6 +9378,56 @@
             ],
             "title": "PlaybillProposalInspection",
             "type": "object"
+          },
+          "PlaybillSemanticFieldDelta": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "before": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-semantic-field-delta-v1",
+                "default": "playbill-semantic-field-delta-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field_path",
+              "before",
+              "after"
+            ],
+            "title": "PlaybillSemanticFieldDelta",
+            "type": "object"
+          },
+          "PlaybillSemanticFieldValue": {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "absent",
+                  "present"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "state",
+              "value"
+            ],
+            "title": "PlaybillSemanticFieldValue",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -9157,6 +9458,13 @@
           "proposal": {
             "$ref": "#/$defs/PlaybillProposalInspection"
           },
+          "semantic_delta": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
+          },
           "tag": {
             "const": "playbill-claim-type-migration-result-v1",
             "default": "playbill-claim-type-migration-result-v1",
@@ -9176,7 +9484,8 @@
         "required": [
           "operation_digest",
           "dependents",
-          "proposal"
+          "proposal",
+          "semantic_delta"
         ],
         "title": "PlaybillClaimTypeMigrationResult",
         "type": "object"
@@ -9184,7 +9493,8 @@
       "required_fields": [
         "dependents",
         "operation_digest",
-        "proposal"
+        "proposal",
+        "semantic_delta"
       ]
     },
     "PlaybillClaimTypeMigrationResultV2": {
@@ -9239,6 +9549,19 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillProposalInspection"
+          }
+        },
+        "semantic_delta": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "semantic_delta",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
           }
         },
         "tag": {
@@ -9373,6 +9696,56 @@
             ],
             "title": "PlaybillProposalInspection",
             "type": "object"
+          },
+          "PlaybillSemanticFieldDelta": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "before": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-semantic-field-delta-v1",
+                "default": "playbill-semantic-field-delta-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field_path",
+              "before",
+              "after"
+            ],
+            "title": "PlaybillSemanticFieldDelta",
+            "type": "object"
+          },
+          "PlaybillSemanticFieldValue": {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "absent",
+                  "present"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "state",
+              "value"
+            ],
+            "title": "PlaybillSemanticFieldValue",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -9403,6 +9776,13 @@
           "proposal": {
             "$ref": "#/$defs/PlaybillProposalInspection"
           },
+          "semantic_delta": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
+          },
           "tag": {
             "const": "playbill-claim-type-migration-result-v2",
             "default": "playbill-claim-type-migration-result-v2",
@@ -9422,7 +9802,8 @@
         "required": [
           "operation_digest",
           "dependents",
-          "proposal"
+          "proposal",
+          "semantic_delta"
         ],
         "title": "PlaybillClaimTypeMigrationResultV2",
         "type": "object"
@@ -9430,7 +9811,8 @@
       "required_fields": [
         "dependents",
         "operation_digest",
-        "proposal"
+        "proposal",
+        "semantic_delta"
       ]
     },
     "PlaybillClaimTypeMigrationResultV3": {
@@ -9485,6 +9867,19 @@
           "required": true,
           "schema": {
             "$ref": "#/$defs/PlaybillProposalInspection"
+          }
+        },
+        "semantic_delta": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "semantic_delta",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
           }
         },
         "tag": {
@@ -9619,6 +10014,56 @@
             ],
             "title": "PlaybillProposalInspection",
             "type": "object"
+          },
+          "PlaybillSemanticFieldDelta": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "before": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-semantic-field-delta-v1",
+                "default": "playbill-semantic-field-delta-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field_path",
+              "before",
+              "after"
+            ],
+            "title": "PlaybillSemanticFieldDelta",
+            "type": "object"
+          },
+          "PlaybillSemanticFieldValue": {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "absent",
+                  "present"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "state",
+              "value"
+            ],
+            "title": "PlaybillSemanticFieldValue",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -9649,6 +10094,13 @@
           "proposal": {
             "$ref": "#/$defs/PlaybillProposalInspection"
           },
+          "semantic_delta": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
+          },
           "tag": {
             "const": "playbill-claim-type-migration-result-v3",
             "default": "playbill-claim-type-migration-result-v3",
@@ -9668,7 +10120,8 @@
         "required": [
           "operation_digest",
           "dependents",
-          "proposal"
+          "proposal",
+          "semantic_delta"
         ],
         "title": "PlaybillClaimTypeMigrationResultV3",
         "type": "object"
@@ -9676,7 +10129,8 @@
       "required_fields": [
         "dependents",
         "operation_digest",
-        "proposal"
+        "proposal",
+        "semantic_delta"
       ]
     },
     "PlaybillClaimTypeProposalLint": {
@@ -18128,8 +18582,7 @@
           "required": true,
           "schema": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/PlaybillReviewedMember"
             },
             "title": "Members",
             "type": "array"
@@ -18243,6 +18696,173 @@
             ],
             "title": "PlaybillAcceptedCoordinate",
             "type": "object"
+          },
+          "PlaybillReviewedMember": {
+            "additionalProperties": false,
+            "properties": {
+              "artifact_kind": {
+                "title": "Artifact Kind",
+                "type": "string"
+              },
+              "base_semantic_artifact": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Base Semantic Artifact"
+              },
+              "candidate_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Candidate Artifact Digest"
+              },
+              "candidate_semantic_artifact": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Candidate Semantic Artifact"
+              },
+              "closure_role": {
+                "enum": [
+                  "authored",
+                  "generated_successor",
+                  "invalidation"
+                ],
+                "title": "Closure Role",
+                "type": "string"
+              },
+              "dependency_proof_refs": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Dependency Proof Refs",
+                "type": "array"
+              },
+              "disposition": {
+                "title": "Disposition",
+                "type": "string"
+              },
+              "law_digest": {
+                "title": "Law Digest",
+                "type": "string"
+              },
+              "law_evidence": {
+                "additionalProperties": true,
+                "title": "Law Evidence",
+                "type": "object"
+              },
+              "law_identifier": {
+                "title": "Law Identifier",
+                "type": "string"
+              },
+              "path": {
+                "title": "Path",
+                "type": "string"
+              },
+              "predecessor_artifact_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Predecessor Artifact Digest"
+              },
+              "semantic_delta": {
+                "items": {
+                  "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+                },
+                "title": "Semantic Delta",
+                "type": "array"
+              }
+            },
+            "required": [
+              "path",
+              "artifact_kind",
+              "disposition",
+              "closure_role",
+              "predecessor_artifact_digest",
+              "candidate_artifact_digest",
+              "base_semantic_artifact",
+              "candidate_semantic_artifact",
+              "semantic_delta",
+              "law_identifier",
+              "law_digest",
+              "law_evidence",
+              "dependency_proof_refs"
+            ],
+            "title": "PlaybillReviewedMember",
+            "type": "object"
+          },
+          "PlaybillSemanticFieldDelta": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "before": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-semantic-field-delta-v1",
+                "default": "playbill-semantic-field-delta-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field_path",
+              "before",
+              "after"
+            ],
+            "title": "PlaybillSemanticFieldDelta",
+            "type": "object"
+          },
+          "PlaybillSemanticFieldValue": {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "absent",
+                  "present"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "state",
+              "value"
+            ],
+            "title": "PlaybillSemanticFieldValue",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -18294,8 +18914,7 @@
           },
           "members": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/PlaybillReviewedMember"
             },
             "title": "Members",
             "type": "array"
@@ -19231,6 +19850,367 @@
         "verdict"
       ]
     },
+    "PlaybillReviewedMember": {
+      "fields": {
+        "artifact_kind": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "artifact_kind",
+          "required": true,
+          "schema": {
+            "title": "Artifact Kind",
+            "type": "string"
+          }
+        },
+        "base_semantic_artifact": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "base_semantic_artifact",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Semantic Artifact"
+          }
+        },
+        "candidate_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate_artifact_digest",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Artifact Digest"
+          }
+        },
+        "candidate_semantic_artifact": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "candidate_semantic_artifact",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Semantic Artifact"
+          }
+        },
+        "closure_role": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "closure_role",
+          "required": true,
+          "schema": {
+            "enum": [
+              "authored",
+              "generated_successor",
+              "invalidation"
+            ],
+            "title": "Closure Role",
+            "type": "string"
+          }
+        },
+        "dependency_proof_refs": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "dependency_proof_refs",
+          "required": true,
+          "schema": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependency Proof Refs",
+            "type": "array"
+          }
+        },
+        "disposition": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "disposition",
+          "required": true,
+          "schema": {
+            "title": "Disposition",
+            "type": "string"
+          }
+        },
+        "law_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "law_digest",
+          "required": true,
+          "schema": {
+            "title": "Law Digest",
+            "type": "string"
+          }
+        },
+        "law_evidence": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "law_evidence",
+          "required": true,
+          "schema": {
+            "additionalProperties": true,
+            "title": "Law Evidence",
+            "type": "object"
+          }
+        },
+        "law_identifier": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "law_identifier",
+          "required": true,
+          "schema": {
+            "title": "Law Identifier",
+            "type": "string"
+          }
+        },
+        "path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "path",
+          "required": true,
+          "schema": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "predecessor_artifact_digest": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "predecessor_artifact_digest",
+          "required": true,
+          "schema": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predecessor Artifact Digest"
+          }
+        },
+        "semantic_delta": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "semantic_delta",
+          "required": true,
+          "schema": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillSemanticFieldDelta": {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "before": {
+                "$ref": "#/$defs/PlaybillSemanticFieldValue"
+              },
+              "field_path": {
+                "title": "Field Path",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-semantic-field-delta-v1",
+                "default": "playbill-semantic-field-delta-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "field_path",
+              "before",
+              "after"
+            ],
+            "title": "PlaybillSemanticFieldDelta",
+            "type": "object"
+          },
+          "PlaybillSemanticFieldValue": {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "absent",
+                  "present"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "state",
+              "value"
+            ],
+            "title": "PlaybillSemanticFieldValue",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "artifact_kind": {
+            "title": "Artifact Kind",
+            "type": "string"
+          },
+          "base_semantic_artifact": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Semantic Artifact"
+          },
+          "candidate_artifact_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Artifact Digest"
+          },
+          "candidate_semantic_artifact": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Semantic Artifact"
+          },
+          "closure_role": {
+            "enum": [
+              "authored",
+              "generated_successor",
+              "invalidation"
+            ],
+            "title": "Closure Role",
+            "type": "string"
+          },
+          "dependency_proof_refs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Dependency Proof Refs",
+            "type": "array"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "law_digest": {
+            "title": "Law Digest",
+            "type": "string"
+          },
+          "law_evidence": {
+            "additionalProperties": true,
+            "title": "Law Evidence",
+            "type": "object"
+          },
+          "law_identifier": {
+            "title": "Law Identifier",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "predecessor_artifact_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predecessor Artifact Digest"
+          },
+          "semantic_delta": {
+            "items": {
+              "$ref": "#/$defs/PlaybillSemanticFieldDelta"
+            },
+            "title": "Semantic Delta",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "artifact_kind",
+          "disposition",
+          "closure_role",
+          "predecessor_artifact_digest",
+          "candidate_artifact_digest",
+          "base_semantic_artifact",
+          "candidate_semantic_artifact",
+          "semantic_delta",
+          "law_identifier",
+          "law_digest",
+          "law_evidence",
+          "dependency_proof_refs"
+        ],
+        "title": "PlaybillReviewedMember",
+        "type": "object"
+      },
+      "required_fields": [
+        "artifact_kind",
+        "base_semantic_artifact",
+        "candidate_artifact_digest",
+        "candidate_semantic_artifact",
+        "closure_role",
+        "dependency_proof_refs",
+        "disposition",
+        "law_digest",
+        "law_evidence",
+        "law_identifier",
+        "path",
+        "predecessor_artifact_digest",
+        "semantic_delta"
+      ]
+    },
     "PlaybillSearchResult": {
       "fields": {
         "coordinate": {
@@ -19501,6 +20481,162 @@
         "rows",
         "selection_basis_digest",
         "truncated"
+      ]
+    },
+    "PlaybillSemanticFieldDelta": {
+      "fields": {
+        "after": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "after",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillSemanticFieldValue"
+          }
+        },
+        "before": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "before",
+          "required": true,
+          "schema": {
+            "$ref": "#/$defs/PlaybillSemanticFieldValue"
+          }
+        },
+        "field_path": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "field_path",
+          "required": true,
+          "schema": {
+            "title": "Field Path",
+            "type": "string"
+          }
+        },
+        "tag": {
+          "default": "playbill-semantic-field-delta-v1",
+          "default_json_serializable": true,
+          "has_default": true,
+          "has_default_factory": false,
+          "json_name": "tag",
+          "required": false,
+          "schema": {
+            "const": "playbill-semantic-field-delta-v1",
+            "default": "playbill-semantic-field-delta-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        }
+      },
+      "json_schema": {
+        "$defs": {
+          "PlaybillSemanticFieldValue": {
+            "additionalProperties": false,
+            "properties": {
+              "state": {
+                "enum": [
+                  "absent",
+                  "present"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "value": {
+                "title": "Value"
+              }
+            },
+            "required": [
+              "state",
+              "value"
+            ],
+            "title": "PlaybillSemanticFieldValue",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "$ref": "#/$defs/PlaybillSemanticFieldValue"
+          },
+          "before": {
+            "$ref": "#/$defs/PlaybillSemanticFieldValue"
+          },
+          "field_path": {
+            "title": "Field Path",
+            "type": "string"
+          },
+          "tag": {
+            "const": "playbill-semantic-field-delta-v1",
+            "default": "playbill-semantic-field-delta-v1",
+            "title": "Tag",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field_path",
+          "before",
+          "after"
+        ],
+        "title": "PlaybillSemanticFieldDelta",
+        "type": "object"
+      },
+      "required_fields": [
+        "after",
+        "before",
+        "field_path"
+      ]
+    },
+    "PlaybillSemanticFieldValue": {
+      "fields": {
+        "state": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "state",
+          "required": true,
+          "schema": {
+            "enum": [
+              "absent",
+              "present"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "value": {
+          "has_default": false,
+          "has_default_factory": false,
+          "json_name": "value",
+          "required": true,
+          "schema": {
+            "title": "Value"
+          }
+        }
+      },
+      "json_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "enum": [
+              "absent",
+              "present"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "state",
+          "value"
+        ],
+        "title": "PlaybillSemanticFieldValue",
+        "type": "object"
+      },
+      "required_fields": [
+        "state",
+        "value"
       ]
     },
     "PlaybillSinceCursor": {

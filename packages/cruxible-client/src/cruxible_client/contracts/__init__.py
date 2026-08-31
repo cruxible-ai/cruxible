@@ -226,6 +226,46 @@ class PlaybillRefusalInspection(BaseModel):
     diagnostics: list[dict[str, Any]]
 
 
+class PlaybillSemanticFieldValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    state: Literal["absent", "present"]
+    value: Any
+
+    @model_validator(mode="after")
+    def _absent_has_no_value(self) -> "PlaybillSemanticFieldValue":
+        if self.state == "absent" and self.value is not None:
+            raise ValueError("an absent semantic field value must carry JSON null")
+        return self
+
+
+class PlaybillSemanticFieldDelta(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-semantic-field-delta-v1"] = "playbill-semantic-field-delta-v1"
+    field_path: str
+    before: PlaybillSemanticFieldValue
+    after: PlaybillSemanticFieldValue
+
+
+class PlaybillReviewedMember(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    artifact_kind: str
+    disposition: str
+    closure_role: Literal["authored", "generated_successor", "invalidation"]
+    predecessor_artifact_digest: str | None
+    candidate_artifact_digest: str | None
+    base_semantic_artifact: dict[str, Any] | None
+    candidate_semantic_artifact: dict[str, Any] | None
+    semantic_delta: list[PlaybillSemanticFieldDelta]
+    law_identifier: str
+    law_digest: str
+    law_evidence: dict[str, Any]
+    dependency_proof_refs: list[dict[str, Any]]
+
+
 class PlaybillProposalReview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -238,7 +278,7 @@ class PlaybillProposalReview(BaseModel):
     settlement_base: PlaybillAcceptedCoordinate
     base_oid: str
     complete_members: list[dict[str, Any]]
-    members: list[dict[str, Any]]
+    members: list[PlaybillReviewedMember]
     governance: dict[str, Any]
     provenance: dict[str, Any]
     attestation_coverage: dict[str, Any]
@@ -464,6 +504,7 @@ class PlaybillClaimTypeMigrationResult(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    semantic_delta: list[PlaybillSemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
@@ -480,6 +521,7 @@ class PlaybillClaimTypeMigrationPreflight(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     successor_artifact_digest: str
     dependents: list[dict[str, Any]]
+    semantic_delta: list[PlaybillSemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
@@ -496,6 +538,7 @@ class PlaybillClaimTypeMigrationResultV2(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    semantic_delta: list[PlaybillSemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
@@ -512,6 +555,7 @@ class PlaybillClaimTypeMigrationResultV3(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    semantic_delta: list[PlaybillSemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,

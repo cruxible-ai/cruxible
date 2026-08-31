@@ -397,3 +397,5 @@ def test_atomic_review_cannot_hide_invalidation_members(tmp_path: Path) -> None:
     )
     rendered = render_playbill_proposal_review(review)
     assert rendered.count("Closure role: invalidation") == 2
+    assert rendered.count("Semantic delta:") == 2
+    assert all(member.semantic_delta for member in review.members)
