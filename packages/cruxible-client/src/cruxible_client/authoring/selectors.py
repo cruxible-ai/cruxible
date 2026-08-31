@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError
 
 from cruxible_client.authoring.sdk_types import InsertionOperation, SourceSelectionError
 from cruxible_client.contracts.authoring.models import (
@@ -26,6 +27,20 @@ from cruxible_client.contracts.source_catalog import (
 
 def _digest(content: bytes) -> str:
     return "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def _validation_path(location: tuple[str | int, ...]) -> str:
+    path = "$"
+    for item in location:
+        path += f"[{item}]" if isinstance(item, int) else f".{item}"
+    return path
+
+
+def _format_catalog_validation(error: ValidationError) -> str:
+    rendered = []
+    for item in error.errors(include_url=False, include_context=False, include_input=False):
+        rendered.append(f"{_validation_path(item['loc'])}: {item['msg']}")
+    return "; ".join(rendered)
 
 
 def _offsets(content: bytes, needle: bytes) -> tuple[int, ...]:
@@ -241,6 +256,10 @@ class WorkspaceSources:
                 else SourceCatalog.model_validate(yaml.safe_load(local_path.read_bytes()))
             )
             self.catalog = merge_source_catalogs(portable, local)
+        except ValidationError as exc:
+            raise SourceSelectionError(
+                f"source catalog is invalid: {_format_catalog_validation(exc)}"
+            ) from exc
         except (OSError, ValueError, yaml.YAMLError) as exc:
             raise SourceSelectionError(f"source catalog is invalid: {exc}") from exc
 
