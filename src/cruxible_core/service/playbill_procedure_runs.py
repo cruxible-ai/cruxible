@@ -19,6 +19,7 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import PlaybillError, PlaybillExecutionError
+from cruxible_client.contracts.procedure_runtime_policy import PROCEDURE_RUNTIME_POLICY_PATH
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactAny,
@@ -33,6 +34,7 @@ from cruxible_client.contracts.procedures.closure import (
     close_procedure_pin_slots,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
     ProcedurePinSlotRefV1,
@@ -86,8 +88,12 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV3,
     ProcedureRunReceiptV1,
+    ProcedureRuntimePolicyAbsent,
+    bind_line_admission_runtime_policy,
     prepare_direct_procedure_run,
     procedure_replay_input_vector,
+    resolve_procedure_runtime_policy,
+    verify_line_admission_spec,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -1184,6 +1190,28 @@ def service_get_playbill_procedure_run(
     return _state_from_records(instance, run_id=run_id)
 
 
+def service_prepare_playbill_line_admission(
+    instance: PlaybillInstance,
+    *,
+    admission: ProcedureRunAdmissionV3,
+    accepted_line: AcceptedLineSpecV1,
+) -> ProcedureRunAdmissionV3 | ProcedureAdmissionRefusalV1:
+    """Bind the accepted runtime policy into a Line admission before publication."""
+
+    tree = instance.tree_at(admission.bound_coordinate.git_oid)
+    try:
+        policy = resolve_procedure_runtime_policy(tree)
+    except ProcedureRuntimePolicyAbsent as exc:
+        return ProcedureAdmissionRefusalV1(
+            code="procedure_runtime_policy_absent",
+            message=str(exc),
+            details={"policy_path": PROCEDURE_RUNTIME_POLICY_PATH},
+        )
+    bound = bind_line_admission_runtime_policy(admission, policy)
+    verify_line_admission_spec(bound, accepted_line)
+    return bound
+
+
 class DirectProcedureReceiptReducer:
     """Pure reducer for later ExhaustPromotion of one finalized direct run."""
 
@@ -1228,5 +1256,6 @@ __all__ = [
     "service_bind_playbill_procedure",
     "service_get_playbill_procedure_run",
     "service_playbill_procedure_readiness",
+    "service_prepare_playbill_line_admission",
     "service_run_playbill_procedure",
 ]

@@ -530,6 +530,32 @@ class ProcedureAdmissionMaterialManifestV1(_StrictResultModel):
         return value
 
 
+PROCEDURE_ADMISSION_MATERIAL_DOMAIN = "playbill-procedure-admission-material-v1"
+PROCEDURE_SELECTION_DECISION_DOMAIN = "playbill-procedure-selection-decision-v1"
+
+
+def procedure_admission_material_digest(
+    manifest: ProcedureAdmissionMaterialManifestV1,
+) -> str:
+    payload = manifest.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_ADMISSION_MATERIAL_DOMAIN,
+        payload,
+    ).tagged
+
+
+def procedure_selection_decision_digest(decision: ProcedureSelectionDecisionV1) -> str:
+    payload = decision.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        PROCEDURE_SELECTION_DECISION_DOMAIN,
+        payload,
+    ).tagged
+
+
 class ProcedureRunBudgetDeclaredV2(_StrictResultModel):
     tag: Literal["playbill-procedure-run-budget-declared-v2"] = (
         "playbill-procedure-run-budget-declared-v2"
@@ -635,26 +661,12 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
             raise ValueError("v4 receipt requires a Line identity")
         if self.selection_decision.policy_digest != self.acquisition_policy_digest:
             raise ValueError("v4 selection decision names another acquisition policy")
-        decision_payload = self.selection_decision.model_dump(mode="json")
-        decision_payload.pop("tag")
-        if (
-            self.selection_decision_digest
-            != typed_digest(
-                Sha256Value,
-                "playbill-procedure-selection-decision-v1",
-                decision_payload,
-            ).tagged
+        if self.selection_decision_digest != procedure_selection_decision_digest(
+            self.selection_decision
         ):
             raise ValueError("v4 selection decision digest does not reproduce")
-        manifest_payload = self.admission_material_manifest.model_dump(mode="json")
-        manifest_payload.pop("tag")
-        if (
-            self.admission_material_manifest_digest
-            != typed_digest(
-                Sha256Value,
-                "playbill-procedure-admission-material-v1",
-                manifest_payload,
-            ).tagged
+        if self.admission_material_manifest_digest != procedure_admission_material_digest(
+            self.admission_material_manifest
         ):
             raise ValueError("v4 admission material digest does not reproduce")
         admitted_names = tuple(
@@ -681,6 +693,10 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
 
 
 __all__ = [
+    "PROCEDURE_ADMISSION_MATERIAL_DOMAIN",
+    "PROCEDURE_SELECTION_DECISION_DOMAIN",
+    "ProcedureAdmissionMaterialManifestV1",
+    "ProcedureAdmissionMaterialMemberV1",
     "ProcedureAdmissionRefusalCodeV1",
     "ProcedureAdmissionRefusalV1",
     "ProcedureBudgetBoundaryObservationV1",
@@ -696,20 +712,20 @@ __all__ = [
     "ProcedureOperationalFailureCodeV1",
     "ProcedureOperationalFailureV1",
     "ProcedurePendingSuccessorV1",
+    "ProcedureProviderBindingV1",
+    "ProcedureReplayInputProjectionV1",
     "ProcedureRunAttributionV1",
     "ProcedureRunBudgetDeclaredV1",
+    "ProcedureRunBudgetDeclaredV2",
     "ProcedureRunBudgetObservedV1",
     "ProcedureRunBudgetV1",
-    "ProcedureRunBudgetDeclaredV2",
     "ProcedureRunBudgetV2",
+    "ProcedureRunNodePinSetV1",
     "ProcedureRunReceiptV2",
     "ProcedureRunReceiptV3",
     "ProcedureRunReceiptV4",
-    "ProcedureAdmissionMaterialManifestV1",
-    "ProcedureAdmissionMaterialMemberV1",
-    "ProcedureProviderBindingV1",
-    "ProcedureReplayInputProjectionV1",
-    "ProcedureRunNodePinSetV1",
     "ProcedureSelectionDecisionV1",
     "ProcedureTerminalV1",
+    "procedure_admission_material_digest",
+    "procedure_selection_decision_digest",
 ]

@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter
 
+import cruxible_client.contracts.procedures.results as procedure_result_contracts
 import cruxible_core.playbill.procedures.execution as execution_module
 import cruxible_core.service.playbill_procedure_runs as procedure_run_service
 from cruxible_client.contracts.acquisition_policies import AcquisitionInputDecisionV1
@@ -70,7 +71,10 @@ from cruxible_client.contracts.procedures.models import (
     StateTapNodeV3,
     TransformNodeV3,
 )
-from cruxible_client.contracts.procedures.results import ProcedureRunReceiptV4
+from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionRefusalV1,
+    ProcedureRunReceiptV4,
+)
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
@@ -122,6 +126,8 @@ from cruxible_core.playbill.procedures.input_planes import (
 )
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.service.playbill_procedure_runs import service_prepare_playbill_line_admission
+from tests.test_playbill._support import initialize_local
 
 NOW = datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc)
 
@@ -997,32 +1003,10 @@ def _line_admission(
     )
 
 
-def test_line_v3_run_id_is_placement_identity_not_semantic_identity(tmp_path) -> None:
-    fixture = _fixture(tmp_path)
-    accepted = _state_procedure()
-    first = _line_admission(accepted, fixture)
-    second = _line_admission(
-        accepted,
-        fixture,
-        occurrence_id="OCC-0002",
-        occurrence_evaluation_time=NOW + timedelta(hours=1),
-        admitted_at=NOW + timedelta(hours=2),
-    )
-
-    assert first.semantic_replay_key_digest == second.semantic_replay_key_digest
-    assert first.admission_binding_digest == second.admission_binding_digest
-    assert first.run_id != second.run_id
-    assert first.journal_partition_id == second.journal_partition_id
-    with pytest.raises(ValueError, match="run_id does not reproduce"):
-        ProcedureRunAdmissionV3.model_validate(
-            {**first.model_dump(mode="python"), "run_id": second.run_id}
-        )
-
-
-def test_line_v3_admission_binds_the_exact_accepted_line_spec(tmp_path) -> None:
-    fixture = _fixture(tmp_path)
-    accepted_procedure = _state_procedure()
-    admission = _line_admission(accepted_procedure, fixture)
+def _accepted_line_for_admission(
+    admission: ProcedureRunAdmissionV3,
+    accepted_procedure: AcceptedProcedureV1,
+) -> AcceptedLineSpecV1:
     procedure_pin = ArtifactPin(
         role="procedure",
         target=accepted_procedure.procedure.identity,
@@ -1051,11 +1035,40 @@ def test_line_v3_admission_binds_the_exact_accepted_line_spec(tmp_path) -> None:
             )
         ),
     )
-    accepted_line = AcceptedLineSpecV1(
+    return AcceptedLineSpecV1(
         path=line_spec_path(line.identity.name),
         line=line,
         artifact_digest=line_spec_digest(line).tagged,
     )
+
+
+def test_line_v3_run_id_is_placement_identity_not_semantic_identity(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    first = _line_admission(accepted, fixture)
+    second = _line_admission(
+        accepted,
+        fixture,
+        occurrence_id="OCC-0002",
+        occurrence_evaluation_time=NOW + timedelta(hours=1),
+        admitted_at=NOW + timedelta(hours=2),
+    )
+
+    assert first.semantic_replay_key_digest == second.semantic_replay_key_digest
+    assert first.admission_binding_digest == second.admission_binding_digest
+    assert first.run_id != second.run_id
+    assert first.journal_partition_id == second.journal_partition_id
+    with pytest.raises(ValueError, match="run_id does not reproduce"):
+        ProcedureRunAdmissionV3.model_validate(
+            {**first.model_dump(mode="python"), "run_id": second.run_id}
+        )
+
+
+def test_line_v3_admission_binds_the_exact_accepted_line_spec(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    accepted_procedure = _state_procedure()
+    admission = _line_admission(accepted_procedure, fixture)
+    accepted_line = _accepted_line_for_admission(admission, accepted_procedure)
     bound = admission.model_copy(update={"line_spec_digest": accepted_line.artifact_digest})
 
     verify_line_admission_spec(bound, accepted_line)
@@ -1064,6 +1077,59 @@ def test_line_v3_admission_binds_the_exact_accepted_line_spec(tmp_path) -> None:
             bound.model_copy(update={"line_identity": ArtifactIdentity(kind="Line", name="other")}),
             accepted_line,
         )
+
+
+def test_served_line_admission_binds_the_accepted_runtime_policy_or_refuses(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    admission = _line_admission(accepted, fixture).model_copy(
+        update={"provider_output_bytes_cap": 17}
+    )
+    accepted_line = _accepted_line_for_admission(admission, accepted)
+    admission = admission.model_copy(update={"line_spec_digest": accepted_line.artifact_digest})
+    instance, _owner = initialize_local(tmp_path)
+    accepted_tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    monkeypatch.setattr(instance, "tree_at", lambda _git_oid: accepted_tree)
+
+    bound = service_prepare_playbill_line_admission(
+        instance,
+        admission=admission,
+        accepted_line=accepted_line,
+    )
+
+    assert isinstance(bound, ProcedureRunAdmissionV3)
+    assert bound.provider_output_bytes_cap == 1_048_576
+    assert bound.semantic_replay_key_digest != procedure_semantic_replay_key_digest(admission)
+    assert bound.semantic_replay_key_digest == procedure_semantic_replay_key_digest(bound)
+    assert bound.admission_binding_digest == procedure_admission_digest(bound)
+
+    legacy_tree = {
+        path: content
+        for path, content in accepted_tree.items()
+        if path != "governance/procedure-runtime-policy.yaml"
+    }
+    monkeypatch.setattr(instance, "tree_at", lambda _git_oid: legacy_tree)
+    refused = service_prepare_playbill_line_admission(
+        instance,
+        admission=admission,
+        accepted_line=accepted_line,
+    )
+    assert isinstance(refused, ProcedureAdmissionRefusalV1)
+    assert refused.code == "procedure_runtime_policy_absent"
+
+
+def test_replay_carriers_have_one_client_contract_definition_source() -> None:
+    for name in (
+        "ProcedureAdmissionMaterialManifestV1",
+        "ProcedureAdmissionMaterialMemberV1",
+        "ProcedureProviderBindingV1",
+        "ProcedureReplayInputProjectionV1",
+        "ProcedureSelectionDecisionV1",
+    ):
+        assert getattr(execution_module, name) is getattr(procedure_result_contracts, name)
 
 
 def test_equal_line_admission_digests_retrieve_two_exact_runs(tmp_path, monkeypatch) -> None:

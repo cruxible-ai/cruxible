@@ -607,6 +607,10 @@ def parse_projection_tree(
                 )
                 continue
             if kind == "procedure-runtime-policy":
+                if not registry.supports_artifact_kind(kind):
+                    raise ProjectionFormatError(
+                        "compiler coordinate does not recognize ProcedureRuntimePolicy"
+                    )
                 runtime_policy = parse_procedure_runtime_policy(content, path=path)
                 digest = procedure_runtime_policy_digest(runtime_policy).tagged
                 identities[PROCEDURE_RUNTIME_POLICY_IDENTITY] = path

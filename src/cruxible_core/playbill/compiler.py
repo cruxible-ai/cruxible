@@ -13,6 +13,7 @@ from cruxible_client.contracts.projection_extensions import (
     playbill_extension_registry,
     playbill_governance_extension_registry,
     playbill_procedure_extension_registry,
+    playbill_replay_extension_registry,
     playbill_runtime_extension_registry,
     playbill_subject_extension_registry,
 )
@@ -90,8 +91,10 @@ def projection_registry_for_compiler(
         return playbill_evidence_extension_registry()
     if compiler == PC_D_COMPILER:
         return playbill_procedure_extension_registry()
-    if compiler in {PC_E1_COMPILER, P2_B0_COMPILER}:
+    if compiler == PC_E1_COMPILER:
         return playbill_runtime_extension_registry()
+    if compiler == P2_B0_COMPILER:
+        return playbill_replay_extension_registry()
     raise PlaybillFormatError("compiler coordinate has no installed deterministic registry")
 
 

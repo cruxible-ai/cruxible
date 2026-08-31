@@ -51,11 +51,11 @@ from cruxible_client.contracts.procedures.models import (
 )
 from cruxible_client.contracts.projection_extensions import (
     ProjectionFact,
-    playbill_runtime_extension_registry,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.compiler import projection_registry_for_compiler
 from cruxible_core.playbill.coverage.contracts import CoverageManifestProfileV2
 from cruxible_core.playbill.coverage.indexes import evidence_citation_index_digest
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -399,7 +399,7 @@ def _procedure_track_records(
 
     projection = parse_projection_tree(
         tree,
-        registry=playbill_runtime_extension_registry(),
+        registry=projection_registry_for_compiler(instance.descriptor.compiler),
         bodies=instance.body_store(),
         coordinate=_FloorProjectionCoordinate(
             instance_id=coordinate.instance_id,

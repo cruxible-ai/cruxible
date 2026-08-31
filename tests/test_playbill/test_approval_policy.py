@@ -24,10 +24,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.keys import generate_client_principal_key
-from cruxible_core.playbill.procedures.execution import (
-    ProcedureRuntimePolicyAbsent,
-    resolve_procedure_runtime_policy,
-)
+from cruxible_core.playbill.procedures.execution import resolve_procedure_runtime_policy
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
@@ -149,11 +146,6 @@ def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
     )
     assert row.declaring_artifact_identity == "ProcedureRuntimePolicy:instance"
     assert row.policy["provider_output_bytes_cap"] == 2_097_152
-
-
-def test_legacy_tree_without_runtime_policy_refuses_line_admission_seedlessly() -> None:
-    with pytest.raises(ProcedureRuntimePolicyAbsent, match="seed ProcedureRuntimePolicy"):
-        resolve_procedure_runtime_policy({})
 
 
 def test_policy_tightening_and_loosening_follow_the_parent_policy(

@@ -3244,7 +3244,6 @@
             "additionalProperties": false,
             "properties": {
               "provider_output_bytes_cap": {
-                "maximum": 9223372036854775807,
                 "minimum": 1,
                 "title": "Provider Output Bytes Cap",
                 "type": "integer"

@@ -67,12 +67,19 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionMaterialManifestV1,
+    ProcedureAdmissionMaterialMemberV1,
     ProcedureBudgetBoundaryObservationV1,
     ProcedureBudgetRefusalDetailV1,
     ProcedureNodeRefusalCodeV1,
+    ProcedureProviderBindingV1,
+    ProcedureReplayInputProjectionV1,
     ProcedureRunBudgetDeclaredV1,
     ProcedureRunBudgetObservedV1,
     ProcedureRunBudgetV1,
+    ProcedureSelectionDecisionV1,
+    procedure_admission_material_digest,
+    procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
@@ -157,9 +164,7 @@ PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
 PROCEDURE_ADMISSION_BINDING_V2_DOMAIN = "playbill-procedure-run-admission-v2"
 PROCEDURE_ADMISSION_BINDING_V3_DOMAIN = "playbill-procedure-run-admission-v3"
 PROCEDURE_SEMANTIC_REPLAY_KEY_V3_DOMAIN = "playbill-procedure-semantic-replay-key-v3"
-PROCEDURE_SELECTION_DECISION_DOMAIN = "playbill-procedure-selection-decision-v1"
 PROCEDURE_INPUT_PROVENANCE_DOMAIN = "playbill-procedure-replay-input-provenance-v1"
-PROCEDURE_ADMISSION_MATERIAL_DOMAIN = "playbill-procedure-admission-material-v1"
 PROCEDURE_LINE_RUN_ID_DOMAIN = "playbill-procedure-line-run-id-v1"
 PROCEDURE_LINE_PARTITION_DOMAIN = "playbill-line-journal-partition-v1"
 PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
@@ -209,168 +214,6 @@ class ProcedureNodePinSetV1(_StrictExecutionModel):
         identities = tuple((pin.role, pin.target.qualified) for pin in value)
         if value != ordered or len(identities) != len(set(identities)):
             raise ValueError("Procedure node pins must be sorted and unique")
-        return value
-
-
-class ProcedureReplayInputProjectionV1(_StrictExecutionModel):
-    tag: Literal["playbill-procedure-replay-input-projection-v1"] = (
-        "playbill-procedure-replay-input-projection-v1"
-    )
-    input_name: str
-    plane: Literal["accepted_state", "landed_capture", "exhaust"]
-    kind: Literal["query_result", "capture", "reduced_exhaust"]
-    value_or_body_digest: str
-    provenance_digest: str
-
-    @field_validator("value_or_body_digest", "provenance_digest")
-    @classmethod
-    def _projection_digest(cls, value: str, info: object) -> str:
-        return _sha256(value, label=str(getattr(info, "field_name", "projection digest")))
-
-    @model_validator(mode="after")
-    def _plane_kind(self) -> "ProcedureReplayInputProjectionV1":
-        expected = {
-            "accepted_state": "query_result",
-            "landed_capture": "capture",
-            "exhaust": "reduced_exhaust",
-        }
-        if self.kind != expected[self.plane]:
-            raise ValueError("replay input projection plane and kind disagree")
-        return self
-
-
-class ProcedureProviderBindingV1(_StrictExecutionModel):
-    tag: Literal["playbill-procedure-provider-binding-v1"] = (
-        "playbill-procedure-provider-binding-v1"
-    )
-    node_id: str
-    provider_artifact_digest: str
-    interface_artifact_digest: str
-    interface_digest: str
-    classifier_digest: str
-    accepted_bucket_selectors: tuple[str, ...]
-    implementation_digest: str
-    secret_binding_identity_digests: tuple[str, ...]
-
-    @field_validator(
-        "provider_artifact_digest",
-        "interface_artifact_digest",
-        "interface_digest",
-        "classifier_digest",
-        "implementation_digest",
-    )
-    @classmethod
-    def _provider_digest(cls, value: str, info: object) -> str:
-        return _sha256(value, label=str(getattr(info, "field_name", "provider digest")))
-
-    @field_validator("accepted_bucket_selectors", "secret_binding_identity_digests")
-    @classmethod
-    def _sets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("Procedure Provider binding sets must be sorted and unique")
-        return value
-
-    @field_validator("secret_binding_identity_digests")
-    @classmethod
-    def _secret_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        for item in value:
-            _sha256(item, label="secret binding identity digest")
-        return value
-
-
-class ProcedureSelectionDecisionV1(_StrictExecutionModel):
-    tag: Literal["playbill-procedure-selection-decision-v1"] = (
-        "playbill-procedure-selection-decision-v1"
-    )
-    policy_digest: str
-    verdict: Literal["selected", "refused"]
-    decisions: tuple[AcquisitionInputDecisionV1, ...]
-    coherence_proof_digest: str | None = None
-
-    @field_validator("policy_digest", "coherence_proof_digest")
-    @classmethod
-    def _decision_digest(cls, value: str | None, info: object) -> str | None:
-        if value is None:
-            return None
-        return _sha256(value, label=str(getattr(info, "field_name", "decision digest")))
-
-    @field_validator("decisions")
-    @classmethod
-    def _decisions(
-        cls,
-        value: tuple[AcquisitionInputDecisionV1, ...],
-    ) -> tuple[AcquisitionInputDecisionV1, ...]:
-        names = tuple(item.input_name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("selection decisions must be sorted and unique by input_name")
-        return value
-
-    @model_validator(mode="after")
-    def _verdict(self) -> "ProcedureSelectionDecisionV1":
-        expected = (
-            "refused"
-            if any(item.disposition == "refused" for item in self.decisions)
-            else "selected"
-        )
-        if self.verdict != expected:
-            raise ValueError("selection decision verdict disagrees with its input decisions")
-        return self
-
-
-class ProcedureAdmissionMaterialMemberV1(_StrictExecutionModel):
-    tag: Literal["playbill-procedure-admission-material-member-v1"] = (
-        "playbill-procedure-admission-material-member-v1"
-    )
-    input_name: str
-    plane: Literal["landed_capture", "exhaust"]
-    semantic_digest: str
-    body_digest: str | None
-    retention_authority_digest: str
-    body_retention: Literal["never_materialize", "optional", "required_for_duration"]
-    retain_until: datetime | None = None
-    erasure_rule_digest: str | None = None
-
-    @field_validator(
-        "semantic_digest",
-        "body_digest",
-        "retention_authority_digest",
-        "erasure_rule_digest",
-    )
-    @classmethod
-    def _material_digest(cls, value: str | None, info: object) -> str | None:
-        if value is None:
-            return None
-        return _sha256(value, label=str(getattr(info, "field_name", "material digest")))
-
-    @field_validator("retain_until")
-    @classmethod
-    def _retention_time(cls, value: datetime | None) -> datetime | None:
-        return None if value is None else ensure_utc(value)
-
-    @model_validator(mode="after")
-    def _retention_shape(self) -> "ProcedureAdmissionMaterialMemberV1":
-        if (self.retain_until is not None) != (self.body_retention == "required_for_duration"):
-            raise ValueError("retain_until is present exactly for required_for_duration material")
-        if self.body_retention == "never_materialize" and self.body_digest is not None:
-            raise ValueError("never_materialize material cannot name a body digest")
-        return self
-
-
-class ProcedureAdmissionMaterialManifestV1(_StrictExecutionModel):
-    tag: Literal["playbill-procedure-admission-material-v1"] = (
-        "playbill-procedure-admission-material-v1"
-    )
-    members: tuple[ProcedureAdmissionMaterialMemberV1, ...]
-
-    @field_validator("members")
-    @classmethod
-    def _members(
-        cls,
-        value: tuple[ProcedureAdmissionMaterialMemberV1, ...],
-    ) -> tuple[ProcedureAdmissionMaterialMemberV1, ...]:
-        names = tuple(item.input_name for item in value)
-        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
-            raise ValueError("admission material members must be sorted and input-name unique")
         return value
 
 
@@ -600,7 +443,7 @@ class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
     resolved_provider_bindings: tuple[ProcedureProviderBindingV1, ...]
     selection_decision: ProcedureSelectionDecisionV1
     selection_decision_digest: str
-    provider_output_bytes_cap: int = Field(ge=1, le=2**63 - 1)
+    provider_output_bytes_cap: int = Field(ge=1)
 
     @field_validator("occurrence_evaluation_time")
     @classmethod
@@ -639,8 +482,10 @@ class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
             raise ValueError("Line admission must use the Procedure exhaust stream")
         if self.journal_partition_id != procedure_line_partition(self.line_identity):
             raise ValueError("Line admission partition does not reproduce its Line identity")
+        if self.occurrence_id is None:
+            raise ValueError("Line admission requires an occurrence id")
         if self.run_id != procedure_line_run_id(
-            occurrence_id=self.occurrence_id or "",
+            occurrence_id=self.occurrence_id,
             attempt=self.attempt,
             admission_binding_digest=self.admission_binding_digest,
             occurrence_evaluation_time=self.occurrence_evaluation_time,
@@ -1006,16 +851,6 @@ def procedure_pin_set_digest(
     ).tagged
 
 
-def procedure_selection_decision_digest(decision: ProcedureSelectionDecisionV1) -> str:
-    payload = decision.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(
-        Sha256Value,
-        PROCEDURE_SELECTION_DECISION_DOMAIN,
-        payload,
-    ).tagged
-
-
 def procedure_replay_input_projection(
     run_input: ProcedureRunInputV1,
 ) -> ProcedureReplayInputProjectionV1:
@@ -1081,18 +916,6 @@ def procedure_replay_input_vector(
     admission: ProcedureRunAdmissionV1,
 ) -> tuple[ProcedureReplayInputProjectionV1, ...]:
     return tuple(procedure_replay_input_projection(item) for item in admission.run_inputs)
-
-
-def procedure_admission_material_digest(
-    manifest: ProcedureAdmissionMaterialManifestV1,
-) -> str:
-    payload = manifest.model_dump(mode="json")
-    payload.pop("tag")
-    return typed_digest(
-        Sha256Value,
-        PROCEDURE_ADMISSION_MATERIAL_DOMAIN,
-        payload,
-    ).tagged
 
 
 def _validate_admission_material_manifest(
@@ -1267,6 +1090,40 @@ def resolve_procedure_runtime_policy(
             "procedure_runtime_policy_absent: seed ProcedureRuntimePolicy before Line admission"
         )
     return parse_procedure_runtime_policy(content, path=PROCEDURE_RUNTIME_POLICY_PATH)
+
+
+def bind_line_admission_runtime_policy(
+    admission: ProcedureRunAdmissionV3,
+    policy: ProcedureRuntimePolicyV1,
+) -> ProcedureRunAdmissionV3:
+    """Derive the complete Line admission identity from its governed runtime cap."""
+
+    provisional = admission.model_copy(
+        update={
+            "run_id": "RUN-" + "0" * 64,
+            "provider_output_bytes_cap": policy.provider_output_bytes_cap,
+            "semantic_replay_key_digest": "sha256:" + "0" * 64,
+            "admission_binding_digest": "sha256:" + "0" * 64,
+        }
+    )
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
+    admission_digest = procedure_admission_digest(provisional)
+    if provisional.occurrence_id is None:  # pragma: no cover - V3 validation proves this
+        raise PlaybillExecutionError("Line admission lacks its occurrence id")
+    run_id = procedure_line_run_id(
+        occurrence_id=provisional.occurrence_id,
+        attempt=provisional.attempt,
+        admission_binding_digest=admission_digest,
+        occurrence_evaluation_time=provisional.occurrence_evaluation_time,
+    )
+    return ProcedureRunAdmissionV3.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "run_id": run_id,
+            "admission_binding_digest": admission_digest,
+        }
+    )
 
 
 def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:

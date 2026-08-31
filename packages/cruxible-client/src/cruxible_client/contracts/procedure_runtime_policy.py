@@ -22,7 +22,7 @@ class ProcedureRuntimePolicyV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     tag: Literal["playbill-procedure-runtime-policy-v1"] = "playbill-procedure-runtime-policy-v1"
-    provider_output_bytes_cap: int = Field(ge=1, le=2**63 - 1)
+    provider_output_bytes_cap: int = Field(ge=1)
 
 
 def render_procedure_runtime_policy(policy: ProcedureRuntimePolicyV1) -> bytes:

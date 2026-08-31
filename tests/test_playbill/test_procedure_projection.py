@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import pytest
+
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    ProcedureRuntimePolicyV1,
+    render_procedure_runtime_policy,
+)
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import render_line_spec
 from cruxible_client.contracts.semantic import SemanticAddress
@@ -13,7 +20,7 @@ from cruxible_core.playbill.compiler import (
     current_compiler_coordinate,
     projection_registry_for_compiler,
 )
-from cruxible_core.playbill.projection_artifacts import parse_projection_tree
+from cruxible_core.playbill.projection_artifacts import ProjectionFormatError, parse_projection_tree
 from tests.test_playbill.test_line_specs import _accepted_procedure, _line
 
 
@@ -93,3 +100,22 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
         )
         is True
     )
+
+
+def test_runtime_policy_artifact_kind_begins_at_the_p2_b0_compiler() -> None:
+    tree = {
+        PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
+            ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576)
+        )
+    }
+
+    with pytest.raises(
+        ProjectionFormatError,
+        match="does not recognize ProcedureRuntimePolicy",
+    ):
+        parse_projection_tree(tree, registry=projection_registry_for_compiler(PC_E1_COMPILER))
+
+    parsed = parse_projection_tree(tree, registry=projection_registry_for_compiler(P2_B0_COMPILER))
+    assert [(row.kind, row.identity) for row in parsed.envelopes] == [
+        ("procedure-runtime-policy", "ProcedureRuntimePolicy:instance")
+    ]
