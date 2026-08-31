@@ -185,6 +185,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "cruxible_playbill_list_query_definitions": (
         "Use when you need the accepted named entrypoints an instance publishes."
     ),
+    "cruxible_playbill_policies_in_force": (
+        "Use when you need the live governed policy inventory at the accepted coordinate."
+    ),
     "cruxible_playbill_get_query_definition": (
         "Use when you need one entrypoint's parameters, budgets, and result contract."
     ),

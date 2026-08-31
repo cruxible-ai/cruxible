@@ -81,6 +81,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
 
     example_schema = schemas["cruxible_playbill_authoring_example"].inputSchema
     assert example_schema["properties"]["name"]["enum"] == [
+        "approval-policy",
         "claim-type",
         "claim-existing-capture",
         "claim-flow-a",
@@ -90,6 +91,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "claim-cite-supporting-evidence",
         "claim-adjudicate-unreviewed-evidence",
         "query-claims-by-type",
+        "subject",
     ]
     bind_schema = schemas["cruxible_playbill_authoring_bind"].inputSchema
     assert set(bind_schema["properties"]) == {

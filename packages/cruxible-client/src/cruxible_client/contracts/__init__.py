@@ -39,6 +39,20 @@ PlaybillAuthoringExampleName = Literal[
     "query-claims-by-type",
     "subject",
 ]
+PlaybillPolicyKind: TypeAlias = Literal[
+    "approval_policy",
+    "source_acquisition_policy",
+    "claim_evidence_admission_policy",
+    "claim_admission_policy",
+    "claim_resolution_policy",
+    "claim_evidence_freshness_policy",
+    "claim_attestation_consequence_policy",
+    "capture_retention_erasure_policy",
+    "query_evaluation_policy",
+    "document_activation_policy",
+    "procedure_activation_policy",
+    "line_trigger_policy",
+]
 PlaybillNextReason: TypeAlias = Literal[
     "claim_conflicted",
     "claim_uncovered",
@@ -833,6 +847,28 @@ class PlaybillProcedureReadiness(BaseModel):
     required_slots: list[str]
     unsupported_nodes: list[dict[str, Any]]
     next_operation: dict[str, Any]
+
+
+class PlaybillPolicyInForce(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-policy-in-force-v1"] = "playbill-policy-in-force-v1"
+    placement: Literal["embedded", "standalone"]
+    policy_kind: PlaybillPolicyKind
+    declaring_artifact_identity: str
+    declaring_artifact_kind: str
+    declaring_artifact_digest: str
+    path: str
+    field_path: str
+    policy: dict[str, Any]
+
+
+class PlaybillPolicyInForceList(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-policy-in-force-list-v1"] = "playbill-policy-in-force-list-v1"
+    coordinate: PlaybillAcceptedCoordinate
+    policies: list[PlaybillPolicyInForce]
 
 
 class PlaybillProcedureBindResult(BaseModel):

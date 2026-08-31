@@ -191,6 +191,14 @@ exact client observation; legacy v1 opens an ordinary backing-only successor can
 while v2 binds the stamped block without a copy citation. Abandon closes only an
 unprepared publication expectation.
 
+## playbill policy
+
+~~~text
+cruxible playbill policy list [--json]
+~~~
+
+Lists the live standalone and embedded governed policies at the accepted coordinate.
+
 ## playbill query
 
 ~~~text

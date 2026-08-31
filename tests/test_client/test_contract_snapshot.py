@@ -114,6 +114,8 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillQueryDefinitionList",
         "PlaybillQueryRun",
         "PlaybillProcedureReadiness",
+        "PlaybillPolicyInForce",
+        "PlaybillPolicyInForceList",
         "PlaybillProcedureBindResult",
         "PlaybillProcedureRunState",
         "PlaybillNextResult",
@@ -155,6 +157,7 @@ def test_contract_catalog_contains_only_host_credentials_and_playbill() -> None:
         "PlaybillAuthoringExampleName",
         "PlaybillHostStatus",
         "PlaybillNextReason",
+        "PlaybillPolicyKind",
         "RuntimeCredentialPermissionMode",
     }
 

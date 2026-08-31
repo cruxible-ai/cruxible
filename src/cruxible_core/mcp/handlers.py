@@ -1070,6 +1070,16 @@ def handle_playbill_list_query_definitions(
     )
 
 
+def handle_playbill_policies_in_force(
+    instance_id: str,
+) -> contracts.PlaybillPolicyInForceList:
+    return _dispatch_remote_or_local(
+        lambda client: client.list_playbill_policies_in_force(instance_id),
+        lambda: playbill_api.playbill_policies_in_force(instance_id),
+        operation_name="cruxible_playbill_policies_in_force",
+    )
+
+
 def handle_playbill_get_query_definition(
     instance_id: str, name: str
 ) -> contracts.PlaybillQueryDefinitionView:

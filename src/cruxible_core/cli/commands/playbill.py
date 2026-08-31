@@ -2129,6 +2129,29 @@ def repin_projection(
     click.echo(f"Repinned {source_id}#{block_id} at generation {stamp.declared_generation}.")
 
 
+@playbill_group.group("policy")
+def policy_group() -> None:
+    """Read governed policies in force."""
+
+
+@policy_group.command("list")
+@json_option
+@handle_errors
+def list_policies_in_force(output_json: bool) -> None:
+    result = _server_call(
+        lambda client, instance_id: client.list_playbill_policies_in_force(instance_id),
+        command_name="playbill policy list",
+    )
+    if output_json:
+        _emit_json(result.model_dump(mode="json"))
+        return
+    for policy in result.policies:
+        click.echo(
+            f"{policy.declaring_artifact_identity}  {policy.field_path}  {policy.policy_kind}"
+        )
+    click.echo(f"Coordinate: {result.coordinate.git_oid}")
+
+
 @playbill_group.group("query")
 def query_group() -> None:
     """Propose, read, and execute governed named entrypoints."""

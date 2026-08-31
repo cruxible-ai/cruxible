@@ -172,6 +172,7 @@ from cruxible_core.service.playbill_next import (
     service_playbill_next,
     validate_playbill_next_request,
 )
+from cruxible_core.service.playbill_policies import list_playbill_policies_in_force
 from cruxible_core.service.playbill_procedure_runs import (
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
@@ -1167,6 +1168,23 @@ def playbill_propose_query_definition(
     raise PlaybillDeprecatedWriteError(
         replacement="cruxible playbill authoring create --example query-claims-by-type"
     )
+
+
+def playbill_policies_in_force(
+    instance_id: str,
+    *,
+    at: AcceptedCoordinate | None = None,
+) -> contracts.PlaybillPolicyInForceList:
+    check_permission("cruxible_playbill_policies_in_force", instance_id=instance_id)
+    result = list_playbill_policies_in_force(
+        get_playbill_manager().get(instance_id),
+        at=(
+            None
+            if at is None
+            else contracts.PlaybillAcceptedCoordinate.model_validate(at.model_dump(mode="json"))
+        ),
+    )
+    return contracts.PlaybillPolicyInForceList.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_list_query_definitions(

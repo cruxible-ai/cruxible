@@ -562,6 +562,16 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
                 module="playbill",
                 attr="query_group",
             ),
+            "policy": _group(
+                "Read governed policies in force.",
+                {
+                    "list": _command(
+                        "playbill", "list_policies_in_force", "List live governed policies."
+                    ),
+                },
+                module="playbill",
+                attr="policy_group",
+            ),
             "procedure": _group(
                 "Inspect, bind, and run accepted query-only Procedures.",
                 {

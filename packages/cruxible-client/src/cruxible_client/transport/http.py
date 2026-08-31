@@ -998,6 +998,13 @@ class CruxibleClient:
         )
         return self._parse_model(response, contracts.PlaybillQueryDefinitionList)
 
+    def list_playbill_policies_in_force(
+        self,
+        instance_id: str,
+    ) -> contracts.PlaybillPolicyInForceList:
+        response = self._client.get(f"/api/v1/{instance_id}/playbill/policies")
+        return self._parse_model(response, contracts.PlaybillPolicyInForceList)
+
     def get_playbill_query_definition(
         self,
         instance_id: str,

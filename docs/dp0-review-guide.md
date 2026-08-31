@@ -38,6 +38,7 @@ playbill authoring prepare-publication
 playbill authoring preflight
 playbill authoring rebase
 playbill authoring resume
+playbill policy list
 playbill authoring status
 playbill authoring submit
 playbill audit
@@ -177,6 +178,7 @@ GET  /api/v1/{instance_id}/playbill/claims/{identity}
 GET  /api/v1/{instance_id}/playbill/claims/{identity}/history
 POST /api/v1/{instance_id}/playbill/claims/{identity}/explanation
 POST /api/v1/{instance_id}/playbill/claims/{claim_id}/retire
+GET  /api/v1/{instance_id}/playbill/policies
 POST /api/v1/{instance_id}/playbill/queries/proposals
 GET  /api/v1/{instance_id}/playbill/queries
 GET  /api/v1/{instance_id}/playbill/queries/{name}
@@ -217,6 +219,7 @@ cruxible_playbill_inspect_proposal
 cruxible_playbill_inspect_refusal
 cruxible_playbill_review
 cruxible_playbill_prepare_approval
+cruxible_playbill_policies_in_force
 cruxible_playbill_submit_approval
 cruxible_playbill_activate
 cruxible_playbill_authoring_abandon_insertion
