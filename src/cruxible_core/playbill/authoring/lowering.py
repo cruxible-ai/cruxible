@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -949,8 +950,15 @@ def _validation_error_lines(exc: ValidationError, *, root: str) -> tuple[str, ..
         )
         offending = error.get("input")
         try:
-            rendered = canonical_bytes(offending).decode("utf-8")
-        except (TypeError, ValueError):
+            rendered = json.dumps(
+                offending,
+                allow_nan=False,
+                default=lambda value: f"<{type(value).__name__}>",
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except Exception:  # noqa: BLE001 - error reporting must be total over arbitrary inputs
             rendered = f"<{type(offending).__name__}>"
         lines.append(f"{location}: {error['msg']}; offending element: {rendered}")
     return tuple(lines)
@@ -978,7 +986,8 @@ def _resolve_authoring_references(
                     repair_kind="replace_reference",
                     repair_description="Use a valid accepted-at-intent-base artifact reference.",
                 )
-            resolved = accepted.get(reference.target.qualified)
+            target_identity = reference.target.qualified
+            resolved = accepted.get(target_identity)
             if resolved is None:
                 _refuse(
                     "playbill.authoring.artifact_reference_unresolved",
@@ -987,6 +996,9 @@ def _resolve_authoring_references(
                     repair_kind="replace_with_pin_slot",
                     repair_description="Use an explicit Procedure pin-slot reference.",
                 )
+            if target_identity in candidate_identities:
+                # Both maps derive from the same staged non-Procedure members.
+                resolved = (candidates or {})[target_identity]
             _path, digest = resolved
             return ArtifactPin(
                 role=reference.role,
@@ -1167,10 +1179,34 @@ def _lower_procedure(
             ),
         )
     )
-    if isinstance(payload, ProcedureAuthoringPayloadV2) and definition.budget.max_items is not None:
+    if isinstance(payload, ProcedureAuthoringPayloadV2):
         referenced_contract_digests = {
             pin.artifact_digest for pin in pins if pin.target.kind == "Contract"
         }
+        unreferenced_contracts = tuple(
+            sorted(
+                (
+                    contract.identity.qualified
+                    for contract in payload.owned_contracts
+                    if procedure_owned_contract_digest(contract).tagged
+                    not in referenced_contract_digests
+                ),
+                key=lambda item: item.encode("utf-8"),
+            )
+        )
+        if unreferenced_contracts:
+            _refuse(
+                "playbill.authoring.procedure_definition_invalid",
+                "owned_contracts",
+                "The Procedure declares owned Contracts that its graph does not reference: "
+                + ", ".join(unreferenced_contracts),
+                repair_kind="replace_contracts_or_definition",
+                repair_description=(
+                    "Remove each unused owned Contract or reference it from the Procedure graph."
+                ),
+            )
+
+    if isinstance(payload, ProcedureAuthoringPayloadV2) and definition.budget.max_items is not None:
 
         def carries_list(contract: ProcedureOwnedContractV1) -> bool:
             pending = list(contract.contract_schema.fields.values())
@@ -1203,24 +1239,36 @@ def _lower_procedure(
             None if predecessor is None else procedure_artifact_digest(predecessor).tagged
         ),
     )
-    if isinstance(payload, ProcedureAuthoringPayloadV2):
-        procedure: ProcedureArtifactAny = ProcedureArtifactV2(
-            identity=identity,
-            definition=definition,
-            definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-            pins=pins,
-            owned_contracts=payload.owned_contracts,
-            activation_policy=payload.activation_policy,
-            lifecycle=lifecycle,
-        )
-    else:
-        procedure = ProcedureArtifactV1(
-            identity=identity,
-            definition=definition,
-            definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
-            pins=pins,
-            activation_policy=payload.activation_policy,
-            lifecycle=lifecycle,
+    try:
+        if isinstance(payload, ProcedureAuthoringPayloadV2):
+            procedure: ProcedureArtifactAny = ProcedureArtifactV2(
+                identity=identity,
+                definition=definition,
+                definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+                pins=pins,
+                owned_contracts=payload.owned_contracts,
+                activation_policy=payload.activation_policy,
+                lifecycle=lifecycle,
+            )
+        else:
+            procedure = ProcedureArtifactV1(
+                identity=identity,
+                definition=definition,
+                definition_digest=compute_procedure_definition_digest_v3(definition).tagged,
+                pins=pins,
+                activation_policy=payload.activation_policy,
+                lifecycle=lifecycle,
+            )
+    except ValidationError as exc:
+        _refuse(
+            "playbill.authoring.procedure_definition_invalid",
+            "procedure",
+            "The lowered Procedure artifact is invalid: "
+            + " | ".join(_validation_error_lines(exc, root="procedure")),
+            repair_kind="replace_definition_or_contracts",
+            repair_description=(
+                "Repair the Procedure definition or its owned Contract declarations."
+            ),
         )
     candidate_tree = dict(base_tree)
     procedure_bytes = render_procedure(procedure)

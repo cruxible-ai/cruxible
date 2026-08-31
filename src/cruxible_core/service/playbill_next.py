@@ -2822,9 +2822,9 @@ def _projection_items(
             ),
         )
         and (
-            not source.scan_notes
+            "projection_marker_invalid" in source.marker_notes or not source.scan_notes
             if isinstance(source, PlaybillNextSourceObservationV4)
-            else source.scan_complete
+            else ("projection_marker_invalid" in source.marker_notes or source.scan_complete)
         )
     )
     if not observed_sources:
