@@ -133,7 +133,11 @@ def _self_source_payload(*, insertion_target: object | None = None) -> ClaimAuth
     )
 
 
-def _working_payload(*, occurrence_count: int) -> ClaimAuthoringPayloadV1:
+def _working_payload(
+    *,
+    occurrence_count: int,
+    selected_occurrence: int | None = None,
+) -> ClaimAuthoringPayloadV1:
     selected = b"status: ready"
     digest = "sha256:" + hashlib.sha256(selected).hexdigest()
     return ClaimAuthoringPayloadV1(
@@ -152,6 +156,7 @@ def _working_payload(*, occurrence_count: int) -> ClaimAuthoringPayloadV1:
                 start_byte=0,
                 end_byte=len(selected),
                 observed_occurrence_count=occurrence_count,
+                selected_occurrence=selected_occurrence,
             ),
         ),
         citation_role="evidence",
@@ -216,7 +221,7 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
 
     codes = {item.code for item in result.frontier.diagnostics}
     assert "playbill.authoring.insertion_target_requires_self_source" in codes
-    assert "playbill.authoring.working_selection_ambiguous" not in codes
+    assert "playbill.authoring.working_selection_ambiguous" in codes
     assert result.verdict == "refused"
     assert result.frontier.frontier_complete is True
     assert all(
@@ -234,7 +239,7 @@ def test_preflight_accepts_a_client_selected_occurrence_from_multiple_matches(
     actor = AuthenticatedActor(actor_id="owner")
     intent = coordinator.create(
         actor=actor,
-        payload=_working_payload(occurrence_count=2),
+        payload=_working_payload(occurrence_count=2, selected_occurrence=2),
         canonical_timestamp=TIMESTAMP,
     ).intent
 

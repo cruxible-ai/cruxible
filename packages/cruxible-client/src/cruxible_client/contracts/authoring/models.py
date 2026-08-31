@@ -393,6 +393,7 @@ class WorkingAnchorWindowV1(_StrictAuthoringModel):
     start_byte: int = Field(ge=0)
     end_byte: int = Field(ge=1)
     observed_occurrence_count: int = Field(ge=0)
+    selected_occurrence: int | None = Field(default=None, ge=1)
 
     @field_validator("anchor")
     @classmethod
@@ -405,6 +406,11 @@ class WorkingAnchorWindowV1(_StrictAuthoringModel):
     def _window(self) -> "WorkingAnchorWindowV1":
         if self.end_byte <= self.start_byte:
             raise ValueError("working selection window must cover at least one byte")
+        if (
+            self.selected_occurrence is not None
+            and self.selected_occurrence > self.observed_occurrence_count
+        ):
+            raise ValueError("selected occurrence exceeds the observed occurrence count")
         return self
 
 

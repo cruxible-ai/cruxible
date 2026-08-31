@@ -138,6 +138,7 @@ def bind_working_selection_input(
             start_byte=start,
             end_byte=end,
             observed_occurrence_count=len(offsets),
+            selected_occurrence=occurrence,
         ),
     )
     try:

@@ -27,6 +27,7 @@ from cruxible_client.contracts.authoring.models import (
     PreflightResultV1,
     RepairAlternativeV1,
     SelfSourceBodyV1,
+    WorkingSelectionObservationV1,
     build_preflight_certificate,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -535,6 +536,27 @@ def compute_preflight(
                                 "omit_insertion_target",
                                 "Omit insertion_target and keep the existing Flow-A binding.",
                                 None,
+                            ),
+                        ),
+                    )
+                )
+        if isinstance(payload.source, WorkingSelectionObservationV1):
+            count = payload.source.selector.observed_occurrence_count
+            if count > 1 and payload.source.selector.selected_occurrence is None:
+                diagnostics.append(
+                    _diagnostic(
+                        code="playbill.authoring.working_selection_ambiguous",
+                        stage="source_binding",
+                        offending_element="source.selector.selected_occurrence",
+                        message=(
+                            "The working-source anchor occurred more than once and the "
+                            f"client did not select one of the {count} occurrences."
+                        ),
+                        repairs=(
+                            _repair(
+                                "select_occurrence",
+                                "Select one 1-based occurrence of the working-source anchor.",
+                                {"minimum": 1, "maximum": count},
                             ),
                         ),
                     )

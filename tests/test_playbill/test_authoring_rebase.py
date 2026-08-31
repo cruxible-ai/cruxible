@@ -60,7 +60,7 @@ def test_refused_intent_rebases_without_changing_authoring_identity(tmp_path: Pa
     instance, owner = initialize_local(tmp_path)
     _seed_claim_surface(instance, owner)
     coordinator = _coordinator(instance)
-    actor = AuthenticatedActor(actor_id="unregistered-writer")
+    actor = AuthenticatedActor(actor_id="owner")
     payload = _working_payload(occurrence_count=2)
     created = coordinator.create(
         actor=actor,
@@ -69,7 +69,7 @@ def test_refused_intent_rebases_without_changing_authoring_identity(tmp_path: Pa
     ).intent
     refused = coordinator.preflight(created.intent_id, actor=actor)
     assert refused.verdict == "refused"
-    assert "playbill.proposal.creator_principal_invalid" in {
+    assert "playbill.authoring.working_selection_ambiguous" in {
         diagnostic.code for diagnostic in refused.frontier.diagnostics
     }
     before = coordinator.get(created.intent_id, actor=actor).intent
