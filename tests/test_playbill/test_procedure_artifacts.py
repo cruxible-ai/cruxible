@@ -230,6 +230,39 @@ def test_layout_only_successor_changes_no_registered_semantic_member() -> None:
     assert result.diagnostics[0].message == ("The proposal changes no registered semantic member.")
 
 
+def test_envelope_pin_only_successor_is_a_semantic_change() -> None:
+    predecessor_procedure = _artifact(_definition())
+    predecessor = AcceptedProcedureV1(
+        path=procedure_path("triage"),
+        procedure=predecessor_procedure,
+        artifact_digest=procedure_artifact_digest(predecessor_procedure).tagged,
+    )
+    added_pin = _pin("source", "Source", "governed-input")
+    successor = predecessor_procedure.model_copy(
+        update={
+            "pins": tuple(
+                sorted(
+                    (*predecessor_procedure.pins, added_pin),
+                    key=lambda pin: (
+                        pin.role.encode(),
+                        pin.target.qualified.encode(),
+                        pin.artifact_digest.encode(),
+                    ),
+                )
+            ),
+            "lifecycle": ArtifactLifecycle(predecessor_digest=predecessor.artifact_digest),
+        }
+    )
+
+    result = evaluate_procedure_law(
+        successor,
+        path=predecessor.path,
+        predecessor=predecessor,
+    )
+
+    assert result.verdict == "accepted"
+
+
 @pytest.mark.parametrize("change", ("activation", "retirement", "definition"))
 def test_procedure_semantic_successors_remain_accepted(change: str) -> None:
     predecessor_procedure = _artifact(_definition())

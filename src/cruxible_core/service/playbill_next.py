@@ -2738,7 +2738,7 @@ def _document_items(
 def _registered_publication_blocks(
     instance: PlaybillInstance,
 ) -> frozenset[tuple[str, str]] | None:
-    """Fold durable prepared/bound publication identities from latest intent events."""
+    """Fold durable bound publication identities from latest intent events."""
 
     exhaust_root = instance.root / instance.descriptor.storage.exhaust
     if not (exhaust_root / "authoring-intents").is_dir():
@@ -2755,7 +2755,7 @@ def _registered_publication_blocks(
         expectation = intent.insertion_expectation
         if (
             not isinstance(expectation, InsertionExpectationV2)
-            or expectation.state not in {"prepared", "bound"}
+            or expectation.state != "bound"
             or expectation.preparation is None
         ):
             continue

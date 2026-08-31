@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
 from cruxible_client.authoring.inputs import (
     AuthoringInputError,
     CarriedContractInput,
+    ChangeSetInput,
     ClaimInput,
     ExistingCaptureInput,
     LiteralObjectInput,
@@ -136,6 +138,28 @@ def test_existing_capture_input_requires_an_explicit_admitted_citation_role() ->
 
     assert raised.value.code == "playbill.authoring.existing_capture_not_admitted"
     assert raised.value.field_path == "input.citation_role"
+
+
+def test_friendly_change_set_sorts_members_and_typed_refuses_duplicate_identity() -> None:
+    procedure = procedure_example()
+    query = query_claims_by_type_example()
+
+    lowered = lower_authoring_input(
+        ChangeSetInput(kind="change_set", members=(query, procedure)),
+        tree={},
+    )
+
+    assert [member.tag for member in lowered.members] == [
+        "playbill-procedure-authoring-payload-v2",
+        "playbill-query-definition-authoring-payload-v1",
+    ]
+    with pytest.raises(AuthoringInputError) as raised:
+        lower_authoring_input(
+            ChangeSetInput(kind="change_set", members=(query, query)),
+            tree={},
+        )
+    assert raised.value.code == "playbill.authoring.change_set_duplicate_identity"
+    assert raised.value.field_path == "input.members"
 
 
 def test_input_compile_typed_refuses_a_terminal_v3_claim_with_v2_backing(

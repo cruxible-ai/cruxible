@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
+from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
+    ApprovalPolicyAuthoringPayloadV1,
     ChangeSetAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
@@ -265,6 +267,32 @@ def _change_set_payload(query: QueryDefinitionV1) -> ChangeSetAuthoringPayloadV1
     )
 
 
+def _with_accepted_query_reference(
+    payload: ChangeSetAuthoringPayloadV1,
+) -> ChangeSetAuthoringPayloadV1:
+    procedure = payload.members[0]
+    query = payload.members[1]
+    assert isinstance(procedure, ProcedureAuthoringPayloadV1)
+    assert isinstance(query, QueryDefinitionAuthoringPayloadV1)
+    definition = dict(procedure.definition)
+    nodes = [dict(node) for node in definition["nodes"]]  # type: ignore[arg-type]
+    nodes[0]["query"] = {
+        "tag": "playbill-authoring-artifact-reference-v1",
+        "role": "query",
+        "target": query.query_definition.identity.model_dump(mode="json"),
+        "resolution": "accepted_at_intent_base",
+    }
+    definition["nodes"] = nodes
+    return payload.model_copy(
+        update={
+            "members": (
+                procedure.model_copy(update={"definition": definition}),
+                query,
+            )
+        }
+    )
+
+
 def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
     opaque = ProcedureAuthoringPayloadV2(
@@ -340,28 +368,43 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
     tmp_path: Path,
 ) -> None:
     instance, owner = initialize_local(tmp_path)
+    tokens = iter(f"{value:032x}" for value in range(1, 20))
     coordinator = AuthoringIntentCoordinator(
         instance=instance,
         store=AuthoringIntentStore(
             instance.root / instance.descriptor.storage.exhaust,
-            token_factory=lambda: "3" * 32,
+            token_factory=lambda: next(tokens),
         ),
     )
     actor = AuthenticatedActor(actor_id="owner")
     query = _change_set_query()
+    accepted_spelling_for_new_candidate = coordinator.compile(
+        actor=actor,
+        payload=_with_accepted_query_reference(_change_set_payload(query)),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert accepted_spelling_for_new_candidate.verdict == "refused"
+    assert accepted_spelling_for_new_candidate.frontier.diagnostics[0].code == (
+        "playbill.authoring.artifact_reference_unresolved"
+    )
     first = coordinator.compile(
         actor=actor,
         payload=_change_set_payload(query),
         canonical_timestamp=TIMESTAMP,
     )
     assert first.verdict == "passed", first.frontier
-    initial_intent = coordinator.list_pending(actor=actor).intents[0]
+    initial_intent = coordinator.list_pending(actor=actor).intents[-1]
     initial = compute_preflight(
         coordinator.instance,
         intent=initial_intent,
         actor=actor,
     ).lowered
     assert initial is not None
+    resolved_identities = [
+        member["identity"] for member in initial.resolved_authoring["members"]
+    ]
+    assert resolved_identities == sorted(resolved_identities, key=lambda item: item.encode())
+    assert all(isinstance(identity, str) for identity in resolved_identities)
     _accept_tree(
         coordinator.instance,
         owner,
@@ -378,11 +421,12 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
             ),
         }
     )
+    successor_tokens = iter(f"{value:032x}" for value in range(20, 40))
     successor = AuthoringIntentCoordinator(
         instance=coordinator.instance,
         store=AuthoringIntentStore(
             coordinator.instance.root / coordinator.instance.descriptor.storage.exhaust,
-            token_factory=lambda: "4" * 32,
+            token_factory=lambda: next(successor_tokens),
         ),
     )
     compiled = successor.compile(
@@ -404,6 +448,79 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
     )
     query_pin = next(pin for pin in accepted_procedure.pins if pin.role == "query")
     assert query_pin.artifact_digest == query_definition_digest(successor_query).tagged
+
+    accepted_payload = _with_accepted_query_reference(_change_set_payload(successor_query))
+    accepted_payload_procedure = accepted_payload.members[0]
+    assert isinstance(accepted_payload_procedure, ProcedureAuthoringPayloadV1)
+    accepted_definition = dict(accepted_payload_procedure.definition)
+    accepted_definition["description"] = "A semantic Procedure revision using the base query."
+    accepted_payload = accepted_payload.model_copy(
+        update={
+            "members": (
+                accepted_payload_procedure.model_copy(
+                    update={"definition": accepted_definition}
+                ),
+                accepted_payload.members[1],
+            )
+        }
+    )
+    accepted_spelling = successor.compile(
+        actor=actor,
+        payload=accepted_payload,
+        canonical_timestamp="2026-08-21T12:02:00.000000Z",
+    )
+    assert accepted_spelling.verdict == "passed", accepted_spelling.frontier
+    accepted_intent = successor.list_pending(actor=actor).intents[-1]
+    accepted_lowered = compute_preflight(
+        coordinator.instance,
+        intent=accepted_intent,
+        actor=actor,
+    ).lowered
+    assert accepted_lowered is not None
+    accepted_spelling_procedure = parse_procedure(
+        accepted_lowered.proposed_tree[procedure_path("triage")],
+        path=procedure_path("triage"),
+    )
+    accepted_query_pin = next(
+        pin for pin in accepted_spelling_procedure.pins if pin.role == "query"
+    )
+    assert accepted_query_pin.artifact_digest == query_definition_digest(query).tagged
+
+
+def test_approval_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    policy_payload = ApprovalPolicyAuthoringPayloadV1(
+        approval_policy=ApprovalPolicyV1(mode="independent_approval_required")
+    )
+    singleton = coordinator.compile(
+        actor=actor,
+        payload=policy_payload,
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert singleton.verdict == "passed", singleton.frontier
+
+    mixed_coordinator = AuthoringIntentCoordinator(
+        instance=coordinator.instance,
+        store=AuthoringIntentStore(
+            coordinator.instance.root / coordinator.instance.descriptor.storage.exhaust,
+            token_factory=lambda: "4" * 32,
+        ),
+    )
+    mixed = mixed_coordinator.compile(
+        actor=actor,
+        payload=ChangeSetAuthoringPayloadV1(
+            members=(
+                policy_payload,
+                QueryDefinitionAuthoringPayloadV1(query_definition=_change_set_query()),
+            )
+        ),
+        canonical_timestamp="2026-08-21T12:01:00.000000Z",
+    )
+    assert mixed.verdict == "refused"
+    diagnostic = mixed.frontier.diagnostics[0]
+    assert diagnostic.code == "playbill.authoring.approval_policy_singleton_required"
+    assert diagnostic.offending_element == "members"
+    assert diagnostic.repairs[0].kind == "split_change_set"
 
 
 def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) -> None:
@@ -462,6 +579,55 @@ def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) 
     assert refused.frontier.diagnostics[0].code == (
         "playbill.authoring.candidate_reference_outside_change_set"
     )
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected_code"),
+    (
+        (
+            {
+                "tag": "playbill-authoring-candidate-reference-v1",
+                "role": "procedure",
+                "target": {"kind": "Procedure", "name": "other"},
+                "resolution": "candidate_in_change_set",
+            },
+            "playbill.authoring.candidate_procedure_reference_forbidden",
+        ),
+        (
+            {
+                "tag": "playbill-authoring-candidate-reference-v1",
+                "target": {"kind": "QueryDefinition", "name": "claims-by-type"},
+                "resolution": "candidate_in_change_set",
+            },
+            "playbill.authoring.candidate_reference_invalid",
+        ),
+    ),
+)
+def test_change_set_candidate_reference_shape_refusals_are_reachable(
+    tmp_path: Path,
+    reference: dict[str, object],
+    expected_code: str,
+) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    payload = _change_set_payload(_change_set_query())
+    procedure = payload.members[0]
+    assert isinstance(procedure, ProcedureAuthoringPayloadV1)
+    definition = dict(procedure.definition)
+    definition["contract_in"] = reference
+    refused = coordinator.compile(
+        actor=actor,
+        payload=payload.model_copy(
+            update={
+                "members": (
+                    procedure.model_copy(update={"definition": definition}),
+                    payload.members[1],
+                )
+            }
+        ),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert refused.verdict == "refused"
+    assert refused.frontier.diagnostics[0].code == expected_code
 
 
 def test_invalid_definition_message_excludes_pydantic_metadata(tmp_path: Path) -> None:

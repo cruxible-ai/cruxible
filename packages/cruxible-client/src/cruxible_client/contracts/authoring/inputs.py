@@ -31,6 +31,7 @@ from cruxible_client.contracts.authoring.models import (
     SelfSourceBodyV1,
     SubjectAuthoringPayloadV1,
     WorkingSelectionObservationV1,
+    authoring_member_identity,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claims import (
@@ -501,20 +502,34 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
         return QueryDefinitionAuthoringPayloadV1(query_definition=value.query_definition)
     if isinstance(value, ApprovalPolicyInput):
         return ApprovalPolicyAuthoringPayloadV1(approval_policy=value.approval_policy)
+    members = tuple(
+        _procedure_payload(member)
+        if isinstance(member, ProcedureInput)
+        else (
+            SubjectAuthoringPayloadV1(subject=member.subject)
+            if isinstance(member, SubjectInput)
+            else (
+                QueryDefinitionAuthoringPayloadV1(query_definition=member.query_definition)
+                if isinstance(member, QueryDefinitionInput)
+                else ApprovalPolicyAuthoringPayloadV1(approval_policy=member.approval_policy)
+            )
+        )
+        for member in value.members
+    )
+    identities = tuple(authoring_member_identity(member) for member in members)
+    if len(set(identities)) != len(identities):
+        raise AuthoringInputError(
+            "playbill.authoring.change_set_duplicate_identity",
+            "input.members",
+            "Change-set member semantic identities must be unique.",
+            "Remove or rename the duplicate member.",
+        )
     return ChangeSetAuthoringPayloadV1(
         members=tuple(
-            _procedure_payload(member)
-            if isinstance(member, ProcedureInput)
-            else (
-                SubjectAuthoringPayloadV1(subject=member.subject)
-                if isinstance(member, SubjectInput)
-                else (
-                    QueryDefinitionAuthoringPayloadV1(query_definition=member.query_definition)
-                    if isinstance(member, QueryDefinitionInput)
-                    else ApprovalPolicyAuthoringPayloadV1(approval_policy=member.approval_policy)
-                )
+            sorted(
+                members,
+                key=lambda member: authoring_member_identity(member).encode("utf-8"),
             )
-            for member in value.members
         )
     )
 

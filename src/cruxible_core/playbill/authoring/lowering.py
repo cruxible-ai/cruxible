@@ -960,6 +960,7 @@ def _resolve_authoring_references(
     value: object,
     *,
     accepted: dict[str, tuple[str, str]],
+    candidates: dict[str, tuple[str, str]] | None = None,
     candidate_identities: frozenset[str] = frozenset(),
     owned_contracts: dict[str, ProcedureOwnedContractV1] | None = None,
     location: str = "definition",
@@ -1020,7 +1021,7 @@ def _resolve_authoring_references(
                     repair_kind="add_or_replace_member",
                     repair_description="Add the referenced artifact or use an accepted reference.",
                 )
-            resolved = accepted.get(candidate_reference.target.qualified)
+            resolved = (candidates or {}).get(candidate_reference.target.qualified)
             if resolved is None:  # pragma: no cover - staged-tree invariant
                 raise ValueError("candidate member was not present in its staged tree")
             _path, digest = resolved
@@ -1064,6 +1065,7 @@ def _resolve_authoring_references(
             key: _resolve_authoring_references(
                 member,
                 accepted=accepted,
+                candidates=candidates,
                 candidate_identities=candidate_identities,
                 owned_contracts=owned_contracts,
                 location=f"{location}.{key}",
@@ -1075,6 +1077,7 @@ def _resolve_authoring_references(
             _resolve_authoring_references(
                 member,
                 accepted=accepted,
+                candidates=candidates,
                 candidate_identities=candidate_identities,
                 owned_contracts=owned_contracts,
                 location=f"{location}[{index}]",
@@ -1089,12 +1092,13 @@ def _lower_procedure(
     intent: AuthoringIntentV1,
     base: AcceptedProjectionCoordinate,
     base_tree: dict[str, bytes],
+    accepted_reference_tree: dict[str, bytes] | None = None,
     candidate_identities: frozenset[str] = frozenset(),
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
     parsed = parse_projection_tree(
-        base_tree,
+        base_tree if accepted_reference_tree is None else accepted_reference_tree,
         registry=projection_registry_for_compiler(base.compiler),
     )
     accepted: dict[str, tuple[str, str]] = {}
@@ -1105,6 +1109,18 @@ def _lower_procedure(
         accepted[envelope.identity] = (envelope.path, envelope.artifact_digest)
     for duplicate_identity in duplicates:
         accepted.pop(duplicate_identity, None)
+    candidate_artifacts: dict[str, tuple[str, str]] = {}
+    if candidate_identities:
+        candidate_parsed = parse_projection_tree(
+            base_tree,
+            registry=projection_registry_for_compiler(base.compiler),
+        )
+        for envelope in candidate_parsed.envelopes:
+            if envelope.identity in candidate_identities:
+                candidate_artifacts[envelope.identity] = (
+                    envelope.path,
+                    envelope.artifact_digest,
+                )
     owned_contracts = (
         {contract.identity.name: contract for contract in payload.owned_contracts}
         if isinstance(payload, ProcedureAuthoringPayloadV2)
@@ -1113,6 +1129,7 @@ def _lower_procedure(
     resolved_definition = _resolve_authoring_references(
         payload.definition,
         accepted=accepted,
+        candidates=candidate_artifacts,
         candidate_identities=candidate_identities,
         owned_contracts=owned_contracts,
     )
@@ -1280,6 +1297,16 @@ def _lower_change_set(
 ) -> LoweredAuthoring:
     payload = intent.payload
     assert isinstance(payload, ChangeSetAuthoringPayloadV1)
+    if any(isinstance(member, ApprovalPolicyAuthoringPayloadV1) for member in payload.members):
+        _refuse(
+            "playbill.authoring.approval_policy_singleton_required",
+            "members",
+            "ApprovalPolicy authoring must be submitted as a singleton payload.",
+            repair_kind="split_change_set",
+            repair_description=(
+                "Author and accept the ApprovalPolicy separately from the change set."
+            ),
+        )
     staged_tree = dict(base_tree)
     member_paths: set[str] = set()
     resolved: list[dict[str, object]] = []
@@ -1292,14 +1319,6 @@ def _lower_change_set(
         if isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
             continue
         path, content, digest = _render_non_procedure_member(member)
-        if path in member_paths:
-            _refuse(
-                "playbill.authoring.change_set_duplicate_path",
-                "members",
-                "Two change-set members own the same canonical path.",
-                repair_kind="remove_duplicate_member",
-                repair_description="Keep exactly one member for each canonical path.",
-            )
         member_paths.add(path)
         staged_tree[path] = content
         resolved.append(
@@ -1313,23 +1332,17 @@ def _lower_change_set(
         if not isinstance(member, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2):
             continue
         path = procedure_path(str(member.definition["name"]))
-        if path in member_paths:
-            _refuse(
-                "playbill.authoring.change_set_duplicate_path",
-                "members",
-                "Two change-set members own the same canonical path.",
-                repair_kind="remove_duplicate_member",
-                repair_description="Keep exactly one member for each canonical path.",
-            )
         member_paths.add(path)
         lowered = _lower_procedure(
             intent=intent.model_copy(update={"payload": member}),
             base=base,
             base_tree=staged_tree,
+            accepted_reference_tree=base_tree,
             candidate_identities=candidate_identities,
         )
         staged_tree = lowered.proposed_tree
         member_resolved = dict(lowered.resolved_authoring)
+        member_resolved["identity"] = authoring_member_identity(member)
         member_resolved["path"] = path
         resolved.append(member_resolved)
     changed = tuple(
