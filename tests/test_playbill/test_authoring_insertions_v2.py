@@ -583,6 +583,16 @@ def test_coordinator_reprepares_after_client_cas_refuses_a_concurrent_edit(
         actor=actor,
         observation=_observation(preimage),
     )
+    assert first.preparation is not None
+    assert first.inserted_block_base64 is not None
+    assert base64.b64decode(first.inserted_block_base64, validate=True) == frame_projection_block(
+        stamp=first.preparation.stamp,
+        body=b"status: ready\n",
+    )
+    malformed = first.model_dump(mode="json")
+    malformed["inserted_block_base64"] = base64.b64encode(b"wrong\n").decode("ascii")
+    with pytest.raises(ValidationError, match="differ from their preparation"):
+        type(first).model_validate(malformed)
     concurrent = b"concurrent heading\n" + preimage
     with pytest.raises(PlaybillInsertionApplyError, match="anchor is stale"):
         apply_playbill_publication(

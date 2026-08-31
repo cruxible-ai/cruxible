@@ -187,10 +187,23 @@ references. `compile` creates or updates an intent and performs a binding prefli
 `submit` is idempotent and never supplies approvals. `status` reports the remaining
 approval or activation conditions without impersonating the actors who own them.
 V2 publication preparation commits a deterministic Claim-backed block against fresh
-whole-source bytes before the client applies it. Insertion confirmation verifies the
-exact client observation; legacy v1 opens an ordinary backing-only successor candidate,
-while v2 binds the stamped block without a copy citation. Abandon closes only an
-unprepared publication expectation.
+whole-source bytes before the client applies it. A successful response includes
+`inserted_block_base64`: the exact UTF-8 bytes to insert. After base64 decoding, those
+bytes are one LF-only opening marker line, the accepted body (ending in LF), and one
+LF-only closing marker line:
+
+~~~text
+<!-- playbill:block:BLOCK_ID:BASE64URL_CANONICAL_STAMP -->
+BODY
+<!-- /playbill:block:BLOCK_ID -->
+~~~
+
+The marker must start in column zero; blocks cannot overlap, nest, or repeat an ID,
+and marker-looking text inside a Markdown fence is not a declaration. Clients should
+insert the returned bytes verbatim rather than synthesize this grammar. Insertion
+confirmation verifies the exact client observation; legacy v1 opens an ordinary
+backing-only successor candidate, while v2 binds the stamped block without a copy
+citation. Abandon closes only an unprepared publication expectation.
 
 ## playbill policy
 

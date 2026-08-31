@@ -1815,12 +1815,32 @@ class InsertionPrepareResultV2(_StrictAuthoringModel):
     intent: AuthoringIntentV1
     expectation: InsertionExpectationV2
     preparation: PublicationPreparationV2 | None = None
+    inserted_block_base64: str | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     warnings: tuple[PublicationPrepareWarningV1, ...] = ()
 
     @model_validator(mode="after")
     def _preparation_shape(self) -> "InsertionPrepareResultV2":
         if self.outcome in {"prepared", "already_prepared", "bound"} and (self.preparation is None):
             raise ValueError("successful publication preparation requires exact preparation")
+        if self.preparation is None:
+            if self.inserted_block_base64 is not None:
+                raise ValueError("rendered publication bytes require an exact preparation")
+            return self
+        if self.inserted_block_base64 is None:
+            raise ValueError("an exact preparation requires its rendered publication bytes")
+        rendered = _canonical_base64(
+            self.inserted_block_base64,
+            label="rendered publication block",
+        )
+        if (
+            len(rendered) != self.preparation.inserted_block_byte_length
+            or "sha256:" + hashlib.sha256(rendered).hexdigest()
+            != self.preparation.inserted_block_digest
+        ):
+            raise ValueError("rendered publication bytes differ from their preparation")
         return self
 
     @field_validator("warnings")
