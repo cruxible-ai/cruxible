@@ -39,10 +39,12 @@ from cruxible_core.playbill.authoring.store import AuthoringIntentStore
 from cruxible_core.playbill.claim_retirement import ClaimRetireResultV1, service_retire_claim
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
+    claim_type_input_template,
     lint_claim_type_input,
     lower_claim_type_input,
 )
 from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.service.claim_types import service_propose_playbill_claim_type_input
 from tests.test_playbill._claim_type_support import claim_type_input_example
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_authoring_preflight import (
@@ -365,6 +367,23 @@ def test_claim_type_example_is_tagless_and_source_intent_is_lint_only(
                 "anticipated_source_ids": ["repo.z", "repo.a"],
             }
         )
+
+
+def test_claim_type_template_proposes_without_policy_lint_in_a_fresh_world(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    result = service_propose_playbill_claim_type_input(
+        instance,
+        input=claim_type_input_template(),
+        actor_id="owner",
+        proposal_name="template-first-claim-type",
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.proposal.proposal.candidate is not None
+    assert result.lint.warnings == ()
 
 
 def test_claim_type_input_lowers_freshness_into_the_existing_v3_artifact() -> None:

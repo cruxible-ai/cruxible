@@ -186,7 +186,14 @@ def lint_claim_type_input(
     anticipated_source_ids: tuple[str, ...] = (),
 ) -> ClaimTypeProposalLintV1:
     tree = instance.tree_at(coordinate.git_oid)
-    accepted_contracts: dict[str, str] = {}
+    # The daemon's frozen direct-self-asserted contract is a built-in capture
+    # profile, not an accepted artifact. Treating it as absent makes the one
+    # fresh-world template warn adopters to delete its only useful rule.
+    accepted_contracts: dict[str, str] = {
+        capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged: (
+            DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.qualified
+        )
+    }
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
         if not path.startswith("capture-contracts/"):
             continue
