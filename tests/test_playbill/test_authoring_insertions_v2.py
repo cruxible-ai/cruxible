@@ -14,6 +14,7 @@ from cruxible_client.authoring.insertions import (
     PlaybillInsertionApplyError,
     apply_playbill_publication,
 )
+from cruxible_client.authoring.workspace import _projection_marker_observation
 from cruxible_client.contracts.authoring.models import (
     AuthoringExistingClaimDispositionV1,
     InsertionAnchorWindowV1,
@@ -65,6 +66,7 @@ from cruxible_core.playbill.service.documents import (
 from cruxible_core.service.playbill_next import (
     PlaybillNextRequestV1,
     PlaybillNextSourceObservationV3,
+    PlaybillNextSourceObservationV4,
     PlaybillNextWorkspaceObservationV1,
     _registered_publication_blocks,
     service_playbill_next,
@@ -936,6 +938,79 @@ def test_block_repin_cannot_manufacture_a_false_publication_orphan(tmp_path: Pat
         for item in service_playbill_next(instance, request=repinned_request).items
         if item.reason == "unregistered_projection_block"
     ]
+
+
+@pytest.mark.parametrize("corruption", ("closing_id_changed", "opening_deleted"))
+def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    instance, coordinator, actor, intent_id, prepared, landed, request = (
+        _prepared_publication_next_request(tmp_path)
+    )
+    confirmation = publication_confirmation_from_source(
+        intent_id=intent_id,
+        expectation=prepared.expectation,
+        observation=_observation(landed.content),
+    )
+    assert confirmation is not None
+    bound = coordinator.confirm_insertion(intent_id, actor=actor, observation=confirmation)
+    assert bound.expectation.state == "bound"
+    assert prepared.preparation is not None
+    block_id = prepared.preparation.block_id
+    source_id = prepared.preparation.source_id
+    (parsed,) = parse_projection_blocks(landed.content, source_id=source_id)
+    if corruption == "closing_id_changed":
+        closer = f"<!-- /playbill:block:{block_id} -->\n".encode()
+        corrupted = landed.content.replace(
+            closer,
+            b"<!-- /playbill:block:pub-CORRUPTED -->\n",
+        )
+    else:
+        corrupted = landed.content[: parsed.opening_start] + landed.content[parsed.opening_end :]
+
+    marker_summaries, marker_notes = _projection_marker_observation(source_id, corrupted)
+    assert marker_summaries == []
+    assert marker_notes == ("projection_marker_invalid",)
+    assert request.workspace_observation is not None
+    corrupted_request = request.model_copy(
+        update={
+            "workspace_observation": PlaybillNextWorkspaceObservationV1(
+                source_observations=(
+                    PlaybillNextSourceObservationV4(
+                        source_id=source_id,
+                        observed_source_digest=_digest(corrupted),
+                        byte_length=len(corrupted),
+                        marker_summaries=(),
+                        occurrences=(),
+                        commitment_scan_proofs=(),
+                        citation_window_observations=(),
+                        scan_notes=("coverage_occurrence_unverified",),
+                        marker_notes=marker_notes,
+                    ),
+                )
+            )
+        }
+    )
+
+    rows = tuple(
+        item
+        for item in service_playbill_next(instance, request=corrupted_request).items
+        if item.reason == "projection_marker_invalid"
+    )
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.severity == "blocking"
+    assert row.subject_identity == f"{source_id}#{block_id}"
+    assert row.detail == {
+        "source_id": source_id,
+        "block_id": block_id,
+        "error_code": "playbill.projection.marker_invalid",
+        "marker_status": "invalid",
+    }
+    assert row.repair.operation == "playbill.block.repin"
+    assert row.repair.required_change == "restore_projection_frame_then_repin"
+    assert row.repair.command == f"cruxible playbill block repin {source_id} {block_id}"
 
 
 def test_prepared_publication_can_be_abandoned_without_observing_the_source(
