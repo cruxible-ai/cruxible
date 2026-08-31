@@ -17,6 +17,7 @@ from cruxible_client.contracts.laws import (
     PLAYBILL_ACCEPTANCE_LAWS,
     PROCEDURE_LAW,
     PROCEDURE_LAW_V2,
+    PROCEDURE_RUNTIME_POLICY_LAW,
 )
 from cruxible_core.playbill.proposals import ROLE_DEMOTED_MEMBER_FAMILIES
 
@@ -40,6 +41,12 @@ def test_approval_policy_law_resolves_as_the_governed_singleton() -> None:
             artifact_tag="playbill-approval-policy-v1"
         ).coordinate
         == APPROVAL_POLICY_LAW
+    )
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+            artifact_tag="playbill-procedure-runtime-policy-v1"
+        ).coordinate
+        == PROCEDURE_RUNTIME_POLICY_LAW
     )
 
 
@@ -101,6 +108,7 @@ def test_claim_type_v1_v3_and_v4_survive_but_removed_v2_has_no_acceptance_law() 
 def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
     assert ROLE_DEMOTED_MEMBER_FAMILIES == (
         "approval-policy",
+        "procedure-runtime-policy",
         "procedure",
         "exhaust-promotion",
         "line",

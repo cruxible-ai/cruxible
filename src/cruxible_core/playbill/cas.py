@@ -27,10 +27,15 @@ def _fsync_directory(path: Path) -> None:
 class ContentAddressedBodyStore:
     """Managed SHA-256 body store; storing bytes grants no canonical authority."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, reservation_root: Path | None = None) -> None:
         if root.is_symlink() or not root.is_dir():
             raise PlaybillCasError("CAS root must be an existing regular directory")
         self.root = root.resolve(strict=True)
+        self.reservation_root = (
+            root.parent / "leases" / "procedure-material"
+            if reservation_root is None
+            else reservation_root
+        )
         algorithm = self.root / "sha256"
         algorithm.mkdir(mode=0o700, exist_ok=True)
         if algorithm.is_symlink() or not algorithm.is_dir():

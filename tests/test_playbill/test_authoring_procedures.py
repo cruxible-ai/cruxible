@@ -16,10 +16,12 @@ from cruxible_client.contracts.authoring.models import (
     ChangeSetAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    ProcedureRuntimePolicyAuthoringPayloadV1,
     QueryDefinitionAuthoringPayloadV1,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.artifacts import (
     ProcedureOwnedContractV1,
     parse_procedure,
@@ -722,6 +724,41 @@ def test_approval_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> 
     assert diagnostic.code == "playbill.authoring.approval_policy_singleton_required"
     assert diagnostic.offending_element == "members"
     assert diagnostic.repairs[0].kind == "split_change_set"
+
+
+def test_procedure_runtime_policy_is_a_real_singleton_authoring_scope(tmp_path: Path) -> None:
+    coordinator, actor = _coordinator(tmp_path)
+    policy_payload = ProcedureRuntimePolicyAuthoringPayloadV1(
+        procedure_runtime_policy=ProcedureRuntimePolicyV1(provider_output_bytes_cap=2_097_152)
+    )
+    singleton = coordinator.compile(
+        actor=actor,
+        payload=policy_payload,
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert singleton.verdict == "passed", singleton.frontier
+
+    mixed_coordinator = AuthoringIntentCoordinator(
+        instance=coordinator.instance,
+        store=AuthoringIntentStore(
+            coordinator.instance.root / coordinator.instance.descriptor.storage.exhaust,
+            token_factory=lambda: "5" * 32,
+        ),
+    )
+    mixed = mixed_coordinator.compile(
+        actor=actor,
+        payload=ChangeSetAuthoringPayloadV1(
+            members=(
+                policy_payload,
+                QueryDefinitionAuthoringPayloadV1(query_definition=_change_set_query()),
+            )
+        ),
+        canonical_timestamp="2026-08-21T12:02:00.000000Z",
+    )
+    assert mixed.verdict == "refused"
+    assert mixed.frontier.diagnostics[0].code == (
+        "playbill.authoring.procedure_runtime_policy_singleton_required"
+    )
 
 
 def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) -> None:

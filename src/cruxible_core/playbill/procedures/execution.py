@@ -7,7 +7,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -26,7 +26,13 @@ from cruxible_client.contracts.canonical import (
     normalize_canonical,
     typed_digest,
 )
+from cruxible_client.contracts.captures import CaptureRetentionErasurePolicyV1
 from cruxible_client.contracts.errors import PlaybillExecutionError, PlaybillJournalError
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    ProcedureRuntimePolicyV1,
+    parse_procedure_runtime_policy,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     procedure_artifact_digest,
@@ -36,6 +42,7 @@ from cruxible_client.contracts.procedures.contracts import (
     ValidatedProcedureContract,
 )
 from cruxible_client.contracts.procedures.graph import analyze_procedure_v3
+from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
     CaptureEgressNodeV3,
@@ -60,12 +67,19 @@ from cruxible_client.contracts.procedures.models import (
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
+    ProcedureAdmissionMaterialManifestV1,
+    ProcedureAdmissionMaterialMemberV1,
     ProcedureBudgetBoundaryObservationV1,
     ProcedureBudgetRefusalDetailV1,
     ProcedureNodeRefusalCodeV1,
+    ProcedureProviderBindingV1,
+    ProcedureReplayInputProjectionV1,
     ProcedureRunBudgetDeclaredV1,
     ProcedureRunBudgetObservedV1,
     ProcedureRunBudgetV1,
+    ProcedureSelectionDecisionV1,
+    procedure_admission_material_digest,
+    procedure_selection_decision_digest,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
@@ -79,6 +93,12 @@ from cruxible_core.playbill.exhaust import (
     StoredProcedureJournalRecordV1,
     journal_payload_bytes,
     parse_journal_payload,
+)
+from cruxible_core.playbill.material_reservations import (
+    PendingAdmissionMaterialReservationV1,
+    ProcedureMaterialReservationStore,
+    make_run_reservation,
+    run_material_invocation_id,
 )
 from cruxible_core.playbill.procedures.acquisition import (
     ProcedureCaptureMaterialV1,
@@ -142,9 +162,15 @@ ProcedureRunStatusV1 = Literal[
 PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN = "playbill-procedure-semantic-replay-key-v1"
 PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
 PROCEDURE_ADMISSION_BINDING_V2_DOMAIN = "playbill-procedure-run-admission-v2"
+PROCEDURE_ADMISSION_BINDING_V3_DOMAIN = "playbill-procedure-run-admission-v3"
+PROCEDURE_SEMANTIC_REPLAY_KEY_V3_DOMAIN = "playbill-procedure-semantic-replay-key-v3"
+PROCEDURE_INPUT_PROVENANCE_DOMAIN = "playbill-procedure-replay-input-provenance-v1"
+PROCEDURE_LINE_RUN_ID_DOMAIN = "playbill-procedure-line-run-id-v1"
+PROCEDURE_LINE_PARTITION_DOMAIN = "playbill-line-journal-partition-v1"
 PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
 PROCEDURE_RUN_RECEIPT_V2_DOMAIN = "playbill-procedure-run-receipt-v2"
 PROCEDURE_RUN_RECEIPT_V3_DOMAIN = "playbill-procedure-run-receipt-v3"
+PROCEDURE_RUN_RECEIPT_V4_DOMAIN = "playbill-procedure-run-receipt-v4"
 
 
 class _StrictExecutionModel(BaseModel):
@@ -407,6 +433,67 @@ class ProcedureRunAdmissionV2(ProcedureRunAdmissionV1):
         return self
 
 
+class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
+    """Line-only admission whose digest identifies byte-replay semantics."""
+
+    tag: Literal["playbill-procedure-run-admission-v3"] = "playbill-procedure-run-admission-v3"  # type: ignore[assignment]
+    invocation_origin: Literal["line"] = "line"
+    line_identity: ArtifactIdentity
+    occurrence_evaluation_time: datetime
+    resolved_provider_bindings: tuple[ProcedureProviderBindingV1, ...]
+    selection_decision: ProcedureSelectionDecisionV1
+    selection_decision_digest: str
+    provider_output_bytes_cap: int = Field(ge=1)
+
+    @field_validator("occurrence_evaluation_time")
+    @classmethod
+    def _occurrence_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_validator("selection_decision_digest")
+    @classmethod
+    def _selection_digest(cls, value: str) -> str:
+        return _sha256(value, label="selection_decision_digest")
+
+    @field_validator("resolved_provider_bindings")
+    @classmethod
+    def _provider_bindings(
+        cls,
+        value: tuple[ProcedureProviderBindingV1, ...],
+    ) -> tuple[ProcedureProviderBindingV1, ...]:
+        node_ids = tuple(item.node_id for item in value)
+        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("resolved Provider bindings must be sorted and node-id unique")
+        return value
+
+    @model_validator(mode="after")
+    def _v3_shape(self) -> "ProcedureRunAdmissionV3":
+        if self.line_identity.kind != "Line":
+            raise ValueError("v3 admission line_identity must have kind Line")
+        if self.acquisition_policy_digest != self.selection_decision.policy_digest:
+            raise ValueError("selection decision must name the admitted acquisition policy")
+        if self.selection_decision_digest != procedure_selection_decision_digest(
+            self.selection_decision
+        ):
+            raise ValueError("selection decision digest does not reproduce")
+        if self.semantic_replay_key_digest != procedure_semantic_replay_key_digest(self):
+            raise ValueError("v3 semantic replay key does not reproduce")
+        if self.journal_stream != procedure_line_journal_stream(self.instance_id):
+            raise ValueError("Line admission must use the Procedure exhaust stream")
+        if self.journal_partition_id != procedure_line_partition(self.line_identity):
+            raise ValueError("Line admission partition does not reproduce its Line identity")
+        if self.occurrence_id is None:
+            raise ValueError("Line admission requires an occurrence id")
+        if self.run_id != procedure_line_run_id(
+            occurrence_id=self.occurrence_id,
+            attempt=self.attempt,
+            admission_binding_digest=self.admission_binding_digest,
+            occurrence_evaluation_time=self.occurrence_evaluation_time,
+        ):
+            raise ValueError("Line admission run_id does not reproduce")
+        return self
+
+
 class LandedCaptureRunMaterialV1(_StrictExecutionModel):
     """One admitted landed Capture and the exact envelope its digest reproduces."""
 
@@ -476,12 +563,57 @@ class PreparedProcedureRunV2(PreparedProcedureRunV1):
     accepted_state_materials: tuple[AcceptedStateRunMaterialV2, ...]  # type: ignore[assignment]
 
 
+class PreparedProcedureRunV3(PreparedProcedureRunV2):
+    tag: Literal["playbill-prepared-procedure-run-v3"] = "playbill-prepared-procedure-run-v3"  # type: ignore[assignment]
+    admission: ProcedureRunAdmissionV3
+    admission_material_manifest: ProcedureAdmissionMaterialManifestV1
+    admission_material_manifest_digest: str
+
+    @field_validator("admission_material_manifest_digest")
+    @classmethod
+    def _manifest_digest(cls, value: str) -> str:
+        return _sha256(value, label="admission_material_manifest_digest")
+
+    @model_validator(mode="after")
+    def _manifest(self) -> "PreparedProcedureRunV3":
+        if self.admission_material_manifest_digest != procedure_admission_material_digest(
+            self.admission_material_manifest
+        ):
+            raise ValueError("admission material manifest digest does not reproduce")
+        _validate_admission_material_manifest(
+            self.admission,
+            self.admission_material_manifest,
+        )
+        return self
+
+
 class ProcedureAdmissionBoundPayloadV2(_StrictExecutionModel):
     tag: Literal["playbill-procedure-admission-bound-payload-v2"] = (
         "playbill-procedure-admission-bound-payload-v2"
     )
     admission: ProcedureRunAdmissionV2
     accepted_state_materials: tuple[AcceptedStateRunMaterialV2, ...]
+
+
+class ProcedureAdmissionBoundPayloadV3(_StrictExecutionModel):
+    tag: Literal["playbill-procedure-admission-bound-payload-v3"] = (
+        "playbill-procedure-admission-bound-payload-v3"
+    )
+    admission: ProcedureRunAdmissionV3
+    admission_material_manifest: ProcedureAdmissionMaterialManifestV1
+    admission_material_manifest_digest: str
+
+    @model_validator(mode="after")
+    def _manifest(self) -> "ProcedureAdmissionBoundPayloadV3":
+        if self.admission_material_manifest_digest != procedure_admission_material_digest(
+            self.admission_material_manifest
+        ):
+            raise ValueError("admission-bound manifest digest does not reproduce")
+        _validate_admission_material_manifest(
+            self.admission,
+            self.admission_material_manifest,
+        )
+        return self
 
 
 class ProcedureRunRefusalV1(_StrictExecutionModel):
@@ -719,7 +851,316 @@ def procedure_pin_set_digest(
     ).tagged
 
 
+def procedure_replay_input_projection(
+    run_input: ProcedureRunInputV1,
+) -> ProcedureReplayInputProjectionV1:
+    if isinstance(run_input, AcceptedStateRunInputV1 | AcceptedStateRunInputV2):
+        provenance = {
+            "plane": "accepted_state",
+            "query_definition_digest": run_input.query_definition_digest,
+            "parameters_digest": run_input.parameters_digest,
+            "read_coordinate": run_input.read_coordinate.model_dump(mode="json"),
+            "effective_query_budgets": (
+                run_input.effective_query_budgets.model_dump(mode="json")
+                if isinstance(run_input, AcceptedStateRunInputV2)
+                else None
+            ),
+        }
+        return ProcedureReplayInputProjectionV1(
+            input_name=run_input.input_name,
+            plane="accepted_state",
+            kind="query_result",
+            value_or_body_digest=run_input.result_digest,
+            provenance_digest=typed_digest(
+                Sha256Value,
+                PROCEDURE_INPUT_PROVENANCE_DOMAIN,
+                provenance,
+            ).tagged,
+        )
+    if isinstance(run_input, LandedCaptureRunInputV1):
+        return ProcedureReplayInputProjectionV1(
+            input_name=run_input.input_name,
+            plane="landed_capture",
+            kind="capture",
+            value_or_body_digest=run_input.capture_digest,
+            provenance_digest=typed_digest(
+                Sha256Value,
+                PROCEDURE_INPUT_PROVENANCE_DOMAIN,
+                {
+                    "plane": "landed_capture",
+                    "capture_contract_digest": run_input.capture_contract_digest,
+                    "landing_cursor": run_input.landing_cursor,
+                },
+            ).tagged,
+        )
+    return ProcedureReplayInputProjectionV1(
+        input_name=run_input.input_name,
+        plane="exhaust",
+        kind="reduced_exhaust",
+        value_or_body_digest=run_input.result_digest,
+        provenance_digest=typed_digest(
+            Sha256Value,
+            PROCEDURE_INPUT_PROVENANCE_DOMAIN,
+            {
+                "plane": "exhaust",
+                "journal_identity": run_input.journal_identity,
+                "first_cursor": run_input.first_cursor,
+                "last_cursor": run_input.last_cursor,
+                "reducer_or_query_digest": run_input.reducer_or_query_digest,
+            },
+        ).tagged,
+    )
+
+
+def procedure_replay_input_vector(
+    admission: ProcedureRunAdmissionV1,
+) -> tuple[ProcedureReplayInputProjectionV1, ...]:
+    return tuple(procedure_replay_input_projection(item) for item in admission.run_inputs)
+
+
+def _validate_admission_material_manifest(
+    admission: ProcedureRunAdmissionV3,
+    manifest: ProcedureAdmissionMaterialManifestV1,
+) -> None:
+    expected: dict[str, tuple[str, str, str | None]] = {
+        item.input_name: (
+            "landed_capture",
+            item.capture_digest,
+            item.capture_contract_digest,
+        )
+        for item in admission.landed_capture_inputs
+    }
+    expected.update(
+        {
+            item.input_name: ("exhaust", item.result_digest, None)
+            for item in admission.exhaust_inputs
+        }
+    )
+    names = tuple(member.input_name for member in manifest.members)
+    expected_names = tuple(sorted(expected, key=lambda item: item.encode("utf-8")))
+    if names != expected_names:
+        raise ValueError("admission material manifest must cover Capture/exhaust inputs")
+    for member in manifest.members:
+        plane, semantic_digest, retention_authority = expected[member.input_name]
+        if member.plane != plane or member.semantic_digest != semantic_digest:
+            raise ValueError("admission material member disagrees with its admitted input")
+        if (
+            retention_authority is not None
+            and member.retention_authority_digest != retention_authority
+        ):
+            raise ValueError("Capture material member names another retention authority")
+
+
+def capture_admission_material_member(
+    run_input: LandedCaptureRunInputV1,
+    *,
+    policy: CaptureRetentionErasurePolicyV1,
+    admitted_at: datetime,
+    body_digest: str | None,
+) -> ProcedureAdmissionMaterialMemberV1:
+    """Freeze Capture retention into one admission member at its admission time."""
+
+    admitted_at = ensure_utc(admitted_at)
+    retain_until = (
+        admitted_at + timedelta(microseconds=policy.minimum_retention.microseconds)
+        if policy.body_retention == "required_for_duration" and policy.minimum_retention is not None
+        else None
+    )
+    return ProcedureAdmissionMaterialMemberV1(
+        input_name=run_input.input_name,
+        plane="landed_capture",
+        semantic_digest=run_input.capture_digest,
+        body_digest=body_digest,
+        retention_authority_digest=run_input.capture_contract_digest,
+        body_retention=policy.body_retention,
+        retain_until=retain_until,
+        erasure_rule_digest=policy.erasure_rule_digest,
+    )
+
+
+def read_admission_material_body(
+    bodies: ContentAddressedBodyStore,
+    member: ProcedureAdmissionMaterialMemberV1,
+) -> bytes:
+    """Read one admitted body or classify local absence without inventing erasure proof."""
+
+    details = {
+        "input_name": member.input_name,
+        "plane": member.plane,
+        "semantic_digest": member.semantic_digest,
+        "retention_authority_digest": member.retention_authority_digest,
+    }
+    if member.body_digest is None:
+        raise _OperationalFailure(
+            "replay_material_unavailable",
+            details=details,
+        )
+    access = BodyAccessContext(principal_id="procedure-material-replay", can_read_body=True)
+    try:
+        metadata = bodies.metadata(member.body_digest, access=access)
+    except Exception as exc:
+        raise _OperationalFailure(
+            "admission_material_corrupt",
+            details={**details, "body_digest": member.body_digest},
+        ) from exc
+    if not metadata.present:
+        raise _OperationalFailure(
+            "replay_material_unavailable",
+            details={**details, "body_digest": member.body_digest},
+        )
+    try:
+        return bodies.read(member.body_digest, access=access)
+    except Exception as exc:  # pragma: no cover - metadata and read share verification
+        raise _OperationalFailure(
+            "admission_material_corrupt",
+            details={**details, "body_digest": member.body_digest},
+        ) from exc
+
+
+def procedure_line_journal_stream(instance_id: str) -> JournalStreamIdentityV1:
+    return JournalStreamIdentityV1(
+        instance_id=instance_id,
+        journal_family="procedure-exhaust-v1",
+        stream_id="procedures",
+    )
+
+
+def verify_line_admission_spec(
+    admission: ProcedureRunAdmissionV3,
+    accepted_line: AcceptedLineSpecV1,
+) -> None:
+    """Bind a V3 admission to the exact accepted LineSpec that placed it."""
+
+    if (
+        admission.line_identity != accepted_line.line.identity
+        or admission.line_spec_digest != accepted_line.artifact_digest
+    ):
+        raise PlaybillExecutionError("Line admission names another accepted LineSpec")
+    if admission.procedure_artifact_digest != accepted_line.line.procedure.artifact_digest:
+        raise PlaybillExecutionError("Line admission names another Procedure artifact")
+    policy = accepted_line.line.acquisition_policy
+    if policy is None or admission.acquisition_policy_digest != policy.artifact_digest:
+        raise PlaybillExecutionError("Line admission names another acquisition policy")
+
+
+def procedure_line_partition(line_identity: ArtifactIdentity) -> str:
+    if line_identity.kind != "Line":
+        raise ValueError("Procedure Line partition requires a Line identity")
+    digest = typed_digest(
+        Sha256Value,
+        PROCEDURE_LINE_PARTITION_DOMAIN,
+        {"line_identity": line_identity.model_dump(mode="json")},
+    ).tagged
+    return "line:" + digest.removeprefix("sha256:")
+
+
+def procedure_line_run_id(
+    *,
+    occurrence_id: str,
+    attempt: int,
+    admission_binding_digest: str,
+    occurrence_evaluation_time: datetime,
+) -> str:
+    if attempt < 1:
+        raise ValueError("Procedure Line attempt must be positive")
+    _sha256(admission_binding_digest, label="admission_binding_digest")
+    digest = typed_digest(
+        Sha256Value,
+        PROCEDURE_LINE_RUN_ID_DOMAIN,
+        {
+            "occurrence_id": occurrence_id,
+            "attempt": attempt,
+            "admission_binding_digest": admission_binding_digest,
+            "occurrence_evaluation_time": format_datetime(ensure_utc(occurrence_evaluation_time)),
+        },
+    ).tagged
+    return "RUN-" + digest.removeprefix("sha256:")
+
+
+class ProcedureRuntimePolicyAbsent(PlaybillExecutionError):
+    code = "procedure_runtime_policy_absent"
+
+
+def resolve_procedure_runtime_policy(
+    tree: Mapping[str, bytes],
+) -> ProcedureRuntimePolicyV1:
+    content = tree.get(PROCEDURE_RUNTIME_POLICY_PATH)
+    if content is None:
+        raise ProcedureRuntimePolicyAbsent(
+            "procedure_runtime_policy_absent: seed ProcedureRuntimePolicy before Line admission"
+        )
+    return parse_procedure_runtime_policy(content, path=PROCEDURE_RUNTIME_POLICY_PATH)
+
+
+def bind_line_admission_runtime_policy(
+    admission: ProcedureRunAdmissionV3,
+    policy: ProcedureRuntimePolicyV1,
+) -> ProcedureRunAdmissionV3:
+    """Derive the complete Line admission identity from its governed runtime cap."""
+
+    provisional = admission.model_copy(
+        update={
+            "run_id": "RUN-" + "0" * 64,
+            "provider_output_bytes_cap": policy.provider_output_bytes_cap,
+            "semantic_replay_key_digest": "sha256:" + "0" * 64,
+            "admission_binding_digest": "sha256:" + "0" * 64,
+        }
+    )
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
+    admission_digest = procedure_admission_digest(provisional)
+    if provisional.occurrence_id is None:  # pragma: no cover - V3 validation proves this
+        raise PlaybillExecutionError("Line admission lacks its occurrence id")
+    run_id = procedure_line_run_id(
+        occurrence_id=provisional.occurrence_id,
+        attempt=provisional.attempt,
+        admission_binding_digest=admission_digest,
+        occurrence_evaluation_time=provisional.occurrence_evaluation_time,
+    )
+    return ProcedureRunAdmissionV3.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "run_id": run_id,
+            "admission_binding_digest": admission_digest,
+        }
+    )
+
+
 def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:
+    if isinstance(admission, ProcedureRunAdmissionV3):
+        pins = [pin.model_dump(mode="json") for pin in admission.full_pins]
+        pins.sort(key=canonical_bytes)
+        return typed_digest(
+            Sha256Value,
+            PROCEDURE_SEMANTIC_REPLAY_KEY_V3_DOMAIN,
+            {
+                "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
+                "procedure_artifact_digest": admission.procedure_artifact_digest,
+                "invocation_input": admission.invocation_input,
+                "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
+                "validated_pins": pins,
+                "node_pin_sets": [item.model_dump(mode="json") for item in admission.node_pin_sets],
+                "pin_set_digest": admission.pin_set_digest,
+                "replay_input_vector": [
+                    item.model_dump(mode="json")
+                    for item in procedure_replay_input_vector(admission)
+                ],
+                "budget": admission.budget.model_dump(mode="json"),
+                "hard_caps": admission.hard_caps.model_dump(mode="json"),
+                "acquisition_policy_digest": admission.acquisition_policy_digest,
+                "selection_decision": admission.selection_decision.model_dump(mode="json"),
+                "resolved_provider_bindings": [
+                    item.model_dump(mode="json") for item in admission.resolved_provider_bindings
+                ],
+                "mandate_coordinate_digest": admission.mandate_coordinate_digest,
+                "calibration_coordinate_digest": admission.calibration_coordinate_digest,
+                "sensitivity_policy_digest": admission.sensitivity_policy_digest,
+                "lane": admission.lane,
+                "taint_labels": list(admission.taint_labels),
+                "epsilon_member": admission.epsilon_member,
+                "provider_output_bytes_cap": admission.provider_output_bytes_cap,
+            },
+        ).tagged
     pins = [
         {
             "role": pin.role,
@@ -759,6 +1200,12 @@ def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> 
 
 
 def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
+    if isinstance(admission, ProcedureRunAdmissionV3):
+        return typed_digest(
+            ArtifactDigest,
+            PROCEDURE_ADMISSION_BINDING_V3_DOMAIN,
+            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
+        ).tagged
     if isinstance(admission, ProcedureRunAdmissionV2):
         return typed_digest(
             ArtifactDigest,
@@ -1030,10 +1477,18 @@ class _BudgetExceeded(Exception):
 class _OperationalFailure(Exception):
     def __init__(
         self,
-        code: Literal["cas_unavailable_at_replay", "replay_material_mismatch"],
+        code: Literal[
+            "cas_unavailable_at_replay",
+            "replay_material_mismatch",
+            "replay_material_unavailable",
+            "admission_material_corrupt",
+        ],
+        *,
+        details: object | None = None,
     ) -> None:
         super().__init__(code)
         self.code = code
+        self.details = normalize_canonical({} if details is None else details)
 
 
 class _Halted(Exception):
@@ -1144,6 +1599,7 @@ class ProcedureExecutor:
     ) -> None:
         self.journal = journal
         self.bodies = bodies
+        self.material_reservations = ProcedureMaterialReservationStore(bodies.reservation_root)
         self.run_index = run_index
         self.fencing_token = fencing_token
         self.activation_authority = activation_authority
@@ -1209,7 +1665,16 @@ class ProcedureExecutor:
             records,
             "admission_bound",
             (
-                ProcedureAdmissionBoundPayloadV2(
+                ProcedureAdmissionBoundPayloadV3(
+                    admission=admission,
+                    admission_material_manifest=prepared.admission_material_manifest,
+                    admission_material_manifest_digest=(
+                        prepared.admission_material_manifest_digest
+                    ),
+                ).model_dump(mode="json")
+                if isinstance(admission, ProcedureRunAdmissionV3)
+                and isinstance(prepared, PreparedProcedureRunV3)
+                else ProcedureAdmissionBoundPayloadV2(
                     admission=admission,
                     accepted_state_materials=prepared.accepted_state_materials,
                 ).model_dump(mode="json")
@@ -1229,6 +1694,7 @@ class ProcedureExecutor:
         refusal: ProcedureRunRefusalV1 | None = None
         failure_message: str | None = None
         failure_code: str | None = None
+        failure_details: object = {}
         halt: CanonicalValue | None = None
         try:
             state = self._seed_state(prepared)
@@ -1289,6 +1755,7 @@ class ProcedureExecutor:
         except _OperationalFailure as exc:
             status = "failed"
             failure_code = exc.code
+            failure_details = exc.details
             failure_message = "Procedure execution failed."
         except PlaybillExecutionError:
             status = "failed"
@@ -1318,6 +1785,7 @@ class ProcedureExecutor:
             "refusal": None if refusal is None else refusal.model_dump(mode="json"),
             "failure": failure_message,
             "failure_code": failure_code,
+            "failure_details": failure_details,
             "halt": halt,
             "semantic_result_digest": semantic_result_digest,
             "provider_calls": state.provider_calls,
@@ -2648,35 +3116,98 @@ class ProcedureExecutor:
         payload: object,
     ) -> StoredProcedureJournalRecordV1:
         payload_bytes = journal_payload_bytes(payload)
-        metadata = self.bodies.store(payload_bytes)
-        head = self.journal.read_head(
-            admission.journal_stream,
-            admission.journal_partition_id,
-        )
-        draft = ProcedureJournalRecordDraftV1(
-            stream=admission.journal_stream,
+        body_digest = self.bodies.digest_bytes(payload_bytes).tagged
+        reservation = make_run_reservation(
+            instance_id=admission.instance_id,
             partition_id=admission.journal_partition_id,
             event_kind=event_kind,
-            accepted_coordinate=admission.accepted_coordinate,
-            procedure_artifact_digest=admission.procedure_artifact_digest,
-            definition_digest=admission.definition_digest,
             run_id=admission.run_id,
-            line_spec_digest=admission.line_spec_digest,
-            occurrence_id=admission.occurrence_id,
-            attempt=admission.attempt,
             admission_binding_digest=admission.admission_binding_digest,
-            payload_digest=metadata.digest,
-            actor_context=admission.actor_context,
-            recorded_at=self.clock.now(),
+            body_digest=body_digest,
         )
-        try:
-            stored = self.journal.append(
-                draft,
-                expected_head=head,
-                fencing_token=self.fencing_token,
+        with self.material_reservations.locked():
+            self.material_reservations.reserve_locked(reservation)
+            pending_to_release: list[PendingAdmissionMaterialReservationV1] = []
+            if isinstance(admission, ProcedureRunAdmissionV3) and event_kind == ("admission_bound"):
+                active = self.material_reservations.active_locked()
+                for member in (
+                    payload.get("admission_material_manifest", {}).get("members", [])
+                    if isinstance(payload, dict)
+                    and isinstance(payload.get("admission_material_manifest"), dict)
+                    else []
+                ):
+                    if not isinstance(member, dict) or member.get("body_digest") is None:
+                        continue
+                    matches = tuple(
+                        item
+                        for item in active
+                        if isinstance(item, PendingAdmissionMaterialReservationV1)
+                        and item.instance_id == admission.instance_id
+                        and item.run_id == admission.run_id
+                        and item.admission_binding_digest == admission.admission_binding_digest
+                        and item.input_name == member.get("input_name")
+                        and item.plane == member.get("plane")
+                        and item.body_digest == member.get("body_digest")
+                    )
+                    if len(matches) != 1:
+                        raise PlaybillExecutionError(
+                            "run_recovery_required: admission material reservation is absent"
+                        )
+                    if not self.bodies.verify(matches[0].body_digest):
+                        raise PlaybillExecutionError(
+                            "run_recovery_required: reserved admission material is unavailable"
+                        )
+                    pending_to_release.append(matches[0])
+            metadata = self.bodies.store(payload_bytes)
+            head = self.journal.read_head(
+                admission.journal_stream,
+                admission.journal_partition_id,
             )
-        except PlaybillJournalError:
-            raise
+            draft = ProcedureJournalRecordDraftV1(
+                stream=admission.journal_stream,
+                partition_id=admission.journal_partition_id,
+                event_kind=event_kind,
+                accepted_coordinate=admission.accepted_coordinate,
+                procedure_artifact_digest=admission.procedure_artifact_digest,
+                definition_digest=admission.definition_digest,
+                run_id=admission.run_id,
+                line_spec_digest=admission.line_spec_digest,
+                occurrence_id=admission.occurrence_id,
+                attempt=admission.attempt,
+                admission_binding_digest=admission.admission_binding_digest,
+                payload_digest=metadata.digest,
+                actor_context=admission.actor_context,
+                recorded_at=self.clock.now(),
+            )
+            try:
+                stored = self.journal.append(
+                    draft,
+                    expected_head=head,
+                    fencing_token=self.fencing_token,
+                )
+            except PlaybillJournalError:
+                raise
+            if (
+                stored.record.payload_digest != reservation.body_digest
+                or stored.record.event_kind != reservation.intended_event_kind
+                or stored.record.run_id != reservation.run_id
+                or stored.record.admission_binding_digest != reservation.admission_binding_digest
+                or reservation.invocation_id
+                != run_material_invocation_id(
+                    instance_id=stored.record.stream.instance_id,
+                    partition_id=stored.record.partition_id,
+                    event_kind=stored.record.event_kind,
+                    run_id=stored.record.run_id,
+                    admission_binding_digest=stored.record.admission_binding_digest,
+                    body_digest=stored.record.payload_digest,
+                )
+            ):
+                raise PlaybillExecutionError(
+                    "journal append did not reproduce its material reservation"
+                )
+            for pending in pending_to_release:
+                self.material_reservations.release_locked(pending.reservation_id)
+            self.material_reservations.release_locked(reservation.reservation_id)
         records.append(stored)
         self.run_index.apply_record(stored, payload=normalize_canonical(payload))
         return stored
@@ -3207,6 +3738,8 @@ def _apply_node_transform(
         ) from exc
 
 
+# STAGED-DEBT(P2-B0-actor-result-cap-succession): move the legacy actor-plane
+# result ceiling into a governed successor without changing V2 admission bytes.
 PROCEDURE_RESULT_MAX_BYTES = 1_048_576
 
 

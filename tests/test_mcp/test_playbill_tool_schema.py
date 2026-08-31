@@ -91,6 +91,7 @@ def test_authoring_tools_expose_payload_and_opaque_intent_not_plumbing() -> None
         "query-claims-by-type",
         "subject",
         "approval-policy",
+        "procedure-runtime-policy",
     ]
     bind_schema = schemas["cruxible_playbill_authoring_bind"].inputSchema
     assert set(bind_schema["properties"]) == {

@@ -231,9 +231,15 @@ class ProjectionFact(_StrictProjectionModel):
 class ProjectionExtensionRegistry:
     """Closed registry that prevents fact schemas from being invented by input."""
 
-    def __init__(self, declarations: Iterable[ProjectionFactDeclaration]) -> None:
+    def __init__(
+        self,
+        declarations: Iterable[ProjectionFactDeclaration],
+        *,
+        artifact_kinds: Iterable[str] = (),
+    ) -> None:
         self._declarations: dict[tuple[str, int], ProjectionFactDeclaration] = {}
         self._versions: dict[str, set[int]] = {}
+        self._artifact_kinds = frozenset(artifact_kinds)
         for declaration in declarations:
             key = (declaration.schema_id, declaration.schema_version)
             if key in self._declarations:
@@ -243,6 +249,19 @@ class ProjectionExtensionRegistry:
                 )
             self._declarations[key] = declaration
             self._versions.setdefault(declaration.schema_id, set()).add(declaration.schema_version)
+
+    def supports_artifact_kind(self, kind: str) -> bool:
+        """Return whether this compiler registry recognizes an additive artifact kind."""
+
+        return kind in self._artifact_kinds
+
+    def with_artifact_kinds(self, *artifact_kinds: str) -> "ProjectionExtensionRegistry":
+        """Copy every registered declaration while extending artifact-kind support."""
+
+        return ProjectionExtensionRegistry(
+            self._declarations.values(),
+            artifact_kinds=(*self._artifact_kinds, *artifact_kinds),
+        )
 
     def declarations(
         self,
@@ -578,6 +597,12 @@ def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
     )
 
 
+def playbill_replay_extension_registry() -> ProjectionExtensionRegistry:
+    """Return P2-B0 runtime schemas plus its governed runtime-policy kind."""
+
+    return playbill_runtime_extension_registry().with_artifact_kinds("procedure-runtime-policy")
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -588,6 +613,7 @@ __all__ = [
     "playbill_claim_extension_registry",
     "playbill_evidence_extension_registry",
     "playbill_procedure_extension_registry",
+    "playbill_replay_extension_registry",
     "playbill_runtime_extension_registry",
     "playbill_claim_type_extension_registry",
     "playbill_extension_registry",

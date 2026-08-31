@@ -18,6 +18,11 @@ from cruxible_client.contracts.approval_policy import (
 from cruxible_client.contracts.captures import capture_contract_digest, parse_capture_contract
 from cruxible_client.contracts.claim_types import claim_type_digest, parse_claim_type
 from cruxible_client.contracts.documents import document_digest, parse_document
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_IDENTITY,
+    parse_procedure_runtime_policy,
+    procedure_runtime_policy_digest,
+)
 from cruxible_client.contracts.procedures.artifacts import (
     parse_procedure,
     procedure_artifact_digest,
@@ -117,6 +122,20 @@ def list_playbill_policies_in_force(
                     path=path,
                     field_path="/",
                     policy=approval_policy.model_dump(mode="json"),
+                )
+            )
+        elif kind == "procedure-runtime-policy":
+            runtime_policy = parse_procedure_runtime_policy(content, path=path)
+            rows.append(
+                _row(
+                    placement="standalone",
+                    policy_kind="procedure_runtime_policy",
+                    identity=PROCEDURE_RUNTIME_POLICY_IDENTITY,
+                    artifact_kind="ProcedureRuntimePolicy",
+                    digest=procedure_runtime_policy_digest(runtime_policy).tagged,
+                    path=path,
+                    field_path="/",
+                    policy=runtime_policy.model_dump(mode="json"),
                 )
             )
         elif kind == "source-acquisition-policy":

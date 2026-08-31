@@ -16,7 +16,7 @@ from cruxible_client.contracts.errors import (
     PlaybillKeyError,
 )
 from cruxible_client.contracts.types import PlaybillTrustRoot, PrincipalRecord
-from cruxible_core.playbill.bootstrap import prepare_genesis
+from cruxible_core.playbill.bootstrap import genesis_tree, prepare_genesis, verify_genesis
 from cruxible_core.playbill.git import GitLedger
 from cruxible_core.playbill.instance import DESCRIPTOR_FILE, PlaybillInstance
 from cruxible_core.playbill.keys import (
@@ -81,6 +81,20 @@ def test_sha1_and_sha256_ledgers_share_semantic_roots_but_not_generation_roots(
     assert sha1.changeset_digest == sha256.changeset_digest
     assert sha1.semantic_root == sha256.semantic_root
     assert sha1.generation_root != sha256.generation_root
+
+    legacy_ledger = GitLedger.initialize(
+        tmp_path / "ledger-legacy-genesis.git",
+        object_format="sha1",
+        signing_key_path=daemon.private_key_path,
+        allowed_signers_path=credentials / ALLOWED_SIGNERS_FILE,
+    )
+    legacy_tree = genesis_tree(
+        trust.principals,
+        approval_policy=ApprovalPolicyV1(mode="self_approval_allowed"),
+    )
+    legacy_oid = legacy_ledger.create_signed_genesis(legacy_tree, timestamp=FIXED_TIMESTAMP)
+    legacy = verify_genesis(legacy_ledger, legacy_oid, trust_root=trust)
+    assert legacy.procedure_runtime_policy is None
 
 
 def test_git_operations_ignore_ambient_repository_and_config_overrides(

@@ -481,7 +481,13 @@ def build_line_track_record(
         if record.occurrence_id is not None:
             occurrences.add(record.occurrence_id)
         if record.event_kind == "admission_bound":
-            snapshot = _payload_mapping(record).get("deployment_snapshot_digest")
+            payload = _payload_mapping(record)
+            nested = payload.get("admission")
+            snapshot = (
+                nested.get("deployment_snapshot_digest")
+                if isinstance(nested, dict)
+                else payload.get("deployment_snapshot_digest")
+            )
             if isinstance(snapshot, str):
                 deployments.add(snapshot)
             continue

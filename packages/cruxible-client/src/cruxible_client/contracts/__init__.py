@@ -17,6 +17,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunAttributionV1,
     ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
+    ProcedureRunReceiptV4,
     ProcedureTerminalV1,
 )
 
@@ -38,9 +39,11 @@ PlaybillAuthoringExampleName = Literal[
     "query-claims-by-type",
     "subject",
     "approval-policy",
+    "procedure-runtime-policy",
 ]
 PlaybillPolicyKind: TypeAlias = Literal[
     "approval_policy",
+    "procedure_runtime_policy",
     "source_acquisition_policy",
     "claim_evidence_admission_policy",
     "claim_admission_policy",
@@ -909,7 +912,7 @@ class PlaybillProcedureRunState(BaseModel):
     attribution: ProcedureRunAttributionV1 | None = None
     semantic_replay_key_digest: str | None = None
     semantic_result_digest: str | None = None
-    receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | None = None
+    receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | ProcedureRunReceiptV4 | None = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
 

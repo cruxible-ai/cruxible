@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import cruxible_core.playbill.bootstrap as playbill_bootstrap_module
+import cruxible_core.playbill.instance as playbill_instance_module
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
     ApprovalPolicyV1,
@@ -16,8 +18,16 @@ from cruxible_client.contracts.documents import render_document
 from cruxible_client.contracts.errors import ApprovalIntegrityError
 from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMENTS
 from cruxible_client.contracts.principal_rendering import render_principal
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    ProcedureRuntimePolicyV1,
+    parse_procedure_runtime_policy,
+    render_procedure_runtime_policy,
+)
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.compiler import PC_E1_COMPILER
 from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.playbill.procedures.execution import resolve_procedure_runtime_policy
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
@@ -25,6 +35,7 @@ from cruxible_core.playbill.service.documents import (
     service_submit_playbill_approval,
 )
 from cruxible_core.playbill.service.review import service_prepare_playbill_approval
+from cruxible_core.service.playbill_policies import list_playbill_policies_in_force
 from cruxible_core.service.playbill_proposals import service_list_playbill_proposals
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
@@ -102,6 +113,87 @@ def test_default_genesis_is_solo_capable_and_policy_is_governed(tmp_path: Path) 
 
     assert policy == ApprovalPolicyV1(mode="self_approval_allowed")
     assert instance.inspect().approval_policy_mode == "self_approval_allowed"
+    runtime_policy = parse_procedure_runtime_policy(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[PROCEDURE_RUNTIME_POLICY_PATH],
+        path=PROCEDURE_RUNTIME_POLICY_PATH,
+    )
+    assert runtime_policy.provider_output_bytes_cap == 1_048_576
+
+
+def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    successor = ProcedureRuntimePolicyV1(provider_output_bytes_cap=2_097_152)
+    proposal = _submit_tree(
+        instance,
+        {
+            **tree,
+            PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(successor),
+        },
+        name="raise-procedure-runtime-cap",
+    )
+    assert proposal.candidate is not None
+    assert _activate(instance, proposal, tmp_path=tmp_path).status == "accepted"
+    instance.refresh()
+
+    resolved = resolve_procedure_runtime_policy(
+        instance.tree_at(instance.accepted_coordinate().git_oid)
+    )
+    assert resolved == successor
+    row = next(
+        item
+        for item in list_playbill_policies_in_force(instance).policies
+        if item.policy_kind == "procedure_runtime_policy"
+    )
+    assert row.declaring_artifact_identity == "ProcedureRuntimePolicy:instance"
+    assert row.policy["provider_output_bytes_cap"] == 2_097_152
+
+
+def test_legacy_compiler_refuses_runtime_policy_at_candidate_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as legacy:
+        legacy.setattr(
+            playbill_instance_module,
+            "current_compiler_coordinate",
+            lambda: PC_E1_COMPILER,
+        )
+        legacy.setattr(
+            playbill_instance_module,
+            "seeded_procedure_runtime_policy",
+            lambda: None,
+        )
+        legacy.setattr(
+            playbill_bootstrap_module,
+            "seeded_procedure_runtime_policy",
+            lambda: None,
+        )
+        instance, _owner = initialize_local(tmp_path)
+
+    base = instance.accepted_coordinate()
+    tree = instance.tree_at(base.git_oid)
+    assert instance.descriptor.compiler == PC_E1_COMPILER
+    assert PROCEDURE_RUNTIME_POLICY_PATH not in tree
+
+    proposal = _submit_tree(
+        instance,
+        {
+            **tree,
+            PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
+                ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576)
+            ),
+        },
+        name="seed-runtime-policy-on-legacy-instance",
+    )
+
+    assert proposal.candidate is None
+    assert [item.code for item in proposal.evaluation.diagnostics] == [
+        "playbill.procedure_runtime_policy.compiler_unsupported"
+    ]
+    assert instance.accepted_coordinate() == base
 
 
 def test_policy_tightening_and_loosening_follow_the_parent_policy(
