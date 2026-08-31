@@ -941,9 +941,11 @@ def test_block_repin_cannot_manufacture_a_false_publication_orphan(tmp_path: Pat
 
 
 @pytest.mark.parametrize("corruption", ("closing_id_changed", "opening_deleted"))
+@pytest.mark.parametrize("observation_version", (3, 4))
 def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
     tmp_path: Path,
     corruption: str,
+    observation_version: int,
 ) -> None:
     instance, coordinator, actor, intent_id, prepared, landed, request = (
         _prepared_publication_next_request(tmp_path)
@@ -973,22 +975,35 @@ def test_bound_publication_marker_corruption_surfaces_exact_blocking_repair(
     assert marker_summaries == []
     assert marker_notes == ("projection_marker_invalid",)
     assert request.workspace_observation is not None
+    if observation_version == 3:
+        source_observation = PlaybillNextSourceObservationV3(
+            tag="playbill-next-source-observation-v3",
+            source_id=source_id,
+            observed_source_digest=_digest(corrupted),
+            byte_length=len(corrupted),
+            marker_summaries=(),
+            occurrences=(),
+            scanned_commitment_digests=(),
+            scan_complete=False,
+            scan_notes=(),
+            marker_notes=marker_notes,
+        )
+    else:
+        source_observation = PlaybillNextSourceObservationV4(
+            source_id=source_id,
+            observed_source_digest=_digest(corrupted),
+            byte_length=len(corrupted),
+            marker_summaries=(),
+            occurrences=(),
+            commitment_scan_proofs=(),
+            citation_window_observations=(),
+            scan_notes=("coverage_occurrence_unverified",),
+            marker_notes=marker_notes,
+        )
     corrupted_request = request.model_copy(
         update={
             "workspace_observation": PlaybillNextWorkspaceObservationV1(
-                source_observations=(
-                    PlaybillNextSourceObservationV4(
-                        source_id=source_id,
-                        observed_source_digest=_digest(corrupted),
-                        byte_length=len(corrupted),
-                        marker_summaries=(),
-                        occurrences=(),
-                        commitment_scan_proofs=(),
-                        citation_window_observations=(),
-                        scan_notes=("coverage_occurrence_unverified",),
-                        marker_notes=marker_notes,
-                    ),
-                )
+                source_observations=(source_observation,)
             )
         }
     )
