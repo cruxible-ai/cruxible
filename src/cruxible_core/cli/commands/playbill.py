@@ -79,6 +79,7 @@ from cruxible_core.playbill.coverage.adapter import (
     WorkingSourceObservationV1,
 )
 from cruxible_core.playbill.coverage.claude_code import (
+    PostToolUseResponseError,
     annotated_tool_output,
     post_tool_use_response,
     read_post_tool_use_event,
@@ -86,6 +87,7 @@ from cruxible_core.playbill.coverage.claude_code import (
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1, CoverageResultV3
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.coverage.middleware import (
+    CoverageRuleTagError,
     CoverageWorkspaceConfig,
     FloorGenerationPairV1,
     ResolveCoverage,
@@ -3310,6 +3312,7 @@ def post_tool_use_hook(root: str) -> None:
 
     payload: Any = None
     text = ""
+    diagnostic: str | None = None
     try:
         payload = json.loads(sys.stdin.read() or "null")
         workspace = Path(root).expanduser()
@@ -3322,9 +3325,23 @@ def post_tool_use_hook(root: str) -> None:
                 resolve=_hook_resolver(config),
                 resolve_floor_generations=_hook_floor_generation_resolver(),
             )
-            text = middleware.after_tool(event).appended_coverage_text
+            delivery = middleware.after_tool(event)
+            text = delivery.appended_coverage_text
+            if delivery.failure_code == "coverage_operation_unavailable":
+                try:
+                    _require_instance_id()
+                except click.UsageError:
+                    diagnostic = "playbill.coverage_hook.instance_id_missing"
+    except CoverageRuleTagError:
+        diagnostic = "playbill.coverage_hook.rule_tag_invalid"
+        text = ""
+    except PostToolUseResponseError:
+        diagnostic = "playbill.coverage_hook.tool_response_invalid"
+        text = ""
     except Exception:  # noqa: BLE001 - fail open; a broken hook is not the agent's problem
         text = ""
+    if diagnostic is not None:
+        click.echo(diagnostic, err=True)
     _emit_json(post_tool_use_response(annotated_tool_output(payload, text)))
 
 

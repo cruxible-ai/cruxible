@@ -383,6 +383,19 @@ def _run_hook(workspace: Path, payload: dict[str, Any]) -> dict[str, Any]:
     return dict(json.loads(result.stdout))
 
 
+def _run_hook_with_diagnostic(
+    workspace: Path,
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], str]:
+    result = CliRunner().invoke(
+        cli,
+        ["playbill", "hook", "post-tool-use", "--root", str(workspace)],
+        input=json.dumps(payload),
+    )
+    assert result.exit_code == 0, result.output
+    return dict(json.loads(result.stdout)), result.stderr
+
+
 def test_the_translation_table_covers_the_four_tools_and_annotates_only_grep() -> None:
     """The vendor limitation, pinned so it cannot drift silently."""
 
@@ -584,6 +597,80 @@ def test_an_unrecognized_payload_changes_nothing(tmp_path: Path) -> None:
 
     assert _run_hook(workspace, {"hook_event_name": "PreToolUse", "tool_name": "Read"}) == {}
     assert _run_hook(workspace, _post_tool_use("Bash", {"command": "ls"}, {"stdout": ""})) == {}
+
+
+def test_hook_reports_missing_instance_id_without_changing_stdout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "absent-context.json"))
+    monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_URL", raising=False)
+    monkeypatch.delenv("CRUXIBLE_SERVER_SOCKET", raising=False)
+    workspace = _workspace(tmp_path)
+    payload = _post_tool_use(
+        "Read",
+        {"file_path": str(workspace / FOREIGN_PATH)},
+        {"type": "text", "file": {"content": "governed"}},
+    )
+
+    emitted, stderr = _run_hook_with_diagnostic(workspace, payload)
+
+    assert emitted == {}
+    assert stderr == "playbill.coverage_hook.instance_id_missing\n"
+
+
+def test_hook_reports_invalid_rule_tag_without_changing_stdout(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+    config_path = workspace / CONFIG_RELATIVE_PATH
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "playbill-coverage-exact-path-rule-v1",
+            "playbill-coverage-path-rule-v1",
+        ),
+        encoding="utf-8",
+    )
+    payload = _post_tool_use(
+        "Read",
+        {"file_path": str(workspace / FOREIGN_PATH)},
+        {"type": "text", "file": {"content": "governed"}},
+    )
+
+    emitted, stderr = _run_hook_with_diagnostic(workspace, payload)
+
+    assert emitted == {}
+    assert stderr == "playbill.coverage_hook.rule_tag_invalid\n"
+
+
+def test_hook_reports_non_object_tool_response_without_changing_stdout(tmp_path: Path) -> None:
+    workspace = _workspace(tmp_path)
+
+    emitted, stderr = _run_hook_with_diagnostic(
+        workspace,
+        _post_tool_use("Grep", {"pattern": "governed"}, "unstructured output"),
+    )
+
+    assert emitted == {}
+    assert stderr == "playbill.coverage_hook.tool_response_invalid\n"
+
+
+def test_unbound_event_remains_silent_without_an_instance_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "absent-context.json"))
+    monkeypatch.delenv("CRUXIBLE_INSTANCE_ID", raising=False)
+    workspace = _workspace(tmp_path)
+    payload = _post_tool_use(
+        "Read",
+        {"file_path": str(workspace / "notes.txt")},
+        {"type": "text", "file": {"content": "ordinary working notes"}},
+    )
+
+    emitted, stderr = _run_hook_with_diagnostic(workspace, payload)
+
+    assert emitted == {}
+    assert stderr == ""
 
 
 def test_the_hook_fails_open_when_the_daemon_is_unreachable(
