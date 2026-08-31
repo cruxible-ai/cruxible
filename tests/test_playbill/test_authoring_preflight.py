@@ -216,13 +216,32 @@ def test_preflight_returns_independent_refusals_in_one_frontier(tmp_path: Path) 
 
     codes = {item.code for item in result.frontier.diagnostics}
     assert "playbill.authoring.insertion_target_requires_self_source" in codes
-    assert "playbill.authoring.working_selection_ambiguous" in codes
+    assert "playbill.authoring.working_selection_ambiguous" not in codes
     assert result.verdict == "refused"
     assert result.frontier.frontier_complete is True
     assert all(
         item.repairs or item.disposition in {"wait", "terminal"}
         for item in result.frontier.diagnostics
     )
+
+
+def test_preflight_accepts_a_client_selected_occurrence_from_multiple_matches(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    coordinator = _coordinator(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create(
+        actor=actor,
+        payload=_working_payload(occurrence_count=2),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+
+    result = coordinator.preflight(intent.intent_id, actor=actor)
+
+    assert result.verdict == "passed"
+    assert result.frontier.diagnostics == ()
 
 
 def test_preflight_refuses_an_actor_absent_from_the_principal_registry(

@@ -965,6 +965,7 @@ def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
 
     assert result.exit_code == 0, result.output
     assert calls[0]["source"]["selector"]["start_byte"] == 1  # type: ignore[index]
+    assert calls[0]["source"]["selector"]["observed_occurrence_count"] == 2  # type: ignore[index]
 
 
 @pytest.mark.parametrize("citation_role", ["evidence", "copy"])

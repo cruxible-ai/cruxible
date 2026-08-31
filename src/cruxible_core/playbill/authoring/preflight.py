@@ -27,7 +27,6 @@ from cruxible_client.contracts.authoring.models import (
     PreflightResultV1,
     RepairAlternativeV1,
     SelfSourceBodyV1,
-    WorkingSelectionObservationV1,
     build_preflight_certificate,
 )
 from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
@@ -540,28 +539,6 @@ def compute_preflight(
                         ),
                     )
                 )
-        if isinstance(payload.source, WorkingSelectionObservationV1):
-            count = payload.source.selector.observed_occurrence_count
-            if count != 1:
-                diagnostics.append(
-                    _diagnostic(
-                        code="playbill.authoring.working_selection_ambiguous",
-                        stage="source_binding",
-                        offending_element="source.selector.observed_occurrence_count",
-                        message=(
-                            "The working-source anchor must occur exactly once; "
-                            f"the client observed {count}."
-                        ),
-                        repairs=(
-                            _repair(
-                                "replace_anchor",
-                                "Choose an anchor/window that occurs exactly once.",
-                                {"required_occurrence_count": 1},
-                            ),
-                        ),
-                    )
-                )
-
     current = instance.accepted_coordinate()
     current_public = AcceptedCoordinate.from_internal(current)
     current_tree = instance.tree_at(current.git_oid)

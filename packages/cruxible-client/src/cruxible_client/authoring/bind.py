@@ -137,7 +137,7 @@ def bind_working_selection_input(
             anchor=anchor,
             start_byte=start,
             end_byte=end,
-            observed_occurrence_count=1,
+            observed_occurrence_count=len(offsets),
         ),
     )
     try:

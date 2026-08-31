@@ -78,6 +78,7 @@ def test_explicit_occurrence_selects_the_requested_overlapping_anchor() -> None:
     assert payload.source.selector.start_byte == 1
     assert payload.source.selector.end_byte == 3
     assert payload.source.selected_content == b"aa"
+    assert payload.source.selector.observed_occurrence_count == 2
 
 
 @pytest.mark.parametrize("occurrence", [0, 3])
