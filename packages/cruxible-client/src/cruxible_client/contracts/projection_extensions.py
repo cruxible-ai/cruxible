@@ -255,6 +255,14 @@ class ProjectionExtensionRegistry:
 
         return kind in self._artifact_kinds
 
+    def with_artifact_kinds(self, *artifact_kinds: str) -> "ProjectionExtensionRegistry":
+        """Copy every registered declaration while extending artifact-kind support."""
+
+        return ProjectionExtensionRegistry(
+            self._declarations.values(),
+            artifact_kinds=(*self._artifact_kinds, *artifact_kinds),
+        )
+
     def declarations(
         self,
         classification: ProjectionFactClassification,
@@ -592,11 +600,7 @@ def playbill_runtime_extension_registry() -> ProjectionExtensionRegistry:
 def playbill_replay_extension_registry() -> ProjectionExtensionRegistry:
     """Return P2-B0 runtime schemas plus its governed runtime-policy kind."""
 
-    prior = playbill_runtime_extension_registry()
-    return ProjectionExtensionRegistry(
-        (*prior.declarations("semantic"), *prior.declarations("presentation")),
-        artifact_kinds=("procedure-runtime-policy",),
-    )
+    return playbill_runtime_extension_registry().with_artifact_kinds("procedure-runtime-policy")
 
 
 __all__ = [

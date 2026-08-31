@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from typing import get_args
+
 import pytest
 
+import cruxible_client.contracts.projection_extensions as projection_extensions_module
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
     ProcedureRuntimePolicyV1,
@@ -11,6 +14,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
 )
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.procedures.line_specs import render_line_spec
+from cruxible_client.contracts.projection_extensions import ProjectionFactClassification
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.compiler import (
     P2_B0_COMPILER,
@@ -119,3 +123,29 @@ def test_runtime_policy_artifact_kind_begins_at_the_p2_b0_compiler() -> None:
     assert [(row.kind, row.identity) for row in parsed.envelopes] == [
         ("procedure-runtime-policy", "ProcedureRuntimePolicy:instance")
     ]
+
+
+def test_replay_registry_copies_the_authoritative_runtime_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = projection_extensions_module.playbill_runtime_extension_registry()
+
+    def classification_listing_is_not_a_copy(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("registry copy must not enumerate known classifications")
+
+    with monkeypatch.context() as guarded:
+        guarded.setattr(
+            projection_extensions_module,
+            "playbill_runtime_extension_registry",
+            lambda: runtime,
+        )
+        guarded.setattr(
+            projection_extensions_module.ProjectionExtensionRegistry,
+            "declarations",
+            classification_listing_is_not_a_copy,
+        )
+        replay = projection_extensions_module.playbill_replay_extension_registry()
+
+    for classification in get_args(ProjectionFactClassification):
+        assert replay.declarations(classification) == runtime.declarations(classification)
+    assert replay.supports_artifact_kind("procedure-runtime-policy")
