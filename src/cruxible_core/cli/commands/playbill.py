@@ -515,6 +515,8 @@ def propose_document(
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
+    """Use the sanctioned command-local Document proposal path."""
+
     if (envelope is None) == (example is None):
         raise click.UsageError("choose exactly one of --envelope or --example")
     if example is not None:
@@ -1152,6 +1154,8 @@ def subject_group() -> None:
 @json_option
 @handle_errors
 def propose_subject(envelope: str, proposal_name: str, output_json: bool) -> None:
+    """Deprecated: use ``playbill authoring create`` then ``authoring submit``."""
+
     del envelope, proposal_name, output_json
     raise PlaybillDeprecatedWriteError(
         replacement="the authoring coordinator with payload kind 'subject'"
@@ -1221,6 +1225,8 @@ def propose_claim_type(
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
+    """Use the sanctioned typed-input ClaimType proposal path."""
+
     if (input_path is None) == (envelope is None):
         raise click.UsageError("provide exactly one ClaimType input with --input")
     if envelope is not None:
@@ -2143,6 +2149,8 @@ def propose_query_definition(
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
+    """Deprecated: use ``playbill authoring create`` then ``authoring submit``."""
+
     del envelope, example, proposal_name, output_json
     raise PlaybillDeprecatedWriteError(
         replacement="the authoring coordinator with payload kind 'query_definition'"

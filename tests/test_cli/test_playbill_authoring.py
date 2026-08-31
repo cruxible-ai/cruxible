@@ -585,6 +585,27 @@ def test_subject_propose_is_a_typed_deprecation_shim(tmp_path: Path) -> None:
     assert result.exit_code != 0
     assert "playbill.write_surface_deprecated" in result.output
     assert "authoring coordinator with payload kind 'subject'" in result.output
+    assert "target:" not in result.output
+
+
+def test_propose_help_distinguishes_coordinator_shims_from_sanctioned_paths() -> None:
+    runner = CliRunner()
+    subject = runner.invoke(cli, ["playbill", "subject", "propose", "--help"])
+    query = runner.invoke(cli, ["playbill", "query", "propose", "--help"])
+    document = runner.invoke(cli, ["playbill", "document", "propose", "--help"])
+    claim_type = runner.invoke(cli, ["playbill", "claim-type", "propose", "--help"])
+
+    for shim in (subject, query):
+        assert shim.exit_code == 0
+        assert "Deprecated" in shim.output
+        assert "playbill authoring create" in shim.output
+        assert "authoring submit" in shim.output
+    assert document.exit_code == 0
+    assert "sanctioned command-local Document proposal path" in document.output
+    assert "Deprecated" not in document.output
+    assert claim_type.exit_code == 0
+    assert "sanctioned typed-input ClaimType proposal path" in claim_type.output
+    assert "Deprecated" not in claim_type.output
 
 
 @pytest.mark.parametrize(
