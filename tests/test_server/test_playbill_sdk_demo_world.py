@@ -25,7 +25,7 @@ from cruxible_client import (
 )
 from cruxible_client.authoring.bind import bind_working_selection_input
 from cruxible_client.authoring.examples import authoring_example
-from cruxible_client.authoring.inputs import ClaimInput
+from cruxible_client.authoring.inputs import ClaimInput, QueryDefinitionInput
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
@@ -65,7 +65,6 @@ from cruxible_client.contracts.query.grammar import (
     QueryProjectionV1,
     QuerySubjectFieldRefV1,
 )
-from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.errors import CoreError
 from cruxible_client.transport.http import CruxibleClient
 from cruxible_core.cli.main import cli
@@ -775,27 +774,32 @@ def test_sdk_retirement_replay_survives_a_fresh_http_client_process_boundary(
 
 def test_shipped_claim_type_and_flow_a_examples_compose_to_a_supported_claim(
     playbill_http: tuple[TestClient, str, Path],
+    tmp_path: Path,
 ) -> None:
     http, instance_id, private_key_path = playbill_http
     transport = CruxibleClient(base_url="http://cruxible")
     transport._client = http  # type: ignore[assignment]
+    workspace = tmp_path / "example-workspace"
+    workspace.mkdir()
+    _catalog(workspace)
+    pb = Playbill._from_client(transport, instance_id=instance_id, workspace=workspace)
 
-    subject = SubjectShell(
-        identity=ArtifactIdentity(kind="Subject", name="project.work_item/replace-me"),
-        subject_kind="project.work_item",
-        subject_id="replace-me",
-    )
-    subject_proposal = transport.propose_playbill_subject(
-        instance_id,
-        shell=subject.model_dump(mode="json"),
-        proposal_name="example-subject",
-    )
+    subject = pb.subject(
+        subject="project.work_item/replace-me",
+        pins=(),
+        lifecycle=ArtifactLifecycle(),
+    ).prepare()
+    assert not subject.refused, subject.diagnostics
+    subject.submit()
+    subject_proposal_id = subject.status().proposal_id
+    assert subject_proposal_id is not None
     _approve_and_activate(
         http,
         instance_id,
         private_key_path,
-        subject_proposal.proposal["admission"]["proposal_id"],
+        subject_proposal_id,
     )
+    pb.refresh()
 
     claim_type_input = defaulted_claim_type_input_example()
     claim_type_proposal = transport.propose_playbill_claim_type_input(
@@ -1062,13 +1066,22 @@ def test_demo_world_beat_one_converts_corpus_through_one_sdk_program(
             ),
         ),
     )
-    proposed_query = transport.propose_playbill_query_definition(
+    query_preflight = transport.compile_playbill_authoring_input(
         instance_id,
-        query=query.model_dump(mode="json"),
-        proposal_name="sdk-demo-response-guidance",
+        input=QueryDefinitionInput(
+            kind="query_definition",
+            query_definition=query,
+        ).model_dump(mode="json"),
     )
-    query_proposal_id = proposed_query.proposal["admission"]["proposal_id"]
-    assert isinstance(query_proposal_id, str)
+    assert query_preflight.verdict == "passed", query_preflight.frontier
+    query_intent_id = query_preflight.certificate["intent_id"]
+    assert isinstance(query_intent_id, str)
+    submitted_query = transport.submit_playbill_authoring_intent(
+        instance_id,
+        query_intent_id,
+    )
+    query_proposal_id = submitted_query.status.proposal_id
+    assert query_proposal_id is not None
     _approve_and_activate(http, instance_id, private_key_path, query_proposal_id)
     pb.refresh()
     queried = transport.run_playbill_query(
