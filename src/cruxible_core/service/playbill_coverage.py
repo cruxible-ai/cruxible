@@ -47,6 +47,7 @@ from cruxible_client.contracts.claims import (
     parse_claim,
 )
 from cruxible_client.contracts.declared_blocks import (
+    ParsedProjectionBlock,
     ProjectionClaimBackingV1,
     ProjectionMarkerError,
     parse_projection_blocks,
@@ -588,7 +589,7 @@ def _bound_publication_observations(
     by_source = {
         item.source.identity: item for item in observations if item.source.plane == "external"
     }
-    parsed_by_source: dict[str, tuple[object, ...]] = {}
+    parsed_by_source: dict[str, tuple[ParsedProjectionBlock, ...]] = {}
     result: dict[tuple[bytes, bytes, bytes], BoundPublicationObservation] = {}
     for registration in registrations:
         preparation = registration.preparation
@@ -623,14 +624,13 @@ def _bound_publication_observations(
         matches = tuple(
             block
             for block in parsed_by_source[preparation.source_id]
-            if getattr(block, "block_id", None) == preparation.block_id
-            and getattr(block, "stamp", None) == preparation.stamp
+            if block.block_id == preparation.block_id and block.stamp == preparation.stamp
         )
         if len(matches) != 1:
             continue
         block = matches[0]
-        body_start = getattr(block, "body_start")
-        body_end = getattr(block, "body_end")
+        body_start = block.body_start
+        body_end = block.body_end
         item = BoundPublicationObservation(
             source=LogicalSourceIdentityV1(
                 plane="external",
@@ -640,7 +640,7 @@ def _bound_publication_observations(
             claim_path=path,
             claim_statement_digest=registration.claim_statement_digest,
             expected_body_digest=preparation.body_digest,
-            observed_body_digest=getattr(block, "body_digest"),
+            observed_body_digest=block.body_digest,
             line_overlay=_line_overlay(
                 observed.content,
                 start_byte=body_start,
