@@ -978,7 +978,8 @@ def _resolve_authoring_references(
                     repair_kind="replace_reference",
                     repair_description="Use a valid accepted-at-intent-base artifact reference.",
                 )
-            resolved = accepted.get(reference.target.qualified)
+            target_identity = reference.target.qualified
+            resolved = accepted.get(target_identity)
             if resolved is None:
                 _refuse(
                     "playbill.authoring.artifact_reference_unresolved",
@@ -987,6 +988,21 @@ def _resolve_authoring_references(
                     repair_kind="replace_with_pin_slot",
                     repair_description="Use an explicit Procedure pin-slot reference.",
                 )
+            if target_identity in candidate_identities:
+                candidate = (candidates or {}).get(target_identity)
+                if candidate is None:
+                    _refuse(
+                        "playbill.authoring.change_set_reference_inconsistent",
+                        location,
+                        "The accepted reference names a sibling member, but its staged "
+                        "successor could not be resolved.",
+                        repair_kind="replace_reference",
+                        repair_description=(
+                            "Use a resolvable sibling member or split the internally "
+                            "inconsistent change set."
+                        ),
+                    )
+                resolved = candidate
             _path, digest = resolved
             return ArtifactPin(
                 role=reference.role,

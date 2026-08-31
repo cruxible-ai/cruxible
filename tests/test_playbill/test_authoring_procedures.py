@@ -275,7 +275,7 @@ def _with_accepted_query_reference(
 ) -> ChangeSetAuthoringPayloadV1:
     procedure = payload.members[0]
     query = payload.members[1]
-    assert isinstance(procedure, ProcedureAuthoringPayloadV1)
+    assert isinstance(procedure, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2)
     assert isinstance(query, QueryDefinitionAuthoringPayloadV1)
     definition = dict(procedure.definition)
     nodes = [dict(node) for node in definition["nodes"]]  # type: ignore[arg-type]
@@ -594,7 +594,7 @@ def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
     accepted_query_pin = next(
         pin for pin in accepted_spelling_procedure.pins if pin.role == "query"
     )
-    assert accepted_query_pin.artifact_digest == query_definition_digest(query).tagged
+    assert accepted_query_pin.artifact_digest == query_definition_digest(successor_query).tagged
 
 
 def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
@@ -638,11 +638,14 @@ def test_change_set_submit_activate_closure_and_run_read_exact_successor_query(
         item.code for item in incomplete.frontier.diagnostics
     }
 
+    successor_payload = _with_accepted_query_reference(
+        _runnable_change_set_payload(query_v2, description="Read query v2.")
+    )
     _submit_approve_activate(
         coordinator,
         actor=actor,
         owner=owner,
-        payload=_runnable_change_set_payload(query_v2, description="Read query v2."),
+        payload=successor_payload,
         timestamp="2026-08-21T12:02:00.000000Z",
     )
     query_v2_digest = query_definition_digest(query_v2).tagged
