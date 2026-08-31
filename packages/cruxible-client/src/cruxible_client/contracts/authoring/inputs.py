@@ -10,20 +10,26 @@ from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.authoring.models import (
+    ApprovalPolicyAuthoringPayloadV1,
     AuthoringArtifactReferenceV1,
+    AuthoringCandidateReferenceV1,
     AuthoringClaimStatementV1,
     AuthoringExactContentObjectV1,
     AuthoringExistingClaimDispositionV1,
     AuthoringPayloadV1,
+    ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ClaimAuthoringPayloadV3,
     ClaimDependencyDraftsV1,
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    QueryDefinitionAuthoringPayloadV1,
     SelfSourceBodyV1,
+    SubjectAuthoringPayloadV1,
     WorkingSelectionObservationV1,
 )
 from cruxible_client.contracts.canonical import canonical_bytes
@@ -34,8 +40,9 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.semantic import SemanticAddress
-from cruxible_client.contracts.subjects import subject_path
+from cruxible_client.contracts.subjects import SubjectShell, subject_path
 
 _SUBJECT_SHORTHAND_RE = re.compile(
     r"^(?P<kind>[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*)/"
@@ -149,8 +156,39 @@ class ProcedureInput(_StrictInputModel):
         return cast(dict[str, object], value)
 
 
+class SubjectInput(_StrictInputModel):
+    kind: Literal["subject"]
+    subject: SubjectShell
+
+
+class QueryDefinitionInput(_StrictInputModel):
+    kind: Literal["query_definition"]
+    query_definition: QueryDefinitionV1
+
+
+class ApprovalPolicyInput(_StrictInputModel):
+    kind: Literal["approval_policy"]
+    approval_policy: ApprovalPolicyV1
+
+
+AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
+    SubjectInput | QueryDefinitionInput | ApprovalPolicyInput | ProcedureInput,
+    Field(discriminator="kind"),
+]
+
+
+class ChangeSetInput(_StrictInputModel):
+    kind: Literal["change_set"]
+    members: tuple[AuthoringChangeSetMemberInputV1, ...] = Field(min_length=2)
+
+
 AuthoringInputV1: TypeAlias = Annotated[
-    ClaimInput | ProcedureInput,
+    ClaimInput
+    | ProcedureInput
+    | SubjectInput
+    | QueryDefinitionInput
+    | ApprovalPolicyInput
+    | ChangeSetInput,
     Field(discriminator="kind"),
 ]
 
@@ -349,6 +387,20 @@ def _procedure_references(
                     accepted_reference.target, field_path=f"{field_path}.target"
                 ),
             ).model_dump(mode="json")
+        if value.get("kind") == "candidate" and set(value) == {"kind", "role", "target"}:
+            role = value["role"]
+            target = value["target"]
+            if not isinstance(role, str) or not isinstance(target, str):
+                raise AuthoringInputError(
+                    "playbill.authoring.candidate_reference_invalid",
+                    field_path,
+                    "Candidate references require text role and target fields.",
+                    "Use {kind: candidate, role: <role>, target: ArtifactKind:name}.",
+                )
+            return AuthoringCandidateReferenceV1(
+                role=role,
+                target=_artifact_identity(target, field_path=f"{field_path}.target"),
+            ).model_dump(mode="json")
         if value.get("kind") == "slot" and set(value) == {"kind", "slot_name"}:
             slot_reference = SlotReferenceInput.model_validate(value)
             return {
@@ -390,12 +442,9 @@ def _procedure_references(
     return value
 
 
-def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) -> AuthoringPayloadV1:
-    """Resolve one input against exactly the supplied accepted tree."""
-
-    if isinstance(value, ClaimInput):
-        return _claim_payload(value)
-    del tree
+def _procedure_payload(
+    value: ProcedureInput,
+) -> ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2:
     contracts = tuple(
         sorted(
             (
@@ -438,23 +487,60 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
     )
 
 
+def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) -> AuthoringPayloadV1:
+    """Resolve one input against exactly the supplied accepted tree."""
+
+    del tree
+    if isinstance(value, ClaimInput):
+        return _claim_payload(value)
+    if isinstance(value, ProcedureInput):
+        return _procedure_payload(value)
+    if isinstance(value, SubjectInput):
+        return SubjectAuthoringPayloadV1(subject=value.subject)
+    if isinstance(value, QueryDefinitionInput):
+        return QueryDefinitionAuthoringPayloadV1(query_definition=value.query_definition)
+    if isinstance(value, ApprovalPolicyInput):
+        return ApprovalPolicyAuthoringPayloadV1(approval_policy=value.approval_policy)
+    return ChangeSetAuthoringPayloadV1(
+        members=tuple(
+            _procedure_payload(member)
+            if isinstance(member, ProcedureInput)
+            else (
+                SubjectAuthoringPayloadV1(subject=member.subject)
+                if isinstance(member, SubjectInput)
+                else (
+                    QueryDefinitionAuthoringPayloadV1(query_definition=member.query_definition)
+                    if isinstance(member, QueryDefinitionInput)
+                    else ApprovalPolicyAuthoringPayloadV1(approval_policy=member.approval_policy)
+                )
+            )
+            for member in value.members
+        )
+    )
+
+
 __all__ = [
     "AcceptedReferenceInput",
+    "ApprovalPolicyInput",
+    "AuthoringChangeSetMemberInputV1",
     "AuthoringInputError",
     "AuthoringInputV1",
     "AuthoringObjectInput",
     "AuthoringSourceInput",
     "CarriedContractInput",
     "CarriedContractReferenceInput",
+    "ChangeSetInput",
     "ClaimDispositionInput",
     "ClaimInput",
     "ExistingCaptureInput",
     "ExactContentObjectInput",
     "LiteralObjectInput",
     "ProcedureInput",
+    "QueryDefinitionInput",
     "SelfSourceInput",
     "SlotReferenceInput",
     "SubjectObjectInput",
+    "SubjectInput",
     "WorkingSelectionInput",
     "lower_bound_claim_input",
     "lower_authoring_input",

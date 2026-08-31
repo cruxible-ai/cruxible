@@ -14,6 +14,7 @@ from cruxible_client.contracts.attestations import (
 )
 from cruxible_client.contracts.authoring.inputs import AuthoringInputV1, lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
+    AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
     AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST,
     AUTHORING_SDK_VERSION,
     AcceptanceConditionV1,
@@ -27,6 +28,7 @@ from cruxible_client.contracts.authoring.models import (
     AuthoringSubmitResultV1,
     CandidateStatusState,
     CandidateStatusV1,
+    ChangeSetAuthoringPayloadV1,
     ClaimAuthoringPayloadV1,
     ExistingCaptureCitationSourceV1,
     InsertionAbandonResultV1,
@@ -40,7 +42,9 @@ from cruxible_client.contracts.authoring.models import (
     PublicationPrepareWarningV1,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
+    authoring_change_set_membership,
     authoring_create_fingerprint,
+    authoring_member_identity,
     authoring_payload_digest,
     insertion_confirm_operation_v2_key,
     insertion_prepare_operation_v2_key,
@@ -1214,25 +1218,44 @@ class AuthoringIntentCoordinator:
                 "ready_to_submit",
             }:
                 raise ValueError("submitted AuthoringIntent payload is immutable")
-            semantic_identity = current.semantic_identity
-            if isinstance(
-                current.payload,
-                ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
-            ) or isinstance(
-                payload,
-                ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
+            if isinstance(current.payload, ClaimAuthoringPayloadV1) != isinstance(
+                payload, ClaimAuthoringPayloadV1
             ):
-                if not isinstance(
-                    current.payload,
-                    ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
-                ) or not isinstance(
-                    payload,
-                    ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
+                raise ValueError("AuthoringIntent payload kind cannot change")
+            if isinstance(current.payload, ChangeSetAuthoringPayloadV1) or isinstance(
+                payload, ChangeSetAuthoringPayloadV1
+            ):
+                if not isinstance(current.payload, ChangeSetAuthoringPayloadV1) or not isinstance(
+                    payload, ChangeSetAuthoringPayloadV1
                 ):
                     raise ValueError("AuthoringIntent payload kind cannot change")
-                semantic_identity = f"Procedure:{payload.definition['name']}"
-            elif not isinstance(payload, ClaimAuthoringPayloadV1):  # pragma: no cover
-                raise ValueError("unsupported AuthoringIntent payload kind")
+                if authoring_change_set_membership(
+                    current.payload.members
+                ) != authoring_change_set_membership(payload.members):
+                    raise ValueError("change-set replacement cannot change member identity")
+            elif not isinstance(payload, ClaimAuthoringPayloadV1):
+                current_family = (
+                    "Procedure"
+                    if isinstance(
+                        current.payload,
+                        ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2,
+                    )
+                    else type(current.payload).__name__
+                )
+                payload_family = (
+                    "Procedure"
+                    if isinstance(
+                        payload, ProcedureAuthoringPayloadV1 | ProcedureAuthoringPayloadV2
+                    )
+                    else type(payload).__name__
+                )
+                if current_family != payload_family:
+                    raise ValueError("AuthoringIntent payload kind cannot change")
+            semantic_identity = (
+                current.semantic_identity
+                if isinstance(payload, ClaimAuthoringPayloadV1)
+                else self._mint_semantic_identity(payload)
+            )
             at = AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
             updates = {
                 "payload": payload,
@@ -1334,7 +1357,19 @@ class AuthoringIntentCoordinator:
     def _mint_semantic_identity(self, payload: AuthoringPayloadV1) -> str:
         if isinstance(payload, ClaimAuthoringPayloadV1):
             return payload.claim_ref or self.claim_id_factory()
-        return f"Procedure:{payload.definition['name']}"
+        if isinstance(payload, ChangeSetAuthoringPayloadV1):
+            digest = typed_digest(
+                Sha256Value,
+                AUTHORING_CHANGE_SET_MEMBERSHIP_DIGEST_DOMAIN,
+                {
+                    "members": [
+                        {"kind": kind, "identity": identity}
+                        for kind, identity in authoring_change_set_membership(payload.members)
+                    ]
+                },
+            ).tagged.removeprefix("sha256:")
+            return f"ChangeSet:{digest}"
+        return authoring_member_identity(payload)
 
     def _current_claim(self, intent: AuthoringIntentV1) -> ClaimArtifactAny | None:
         path = claim_path(intent.semantic_identity)

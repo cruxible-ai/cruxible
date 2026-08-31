@@ -27,6 +27,7 @@ RuntimeCredentialPermissionMode = Literal[
 ]
 PlaybillHostStatus = Literal["created", "already_exists"]
 PlaybillAuthoringExampleName = Literal[
+    "approval-policy",
     "claim-type",
     "claim-existing-capture",
     "claim-flow-a",
@@ -36,6 +37,7 @@ PlaybillAuthoringExampleName = Literal[
     "claim-cite-supporting-evidence",
     "claim-adjudicate-unreviewed-evidence",
     "query-claims-by-type",
+    "subject",
 ]
 PlaybillNextReason: TypeAlias = Literal[
     "claim_conflicted",

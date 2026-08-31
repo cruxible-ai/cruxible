@@ -42,7 +42,7 @@ from cruxible_client.contracts.discovery import (
     ExpansionBudgetV1,
 )
 from cruxible_client.contracts.documents import DocumentShell
-from cruxible_client.contracts.errors import PlaybillBootstrapError
+from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillDeprecatedWriteError
 from cruxible_client.contracts.primitives import new_id
 from cruxible_client.contracts.procedures.artifacts import procedure_path
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -110,7 +110,6 @@ from cruxible_core.playbill.service.explain import service_explain_playbill_subj
 from cruxible_core.playbill.service.query_definitions import (
     service_get_playbill_query_definition,
     service_list_playbill_query_definitions,
-    service_propose_playbill_query_definition,
 )
 from cruxible_core.playbill.service.review import (
     service_prepare_playbill_approval,
@@ -125,7 +124,6 @@ from cruxible_core.playbill.service.subjects import (
     service_get_playbill_subject,
     service_list_playbill_subjects,
     service_playbill_subject_history,
-    service_propose_playbill_subject,
 )
 from cruxible_core.runtime.permissions import check_permission, get_current_mode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
@@ -686,19 +684,10 @@ def playbill_propose_subject(
     proposal_name: str,
     base: AcceptedCoordinate | None = None,
 ) -> contracts.PlaybillProposalInspection:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = _proposal_validation_boundary(
-        "subject",
-        lambda: service_propose_playbill_subject(
-            get_playbill_manager().get(instance_id),
-            shell=shell,
-            actor_id=_actor_id(),
-            proposal_name=proposal_name,
-            timestamp=canonical_candidate_timestamp(utc_now()),
-            base=base,
-        ),
+    del instance_id, shell, proposal_name, base
+    raise PlaybillDeprecatedWriteError(
+        replacement="cruxible playbill authoring create --example subject"
     )
-    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_list_subjects(
@@ -1174,19 +1163,10 @@ def playbill_propose_query_definition(
     proposal_name: str,
     base: AcceptedCoordinate | None = None,
 ) -> contracts.PlaybillProposalInspection:
-    check_permission("cruxible_playbill_propose", instance_id=instance_id)
-    result = _proposal_validation_boundary(
-        "query definition",
-        lambda: service_propose_playbill_query_definition(
-            get_playbill_manager().get(instance_id),
-            query=query,
-            actor_id=_actor_id(),
-            proposal_name=proposal_name,
-            timestamp=canonical_candidate_timestamp(utc_now()),
-            base=base,
-        ),
+    del instance_id, query, proposal_name, base
+    raise PlaybillDeprecatedWriteError(
+        replacement="cruxible playbill authoring create --example query-claims-by-type"
     )
-    return contracts.PlaybillProposalInspection.model_validate(result.model_dump(mode="json"))
 
 
 def playbill_list_query_definitions(

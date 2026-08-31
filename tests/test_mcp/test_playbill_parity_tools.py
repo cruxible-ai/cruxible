@@ -39,7 +39,8 @@ def test_governed_query_example_has_mcp_client_factory_parity() -> None:
     result = handlers.handle_playbill_authoring_example("query-claims-by-type")
 
     assert result.payload == authoring_example("query-claims-by-type").model_dump(mode="json")
-    assert result.payload["artifact_format"] == "playbill-query-definition-v1"
+    assert result.payload["kind"] == "query_definition"
+    assert result.payload["query_definition"]["artifact_format"] == ("playbill-query-definition-v1")
     assert result.name == "query-claims-by-type"
 
 

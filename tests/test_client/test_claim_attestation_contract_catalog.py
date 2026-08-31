@@ -54,6 +54,6 @@ def test_claim_attestation_wire_catalog_is_current_and_exhaustive() -> None:
 
 def test_attestation_door_does_not_move_the_authoring_wire_catalog() -> None:
     assert AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST == (
-        "sha256:8754692fa551cbed00be32b17653f1e7298143b959082074dd2ef66e57989b79"
+        "sha256:dd8232f67da288502f2f5a52e2e16d320dcc9d496dd78e3938c42d56d2a207a1"
     )
     assert authoring_wire_contract_catalog_digest() == AUTHORING_WIRE_CONTRACT_CATALOG_DIGEST

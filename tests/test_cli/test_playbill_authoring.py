@@ -538,13 +538,29 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     runner = CliRunner()
     help_result = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
     assert help_result.exit_code == 0
-    assert "Input kind family: claim | procedure" in help_result.output
+    assert "Input kind family: claim | procedure | subject | query_definition" in (
+        help_result.output
+    )
 
-    for name in ("claim-existing-capture", "claim-flow-a", "claim-self-source", "procedure"):
+    for name in (
+        "claim-existing-capture",
+        "claim-flow-a",
+        "claim-self-source",
+        "procedure",
+        "subject",
+        "approval-policy",
+        "query-claims-by-type",
+    ):
         result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
-        assert payload["kind"] in {"claim", "procedure"}
+        assert payload["kind"] in {
+            "claim",
+            "procedure",
+            "subject",
+            "approval_policy",
+            "query_definition",
+        }
         assert "tag" not in payload
         if name == "procedure":
             assert [node["spec"]["tag"] for node in payload["definition"]["nodes"]] == [
@@ -556,6 +572,27 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
                 "playbill-transform-aggregate-items-spec-v1",
             ]
         assert result.stderr == ""
+
+
+def test_subject_propose_is_a_typed_deprecation_shim(tmp_path: Path) -> None:
+    envelope = tmp_path / "subject.json"
+    envelope.write_text("{}\n")
+    result = CliRunner().invoke(
+        cli,
+        [
+            "playbill",
+            "subject",
+            "propose",
+            "--envelope",
+            str(envelope),
+            "--name",
+            "old-path",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "playbill.write_surface_deprecated" in result.output
+    assert "playbill authoring create --example subject" in result.output
 
 
 @pytest.mark.parametrize(

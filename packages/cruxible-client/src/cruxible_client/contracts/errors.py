@@ -108,6 +108,18 @@ class PlaybillInstanceIncompatiblePrereleaseContent(PlaybillFormatError):
         )
 
 
+class PlaybillDeprecatedWriteError(PlaybillFormatError):
+    """A removed bespoke writer names the coordinator replacement."""
+
+    error_code = "playbill.write_surface_deprecated"
+
+    def __init__(self, *, replacement: str) -> None:
+        self.replacement = replacement
+        super().__init__(
+            f"{self.error_code}: this write surface is deprecated; use `{replacement}`"
+        )
+
+
 class PlaybillBootstrapError(PlaybillError):
     """Genesis does not reproduce from the supplied out-of-band trust root."""
 
@@ -214,6 +226,7 @@ __all__ = [
     "DocumentNotFoundError",
     "PlaybillBootstrapError",
     "PlaybillCasError",
+    "PlaybillDeprecatedWriteError",
     "PlaybillError",
     "PlaybillFormatError",
     "PlaybillGitError",

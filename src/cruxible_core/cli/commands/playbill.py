@@ -31,7 +31,7 @@ from cruxible_client.authoring.examples import (
     AUTHORING_EXAMPLE_NAMES,
     AuthoringExampleName,
     authoring_example,
-    query_claims_by_type_example,
+    document_example,
 )
 from cruxible_client.authoring.inputs import AuthoringInputV1, ClaimInput
 from cruxible_client.authoring.sources import (
@@ -51,6 +51,7 @@ from cruxible_client.contracts.documents import DocumentShell
 from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     DocumentNotFoundError,
+    PlaybillDeprecatedWriteError,
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.primitives import canonical_json
@@ -512,11 +513,27 @@ def document_group() -> None:
 
 
 @document_group.command("propose")
-@click.option("--envelope", required=True, type=click.Path(exists=True, dir_okay=False))
+@click.option("--envelope", type=click.Path(exists=True, dir_okay=False))
+@click.option("--example", type=click.Choice(["document"]))
 @click.option("--name", "proposal_name")
 @json_option
 @handle_errors
-def propose_document(envelope: str, proposal_name: str, output_json: bool) -> None:
+def propose_document(
+    envelope: str | None,
+    example: str | None,
+    proposal_name: str | None,
+    output_json: bool,
+) -> None:
+    if (envelope is None) == (example is None):
+        raise click.UsageError("choose exactly one of --envelope or --example")
+    if example is not None:
+        if proposal_name is not None:
+            raise click.UsageError("--name applies only when --envelope is supplied")
+        _emit_json(document_example().model_dump(mode="json"))
+        return
+    if proposal_name is None:
+        raise click.UsageError("--name is required with --envelope")
+    assert envelope is not None
     shell = _read_model(envelope, DocumentShell)
     result = _server_call(
         lambda client, instance_id: client.propose_playbill_document(
@@ -1144,16 +1161,10 @@ def subject_group() -> None:
 @json_option
 @handle_errors
 def propose_subject(envelope: str, proposal_name: str, output_json: bool) -> None:
-    shell = _read_mapping(envelope)
-    result = _server_call(
-        lambda client, instance_id: client.propose_playbill_subject(
-            instance_id,
-            shell=shell,
-            proposal_name=proposal_name,
-        ),
-        command_name="playbill subject propose",
+    del envelope, proposal_name, output_json
+    raise PlaybillDeprecatedWriteError(
+        replacement="cruxible playbill authoring create --example subject"
     )
-    _emit_json(result.model_dump(mode="json"))
 
 
 @subject_group.command("list")
@@ -1538,10 +1549,10 @@ def create_authoring_intent(
     """Create a durable authoring intent or print a schema-derived example.
 
     \b
-    Input kind family: claim | procedure (tagless).
+    Input kind family: claim | procedure | subject | query_definition |
+    approval_policy | change_set (tagless).
 
-    Use --example claim-flow-a|claim-self-source|procedure for a
-    model-generated starting point.
+    Use --example for a model-generated starting point.
     """
 
     if (payload is None) == (example_name is None):
@@ -2135,26 +2146,10 @@ def propose_query_definition(
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
-    if (envelope is None) == (example is None):
-        raise click.UsageError("choose exactly one of --envelope or --example")
-    if example is not None:
-        if proposal_name is not None:
-            raise click.UsageError("--name applies only when --envelope is supplied")
-        _emit_json(query_claims_by_type_example().model_dump(mode="json"))
-        return
-    if proposal_name is None:
-        raise click.UsageError("--name is required with --envelope")
-    assert envelope is not None
-    definition = _read_mapping(envelope)
-    result = _server_call(
-        lambda client, instance_id: client.propose_playbill_query_definition(
-            instance_id,
-            query=definition,
-            proposal_name=proposal_name,
-        ),
-        command_name="playbill query propose",
+    del envelope, example, proposal_name, output_json
+    raise PlaybillDeprecatedWriteError(
+        replacement="cruxible playbill authoring create --example query-claims-by-type"
     )
-    _emit_json(result.model_dump(mode="json"))
 
 
 @query_group.command("list")

@@ -94,6 +94,7 @@ from cruxible_client.contracts.authoring.models import (
     ProcedureAuthoringPayloadV2,
     PublicationSourceObservationV2,
     SelfSourceBodyV1,
+    SubjectAuthoringPayloadV1,
     authoring_program_digest,
 )
 from cruxible_client.contracts.canonical import (
@@ -421,25 +422,6 @@ class NextPage:
 
 
 @dataclass(frozen=True)
-class SubjectDraft:
-    _playbill: Playbill = field(repr=False, compare=False)
-    shell: SubjectShell
-
-    @property
-    def address(self) -> str:
-        return self.shell.identity.name
-
-    def propose(self, *, proposal_name: str) -> Proposal:
-        result = self._playbill._client.propose_playbill_subject(
-            self._playbill._instance_id,
-            shell=self.shell.model_dump(mode="json"),
-            proposal_name=proposal_name,
-            base=_api_coordinate(self._playbill.coordinate),
-        )
-        return Proposal.from_inspection(self._playbill, result)
-
-
-@dataclass(frozen=True)
 class ClaimTypeDraft:
     _playbill: Playbill = field(repr=False, compare=False)
     definition: ClaimType
@@ -466,6 +448,7 @@ class _IntentDraft:
         | ClaimAuthoringPayloadV2
         | ClaimAuthoringPayloadV3
         | ProcedureAuthoringPayloadV2
+        | SubjectAuthoringPayloadV1
     )
     reference_expectations: tuple[AuthoringReferenceExpectationV1, ...]
     program_stamp: AuthoringProgramStampV1
@@ -497,6 +480,23 @@ class ClaimDraft(_IntentDraft):
 @dataclass(frozen=True)
 class ProcedureDraft(_IntentDraft):
     pass
+
+
+@dataclass(frozen=True)
+class SubjectDraft(_IntentDraft):
+    shell: SubjectShell
+
+    @property
+    def address(self) -> str:
+        return self.shell.identity.name
+
+    def propose(self, *, proposal_name: str) -> Proposal:
+        del proposal_name
+        from cruxible_client.contracts.errors import PlaybillDeprecatedWriteError
+
+        raise PlaybillDeprecatedWriteError(
+            replacement="cruxible playbill authoring create --example subject"
+        )
 
 
 class Intent:
@@ -611,7 +611,7 @@ class Intent:
         ).intent
         return self
 
-    def reprepare(self, *, draft: ClaimDraft | ProcedureDraft) -> Intent:
+    def reprepare(self, *, draft: ClaimDraft | ProcedureDraft | SubjectDraft) -> Intent:
         if draft._playbill is not self._playbill:
             raise ValueError("replacement draft belongs to another Playbill connection")
         result = self._playbill._client.compile_playbill_authoring(
@@ -1072,15 +1072,23 @@ class Playbill:
         if isinstance(subject, SubjectRef):
             self._assert_coordinate(subject.coordinate)
         kind, identifier = _subject_parts(address)
+        shell = SubjectShell(
+            identity=ArtifactIdentity(kind="Subject", name=address),
+            subject_kind=kind,
+            subject_id=identifier,
+            pins=tuple(pins),
+            lifecycle=lifecycle,
+        )
         return SubjectDraft(
             self,
-            SubjectShell(
-                identity=ArtifactIdentity(kind="Subject", name=address),
-                subject_kind=kind,
-                subject_id=identifier,
-                pins=tuple(pins),
-                lifecycle=lifecycle,
+            SubjectAuthoringPayloadV1(subject=shell),
+            (),
+            _program_stamp(
+                "subject",
+                {"subject": shell.model_dump(mode="json")},
             ),
+            DiagnosticSourceMap(()),
+            shell,
         )
 
     def claim_type(

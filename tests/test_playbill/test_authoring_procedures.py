@@ -4,16 +4,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cruxible_client.authoring.examples import procedure_example
-from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+import pytest
+
+from cruxible_client.authoring.examples import procedure_example, query_claims_by_type_example
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactLifecycle, ArtifactPin
 from cruxible_client.contracts.authoring.inputs import lower_authoring_input
 from cruxible_client.contracts.authoring.models import (
+    ChangeSetAuthoringPayloadV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    QueryDefinitionAuthoringPayloadV1,
 )
 from cruxible_client.contracts.canonical import ArtifactDigest, typed_digest
 from cruxible_client.contracts.captures import CanonicalDurationV1
-from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
+from cruxible_client.contracts.procedures.artifacts import (
+    ProcedureOwnedContractV1,
+    parse_procedure,
+    procedure_path,
+)
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
 from cruxible_client.contracts.procedures.models import (
     ProcedureBudgetV3,
@@ -24,6 +32,11 @@ from cruxible_client.contracts.procedures.models import (
     ProjectNodeV3,
     StateTapNodeV3,
 )
+from cruxible_client.contracts.query.definitions import (
+    QueryDefinitionV1,
+    query_definition_digest,
+)
+from cruxible_client.contracts.query.grammar import QueryProjectionV1
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.authoring.preflight import compute_preflight
 from cruxible_core.playbill.authoring.store import AuthoringIntentStore
@@ -164,6 +177,41 @@ def _carried_definition() -> dict[str, object]:
     }
 
 
+def _change_set_query() -> QueryDefinitionV1:
+    example = query_claims_by_type_example().query_definition
+    assert example.projection is not None
+    return example.model_copy(
+        update={
+            "pins": (),
+            "projection": QueryProjectionV1(fields=(example.projection.fields[0],)),
+        }
+    )
+
+
+def _change_set_payload(query: QueryDefinitionV1) -> ChangeSetAuthoringPayloadV1:
+    definition = _slot_definition().model_dump(mode="json", by_alias=True)
+    definition["nodes"][0]["query"] = {  # type: ignore[index]
+        "tag": "playbill-authoring-candidate-reference-v1",
+        "role": "query",
+        "target": query.identity.model_dump(mode="json"),
+        "resolution": "candidate_in_change_set",
+    }
+    definition["pin_slots"] = [
+        slot
+        for slot in definition["pin_slots"]
+        if slot["slot_name"] != "query"  # type: ignore[index]
+    ]
+    return ChangeSetAuthoringPayloadV1(
+        members=(
+            ProcedureAuthoringPayloadV1(
+                definition=definition,
+                activation_policy="drain",
+            ),
+            QueryDefinitionAuthoringPayloadV1(query_definition=query),
+        )
+    )
+
+
 def test_max_items_requires_a_referenced_list_contract(tmp_path: Path) -> None:
     coordinator, actor = _coordinator(tmp_path)
     opaque = ProcedureAuthoringPayloadV2(
@@ -233,6 +281,134 @@ def test_served_procedure_example_reaches_all_six_typed_specs(tmp_path: Path) ->
         canonical_timestamp=TIMESTAMP,
     )
     assert result.verdict == "passed"
+
+
+def test_change_set_successor_resolves_candidate_query_to_exact_new_digest(
+    tmp_path: Path,
+) -> None:
+    instance, owner = initialize_local(tmp_path)
+    coordinator = AuthoringIntentCoordinator(
+        instance=instance,
+        store=AuthoringIntentStore(
+            instance.root / instance.descriptor.storage.exhaust,
+            token_factory=lambda: "3" * 32,
+        ),
+    )
+    actor = AuthenticatedActor(actor_id="owner")
+    query = _change_set_query()
+    first = coordinator.compile(
+        actor=actor,
+        payload=_change_set_payload(query),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert first.verdict == "passed", first.frontier
+    initial_intent = coordinator.list_pending(actor=actor).intents[0]
+    initial = compute_preflight(
+        coordinator.instance,
+        intent=initial_intent,
+        actor=actor,
+    ).lowered
+    assert initial is not None
+    _accept_tree(
+        coordinator.instance,
+        owner,
+        initial.proposed_tree,
+        timestamp=TIMESTAMP,
+        proposal_name="initial-query-and-procedure",
+    )
+
+    successor_query = query.model_copy(
+        update={
+            "description": "A revised governed query.",
+            "lifecycle": ArtifactLifecycle(
+                predecessor_digest=query_definition_digest(query).tagged
+            ),
+        }
+    )
+    successor = AuthoringIntentCoordinator(
+        instance=coordinator.instance,
+        store=AuthoringIntentStore(
+            coordinator.instance.root / coordinator.instance.descriptor.storage.exhaust,
+            token_factory=lambda: "4" * 32,
+        ),
+    )
+    compiled = successor.compile(
+        actor=actor,
+        payload=_change_set_payload(successor_query),
+        canonical_timestamp="2026-08-21T12:01:00.000000Z",
+    )
+    assert compiled.verdict == "passed", compiled.frontier
+    intent = successor.list_pending(actor=actor).intents[-1]
+    lowered = compute_preflight(
+        coordinator.instance,
+        intent=intent,
+        actor=actor,
+    ).lowered
+    assert lowered is not None
+    accepted_procedure = parse_procedure(
+        lowered.proposed_tree[procedure_path("triage")],
+        path=procedure_path("triage"),
+    )
+    query_pin = next(pin for pin in accepted_procedure.pins if pin.role == "query")
+    assert query_pin.artifact_digest == query_definition_digest(successor_query).tagged
+
+
+def test_change_set_membership_and_candidate_reference_refusals(tmp_path: Path) -> None:
+    query = _change_set_query()
+    with pytest.raises(ValueError, match="at least 2 items"):
+        ChangeSetAuthoringPayloadV1(
+            members=(QueryDefinitionAuthoringPayloadV1(query_definition=query),)
+        )
+    with pytest.raises(ValueError, match="sorted by semantic identity"):
+        ChangeSetAuthoringPayloadV1(members=tuple(reversed(_change_set_payload(query).members)))
+
+    coordinator, actor = _coordinator(tmp_path)
+    created = coordinator.create(
+        actor=actor,
+        payload=_change_set_payload(query),
+        canonical_timestamp=TIMESTAMP,
+    )
+    renamed_values = query.model_dump(mode="json")
+    renamed_values["identity"] = {"kind": "QueryDefinition", "name": "renamed"}
+    renamed = QueryDefinitionV1.model_validate(renamed_values)
+    with pytest.raises(ValueError, match="cannot change member identity"):
+        coordinator.replace_payload(
+            created.intent.intent_id,
+            actor=actor,
+            payload=_change_set_payload(renamed),
+        )
+
+    outside_root = tmp_path / "outside"
+    outside_root.mkdir()
+    coordinator, actor = _coordinator(outside_root)
+    outside = _change_set_payload(query)
+    procedure = outside.members[0]
+    assert isinstance(procedure, ProcedureAuthoringPayloadV1)
+    definition = dict(procedure.definition)
+    nodes = [dict(node) for node in definition["nodes"]]  # type: ignore[arg-type]
+    nodes[0]["query"] = {
+        "tag": "playbill-authoring-candidate-reference-v1",
+        "role": "query",
+        "target": {"kind": "QueryDefinition", "name": "outside"},
+        "resolution": "candidate_in_change_set",
+    }
+    definition["nodes"] = nodes
+    refused = coordinator.compile(
+        actor=actor,
+        payload=outside.model_copy(
+            update={
+                "members": (
+                    procedure.model_copy(update={"definition": definition}),
+                    outside.members[1],
+                )
+            }
+        ),
+        canonical_timestamp=TIMESTAMP,
+    )
+    assert refused.verdict == "refused"
+    assert refused.frontier.diagnostics[0].code == (
+        "playbill.authoring.candidate_reference_outside_change_set"
+    )
 
 
 def test_invalid_definition_message_excludes_pydantic_metadata(tmp_path: Path) -> None:
