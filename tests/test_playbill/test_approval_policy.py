@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import cruxible_core.playbill.bootstrap as playbill_bootstrap_module
+import cruxible_core.playbill.instance as playbill_instance_module
 from cruxible_client.contracts.approval_policy import (
     APPROVAL_POLICY_PATH,
     ApprovalPolicyV1,
@@ -23,6 +25,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     render_procedure_runtime_policy,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.compiler import PC_E1_COMPILER
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.procedures.execution import resolve_procedure_runtime_policy
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -146,6 +149,51 @@ def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
     )
     assert row.declaring_artifact_identity == "ProcedureRuntimePolicy:instance"
     assert row.policy["provider_output_bytes_cap"] == 2_097_152
+
+
+def test_legacy_compiler_refuses_runtime_policy_at_candidate_time(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with monkeypatch.context() as legacy:
+        legacy.setattr(
+            playbill_instance_module,
+            "current_compiler_coordinate",
+            lambda: PC_E1_COMPILER,
+        )
+        legacy.setattr(
+            playbill_instance_module,
+            "seeded_procedure_runtime_policy",
+            lambda: None,
+        )
+        legacy.setattr(
+            playbill_bootstrap_module,
+            "seeded_procedure_runtime_policy",
+            lambda: None,
+        )
+        instance, _owner = initialize_local(tmp_path)
+
+    base = instance.accepted_coordinate()
+    tree = instance.tree_at(base.git_oid)
+    assert instance.descriptor.compiler == PC_E1_COMPILER
+    assert PROCEDURE_RUNTIME_POLICY_PATH not in tree
+
+    proposal = _submit_tree(
+        instance,
+        {
+            **tree,
+            PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
+                ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576)
+            ),
+        },
+        name="seed-runtime-policy-on-legacy-instance",
+    )
+
+    assert proposal.candidate is None
+    assert [item.code for item in proposal.evaluation.diagnostics] == [
+        "playbill.procedure_runtime_policy.compiler_unsupported"
+    ]
+    assert instance.accepted_coordinate() == base
 
 
 def test_policy_tightening_and_loosening_follow_the_parent_policy(

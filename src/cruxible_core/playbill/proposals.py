@@ -240,6 +240,7 @@ from cruxible_core.playbill.closure import (
     judge_dependency_closure,
     update_dependency_index,
 )
+from cruxible_core.playbill.compiler import projection_registry_for_compiler
 from cruxible_core.playbill.exhaust.promotions import (
     AcceptedExhaustPromotionV1,
     ExhaustPromotionError,
@@ -2147,6 +2148,19 @@ def _procedure_runtime_policy_member(context: _MemberContext) -> _MemberVerdict:
         PROCEDURE_RUNTIME_POLICY_PATH,
     ):
         return _MemberVerdict(diagnostics=(_unregistered(context.path),))
+    if not projection_registry_for_compiler(context.current.compiler).supports_artifact_kind(
+        "procedure-runtime-policy"
+    ):
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.procedure_runtime_policy.compiler_unsupported",
+                    "The instance compiler does not recognize ProcedureRuntimePolicy; "
+                    "migrate the instance compiler before proposing this singleton.",
+                    context.path,
+                ),
+            )
+        )
     try:
         policy = parse_procedure_runtime_policy(context.content, path=context.path)
     except ProcedureRuntimePolicyFormatError as exc:
