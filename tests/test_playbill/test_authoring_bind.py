@@ -10,6 +10,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client.authoring.bind import (
     AuthoringBindAmbiguityError,
+    AuthoringBindError,
     bind_working_selection_input,
 )
 from cruxible_client.authoring.examples import (
@@ -63,6 +64,31 @@ def test_ambiguous_anchor_names_all_overlapping_candidate_offsets() -> None:
     assert caught.value.observed_occurrence_count == 2
     assert caught.value.candidate_byte_offsets == (0, 1)
     assert "playbill.authoring.anchor_ambiguous" in str(caught.value)
+    assert "--occurrence" in str(caught.value)
+
+
+def test_explicit_occurrence_selects_the_requested_overlapping_anchor() -> None:
+    payload = bind_working_selection_input(
+        _input(),
+        content=b"aaa",
+        anchor="aa",
+        occurrence=2,
+    )
+
+    assert payload.source.selector.start_byte == 1
+    assert payload.source.selector.end_byte == 3
+    assert payload.source.selected_content == b"aa"
+
+
+@pytest.mark.parametrize("occurrence", [0, 3])
+def test_explicit_occurrence_must_name_an_observed_anchor(occurrence: int) -> None:
+    with pytest.raises(AuthoringBindError, match="--occurrence"):
+        bind_working_selection_input(
+            _input(),
+            content=b"aaa",
+            anchor="aa",
+            occurrence=occurrence,
+        )
 
 
 def test_every_example_is_constructed_as_a_valid_authoring_union_member() -> None:

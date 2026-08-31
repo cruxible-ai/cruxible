@@ -170,7 +170,8 @@ cruxible playbill authoring get INTENT_ID
 cruxible playbill authoring resume INTENT_ID
 cruxible playbill authoring list
 cruxible playbill authoring compile PAYLOAD [--intent-id INTENT_ID]
-cruxible playbill authoring bind --file PATH --anchor TEXT [--window-lines N]
+cruxible playbill authoring bind --file PATH --anchor TEXT [--occurrence N]
+  [--window-lines N]
   --payload-file CLAIM_STUB
 cruxible playbill authoring preflight INTENT_ID
 cruxible playbill authoring rebase INTENT_ID

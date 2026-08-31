@@ -1637,6 +1637,12 @@ def compile_authoring(payload: str, intent_id: str | None, output_json: bool) ->
 @click.option("--anchor", required=True)
 @click.option("--window-lines", type=click.IntRange(min=0), default=None)
 @click.option(
+    "--occurrence",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Select the 1-based anchor occurrence when the anchor is not unique.",
+)
+@click.option(
     "--payload-file",
     required=True,
     type=click.Path(exists=True, dir_okay=False),
@@ -1648,6 +1654,7 @@ def bind_authoring_selection(
     source_path: str,
     anchor: str,
     window_lines: int | None,
+    occurrence: int | None,
     payload_file: str,
     output_json: bool,
 ) -> None:
@@ -1666,6 +1673,7 @@ def bind_authoring_selection(
         content=content,
         anchor=anchor,
         window_lines=window_lines,
+        occurrence=occurrence,
     )
     result = _server_call(
         lambda client, instance_id: client.compile_playbill_authoring(

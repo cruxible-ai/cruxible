@@ -888,6 +888,61 @@ def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
     assert result.exit_code == 1
     assert "playbill.authoring.anchor_ambiguous" in result.output
     assert '"candidate_byte_offsets":[0,1]' in result.output
+    assert "--occurrence" in result.output
+
+
+def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    source = tmp_path / "ambiguous.txt"
+    source.write_text("aaa")
+    stub = claim_self_source_example().model_dump(mode="json")
+    stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
+    stub["citation_role"] = "evidence"
+    payload_file = tmp_path / "stub.json"
+    payload_file.write_text(json.dumps(stub))
+    calls: list[dict[str, object]] = []
+
+    class StubClient:
+        def compile_playbill_authoring(
+            self,
+            instance_id: str,
+            *,
+            payload: dict[str, object],
+            intent_id: str | None,
+        ) -> contracts.PlaybillAuthoringPreflightResult:
+            calls.append(payload)
+            return contracts.PlaybillAuthoringPreflightResult(
+                verdict="passed",
+                certificate={"certificate_digest": "sha256:" + "6" * 64},
+                frontier={"diagnostics": []},
+            )
+
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: StubClient())
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "authoring",
+            "bind",
+            "--file",
+            str(source),
+            "--anchor",
+            "aa",
+            "--occurrence",
+            "2",
+            "--payload-file",
+            str(payload_file),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls[0]["source"]["selector"]["start_byte"] == 1  # type: ignore[index]
 
 
 @pytest.mark.parametrize("citation_role", ["evidence", "copy"])
