@@ -100,7 +100,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need one Subject's accepted lineage across generations."
     ),
     "cruxible_playbill_propose_claim_type": (
-        "Use when you need a governed ClaimType before any Claim can state that predicate."
+        "Use when you need a governed ClaimType before any Claim can state that predicate; "
+        "pass a complete ClaimTypeInputV1 whose evidence rules match its capture contracts."
     ),
     "cruxible_playbill_claim_type_migrate": (
         "Use when a ClaimType and all of its dependent Claim dispositions must change atomically."
@@ -127,7 +128,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use when you need a durable machine-owned intent before iterating on a governed write."
     ),
     "cruxible_playbill_authoring_example": (
-        "Use when you need a model-constructed ClaimType, Claim, or Procedure input template."
+        "Use when you need a model-constructed Claim, Procedure, Subject, QueryDefinition, "
+        "or ApprovalPolicy authoring input template."
     ),
     "cruxible_playbill_authoring_get": (
         "Use when you need the current durable content and state of one authoring intent."

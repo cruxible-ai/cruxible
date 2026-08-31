@@ -11,6 +11,7 @@ from cruxible_client import contracts
 from cruxible_client.authoring.examples import AuthoringExampleName, authoring_example
 from cruxible_client.authoring.inputs import ClaimInput
 from cruxible_core.mcp import handlers
+from cruxible_core.mcp.tool_prompts import tool_description
 from cruxible_core.playbill.claim_type_inputs import (
     claim_type_input_example,
 )
@@ -43,6 +44,12 @@ def test_governed_query_example_has_mcp_client_factory_parity() -> None:
 
 def test_public_example_vocabulary_exactly_matches_authoring_input_examples() -> None:
     assert get_args(contracts.PlaybillAuthoringExampleName) == get_args(AuthoringExampleName)
+
+
+def test_claim_type_uses_typed_proposal_input_not_a_coordinator_example() -> None:
+    assert "claim-type" not in get_args(contracts.PlaybillAuthoringExampleName)
+    assert "ClaimType" not in tool_description("cruxible_playbill_authoring_example")
+    assert "ClaimTypeInputV1" in tool_description("cruxible_playbill_propose_claim_type")
 
 
 def test_attestation_door_example_hints_have_mcp_client_parity() -> None:

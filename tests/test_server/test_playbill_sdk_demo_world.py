@@ -263,7 +263,7 @@ def test_empty_evidence_policy_is_candidate_through_cli_and_sdk(
     assert list(sdk_proposal.warnings) == cli_proposal["lint"]["warnings"]
 
 
-def test_cli_claim_type_example_is_accepted_in_a_fresh_world(
+def test_cli_claim_type_input_is_accepted_in_a_fresh_world(
     playbill_http: tuple[TestClient, str, Path],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -274,15 +274,13 @@ def test_cli_claim_type_example_is_accepted_in_a_fresh_world(
     transport._client = http  # type: ignore[assignment]
     monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: transport)
     runner = CliRunner()
-    example = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
-    assert example.exit_code == 0, example.output
-    example_payload = json.loads(example.stdout)
+    example_payload = defaulted_claim_type_input_example().model_dump(mode="json")
     assert (
         accepted_contract_digest
         in example_payload["evidence_admission_policy"]["rules"][0]["capture_contract_digests"]
     )
-    input_path = tmp_path / "printed-claim-type-example.json"
-    input_path.write_text(example.stdout, encoding="utf-8")
+    input_path = tmp_path / "claim-type-input.json"
+    input_path.write_text(json.dumps(example_payload), encoding="utf-8")
 
     proposed = runner.invoke(
         cli,

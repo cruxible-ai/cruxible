@@ -72,10 +72,7 @@ from cruxible_core.cli.commands._common import (
     json_option,
 )
 from cruxible_core.cli.main import handle_errors
-from cruxible_core.playbill.claim_type_inputs import (
-    ClaimTypeInputV1,
-    defaulted_claim_type_input_example,
-)
+from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.coverage.adapter import (
     WorkingPathBindingsV1,
@@ -249,12 +246,6 @@ _CLAIM_TYPE_MIGRATION_ADAPTER: TypeAdapter[ClaimTypeMigrationRequest] = TypeAdap
     ClaimTypeMigrationRequest
 )
 _CLAIM_RETIRE_ADAPTER = TypeAdapter(ClaimRetireRequestV1)
-
-
-def _cli_claim_type_input_example() -> ClaimTypeInputV1:
-    """Give CLI authors the same supported-by-default source rule as the SDK."""
-
-    return defaulted_claim_type_input_example()
 
 
 def _claim_retire_example() -> ClaimRetireRequestV1:
@@ -1221,35 +1212,17 @@ def claim_type_group() -> None:
 @claim_type_group.command("propose")
 @click.option("--input", "input_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--envelope", type=click.Path(exists=True, dir_okay=False), hidden=True)
-@click.option("--example", is_flag=True, help="Print the model-generated ClaimType input.")
 @click.option("--name", "proposal_name")
 @json_option
 @handle_errors
 def propose_claim_type(
     input_path: str | None,
     envelope: str | None,
-    example: bool,
     proposal_name: str | None,
     output_json: bool,
 ) -> None:
-    choices = (input_path is not None, envelope is not None, example)
-    if sum(choices) != 1:
-        raise click.UsageError("provide exactly one of --input or --example")
-    if example:
-        click.echo(
-            "# Edit anticipated_source_ids and evidence_admission_policy.rules for the "
-            "source contracts this type admits.",
-            err=True,
-        )
-        click.echo(
-            json.dumps(
-                _cli_claim_type_input_example().model_dump(mode="json"),
-                ensure_ascii=False,
-                indent=2,
-                sort_keys=True,
-            )
-        )
-        return
+    if (input_path is None) == (envelope is None):
+        raise click.UsageError("provide exactly one ClaimType input")
     if envelope is not None:
         envelope_payload = _read_mapping(envelope)
         resolved_name = proposal_name or envelope_payload.get("predicate")
@@ -1275,7 +1248,8 @@ def propose_claim_type(
                 f"{_validation_path(tuple(item['loc']))}: {item['msg']}"
                 for item in exc.errors(include_url=False)
             )
-            + ". Matching example: playbill claim-type propose --example"
+            + ". Pass a complete ClaimTypeInputV1 whose evidence_admission_policy.rules "
+            "match its capture contracts"
         ) from exc
     input_result = _server_call(
         lambda client, instance_id: client.propose_playbill_claim_type_input(

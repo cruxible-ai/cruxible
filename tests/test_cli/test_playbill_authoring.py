@@ -14,10 +14,6 @@ from cruxible_client import CruxibleClient, contracts
 from cruxible_client.authoring.blocks import render_projection_opening
 from cruxible_client.authoring.examples import claim_flow_a_example, claim_self_source_example
 from cruxible_client.contracts.artifacts import ArtifactIdentity
-from cruxible_client.contracts.captures import (
-    DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT,
-    capture_contract_digest,
-)
 from cruxible_client.contracts.declared_blocks import (
     ProjectionBlockStampV1,
     ProjectionClaimBackingV1,
@@ -166,22 +162,15 @@ def test_cli_claim_type_propose_delivers_nonblocking_source_lint(
 def test_cli_examples_are_supported_and_schema_discoverable() -> None:
     runner = CliRunner()
 
-    claim_type = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
+    claim_type_help = runner.invoke(cli, ["playbill", "claim-type", "propose", "--help"])
+    claim_type_example = runner.invoke(cli, ["playbill", "claim-type", "propose", "--example"])
     retirement = runner.invoke(cli, ["playbill", "claim", "retire", "--example"])
     create_help = runner.invoke(cli, ["playbill", "authoring", "create", "--help"])
 
-    assert claim_type.exit_code == 0, claim_type.output
-    claim_type_payload = json.loads(claim_type.stdout)
-    (rule,) = claim_type_payload["evidence_admission_policy"]["rules"]
-    assert rule["evidence_kinds"] == ["self_asserted"]
-    assert (
-        capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged
-        in rule["capture_contract_digests"]
-    )
-    assert claim_type_payload["predicate"] == "project.work_item.status"
-    assert claim_type_payload["anticipated_source_ids"] == ["repo.replace-me"]
-    assert "evidence_admission_policy.rules" in claim_type.stderr
-    assert "anticipated_source_ids" in claim_type.stderr
+    assert claim_type_help.exit_code == 0, claim_type_help.output
+    assert "--example" not in claim_type_help.output
+    assert claim_type_example.exit_code == 2
+    assert "No such option: --example" in claim_type_example.output
 
     assert retirement.exit_code == 0, retirement.output
     retirement_payload = json.loads(retirement.stdout)
