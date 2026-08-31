@@ -50,4 +50,4 @@ def test_query_propose_is_a_typed_deprecation_shim() -> None:
 
     assert result.exit_code != 0
     assert "playbill.write_surface_deprecated" in result.output
-    assert "playbill authoring create --example query-claims-by-type" in result.output
+    assert "authoring coordinator with payload kind 'query_definition'" in result.output

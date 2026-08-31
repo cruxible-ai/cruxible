@@ -592,7 +592,7 @@ def test_subject_propose_is_a_typed_deprecation_shim(tmp_path: Path) -> None:
 
     assert result.exit_code != 0
     assert "playbill.write_surface_deprecated" in result.output
-    assert "playbill authoring create --example subject" in result.output
+    assert "authoring coordinator with payload kind 'subject'" in result.output
 
 
 @pytest.mark.parametrize(
