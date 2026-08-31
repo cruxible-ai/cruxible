@@ -36,7 +36,7 @@ def bound_publication_registrations(
     try:
         latest = {
             event.intent.intent_id: event.intent
-            for event in AuthoringIntentStore(exhaust_root).events()
+            for event in AuthoringIntentStore(exhaust_root, read_only=True).events()
         }
     except (OSError, PlaybillError):
         return None

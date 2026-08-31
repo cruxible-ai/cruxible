@@ -70,7 +70,6 @@ from cruxible_client.contracts.claims import (
     new_claim_id,
     parse_claim,
 )
-from cruxible_client.contracts.declared_blocks import frame_projection_block
 from cruxible_client.contracts.errors import ApprovalIntegrityError, PlaybillError
 from cruxible_client.contracts.source_references import (
     CasSourceReferenceV1,
@@ -166,12 +165,7 @@ def _rendered_publication_block(
         payload.source, SelfSourceBodyV1
     ):
         raise InsertionProtocolError("publication intent lost its Flow-B self-source")
-    framed = frame_projection_block(stamp=preparation.stamp, body=payload.source.content)
-    if (
-        len(framed) != preparation.inserted_block_byte_length
-        or "sha256:" + hashlib.sha256(framed).hexdigest() != preparation.inserted_block_digest
-    ):
-        raise InsertionProtocolError("rendered publication block differs from its preparation")
+    framed = build_publication_preparation(preparation, body=payload.source.content)
     return base64.b64encode(framed).decode("ascii")
 
 

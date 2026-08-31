@@ -3195,12 +3195,15 @@ def resolve_coverage(
         _emit_json(result.model_dump(mode="json"))
         return
     if output_brief:
-        drifted = [span for span in result.spans if span.match_state == "drifted"]
         _emit_brief(
-            outcome=f"{result.health} ({result.summary.exact} exact, {len(drifted)} drifted)",
+            outcome=(
+                f"{result.health} ({result.summary.exact} exact, {result.summary.drifted} drifted)"
+            ),
             ids={"coordinate": result.at.git_oid, "epoch": str(result.epoch)},
             next_command=(
-                "cruxible playbill next --brief" if drifted or result.health != "complete" else None
+                "cruxible playbill next --brief"
+                if result.summary.drifted or result.health != "complete"
+                else None
             ),
         )
         return

@@ -61,7 +61,7 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageSpanResultV3,
     LogicalSourceIdentityV1,
     PlaybillCitationWindowObservationV1,
-    strongest_match_state,
+    coverage_span_match_state,
     weakest_health,
 )
 from cruxible_core.playbill.coverage.indexes import (
@@ -484,7 +484,7 @@ def _resolve_span_v3(
         for item in window_observations
         if item.source == span.source and item.citation_id in allowed_ids
     )
-    match_state: CoverageMatchStateV1 = strongest_match_state(card.match_state for card in kept)
+    match_state: CoverageMatchStateV1 = coverage_span_match_state(card.match_state for card in kept)
     return CoverageSpanResultV3(
         request=span,
         match_state=match_state,

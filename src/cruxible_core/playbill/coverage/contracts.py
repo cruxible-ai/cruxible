@@ -602,9 +602,9 @@ class CoverageSpanResultV3(_StrictCoverageModel):
         else:
             if not self.cards:
                 raise ValueError("a non-`none` span requires at least one card")
-            strongest = min(MATCH_STATE_PRECEDENCE[card.match_state] for card in self.cards)
-            if MATCH_STATE_PRECEDENCE[self.match_state] != strongest:
-                raise ValueError("a span reports the strongest state its cards carry")
+            expected = coverage_span_match_state(card.match_state for card in self.cards)
+            if self.match_state != expected:
+                raise ValueError("a span never hides drift behind another card state")
         if self.ambiguous_occurrence_count and self.match_state == "exact":
             raise ValueError("indistinguishable occurrences are never silently bound to one")
         if tuple(card.sort_key for card in self.cards) != tuple(
@@ -809,6 +809,15 @@ def strongest_match_state(states: Iterable[CoverageMatchStateV1]) -> CoverageMat
     return strongest
 
 
+def coverage_span_match_state(states: Iterable[CoverageMatchStateV1]) -> CoverageMatchStateV1:
+    """Roll up one span while making every drifted card visible to summary surfaces."""
+
+    materialized = tuple(states)
+    if "drifted" in materialized:
+        return "drifted"
+    return strongest_match_state(materialized)
+
+
 __all__ = [
     "COVERAGE_HEALTH_ABSENCE_IS_FACTUAL",
     "COVERAGE_HEALTH_PROVES_FRESHNESS",
@@ -838,6 +847,7 @@ __all__ = [
     "CoverageSpanRequestV1",
     "CoverageSpanResultV3",
     "CoverageWatcherHealthV1",
+    "coverage_span_match_state",
     "LogicalSourceIdentityV1",
     "PlaybillCitationWindowObservationV1",
     "logical_sources_sorted",

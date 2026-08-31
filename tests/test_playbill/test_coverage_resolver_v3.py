@@ -20,6 +20,7 @@ from cruxible_core.playbill.coverage.contracts import (
     CoverageSelectionV1,
     CoverageSpanRequestV1,
     CoverageSpanResultV3,
+    coverage_span_match_state,
 )
 from cruxible_core.playbill.coverage.resolver import resolve_coverage_v3
 from tests.test_playbill._coverage_support import (
@@ -177,6 +178,30 @@ def test_same_v3_inputs_resolve_byte_identically() -> None:
     assert canonical_bytes(first.model_dump(mode="json")) == canonical_bytes(
         second.model_dump(mode="json")
     )
+
+
+def test_span_rollup_never_masks_drift_behind_an_exact_card() -> None:
+    exact = _resolve().spans[0].cards[0]
+    drifted = exact.model_copy(
+        update={
+            "match_state": "drifted",
+            "occurrence_identity_digest": None,
+            "expected_commitment_digest": exact.observed_commitment_digest,
+            "observed_commitment_digest": "sha256:" + "f" * 64,
+            "reason_codes": ("commitment_superseded",),
+        }
+    )
+
+    assert coverage_span_match_state((exact.match_state, drifted.match_state)) == "drifted"
+    with pytest.raises(ValidationError, match="never hides drift"):
+        CoverageSpanResultV3(
+            request=CoverageSpanRequestV1(source=HANDBOOK),
+            match_state="exact",
+            health="complete",
+            absence_is_factual=False,
+            cards=tuple(sorted((exact, drifted), key=lambda card: card.sort_key)),
+            coverage=_resolve().spans[0].coverage,
+        )
 
 
 def test_the_frozen_coverage_v3_grammar_matches_its_golden() -> None:
