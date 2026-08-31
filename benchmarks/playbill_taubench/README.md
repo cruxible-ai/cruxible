@@ -85,10 +85,10 @@ The current ClaimInput bundle plans and settles as **nine** proposals:
 
 ```text
 1. claim_type:project.work_item.status  [playbill_propose_claim_type]
-2-4. subject:project.work_item/wi-10{1,2,3}  [playbill_propose_subject]
+2-4. subject:project.work_item/wi-10{1,2,3}  [playbill_authoring_submit]
 5-7. claim_input:project.work_item/wi-10{1,2,3}#project.work_item.status
      [playbill_authoring_submit]
-8. query_definition:project.work_items  [playbill_propose_query_definition]
+8. query_definition:project.work_items  [playbill_authoring_submit]
 9. procedure:project.work_item.digest  [playbill_authoring_submit]
 ```
 

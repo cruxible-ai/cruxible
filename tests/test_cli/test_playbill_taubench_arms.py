@@ -108,13 +108,13 @@ def test_the_seed_bundle_uses_only_surviving_governed_writers(
     ]
     assert [item["operation"] for item in groups] == [
         "playbill_propose_claim_type",
-        "playbill_propose_subject",
-        "playbill_propose_subject",
-        "playbill_propose_subject",
         "playbill_authoring_submit",
         "playbill_authoring_submit",
         "playbill_authoring_submit",
-        "playbill_propose_query_definition",
+        "playbill_authoring_submit",
+        "playbill_authoring_submit",
+        "playbill_authoring_submit",
+        "playbill_authoring_submit",
         "playbill_authoring_submit",
     ]
     # Each group settled its own generation, in the order the plan named them.

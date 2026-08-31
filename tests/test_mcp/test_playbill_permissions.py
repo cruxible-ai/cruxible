@@ -84,6 +84,7 @@ def test_admin_default_profile_is_exactly_the_writer_path(
         "cruxible_playbill_whoami",
         "cruxible_playbill_proposal_list",
         "cruxible_playbill_proposal_readmit",
+        "cruxible_playbill_policies_in_force",
         "cruxible_playbill_claim_type_migrate",
         "cruxible_playbill_claim_retire",
         "cruxible_playbill_claim_attest",

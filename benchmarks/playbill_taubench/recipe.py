@@ -236,8 +236,9 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
 
     The pure seed planner remains useful for pinning the bundle bytes, but the
     retired seed-apply and direct-Claim adapters no longer orchestrate writes.
-    This recipe therefore drives each declared dependency through its ordinary
-    proposal surface and each Claim/Procedure through AuthoringIntent.
+    This recipe therefore drives Subjects, Claims, QueryDefinitions, and
+    Procedures through AuthoringIntent. ClaimTypes retain their sanctioned
+    direct proposal surface.
     """
 
     planning = plan_seed_directory(bundle_dir, proposal_name=name)
@@ -265,6 +266,41 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
                 return str(admission["proposal_id"])
         raise RuntimeError(f"proposal response omitted its identity: {answer}")
 
+    def authoring_proposal_id(
+        *,
+        kind: Literal["subject", "query_definition"],
+        payload: Mapping[str, Any],
+        stem: str,
+    ) -> str:
+        authoring_dir = key_dir / "seed-authoring-inputs"
+        authoring_dir.mkdir(parents=True, exist_ok=True)
+        authoring_path = authoring_dir / f"{kind}-{stem}.json"
+        wrapper_key = "subject" if kind == "subject" else "query_definition"
+        authoring_path.write_text(
+            json.dumps(
+                {
+                    "kind": kind,
+                    wrapper_key: dict(payload),
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        created = run_cli_json(
+            "playbill",
+            "authoring",
+            "create",
+            str(authoring_path),
+        )
+        submitted = run_cli_json(
+            "playbill",
+            "authoring",
+            "submit",
+            str(created["intent"]["intent_id"]),
+        )
+        return str(submitted["status"]["proposal_id"])
+
     for path in sorted((bundle_dir / "claim-types").glob("*.json")):
         answer = run_cli_json(
             "playbill",
@@ -278,19 +314,14 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         record(f"claim_type:{path.stem}", "playbill_propose_claim_type", proposal_id(answer))
 
     for path in sorted((bundle_dir / "subjects").glob("*.json")):
-        answer = run_cli_json(
-            "playbill",
-            "subject",
-            "propose",
-            "--envelope",
-            str(path),
-            "--name",
-            f"{name}-{path.stem}",
-        )
         record(
             f"subject:project.work_item/{path.stem}",
-            "playbill_propose_subject",
-            proposal_id(answer),
+            "playbill_authoring_submit",
+            authoring_proposal_id(
+                kind="subject",
+                payload=json.loads(path.read_text(encoding="utf-8")),
+                stem=path.stem,
+            ),
         )
 
     working_sources = {
@@ -340,19 +371,14 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
         )
 
     for path in sorted((bundle_dir / "query-definitions").glob("*.json")):
-        answer = run_cli_json(
-            "playbill",
-            "query",
-            "propose",
-            "--envelope",
-            str(path),
-            "--name",
-            f"{name}-{path.stem}",
-        )
         record(
             f"query_definition:{path.stem}",
-            "playbill_propose_query_definition",
-            proposal_id(answer),
+            "playbill_authoring_submit",
+            authoring_proposal_id(
+                kind="query_definition",
+                payload=json.loads(path.read_text(encoding="utf-8")),
+                stem=path.stem,
+            ),
         )
 
     for path in sorted((bundle_dir / "procedures").glob("*.json")):

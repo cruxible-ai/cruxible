@@ -26,6 +26,8 @@ from cruxible_client import CruxibleClient
 from cruxible_client.contracts.authoring.inputs import (
     ClaimInput,
     LiteralObjectInput,
+    QueryDefinitionInput,
+    SubjectInput,
     WorkingSelectionInput,
 )
 from cruxible_client.contracts.captures import (
@@ -110,6 +112,27 @@ def _write(path: Path, payload: Any) -> str:
 
 def _proposal_id(inspection: dict[str, Any]) -> str:
     return str(inspection["proposal"]["admission"]["proposal_id"])
+
+
+def _author_and_accept(
+    cruxible: _Cli,
+    path: Path,
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    created = cruxible.json(
+        "playbill",
+        "authoring",
+        "create",
+        _write(path, payload),
+    )
+    submitted = cruxible.json(
+        "playbill",
+        "authoring",
+        "submit",
+        str(created["intent"]["intent_id"]),
+    )
+    accepted = cruxible.accept(str(submitted["status"]["proposal_id"]))
+    return submitted, accepted
 
 
 def _claim_authoring(subject_id: str, value: str) -> ClaimInput:
@@ -255,17 +278,15 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     )
     cruxible.accept(_proposal_id(proposed))
 
-    # 3. Seed one Subject on its own surface.
-    proposed = cruxible.json(
-        "playbill",
-        "subject",
-        "propose",
-        "--envelope",
-        _write(tmp_path / "subject.json", subject_shell("wi-42").model_dump(mode="json")),
-        "--name",
-        "seed-subject",
+    # 3. Seed one Subject through the durable authoring coordinator.
+    _author_and_accept(
+        cruxible,
+        tmp_path / "subject-input.json",
+        SubjectInput(
+            kind="subject",
+            subject=subject_shell("wi-42"),
+        ).model_dump(mode="json"),
     )
-    cruxible.accept(_proposal_id(proposed))
 
     # 4. Two Claims through the durable AuthoringIntent coordinator. The second
     #    Subject is admitted first because tagless Claim input resolves accepted
@@ -273,19 +294,14 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     claim_identities: list[str] = []
     for subject_id, value in (("wi-42", "ready"), ("wi-43", "blocked")):
         if subject_id == "wi-43":
-            proposed = cruxible.json(
-                "playbill",
-                "subject",
-                "propose",
-                "--envelope",
-                _write(
-                    tmp_path / "subject-wi-43.json",
-                    subject_shell("wi-43").model_dump(mode="json"),
-                ),
-                "--name",
-                "seed-subject-wi-43",
+            _author_and_accept(
+                cruxible,
+                tmp_path / "subject-wi-43-input.json",
+                SubjectInput(
+                    kind="subject",
+                    subject=subject_shell("wi-43"),
+                ).model_dump(mode="json"),
             )
-            cruxible.accept(_proposal_id(proposed))
         payload_file = _write(
             tmp_path / f"claim-{subject_id}.json",
             _claim_authoring(subject_id, value).model_dump(mode="json"),
@@ -329,19 +345,14 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
             cruxible.accept(str(submitted["status"]["proposal_id"]))
 
     # 5. Publish the named entrypoint that reads them.
-    proposed = cruxible.json(
-        "playbill",
-        "query",
-        "propose",
-        "--envelope",
-        _write(
-            tmp_path / "query.json",
-            work_item_query(claim_type=claim_type).model_dump(mode="json"),
-        ),
-        "--name",
-        "seed-query",
+    _submitted_query, accepted = _author_and_accept(
+        cruxible,
+        tmp_path / "query-input.json",
+        QueryDefinitionInput(
+            kind="query_definition",
+            query_definition=work_item_query(claim_type=claim_type),
+        ).model_dump(mode="json"),
     )
-    accepted = cruxible.accept(_proposal_id(proposed))
     coordinate = accepted["accepted_coordinate"]
 
     # -- reads ------------------------------------------------------------
