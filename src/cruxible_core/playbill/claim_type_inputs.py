@@ -186,10 +186,12 @@ def lint_claim_type_input(
     anticipated_source_ids: tuple[str, ...] = (),
 ) -> ClaimTypeProposalLintV1:
     tree = instance.tree_at(coordinate.git_oid)
-    # The daemon's frozen direct-self-asserted contract is a built-in capture
-    # profile, not an accepted artifact. Treating it as absent makes the one
-    # fresh-world template warn adopters to delete its only useful rule.
-    accepted_contracts: dict[str, str] = {
+    accepted_contracts: dict[str, str] = {}
+    # The daemon's frozen direct-self-asserted contract is a resolvable built-in
+    # profile, not an accepted artifact. It validates an explicit template rule,
+    # but it must not make an otherwise empty policy look as though a governed
+    # CaptureContract is waiting to be selected.
+    resolvable_contracts: dict[str, str] = {
         capture_contract_digest(DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT).tagged: (
             DIRECT_SELF_ASSERTED_CAPTURE_CONTRACT.identity.qualified
         )
@@ -199,6 +201,7 @@ def lint_claim_type_input(
             continue
         contract = parse_capture_contract(tree[path], path=path)
         accepted_contracts[capture_contract_digest(contract).tagged] = contract.identity.qualified
+    resolvable_contracts.update(accepted_contracts)
 
     policy = (
         value.evidence_admission_policy
@@ -215,7 +218,7 @@ def lint_claim_type_input(
         raw_digests = raw_rule.get("capture_contract_digests", [])
         digests = tuple(item for item in raw_digests if isinstance(item, str))
         admitted.update(digests)
-        if digests and not set(digests).intersection(accepted_contracts):
+        if digests and not set(digests).intersection(resolvable_contracts):
             for digest in digests:
                 warnings.append(
                     ClaimTypeLintWarningV1(
@@ -226,7 +229,7 @@ def lint_claim_type_input(
                         contract_identity="unresolved",
                         contract_digest=digest,
                         replacement_rule_fragment={
-                            "capture_contract_digests": sorted(accepted_contracts)
+                            "capture_contract_digests": sorted(resolvable_contracts)
                         },
                     )
                 )

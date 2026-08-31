@@ -386,6 +386,20 @@ def test_claim_type_template_proposes_without_policy_lint_in_a_fresh_world(
     assert result.lint.warnings == ()
 
 
+def test_builtin_template_profile_does_not_pose_as_an_accepted_contract(
+    tmp_path: Path,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    lint = lint_claim_type_input(
+        instance,
+        claim_type_input_example(),
+        coordinate=instance.accepted_coordinate(),
+    )
+
+    assert lint.warnings == ()
+
+
 def test_claim_type_input_lowers_freshness_into_the_existing_v3_artifact() -> None:
     original = claim_type_input_example()
     freshness = ClaimEvidenceFreshnessV1(
