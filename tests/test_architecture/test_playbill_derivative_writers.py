@@ -34,16 +34,25 @@ SANCTIONED_CALLERS = {
         "src/cruxible_core/playbill/authoring/insertions.py::build_publication_preparation",
     },
 }
-SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str]] = {
+SANCTIONED_WRITERS: dict[str, tuple[Callable[..., object], str, tuple[str, ...]]] = {
     "packages/cruxible-client/src/cruxible_client/authoring/blocks.py::repin_projection_block": (
         repin_projection_block,
         "assert_projection_block_frame",
+        ("replace one declared block's opening marker",),
     ),
     "packages/cruxible-client/src/cruxible_client/authoring/insertions.py::"
-    "apply_playbill_publication": (apply_playbill_publication, "frame_projection_block"),
+    "apply_playbill_publication": (
+        apply_playbill_publication,
+        "frame_projection_block",
+        ("apply one prepared publication to client-observed bytes",),
+    ),
     "src/cruxible_core/playbill/authoring/insertions.py::build_publication_preparation": (
         build_publication_preparation,
         "frame_projection_block",
+        (
+            "prepare a full-file publication postimage from an insertion expectation",
+            "reproduce and verify the exact framed block bytes from a preparation",
+        ),
     ),
 }
 
@@ -112,8 +121,17 @@ def test_sanctioned_writer_inventory_matches_primitive_callers() -> None:
     expected_callers = set().union(*SANCTIONED_CALLERS.values())
 
     assert set(SANCTIONED_WRITERS) == expected_callers
-    for writer, primitive in SANCTIONED_WRITERS.values():
+    for writer, primitive, operations in SANCTIONED_WRITERS.values():
         assert f"{primitive}(" in inspect.getsource(writer)
+        assert operations
+    assert (
+        len(
+            SANCTIONED_WRITERS[
+                "src/cruxible_core/playbill/authoring/insertions.py::build_publication_preparation"
+            ][2]
+        )
+        == 2
+    )
 
 
 def test_projection_primitive_callers_equal_the_two_writer_inventory() -> None:

@@ -65,12 +65,12 @@ MATCH_STATE_PRECEDENCE: Mapping[str, int] = {
     "candidate": 2,
     "none": 3,
 }
-"""Which state a span reports when several cards apply: the strongest one.
+"""Per-card strength order and the fallback order for a span without drift.
 
-A span that holds both an exact card and a drifted card is exact *and* has
-drift to show; reporting the weaker state would hide the verified match, and
-reporting only the stronger card would hide the drift, so the state takes the
-strongest and the card list keeps both.
+``coverage_span_match_state`` applies the disclosure law first: any drifted
+card makes the span drifted, even beside an exact card. Otherwise the span uses
+this order, so exact wins over candidate and none while every card remains
+available in the card list.
 """
 
 CoverageHealthV1 = Literal["complete", "partial", "stale", "denied", "unavailable"]
