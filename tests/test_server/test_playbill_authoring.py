@@ -350,6 +350,7 @@ def test_http_authoring_openapi_exposes_frozen_union_and_rejects_removed_brief_i
             "change_set",
             "claim",
             "procedure",
+            "procedure_runtime_policy",
             "query_definition",
             "subject",
         }

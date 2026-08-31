@@ -31,7 +31,7 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
     render_document,
 )
-from cruxible_client.contracts.projection_extensions import playbill_runtime_extension_registry
+from cruxible_client.contracts.projection_extensions import playbill_replay_extension_registry
 from cruxible_client.contracts.subjects import SubjectShell, render_subject
 from cruxible_core.playbill.checkpoints import (
     checkpoint_body,
@@ -352,7 +352,7 @@ def test_accepted_projection_reads_a_crossed_ledger(
     # `candidate_artifact_digest` member land in the same envelope rows.
     parsed = parse_projection_tree(
         dict(reopened.tree_at(head.git_oid)),
-        registry=playbill_runtime_extension_registry(),
+        registry=playbill_replay_extension_registry(),
         bodies=reopened.body_store(),
     )
     identities = {row.identity for row in parsed.envelopes}

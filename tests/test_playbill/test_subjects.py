@@ -201,6 +201,10 @@ def test_subject_successor_uses_exact_predecessor_and_projection_revision(tmp_pa
     with instance.bind_accepted_projection(instance.accepted_coordinate()) as projection:
         logical = canonical_logical_export(projection.index_path)
     live = next(table for table in logical["tables"] if table["name"] == "live_identities")
-    assert len(live["rows"]) == 1
-    assert live["rows"][0][0] == "ApprovalPolicy:instance"
-    assert live["rows"][0][2] == "governance/approval-policy.yaml"
+    assert {(row[0], row[2]) for row in live["rows"]} == {
+        ("ApprovalPolicy:instance", "governance/approval-policy.yaml"),
+        (
+            "ProcedureRuntimePolicy:instance",
+            "governance/procedure-runtime-policy.yaml",
+        ),
+    }

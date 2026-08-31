@@ -224,7 +224,10 @@ def test_converged_writes_and_policy_read_are_real_http_behaviors(
 
     policies = client.get(f"/api/v1/{instance_id}/playbill/policies")
     assert policies.status_code == 200, policies.text
-    assert [item["policy_kind"] for item in policies.json()["policies"]] == ["approval_policy"]
+    assert [item["policy_kind"] for item in policies.json()["policies"]] == [
+        "approval_policy",
+        "procedure_runtime_policy",
+    ]
 
     requests = (
         (
