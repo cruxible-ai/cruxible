@@ -154,6 +154,7 @@ EXPECTED_OPERATIONS = {
     "floor_invalid": "playbill.floor.export",
     "projection_dirty": "playbill.block.repin",
     "projection_backing_stale": "playbill.block.repin",
+    "projection_marker_invalid": "playbill.block.repin",
     "self_published_source_stale": "playbill.authoring.create",
     "claim_dependency_stale": "playbill.authoring.create",
     "claim_attestation_threshold_met": "playbill.authoring.create",
@@ -958,6 +959,24 @@ def _projection_backing_stale(root: Path, _monkeypatch: pytest.MonkeyPatch) -> N
     )
 
 
+def _projection_marker_invalid(root: Path, _monkeypatch: pytest.MonkeyPatch) -> None:
+    instance, _owner = _instance_with_query(root)
+    backing = (_claim_backing(instance),)
+    before = _projection_request(
+        instance,
+        backing=backing,
+        marker_notes=("projection_marker_invalid",),
+    )
+    row = _row(instance, "projection_marker_invalid", before)
+    assert row.repair.operation == EXPECTED_OPERATIONS["projection_marker_invalid"]
+
+    _assert_gone(
+        instance,
+        "projection_marker_invalid",
+        _projection_request(instance, backing=backing),
+    )
+
+
 def _publish_replacement_claim(instance, owner) -> None:  # type: ignore[no-untyped-def]
     _publish_self_published_claim(
         instance,
@@ -1176,6 +1195,7 @@ CLOSED_LOOP_CASES: dict[ClosedLoopKey, RepairCase] = {
     ("floor_invalid", None): _floor_invalid,
     ("projection_dirty", None): _projection_dirty,
     ("projection_backing_stale", None): _projection_backing_stale,
+    ("projection_marker_invalid", None): _projection_marker_invalid,
     ("self_published_source_stale", None): _self_published_source_stale,
     ("claim_dependency_stale", None): _claim_dependency_stale,
     ("claim_attestation_threshold_met", None): _claim_attestation_threshold,
