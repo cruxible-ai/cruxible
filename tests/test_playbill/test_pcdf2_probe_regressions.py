@@ -10,6 +10,8 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from cruxible_client.contracts import laws as laws_module
 from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
@@ -22,6 +24,15 @@ from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeMigrationRequestV3,
     ClaimTypeMigrationResultV3,
     service_migrate_claim_type,
+)
+from cruxible_core.playbill import instance as instance_module
+from cruxible_core.playbill.compiler import (
+    P2_B2_COMPILER,
+    PC_DF2_COMPILER,
+    PC_HR_ARTIFACT_CODEC_COMPILERS,
+    PC_HR_COMPILER,
+    SUPPORTED_COMPILERS,
+    current_compiler_coordinate,
 )
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import AuthenticatedActor
@@ -37,6 +48,79 @@ from tests.test_playbill.test_claim_type_migrations import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _genesis_replay_at_retained_compiler(
+    instance: PlaybillInstance, tmp_path: Path, name: str
+) -> None:
+    clone = tmp_path / name
+    shutil.copytree(instance.root, clone)
+    checkpoint = PlaybillInstance._checkpoint_directory(clone)
+    if checkpoint.exists():
+        shutil.rmtree(checkpoint)
+    script = textwrap.dedent(
+        """
+        import json, sys
+        from pathlib import Path
+        from cruxible_client.contracts.types import PlaybillTrustRoot
+        from cruxible_core.playbill import compiler
+        from cruxible_core.playbill.instance import PlaybillInstance
+
+        assert compiler.current_compiler_coordinate() == compiler.P2_B2_COMPILER
+        reopened = PlaybillInstance.open(
+            Path(sys.argv[1]),
+            trust_root=PlaybillTrustRoot.model_validate(json.loads(sys.argv[2])),
+        )
+        assert reopened.descriptor.compiler.model_dump(mode="json") == json.loads(sys.argv[4])
+        assert reopened.accepted_coordinate().git_oid == sys.argv[3]
+        """
+    )
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = os.pathsep.join(
+        (str(ROOT / "src"), str(ROOT / "packages" / "cruxible-client" / "src"))
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(clone),
+            json.dumps(instance.trust_root.model_dump(mode="json")),
+            instance.accepted_coordinate().git_oid,
+            json.dumps(instance.descriptor.compiler.model_dump(mode="json")),
+        ],
+        cwd=ROOT,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_rev15_and_rev12_remain_exact_codec_lineage_members() -> None:
+    assert current_compiler_coordinate() == P2_B2_COMPILER
+    assert P2_B2_COMPILER in SUPPORTED_COMPILERS
+    assert P2_B2_COMPILER in PC_HR_ARTIFACT_CODEC_COMPILERS
+    for retained in (PC_DF2_COMPILER, PC_HR_COMPILER):
+        assert retained in SUPPORTED_COMPILERS
+        assert retained in PC_HR_ARTIFACT_CODEC_COMPILERS
+
+
+@pytest.mark.parametrize("retained", [PC_DF2_COMPILER, PC_HR_COMPILER])
+def test_retained_codec_instance_stays_writable_and_replays_under_rev16(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, retained
+) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setattr(instance_module, "current_compiler_coordinate", lambda: retained)
+    instance, claim_id, _owner = _accepted_affects_package_world(tmp_path)
+    assert instance.descriptor.compiler == retained
+    monkeypatch.undo()
+
+    before = instance.accepted_coordinate().git_oid
+    _accept(instance, _migration(instance, claim_id))
+    assert instance.accepted_coordinate().git_oid != before
+    assert instance.descriptor.compiler == retained
+    _genesis_replay_at_retained_compiler(instance, tmp_path, f"clone-{retained.rule_digest[7:15]}")
 
 
 def _migration(instance: PlaybillInstance, claim_id: str) -> ClaimTypeMigrationResultV3:
