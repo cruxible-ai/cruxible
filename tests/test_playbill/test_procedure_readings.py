@@ -33,10 +33,31 @@ from cruxible_core.playbill.procedures.resolution import (
 from tests.test_playbill.test_resolution_contracts import (
     NOW,
     _accepted,
+    _accepted_v4,
     _actor,
     _coordinate,
     _digest,
 )
+
+
+def test_graph_v4_reading_uses_v4_grain_digests() -> None:
+    accepted = _accepted_v4()
+    reading = build_procedure_reading(
+        accepted,
+        accepted_coordinate=_coordinate(),
+        subject_grain="node",
+        node_id="hot",
+        grade="observation",
+        verdict="satisfied",
+        observed_at=NOW,
+        recorded_at=NOW,
+        actor_context=_actor(),
+        value={"healthy": True},
+    )
+
+    assert reading.definition_digest == accepted.procedure.definition_digest
+    assert reading.node_id == "hot"
+    assert reading.node_local_digest is not None
 
 
 def _writer(tmp_path, *, partition_id: str):
