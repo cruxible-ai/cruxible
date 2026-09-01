@@ -75,7 +75,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:62e8a9b24e75c12dc77751ce1e93dd5316b97894c3a8b0e808a3198b33d45c54"
+    "sha256:ce7674fef67b5ec1ec545c2f51066b7e093d6ee7742b2db374f9bfaac299d5e5"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"

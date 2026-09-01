@@ -323,9 +323,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -5652,9 +5654,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -8729,9 +8733,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -9008,9 +9014,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -9807,9 +9815,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -10207,9 +10217,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -10607,9 +10619,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -13862,9 +13876,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -15524,9 +15540,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -18618,9 +18636,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -19351,9 +19371,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
@@ -23741,9 +23763,11 @@
                       "workspace_missing",
                       "workspace_not_git",
                       "workspace_path_invalid",
+                      "git_unavailable",
                       "remote_conflict",
                       "object_format_mismatch",
-                      "fetch_failed"
+                      "fetch_failed",
+                      "unexpected_failure"
                     ],
                     "type": "string"
                   },
