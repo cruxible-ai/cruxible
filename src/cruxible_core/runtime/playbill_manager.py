@@ -85,7 +85,38 @@ class PlaybillInstanceManager:
         managed_root, trust_path, workspaces = self._paths(instance_id)
         with self._lock:
             if managed_root.exists() or trust_path.exists():
-                raise PlaybillBootstrapError("Playbill is already initialized for this instance")
+                instance = self.get(instance_id)
+                actual_clients = tuple(
+                    sorted(
+                        (
+                            principal
+                            for principal in instance.trust_root.principals
+                            if principal.kind != "daemon"
+                        ),
+                        key=lambda item: item.principal_id.encode("utf-8"),
+                    )
+                )
+                requested_clients = tuple(
+                    sorted(
+                        client_principals,
+                        key=lambda item: item.principal_id.encode("utf-8"),
+                    )
+                )
+                expected_policy = (
+                    "independent_approval_required"
+                    if require_independent_approval
+                    else "self_approval_allowed"
+                )
+                if (
+                    actual_clients != requested_clients
+                    or instance.descriptor.operating_profile != operating_profile
+                    or instance.inspect().approval_policy_mode != expected_policy
+                ):
+                    raise PlaybillBootstrapError(
+                        "Playbill is already initialized with a different principal set, "
+                        "operating profile, or bootstrap approval policy"
+                    )
+                return instance
             try:
                 object_format = (
                     workspace_git_object_format(workspaces[0]) if workspaces else "sha256"

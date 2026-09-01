@@ -60,7 +60,9 @@ def create_playbill_host(
         if workspace_root is not None:
             if Path(existing.location).exists() and existing.workspace_root is None:
                 raise ConfigError(
-                    "Workspace attachment must be recorded before Playbill initialization"
+                    f"Playbill host {selected!r} is already initialized without workspace "
+                    "attachment; archive/rebuild an attached host, record attachment before "
+                    "init, then re-seed"
                 )
             registry.attach_governed_workspace(selected, workspace_root)
         return contracts.PlaybillHostResult(instance_id=selected, status="already_exists")

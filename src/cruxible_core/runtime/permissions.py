@@ -23,7 +23,12 @@ from pathlib import Path
 
 import structlog
 
-from cruxible_core.errors import ConfigError, InstanceScopeError, PermissionDeniedError
+from cruxible_core.errors import (
+    ConfigError,
+    DaemonOperationScopeError,
+    InstanceScopeError,
+    PermissionDeniedError,
+)
 
 # ---------------------------------------------------------------------------
 # Safe stderr default for structlog — never write to stdout (MCP stdio)
@@ -547,7 +552,7 @@ def require_unscoped_operator(operation: str) -> None:
             operation=operation,
             credential_scope=credential_scope,
         )
-        raise InstanceScopeError(operation, credential_scope)
+        raise DaemonOperationScopeError(operation, credential_scope)
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,8 @@ COORDINATE = contracts.PlaybillAcceptedCoordinate(
 
 
 def test_cli_allocates_and_remembers_a_playbill_host(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
     class StubClient:
         def create_playbill_host(
             self, *, instance_id: str | None = None
@@ -52,6 +54,8 @@ def test_cli_allocates_and_remembers_a_playbill_host(monkeypatch, tmp_path) -> N
 
 
 def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
     class StubClient:
         def init_playbill(
             self,

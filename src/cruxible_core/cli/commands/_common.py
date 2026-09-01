@@ -106,7 +106,7 @@ def _emit_json(data: Any, *, sort_keys: bool = False) -> None:
 
 def _transport_target(obj: Mapping[str, Any]) -> str | None:
     if obj.get("server_url"):
-        return str(obj["server_url"])
+        return str(obj["server_url"]).rstrip("/")
     if obj.get("server_socket"):
         return f"unix://{Path(str(obj['server_socket'])).expanduser().resolve()}"
     return None

@@ -16,6 +16,7 @@ In shell one:
 
 ~~~bash
 uv run cruxible server start \
+  --socket /tmp/cruxible-playbill.sock \
   --state-root /tmp/cruxible-playbill-dev \
   --bootstrap-secret-file /tmp/cruxible-playbill-bootstrap
 ~~~
@@ -25,12 +26,13 @@ The daemon creates a one-time bootstrap secret with mode 0600.
 In shell two:
 
 ~~~bash
-export CRUXIBLE_SERVER_URL=http://127.0.0.1:8100
+export CRUXIBLE_SERVER_SOCKET=/tmp/cruxible-playbill.sock
 export CRUXIBLE_SERVER_BEARER_TOKEN="$(cat /tmp/cruxible-playbill-bootstrap)"
 ~~~
 
 Allocate an empty daemon-owned host. The CLI remembers it as the active
-instance:
+instance. When run inside a Git worktree, the local socket also lets the daemon
+attach that exact workspace before initialization:
 
 ~~~bash
 uv run cruxible playbill host create --instance-id playbill-demo

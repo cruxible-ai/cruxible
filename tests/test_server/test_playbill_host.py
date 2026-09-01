@@ -15,7 +15,7 @@ from cruxible_client.contracts.documents import (
     DocumentLifecycle,
     DocumentShell,
 )
-from cruxible_client.contracts.errors import PlaybillReseedRequired
+from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillReseedRequired
 from cruxible_core.errors import ConfigError
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime import host_api, playbill_api
@@ -273,6 +273,75 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
     trust_directory = tmp_path / "server-state" / "trust"
     assert (trust_directory / "inst_dp0b_bootstrap.json").is_file()
     assert trust_directory.stat().st_mode & 0o777 == 0o700
+
+
+def test_playbill_init_retry_is_idempotent_only_for_the_exact_bootstrap_request(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    del host_client
+    host_api.create_playbill_host(instance_id="inst_exact_init_retry")
+    record = get_registry().get("inst_exact_init_retry")
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "exact-init-owner",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+    first = playbill_api.playbill_init(
+        "inst_exact_init_retry",
+        principals=(owner.principal,),
+    )
+    retry = playbill_api.playbill_init(
+        "inst_exact_init_retry",
+        principals=(owner.principal,),
+    )
+    assert retry == first
+
+    different_owner = generate_client_principal_key(
+        tmp_path / "different-init-owner",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+    with pytest.raises(PlaybillBootstrapError, match="different principal set"):
+        playbill_api.playbill_init(
+            "inst_exact_init_retry",
+            principals=(different_owner.principal,),
+        )
+
+
+def test_workspace_attachment_after_init_names_archive_and_rebuild_repair(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    del host_client
+    host_api.create_playbill_host(instance_id="inst_unattached_initialized")
+    record = get_registry().get("inst_unattached_initialized")
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "unattached-owner",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+    playbill_api.playbill_init(
+        "inst_unattached_initialized",
+        principals=(owner.principal,),
+    )
+    workspace = tmp_path / "late-workspace"
+    subprocess.run(["git", "init", "-b", "main", str(workspace)], check=True, capture_output=True)
+
+    with pytest.raises(
+        ConfigError,
+        match="inst_unattached_initialized.*archive/rebuild.*before init.*re-seed",
+    ):
+        host_api.create_playbill_host(
+            instance_id="inst_unattached_initialized",
+            workspace_root=str(workspace),
+            workspace_attachment_authorized=True,
+        )
 
 
 def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(

@@ -65,7 +65,9 @@ cruxible playbill host create [--instance-id ID]
 Allocates an empty daemon-owned host and remembers it. When the selected daemon
 is reached through `--server-socket` or `CRUXIBLE_SERVER_SOCKET`, the command
 also attaches the current Git worktree. A TCP client never sends a local path
-for the daemon to interpret.
+for the daemon to interpret. Host creation over TCP therefore refuses when the
+CLI is running inside a Git worktree; use the local socket for attachment, or
+run outside the worktree to create an intentionally unattached remote host.
 
 ## playbill init
 
@@ -88,11 +90,24 @@ rides branch protection/CODEOWNERS on the state repository; real custody
 separation belongs at the parked Cloud broker/leasing seam. The optional
 recovery key remains lifecycle-only.
 
+All target, topology, principal, and custody-path checks run before key
+generation. If the server response is lost after generation, each custody pair
+has a transport- and instance-bound local retry marker; the exact retry adopts
+that pair and clears the marker after success. This is not general key import:
+existing keys without the matching marker are refused. Re-seed with fresh
+owner, reviewer, and recovery custody by default; see
+[Canonical repository and daemon layout](canonical-repository-layout.md).
+
 Successful initialization remembers the initialized instance before rendering
 either JSON or human output. For an attached local worktree, the daemon creates
 or validates the advisory `playbill` Git remote and fetches accepted `main` and
 proposal refs into `refs/remotes/playbill/*`. Those refs are review aids only;
 merging one never admits or activates governed state.
+
+Initialization over TCP also refuses from inside a Git worktree because an
+attachment cannot be added afterward. An instance initialized without an
+attachment must be archived and rebuilt as an attached host; record attachment
+before init, then re-seed.
 
 ## playbill body
 

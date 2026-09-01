@@ -54,6 +54,7 @@ from cruxible_client.contracts.errors import (
     CanonicalEncodingError,
     DocumentNotFoundError,
     PlaybillDeprecatedWriteError,
+    PlaybillKeyError,
     PlaybillSinceRequestInvalid,
 )
 from cruxible_client.contracts.primitives import canonical_json
@@ -68,8 +69,10 @@ from cruxible_core.cli.commands._common import (
     _echo_write_target,
     _emit_brief,
     _emit_json,
+    _get_client,
     _require_instance_id,
     _root_ctx_obj,
+    _transport_target,
     and_activate_option,
     brief_option,
     json_option,
@@ -111,7 +114,13 @@ from cruxible_core.playbill.curation_calibration import (
     AUDIT_BUDGET_MIN_MAX_BYTES,
     AUDIT_BUDGET_MIN_MAX_ROWS,
 )
-from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.playbill.keys import (
+    ClientPrincipalKeyTarget,
+    GeneratedKeyMaterial,
+    adopt_client_principal_key,
+    generate_client_principal_key,
+    validate_client_principal_key_target,
+)
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.service.review import (
     PlaybillProposalReview,
@@ -333,6 +342,164 @@ def _local_git_workspace_root() -> Path | None:
         return None
 
 
+def _refuse_tcp_workspace_operation(git_workspace: Path | None) -> None:
+    if git_workspace is not None and _root_ctx_obj().get("server_url"):
+        raise click.UsageError(
+            f"This command is running in Git worktree {str(git_workspace)!r}, but TCP cannot "
+            "attach a daemon-local workspace. Use --server-socket for local attachment, or "
+            "run from outside the worktree for an intentionally unattached remote host."
+        )
+
+
+def _init_resume_marker(target: ClientPrincipalKeyTarget) -> Path:
+    return target.directory / f".playbill-init-resume-{target.principal.principal_id}.json"
+
+
+def _init_resume_payload(
+    target: ClientPrincipalKeyTarget,
+    *,
+    transport: str,
+    instance_id: str,
+    public_key: str,
+) -> dict[str, str]:
+    return {
+        "tag": "playbill-init-key-resume-v1",
+        "transport": transport,
+        "instance_id": instance_id,
+        "principal_id": target.principal.principal_id,
+        "kind": target.principal.kind,
+        "public_key": public_key,
+    }
+
+
+def _read_init_resume_marker(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_bytes())
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise PlaybillKeyError(
+            f"Playbill init retry marker is missing or malformed: {path}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise PlaybillKeyError(f"Playbill init retry marker is missing or malformed: {path}")
+    return payload
+
+
+def _write_init_resume_marker(path: Path, payload: Mapping[str, str]) -> None:
+    try:
+        with path.open("xb") as handle:
+            handle.write(canonical_bytes(dict(payload)) + b"\n")
+        path.chmod(0o600)
+    except FileExistsError as exc:
+        raise PlaybillKeyError(f"refusing to replace Playbill init retry marker: {path}") from exc
+
+
+def _adopt_init_retry_key(
+    target: ClientPrincipalKeyTarget,
+    *,
+    workspace: Path | None,
+    transport: str,
+    instance_id: str,
+) -> GeneratedKeyMaterial:
+    marker = _init_resume_marker(target)
+    if not marker.is_file() or marker.is_symlink():
+        raise PlaybillKeyError(
+            f"refusing to reuse existing key material without this init's retry marker: {marker}"
+        )
+    material = adopt_client_principal_key(
+        target.directory,
+        principal_id=target.principal.principal_id,
+        kind=target.principal.kind,
+        forbidden_roots=() if workspace is None else (workspace,),
+    )
+    expected = _init_resume_payload(
+        target,
+        transport=transport,
+        instance_id=instance_id,
+        public_key=material.principal.public_key,
+    )
+    if _read_init_resume_marker(marker) != expected:
+        raise PlaybillKeyError(
+            f"existing key material belongs to a different Playbill init target: {marker}"
+        )
+    return material
+
+
+def _prepare_init_custody(
+    *,
+    workspace: Path | None,
+    transport: str,
+    instance_id: str,
+    specifications: tuple[tuple[Path, str, PrincipalKind], ...],
+) -> tuple[tuple[GeneratedKeyMaterial, ...], tuple[Path, ...]]:
+    targets = tuple(
+        validate_client_principal_key_target(
+            directory,
+            principal_id=principal_id,
+            kind=kind,
+            forbidden_roots=() if workspace is None else (workspace,),
+        )
+        for directory, principal_id, kind in specifications
+    )
+    if len({target.principal.principal_id for target in targets}) != len(targets):
+        raise PlaybillKeyError("Playbill init principal IDs must be distinct")
+    key_paths = tuple(
+        path for target in targets for path in (target.private_key_path, target.public_key_path)
+    )
+    if len(set(key_paths)) != len(key_paths):
+        raise PlaybillKeyError("Playbill init custody key paths must be distinct")
+
+    prepared: list[GeneratedKeyMaterial | None] = []
+    for target in targets:
+        private_exists = target.private_key_path.exists()
+        public_exists = target.public_key_path.exists()
+        marker = _init_resume_marker(target)
+        if private_exists != public_exists:
+            raise PlaybillKeyError(
+                f"Playbill init retry requires a complete key pair for "
+                f"{target.principal.principal_id}"
+            )
+        if private_exists:
+            prepared.append(
+                _adopt_init_retry_key(
+                    target,
+                    workspace=workspace,
+                    transport=transport,
+                    instance_id=instance_id,
+                )
+            )
+        else:
+            if marker.exists():
+                raise PlaybillKeyError(
+                    f"Playbill init retry marker has no complete key pair: {marker}"
+                )
+            prepared.append(None)
+
+    materials: list[GeneratedKeyMaterial] = []
+    markers: list[Path] = []
+    for target, existing in zip(targets, prepared, strict=True):
+        material = existing
+        marker = _init_resume_marker(target)
+        if material is None:
+            material = generate_client_principal_key(
+                target.directory,
+                principal_id=target.principal.principal_id,
+                kind=target.principal.kind,
+                forbidden_roots=() if workspace is None else (workspace,),
+            )
+            _write_init_resume_marker(
+                marker,
+                _init_resume_payload(
+                    target,
+                    transport=transport,
+                    instance_id=instance_id,
+                    public_key=material.principal.public_key,
+                ),
+            )
+        materials.append(material)
+        markers.append(marker)
+    return tuple(materials), tuple(markers)
+
+
 def _write_bundle(path: str, bundle: SourceCompilationBundle) -> None:
     output = Path(path).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -389,6 +556,7 @@ def create_host(instance_id: str | None, output_json: bool) -> None:
     """Allocate an empty host and remember it as the active instance."""
 
     git_workspace = _local_git_workspace_root()
+    _refuse_tcp_workspace_operation(git_workspace)
     workspace_root = (
         str(git_workspace)
         if git_workspace is not None and _root_ctx_obj().get("server_socket")
@@ -442,40 +610,37 @@ def init_playbill(
     """Create client custody and bootstrap the governed approval policy."""
 
     git_workspace = _local_git_workspace_root()
-    workspace = git_workspace or Path.cwd().resolve()
     if require_independent_approval and reviewer_key_dir is None:
         raise click.UsageError("--require-independent-approval requires --reviewer-key-dir")
-    owner = generate_client_principal_key(
-        Path(key_dir).expanduser(),
-        principal_id=principal_id,
-        kind="ordinary",
-        forbidden_roots=(workspace,),
-    )
-    reviewer = (
-        None
-        if reviewer_key_dir is None
-        else generate_client_principal_key(
-            Path(reviewer_key_dir).expanduser(),
-            principal_id="reviewer",
-            kind="ordinary",
-            forbidden_roots=(workspace,),
-        )
-    )
-    principals = [owner.principal]
-    if reviewer is not None:
-        principals.append(reviewer.principal)
+    _refuse_tcp_workspace_operation(git_workspace)
+    if _get_client() is None:
+        raise click.UsageError("Local execution disabled for playbill init; use server mode.")
+    selected = _require_instance_id()
+    transport = _transport_target(_root_ctx_obj())
+    if transport is None:  # pragma: no cover - guarded by _get_client above
+        raise click.UsageError("Server mode is required for playbill init")
+    workspace = git_workspace
+    specifications: list[tuple[Path, str, PrincipalKind]] = [
+        (Path(key_dir).expanduser(), principal_id, "ordinary")
+    ]
+    if reviewer_key_dir is not None:
+        specifications.append((Path(reviewer_key_dir).expanduser(), "reviewer", "ordinary"))
     if recovery_key_dir is not None:
-        recovery = generate_client_principal_key(
-            Path(recovery_key_dir).expanduser(),
-            principal_id=recovery_principal_id,
-            kind="recovery",
-            forbidden_roots=(workspace,),
+        specifications.append(
+            (Path(recovery_key_dir).expanduser(), recovery_principal_id, "recovery")
         )
-        principals.append(recovery.principal)
+    materials, markers = _prepare_init_custody(
+        workspace=workspace,
+        transport=transport,
+        instance_id=selected,
+        specifications=tuple(specifications),
+    )
+    owner = materials[0]
+    reviewer = materials[1] if reviewer_key_dir is not None else None
     result = _server_call(
-        lambda client, selected: client.init_playbill(
-            selected,
-            principals=[item.model_dump(mode="json") for item in principals],
+        lambda client, active: client.init_playbill(
+            active,
+            principals=[item.principal.model_dump(mode="json") for item in materials],
             operating_profile=cast(Any, profile),
             require_independent_approval=require_independent_approval,
             **(
@@ -486,6 +651,8 @@ def init_playbill(
         ),
         command_name="playbill init",
     )
+    for marker in markers:
+        marker.unlink()
     _activate_server_instance(result.instance_id)
     if output_json:
         _emit_json(result.model_dump(mode="json"))

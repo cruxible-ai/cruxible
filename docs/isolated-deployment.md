@@ -35,7 +35,11 @@ uv run cruxible server start \
 ~~~
 
 Use TLS at the proxy for any non-loopback deployment. Never send bearer tokens
-over plaintext untrusted networks.
+over plaintext untrusted networks. TCP-created hosts are intentionally
+unattached: run `playbill host create` and `playbill init` outside a Git
+worktree. If the daemon and workspace are local and the ledger should advertise
+into that workspace, use the Unix socket and attach before initialization;
+attachment cannot be retrofitted afterward.
 
 ## Capability ceiling
 

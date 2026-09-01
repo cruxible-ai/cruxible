@@ -348,6 +348,12 @@ def playbill_init(
         record = registry.get(instance_id)
         if record is None:
             raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
+        if Path(record.location).exists() and record.workspace_root is None:
+            raise ConfigError(
+                f"Playbill host {instance_id!r} is already initialized without workspace "
+                "attachment; archive/rebuild an attached host, record attachment before init, "
+                "then re-seed"
+            )
         attached_for_init = record.workspace_root is None
         registry.attach_governed_workspace(instance_id, workspace_root)
     try:

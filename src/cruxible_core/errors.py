@@ -798,6 +798,19 @@ class InstanceScopeError(CoreError):
         )
 
 
+class DaemonOperationScopeError(InstanceScopeError):
+    """An instance-scoped credential attempted one daemon-wide operation."""
+
+    def __init__(self, operation: str, credential_scope: str):
+        self.operation = operation
+        self.credential_scope = credential_scope
+        CoreError.__init__(
+            self,
+            f"Credential scoped to instance {credential_scope!r} cannot perform daemon-wide "
+            f"operation {operation!r}; use an unscoped operator credential",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Permission errors
 # ---------------------------------------------------------------------------

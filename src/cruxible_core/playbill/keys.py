@@ -31,6 +31,16 @@ class GeneratedKeyMaterial:
     public_key_path: Path
 
 
+@dataclass(frozen=True)
+class ClientPrincipalKeyTarget:
+    """Validated client-custody paths without creating or adopting key bytes."""
+
+    directory: Path
+    principal: PrincipalRecord
+    private_key_path: Path
+    public_key_path: Path
+
+
 def _resolved(path: Path) -> Path:
     return path.expanduser().resolve(strict=False)
 
@@ -181,6 +191,78 @@ def generate_client_principal_key(
     )
 
 
+def validate_client_principal_key_target(
+    key_directory: Path,
+    *,
+    principal_id: str,
+    kind: PrincipalKind,
+    forbidden_roots: Sequence[Path],
+) -> ClientPrincipalKeyTarget:
+    """Validate one custody target without creating directories or key material."""
+
+    if principal_id == "daemon" or kind == "daemon":
+        raise PlaybillKeyError("client keys cannot claim daemon identity or kind")
+    directory = _resolved(key_directory)
+    assert_outside_roots(directory, forbidden_roots)
+    principal = PrincipalRecord(
+        principal_id=principal_id,
+        public_key="0" * 64,
+        kind=kind,
+    )
+    if directory.exists():
+        if directory.is_symlink() or not directory.is_dir():
+            raise PlaybillKeyError(f"key directory is not a real directory: {directory}")
+        if stat.S_IMODE(directory.stat().st_mode) & 0o077:
+            raise PlaybillKeyError(
+                f"key directory permissions must exclude group/world access: {directory}"
+            )
+    return ClientPrincipalKeyTarget(
+        directory=directory,
+        principal=principal,
+        private_key_path=directory / f"{principal.principal_id}.ed25519",
+        public_key_path=directory / f"{principal.principal_id}.ed25519.pub",
+    )
+
+
+def adopt_client_principal_key(
+    key_directory: Path,
+    *,
+    principal_id: str,
+    kind: PrincipalKind,
+    forbidden_roots: Sequence[Path],
+) -> GeneratedKeyMaterial:
+    """Load one exact complete client key pair after an external retry receipt check."""
+
+    target = validate_client_principal_key_target(
+        key_directory,
+        principal_id=principal_id,
+        kind=kind,
+        forbidden_roots=forbidden_roots,
+    )
+    for path in (target.private_key_path, target.public_key_path):
+        if path.is_symlink() or not path.is_file():
+            raise PlaybillKeyError(
+                f"retry adoption requires a complete regular key pair for {principal_id}"
+            )
+    if stat.S_IMODE(target.private_key_path.stat().st_mode) & 0o077:
+        raise PlaybillKeyError(
+            f"private key permissions must exclude group/world access: {target.private_key_path}"
+        )
+    private_public = public_key_hex_from_private_file(target.private_key_path)
+    try:
+        public_content = target.public_key_path.read_bytes()
+    except OSError as exc:
+        raise PlaybillKeyError("client public key is missing or unreadable") from exc
+    public_hex = raw_public_key_hex_from_openssh(public_content)
+    if private_public != public_hex:
+        raise PlaybillKeyError("client public/private key pair does not correspond")
+    return GeneratedKeyMaterial(
+        principal=target.principal.model_copy(update={"public_key": public_hex}),
+        private_key_path=target.private_key_path,
+        public_key_path=target.public_key_path,
+    )
+
+
 def public_key_hex_from_private_file(path: Path) -> str:
     """Load an unencrypted OpenSSH Ed25519 key and return its raw public bytes."""
 
@@ -213,9 +295,12 @@ __all__ = [
     "DAEMON_PRIVATE_KEY_FILE",
     "DAEMON_PUBLIC_KEY_FILE",
     "GeneratedKeyMaterial",
+    "ClientPrincipalKeyTarget",
+    "adopt_client_principal_key",
     "assert_outside_roots",
     "generate_client_principal_key",
     "generate_daemon_key",
     "public_key_hex_from_private_file",
     "raw_public_key_hex_from_openssh",
+    "validate_client_principal_key_target",
 ]

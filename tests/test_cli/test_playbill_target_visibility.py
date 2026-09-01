@@ -148,6 +148,7 @@ def test_host_creation_names_explicit_requested_id(
     tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(tmp_path)
 
     class StubClient:
         def create_playbill_host(
@@ -178,6 +179,36 @@ def test_host_creation_names_explicit_requested_id(
     assert result.stderr == (
         "target: inst_requested @ https://host.example.test (transport=explicit)\n"
     )
+
+
+def test_explicit_transport_does_not_inherit_another_daemons_remembered_instance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(tmp_path)
+    save_cli_context(
+        CliContextState(
+            server_url="https://remembered.example.test/",
+            instance_id="inst_remembered",
+        )
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://other.example.test",
+            "playbill",
+            "proposal",
+            "activate",
+            "proposal-1",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--instance-id is required in server mode" in result.output
+    assert "inst_remembered" not in result.stderr
 
 
 def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(

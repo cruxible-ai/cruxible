@@ -7,11 +7,12 @@ import importlib
 import os
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
 
-from cruxible_core.cli.context import load_cli_context
+from cruxible_core.cli.context import CliContextState, load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
 
@@ -107,11 +108,38 @@ def _resolve_cli_transport(
     return stored.server_url, stored.server_socket
 
 
-def _resolve_cli_instance_id(instance_id: str | None) -> str | None:
-    """Resolve the active governed instance ID."""
+def _normalized_transport(
+    server_url: str | None,
+    server_socket: str | None,
+) -> tuple[str, str] | None:
+    if server_url:
+        return ("url", server_url.rstrip("/"))
+    if server_socket:
+        return ("socket", str(Path(server_socket).expanduser().resolve()))
+    return None
+
+
+def _resolve_cli_instance_id(
+    instance_id: str | None,
+    *,
+    server_url: str | None,
+    server_socket: str | None,
+    stored: CliContextState,
+) -> str | None:
+    """Resolve the instance only when it belongs to the selected transport."""
+
     if instance_id is not None:
         return instance_id
-    return load_cli_context().instance_id
+    stored_transport = _normalized_transport(
+        stored.server_url,
+        stored.server_socket,
+    )
+    if (
+        stored_transport is None
+        or _normalized_transport(server_url, server_socket) != stored_transport
+    ):
+        return None
+    return stored.instance_id
 
 
 def _active_transport_label(exc: httpx.TransportError) -> str:
@@ -785,7 +813,12 @@ def cli(
             server_url=server_url,
             server_socket=server_socket,
         )
-        resolved_instance_id = _resolve_cli_instance_id(instance_id)
+        resolved_instance_id = _resolve_cli_instance_id(
+            instance_id,
+            server_url=resolved_url,
+            server_socket=resolved_socket,
+            stored=stored,
+        )
         settings = resolve_server_settings(
             server_url=resolved_url,
             server_socket=resolved_socket,
@@ -809,7 +842,7 @@ def cli(
             "target_instance_source": _target_source(
                 explicit=instance_id is not None,
                 environment=False,
-                remembered=stored.instance_id is not None,
+                remembered=resolved_instance_id is not None and stored.instance_id is not None,
             ),
         }
     )

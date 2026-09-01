@@ -23,7 +23,7 @@ import pytest
 from click.testing import CliRunner, Result
 from fastapi.testclient import TestClient
 
-from cruxible_client import CruxibleClient
+from cruxible_client import CruxibleClient, contracts
 from cruxible_client.contracts.authoring.inputs import (
     ClaimInput,
     LiteralObjectInput,
@@ -35,6 +35,7 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
     foreign_source_capture_contract,
 )
+from cruxible_client.contracts.errors import PlaybillBootstrapError
 from cruxible_client.contracts.policies import (
     ClaimEvidenceAdmissionPolicyV1,
     ClaimEvidenceAdmissionRuleV1,
@@ -160,6 +161,7 @@ def served_cli(
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
+    monkeypatch.chdir(tmp_path)
     reset_permissions()
     reset_registry()
     get_playbill_manager().clear()
@@ -233,6 +235,155 @@ def test_cli_independent_approval_flag_validates_before_provisioning(
     assert result.exit_code == 2
     assert "requires --reviewer-key-dir" in result.output
     assert not (tmp_path / "solo-custody").exists()
+    assert reached == []
+
+
+def test_cli_init_requires_an_active_instance_before_provisioning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    reached: list[str] = []
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.generate_client_principal_key",
+        lambda *_args, **_kwargs: reached.append("key"),
+    )
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill._get_client", lambda: object())
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://init.example.test",
+            "playbill",
+            "init",
+            "--key-dir",
+            str(tmp_path.parent / "missing-instance-custody"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--instance-id is required in server mode" in result.output
+    assert reached == []
+
+
+def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    custody = tmp_path.parent / "retry-custody"
+    calls = 0
+
+    class StubClient:
+        def init_playbill(
+            self,
+            instance_id: str,
+            *,
+            principals: list[dict[str, object]],
+            operating_profile: str,
+            require_independent_approval: bool,
+        ) -> contracts.PlaybillInitResult:
+            nonlocal calls
+            calls += 1
+            assert instance_id == "inst_retry"
+            assert operating_profile == "local"
+            assert require_independent_approval is False
+            if calls == 1:
+                raise PlaybillBootstrapError("simulated response loss")
+            coordinate = contracts.PlaybillAcceptedCoordinate(
+                git_oid="1" * 64,
+                semantic_root="sha256:" + "2" * 64,
+                generation_root="sha256:" + "3" * 64,
+                compiler_digest="sha256:" + "4" * 64,
+            )
+            return contracts.PlaybillInitResult(
+                instance_id=instance_id,
+                coordinate=coordinate,
+                trust_root={"principals": principals},
+                recovery_posture="normal",
+                approval_policy_mode="self_approval_allowed",
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
+            )
+
+    stub = StubClient()
+    monkeypatch.setattr("cruxible_core.cli.commands.playbill._get_client", lambda: stub)
+    monkeypatch.setattr("cruxible_core.cli.commands._common._get_client", lambda: stub)
+    args = [
+        "--server-url",
+        "https://init.example.test/",
+        "--instance-id",
+        "inst_retry",
+        "playbill",
+        "init",
+        "--key-dir",
+        str(custody),
+        "--principal-id",
+        CREATOR_ID,
+        "--json",
+    ]
+    first = CliRunner().invoke(cli, args)
+    assert first.exit_code == 1
+    private_key = custody / f"{CREATOR_ID}.ed25519"
+    marker = custody / f".playbill-init-resume-{CREATOR_ID}.json"
+    original_private = private_key.read_bytes()
+    assert marker.is_file()
+
+    retry = CliRunner().invoke(cli, args)
+    assert retry.exit_code == 0, retry.output
+    assert private_key.read_bytes() == original_private
+    assert not marker.exists()
+    assert calls == 2
+
+    refused_reuse = CliRunner().invoke(cli, args)
+    assert refused_reuse.exit_code == 1
+    assert "without this init's retry marker" in refused_reuse.output
+    assert calls == 2
+
+
+@pytest.mark.parametrize("command", ["host", "init"])
+def test_tcp_in_git_worktree_refuses_before_remote_or_key_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    monkeypatch.chdir(workspace)
+    reached: list[str] = []
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill._get_client",
+        lambda: reached.append("client"),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: reached.append("client"),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands.playbill.generate_client_principal_key",
+        lambda *_args, **_kwargs: reached.append("key"),
+    )
+    leaf = ["playbill", "host", "create"]
+    if command == "init":
+        leaf = [
+            "--instance-id",
+            "inst_tcp",
+            "playbill",
+            "init",
+            "--key-dir",
+            str(tmp_path / "outside-custody"),
+        ]
+    result = CliRunner().invoke(cli, ["--server-url", "https://remote.test", *leaf])
+
+    assert result.exit_code == 2
+    assert "TCP cannot attach a daemon-local workspace" in result.output
+    assert "Use --server-socket" in result.output
     assert reached == []
 
 

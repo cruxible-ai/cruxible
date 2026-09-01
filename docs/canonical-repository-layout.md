@@ -80,8 +80,15 @@ Archive the managed instance directory together with its matching out-of-band
 `trust/<instance-id>.json`, then re-seed under a new instance ID; do not transcode
 signed history. Leaving only one half is a typed re-seed-required state, never a
 partly initialized state. Historical compiler verifiers remain available for
-frozen material, but a current mutable instance must use the current layout and
-compiler.
+frozen material, but a mutable instance must use the current layout and an
+installed compiler in the PC-HR artifact-codec lineage.
+
+Re-seed creates fresh owner, reviewer, and recovery custody by default.
+Arbitrary existing client key directories are not an import surface and are
+refused. The CLI's per-principal init retry marker is narrower: it binds an
+init-created key pair to one normalized transport, instance ID, principal ID,
+kind, and public key solely so the same operation can recover from response
+loss. It is cleared after success and does not authorize later key reuse.
 
 ## Advisory ledger remote
 

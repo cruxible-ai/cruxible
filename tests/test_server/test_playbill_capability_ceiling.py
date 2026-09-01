@@ -7,8 +7,13 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from cruxible_core.errors import ConfigError
-from cruxible_core.runtime.permissions import init_permissions, reset_permissions
+from cruxible_core.errors import ConfigError, DaemonOperationScopeError
+from cruxible_core.runtime.permissions import (
+    init_permissions,
+    request_instance_scope,
+    require_unscoped_operator,
+    reset_permissions,
+)
 from cruxible_core.server.app import create_app
 from cruxible_core.server.credentials import (
     get_runtime_credential_store,
@@ -197,3 +202,15 @@ def test_health_does_not_disclose_capability_ceiling(
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_daemon_scope_refusal_names_operation_instead_of_a_fake_instance() -> None:
+    with request_instance_scope("inst_scoped"):
+        with pytest.raises(
+            DaemonOperationScopeError,
+            match=(
+                "instance 'inst_scoped' cannot perform daemon-wide operation "
+                "'cruxible_playbill_host_create'"
+            ),
+        ):
+            require_unscoped_operator("cruxible_playbill_host_create")
