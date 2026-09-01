@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
     ProcedureAdmissionMaterialManifestV1,
+    ProcedureSourceCaptureAssociationV1,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
 )
@@ -27,6 +28,7 @@ from cruxible_core.playbill.procedures.execution import (
     procedure_line_run_id,
     procedure_semantic_replay_key_digest,
 )
+from cruxible_core.service.playbill_procedure_runs import service_prepare_playbill_line_admission
 from tests.test_playbill.test_procedure_execution import (
     _digest,
     _fixture,
@@ -179,6 +181,22 @@ def test_exhaust_carrier_presence_law_fails_closed(tmp_path: Path) -> None:
         )
 
 
+def test_exhaust_carrier_presence_law_has_a_typed_admission_emitter(tmp_path: Path) -> None:
+    _plan, admission = _plan_and_admission(tmp_path)
+    invalid = ProcedureRunAdmissionV5.model_construct(
+        **{
+            **admission.model_dump(mode="python"),
+            "exhaust_access_binding_digest": _digest("unexpected-exhaust"),
+        }
+    )
+    refusal = service_prepare_playbill_line_admission(
+        object(),  # type: ignore[arg-type]
+        admission=invalid,
+        accepted_line=object(),  # type: ignore[arg-type]
+    )
+    assert refusal.code == "exhaust_binding_carrier_required"  # type: ignore[union-attr]
+
+
 def test_prepared_v5_requires_exact_plan_and_complete_provider_coverage(tmp_path: Path) -> None:
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
@@ -275,33 +293,28 @@ def test_prepared_v5_requires_exact_plan_and_complete_provider_coverage(tmp_path
         )
 
 
-def test_runtime_reservation_v2_commits_actual_invocation_identity(tmp_path: Path) -> None:
+def test_retired_runtime_reservation_v2_is_not_a_live_sidecar_format(tmp_path: Path) -> None:
     from cruxible_core.playbill.material_reservations import (
+        ProcedureMaterialRecoveryRequired,
         ProcedureMaterialReservationStore,
-        make_run_reservation_v2,
     )
 
     fixture = _fixture(tmp_path)
-    first = make_run_reservation_v2(
-        instance_id="instance-a",
-        run_id="RUN-a",
-        admission_binding_digest=_digest("admission"),
-        partition_id="line-a",
-        invocation_id=_digest("invocation-a"),
-        body_digest=_digest("body"),
-        event_kind="node_fired",
-    )
-    second = make_run_reservation_v2(
-        instance_id="instance-a",
-        run_id="RUN-a",
-        admission_binding_digest=_digest("admission"),
-        partition_id="line-a",
-        invocation_id=_digest("invocation-b"),
-        body_digest=_digest("body"),
-        event_kind="node_fired",
-    )
-    assert first.reservation_id != second.reservation_id
-
     store = ProcedureMaterialReservationStore(fixture.bodies.reservation_root)
-    store.reserve(first)
-    assert store.active() == (first,)
+    (store.root / ("0" * 64 + ".json")).write_text(
+        '{"tag":"playbill-run-material-reservation-v2"}\n', encoding="utf-8"
+    )
+    with pytest.raises(ProcedureMaterialRecoveryRequired, match="sidecar is corrupt"):
+        store.active()
+
+
+@pytest.mark.parametrize("occurrence_path", ["", "/provider", "provider/", "a//b"])
+def test_reserved_b4_source_capture_association_requires_canonical_occurrence_path(
+    occurrence_path: str,
+) -> None:
+    with pytest.raises(ValidationError, match="occurrence path"):
+        ProcedureSourceCaptureAssociationV1(
+            occurrence_path=occurrence_path,
+            invocation_receipt_digest=_digest("receipt"),
+            capture_digest=_digest("capture"),
+        )

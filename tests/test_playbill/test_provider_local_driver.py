@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import signal
@@ -41,7 +42,9 @@ from cruxible_core.playbill.provider_local_runtime import (
     ProviderLocalRuntimeInvoker,
     ProviderLocalRuntimeRefused,
     ProviderSecretResolverRegistry,
+    _assert_no_secret,
     _run_child,
+    provider_environment_secret_key,
     translate_provider_budget,
 )
 from cruxible_core.playbill.provider_process_leases import (
@@ -319,7 +322,7 @@ def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_
     registry = ProviderSecretResolverRegistry(
         (
             EnvironmentProviderSecretResolver(
-                {"CRUXIBLE_PROVIDER_SECRET_billing_api_7": "credential-value"}
+                {provider_environment_secret_key(plan.references[0]): "credential-value"}
             ),
         )
     )
@@ -384,7 +387,11 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> 
     registry = ProviderSecretResolverRegistry(
         (
             EnvironmentProviderSecretResolver(
-                {"CRUXIBLE_PROVIDER_SECRET_billing_api_7": "credential-value"}
+                {
+                    provider_environment_secret_key(_secret_plan().references[0]): (
+                        "credential-value"
+                    )
+                }
             ),
         )
     )
@@ -620,6 +627,32 @@ def test_process_lease_root_refuses_non_directory_or_symlink(
 
 
 @pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        (("billing", "api_key", "v1"), ("billing", "api", "key_v1")),
+        (("prod_billing", "api", "v1"), ("prod", "billing_api", "v1")),
+    ],
+)
+def test_environment_secret_keys_are_injective_across_separator_collisions(
+    first: tuple[str, str, str], second: tuple[str, str, str]
+) -> None:
+    references = tuple(
+        ProviderSecretReferenceV1(
+            realm=realm,
+            name=name,
+            epoch=epoch,
+            resolver_kind="environment",
+        )
+        for realm, name, epoch in (first, second)
+    )
+    keys = tuple(provider_environment_secret_key(reference) for reference in references)
+    assert keys[0] != keys[1]
+    resolver = EnvironmentProviderSecretResolver({keys[0]: "first", keys[1]: "second"})
+    assert resolver.resolve(references[0]) == "first"
+    assert resolver.resolve(references[1]) == "second"
+
+
+@pytest.mark.parametrize(
     "code",
     [
         "unaccepted_provider",
@@ -699,5 +732,98 @@ def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
             occurrence=occurrence,  # type: ignore[arg-type]
             context=context,
             invocation_id=_digest("bind-invocation"),
+            bound=BoundLocalProviderV1(binding=binding, interpreter_path=tmp_path / "unused"),
         )
     assert caught.value.code == code
+
+
+def test_output_cap_refuses_before_buffering_more_than_one_extra_byte(tmp_path: Path) -> None:
+    interpreter = tmp_path / "flooding-python"
+    interpreter.write_text(
+        """#!/usr/bin/env python3
+import os, socket, sys, threading, time
+invocation_id, control_path = sys.argv[2:4]
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(control_path)
+server.listen(2)
+def echo():
+    while True:
+        try:
+            connection, _ = server.accept()
+        except OSError:
+            return
+        with connection:
+            data = connection.recv(4096).decode()
+            connection.sendall(invocation_id.encode() if data == invocation_id else b"")
+threading.Thread(target=echo, daemon=True).start()
+sys.stdout.buffer.write(b"x" * 65536)
+sys.stdout.buffer.flush()
+time.sleep(5)
+""",
+        encoding="utf-8",
+    )
+    interpreter.chmod(0o755)
+    leases = ProviderProcessLeaseStore(tmp_path / "cap-leases")
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        _run_child(
+            interpreter,
+            entrypoint="demo.runtime:Provider",
+            context=b"{}",
+            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=5, output_bytes=4096),
+            secret_fd=None,
+            invocation_id=_digest("cap"),
+            process_leases=leases,
+        )
+    assert caught.value.code == "budget_output_size"
+    assert tuple(leases.root.glob("*.json")) == ()
+
+
+@pytest.mark.parametrize("transform", [lambda value: value[::-1], base64.b64encode])
+def test_secret_scan_refuses_cheap_encoded_variants(transform) -> None:  # type: ignore[no-untyped-def]
+    secret = "not-visible-material"
+    with pytest.raises(ProviderLocalRuntimeRefused, match="secret_leak"):
+        _assert_no_secret(
+            transform(secret.encode("utf-8")),
+            {"private/key": secret},
+            where="provider stderr",
+        )
+
+
+def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(tmp_path: Path) -> None:
+    interpreter = _fake_interpreter(tmp_path / "never-spawned")
+    binding = BoundLocalProviderV1(
+        binding=VerifiedProviderBindingV1(
+            provider_artifact_digest=_digest("provider"),
+            interface_artifact_digest=_digest("interface-artifact"),
+            interface_id="demo.interface",
+            interface_digest=_digest("interface"),
+            implementation_digest=_digest("implementation"),
+            deployment_digest=_digest("deployment"),
+            materialization_digest=_digest("materialization"),
+            environment_manifest_digest=_digest("environment"),
+            entrypoint="demo.runtime:Provider",
+            declared_endpoints=("dynamic:future-form",),
+        ),
+        interpreter_path=interpreter,
+    )
+    context = ProviderRuntimeRunContextV1(
+        protocol_version="1.0",
+        run_id="RUN-dynamic",
+        interface_id="demo.interface",
+        interface_digest=_digest("interface"),
+        implementation_digest=_digest("implementation"),
+        entrypoint="demo.runtime:Provider",
+        input={},
+        input_bucket="size=small",
+        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=1024),
+    )
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        LocalProviderExecutionDriver().invoke(
+            binding,
+            context,
+            secret_plan=ProviderSecretResolutionPlanV1(),
+            secret_resolvers=ProviderSecretResolverRegistry(()),
+            invocation_id=_digest("dynamic"),
+            process_leases=ProviderProcessLeaseStore(tmp_path / "dynamic-leases"),
+        )
+    assert caught.value.code == "undeclared_egress"

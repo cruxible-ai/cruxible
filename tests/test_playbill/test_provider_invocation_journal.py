@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -34,10 +35,18 @@ from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlanV1,
     ProviderInvocationCompletedV1,
     ProviderInvocationReceiptV1,
+    ProviderSecretBindingIdentityV1,
+    ProviderSecretReceiptReferenceV1,
+    ProviderSecretReferenceV1,
     ProviderSecretResolutionPlanV1,
     VerifiedProviderBindingV1,
     provider_invocation_receipt_digest,
+    provider_secret_binding_identity_digest,
 )
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistrationV1,
+)
+from cruxible_client.contracts.providers import AcceptedProviderV1
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import parse_journal_payload
 from cruxible_core.playbill.procedures.execution import (
@@ -51,9 +60,16 @@ from cruxible_core.playbill.procedures.execution import (
 )
 from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.provider_classifiers import ProviderBucketClassifierRegistry
-from cruxible_core.playbill.provider_local_runtime import ProviderDriverOutcomeV1
+from cruxible_core.playbill.provider_local_runtime import (
+    ProviderDriverOutcomeV1,
+    ProviderLocalRuntimeRefused,
+)
 from cruxible_core.playbill.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
-from tests.test_playbill._p2b1_support import accepted_interface, accepted_provider
+from tests.test_playbill._p2b1_support import (
+    accepted_interface,
+    accepted_provider,
+    install_demo_classifier,
+)
 from tests.test_playbill.test_graph_v4_provider_closure import (
     _accepted_procedure as _provider_v4_procedure,
 )
@@ -72,8 +88,19 @@ class _Invoker:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    def invoke_provider(self, *, occurrence, context, invocation_id):  # type: ignore[no-untyped-def]
+    def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
+        from cruxible_core.playbill.provider_local_runtime import BoundLocalProviderV1
+
+        return BoundLocalProviderV1(
+            binding=occurrence.local_execution,
+            interpreter_path=Path("/test/provider-runtime"),
+        )
+
+    def invoke_provider(  # type: ignore[no-untyped-def]
+        self, *, occurrence, context, invocation_id, bound
+    ):
         self.calls.append(invocation_id)
+        assert bound.binding == occurrence.local_execution
         return ProviderDriverOutcomeV1(
             envelope=ProviderRuntimeResultEnvelopeV1(
                 protocol_version="1.0",
@@ -92,8 +119,25 @@ class _Invoker:
 
 
 class _CrashingInvoker:
-    def invoke_provider(self, *, occurrence, context, invocation_id):  # type: ignore[no-untyped-def]
+    def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
+        return _Invoker().bind_provider(occurrence=occurrence)
+
+    def invoke_provider(  # type: ignore[no-untyped-def]
+        self, *, occurrence, context, invocation_id, bound
+    ):
         raise RuntimeError("daemon lost the provider result")
+
+
+class _ElapsedClock:
+    def __init__(self) -> None:
+        self.monotonic_calls = 0
+
+    def now(self):  # type: ignore[no-untyped-def]
+        return datetime(2026, 9, 1, tzinfo=timezone.utc)
+
+    def monotonic_ns(self) -> int:
+        self.monotonic_calls += 1
+        return 0 if self.monotonic_calls == 1 else 400_000_000
 
 
 def _accepted_one_provider(
@@ -176,11 +220,15 @@ def _prepared_v5(
     tmp_path: Path,
     *,
     effect_class: str = "external_read",
+    secret_plan: ProviderSecretResolutionPlanV1 | None = None,
+    provider: AcceptedProviderV1 | None = None,
+    interface: AcceptedProviderInterfaceRegistrationV1 | None = None,
+    local_binding: VerifiedProviderBindingV1 | None = None,
 ) -> tuple[PreparedProcedureRunV5, object]:
     fixture = _fixture(tmp_path)
     v3 = _line_admission(accepted, fixture)
-    provider = accepted_provider()
-    interface = accepted_interface()
+    provider = provider or accepted_provider()
+    interface = interface or accepted_interface()
     graph_node = accepted.procedure.definition.nodes[0]
     repeat_node_id: str | None = None
     if isinstance(graph_node, RepeatNodeV4):
@@ -192,6 +240,7 @@ def _prepared_v5(
         assert isinstance(node, ProviderNodeV4)
     registration = interface.registration
     implementation_digest = provider.provider.implementations[0].implementation_digest
+    secret_plan = secret_plan or ProviderSecretResolutionPlanV1()
     selectors = tuple(item.selector for item in registration.conformance_proofs)
     classification = ProviderBucketClassificationPlanV1(
         node_id=node.node_id,
@@ -207,7 +256,7 @@ def _prepared_v5(
         classification_plan=classification,
         implementation_digest=implementation_digest,
         effect_class=effect_class,  # type: ignore[arg-type]
-        secret_binding_identity_digests=(),
+        secret_binding_identity_digests=secret_plan.binding_identity_digests,
     )
     v4_fields = {name: getattr(v3, name) for name in type(v3).model_fields if name != "tag"}
     v4_fields.update(
@@ -235,16 +284,18 @@ def _prepared_v5(
             ),
         }
     )
-    local = VerifiedProviderBindingV1(
+    local = local_binding or VerifiedProviderBindingV1(
         provider_artifact_digest=provider.artifact_digest,
         interface_artifact_digest=interface.artifact_digest,
         interface_id=registration.interface_id,
         interface_digest=registration.interface_digest,
         implementation_digest=implementation_digest,
         deployment_digest=_digest("deployment-local"),
-        materialization_digest=provider.provider.implementations[0]
-        .materialization_references[0]
-        .materialization_digest,
+        materialization_digest=(
+            provider.provider.implementations[0]
+            .materialization_references[0]
+            .materialization_digest
+        ),
         environment_manifest_digest=_digest("environment"),
         entrypoint=provider.provider.runtime_artifact.manifest.implementations[0].entrypoint,
     )
@@ -280,7 +331,7 @@ def _prepared_v5(
         contract_input_digest=node.contract_in.artifact_digest,  # type: ignore[union-attr]
         contract_output_digest=node.contract_out.artifact_digest,  # type: ignore[union-attr]
         local_execution=local,
-        secret_plan=ProviderSecretResolutionPlanV1(),
+        secret_plan=secret_plan,
         budget_translation=budget,
     )
     plan = ProcedureAcquisitionPlanV2(
@@ -355,7 +406,7 @@ def test_graph_v4_provider_journals_completed_receipt_before_progress(
     accepted = _accepted_one_provider(repeat=repeat)
     prepared, fixture = _prepared_v5(accepted, tmp_path, effect_class=effect_class)
     registry = ProviderBucketClassifierRegistry()
-    registry.require_accepted(accepted_interface())
+    install_demo_classifier(registry)
     invoker = _Invoker()
     result = ProcedureExecutor(
         journal=fixture.journal,
@@ -447,7 +498,7 @@ def test_line_external_mutation_prepares_intent_and_invokes_zero_times(
     accepted = _accepted_one_provider(mutation=True, repeat=repeat)
     prepared, fixture = _prepared_v5(accepted, tmp_path, effect_class="external_mutation")
     registry = ProviderBucketClassifierRegistry()
-    registry.require_accepted(accepted_interface())
+    install_demo_classifier(registry)
     invoker = _Invoker()
     result = ProcedureExecutor(
         journal=fixture.journal,
@@ -474,7 +525,7 @@ def test_started_without_completed_poison_is_never_auto_reissued(tmp_path: Path)
     accepted = _accepted_one_provider()
     prepared, fixture = _prepared_v5(accepted, tmp_path)
     registry = ProviderBucketClassifierRegistry()
-    registry.require_accepted(accepted_interface())
+    install_demo_classifier(registry)
     executor = ProcedureExecutor(
         journal=fixture.journal,
         bodies=fixture.bodies,
@@ -490,3 +541,253 @@ def test_started_without_completed_poison_is_never_auto_reissued(tmp_path: Path)
         executor.execute(prepared, accepted)
     with pytest.raises(PlaybillExecutionError, match="incomplete Provider invocation"):
         executor.execute(prepared, accepted)
+
+
+def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_CrashingInvoker(),
+        provider_classifier_registry=registry,
+    )
+    with pytest.raises(PlaybillExecutionError, match="provider_completion_not_durable"):
+        executor.execute(prepared, accepted)
+    records = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    started_record = next(
+        item for item in records if item.record.event_kind == "provider_invocation_started"
+    )
+    started = parse_journal_payload(
+        fixture.bodies.read(
+            started_record.record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    invocation_id = started["invocation_id"]  # type: ignore[index]
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_journal_for_write",
+        lambda _instance: (fixture.journal, tmp_path),
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_stream",
+        lambda _instance: prepared.admission.journal_stream,
+    )
+    assert procedure_run_service.service_recover_provider_invocations(
+        _Instance(),  # type: ignore[arg-type]
+        invocation_ids=(invocation_id,),
+        recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    ) == (invocation_id,)
+    kinds = tuple(
+        item.record.event_kind
+        for item in fixture.journal.all_records(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+    )
+    assert kinds.count("provider_invocation_completed") == 1
+    assert kinds[-1] == "attempt_finalized"
+    assert executor.execute(prepared, accepted).status == "failed"
+
+
+def test_typed_start_failure_journals_completion_and_is_replayable(tmp_path: Path) -> None:
+    class _StartFailure:
+        def bind_provider(self, *, occurrence):  # type: ignore[no-untyped-def]
+            return _Invoker().bind_provider(occurrence=occurrence)
+
+        def invoke_provider(self, **_kwargs):  # type: ignore[no-untyped-def]
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_missing", "child did not acquire its fence"
+            )
+
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_StartFailure(),
+        provider_classifier_registry=registry,
+    )
+
+    first = executor.execute(prepared, accepted)
+    assert first.status == "failed"
+    records = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    kinds = tuple(item.record.event_kind for item in records)
+    assert kinds.count("provider_invocation_started") == 1
+    assert kinds.count("provider_invocation_completed") == 1
+    assert executor.execute(prepared, accepted).status == "failed"
+
+
+def test_invocation_receipt_commits_only_secret_binding_digest_and_purpose(
+    tmp_path: Path,
+) -> None:
+    reference = ProviderSecretReferenceV1(
+        realm="private_realm",
+        name="credential_name",
+        epoch="secret_epoch",
+        purpose="billing lookup",
+        resolver_kind="environment",
+    )
+    identity_digest = provider_secret_binding_identity_digest(
+        ProviderSecretBindingIdentityV1(realm=reference.realm, name=reference.name)
+    )
+    plan = ProviderSecretResolutionPlanV1(
+        references=(reference,),
+        binding_identity_digests=(identity_digest,),
+    )
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path, secret_plan=plan)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_Invoker(),
+        provider_classifier_registry=registry,
+    ).execute(prepared, accepted)
+    completed_record = next(
+        item
+        for item in fixture.journal.all_records(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+        if item.record.event_kind == "provider_invocation_completed"
+    )
+    completed = ProviderInvocationCompletedV1.model_validate(
+        parse_journal_payload(
+            fixture.bodies.read(
+                completed_record.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+    )
+    assert completed.receipt.secret_references == (
+        ProviderSecretReceiptReferenceV1(
+            binding_identity_digest=identity_digest,
+            purpose=reference.purpose,
+        ),
+    )
+    serialized = completed.model_dump_json()
+    assert reference.realm not in serialized
+    assert reference.name not in serialized
+    assert reference.epoch not in serialized
+
+
+@pytest.mark.parametrize("mutation", ["duplicate_completion", "orphan_completion"])
+def test_authoritative_replay_matches_cache_for_provider_completion_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_Invoker(),
+        provider_classifier_registry=registry,
+    ).execute(prepared, accepted)
+    records = list(
+        fixture.journal.all_records(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+    )
+    completed = next(
+        item for item in records if item.record.event_kind == "provider_invocation_completed"
+    )
+    if mutation == "duplicate_completion":
+        records.append(completed)
+    else:
+        records = [
+            item for item in records if item.record.event_kind != "provider_invocation_started"
+        ]
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_records_for_run",
+        lambda *_args, **_kwargs: tuple(records),
+    )
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    with pytest.raises(
+        procedure_run_service.ProcedureRunRecoveryRequired,
+        match="exact unmatched durable start",
+    ):
+        procedure_run_service._state_from_records(  # noqa: SLF001
+            _Instance(), run_id=prepared.admission.run_id
+        )
+
+
+def test_provider_call_budget_subtracts_elapsed_run_time_at_each_spawn(tmp_path: Path) -> None:
+    class _BudgetCapturingInvoker(_Invoker):
+        def __init__(self) -> None:
+            super().__init__()
+            self.wall_windows: list[float] = []
+
+        def invoke_provider(self, **kwargs):  # type: ignore[no-untyped-def]
+            self.wall_windows.append(kwargs["context"].budgets.wall_clock_seconds)
+            return super().invoke_provider(**kwargs)
+
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    invoker = _BudgetCapturingInvoker()
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
+        provider_classifier_registry=registry,
+        clock=_ElapsedClock(),
+    ).execute(prepared, accepted)
+
+    assert result.status == "succeeded"
+    admitted_window = prepared.acquisition_plan.external_occurrences[
+        0
+    ].budget_translation.runtime_wall_clock_seconds
+    assert invoker.wall_windows == [pytest.approx(admitted_window - 0.4)]

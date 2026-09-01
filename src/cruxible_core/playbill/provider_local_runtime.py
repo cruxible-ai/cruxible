@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import hashlib
 import json
@@ -25,9 +26,11 @@ from cruxible_client.contracts.provider_execution import (
     ProviderBudgetTranslationV1,
     ProviderEgressObservationV1,
     ProviderExternalOccurrencePlanV1,
+    ProviderSecretBindingIdentityV1,
     ProviderSecretReferenceV1,
     ProviderSecretResolutionPlanV1,
     VerifiedProviderBindingV1,
+    provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
@@ -105,13 +108,23 @@ class EnvironmentProviderSecretResolver:
         self._values = os.environ if values is None else values
 
     def resolve(self, reference: ProviderSecretReferenceV1) -> str:
-        key = f"CRUXIBLE_PROVIDER_SECRET_{reference.realm}_{reference.name}_{reference.epoch}"
+        key = provider_environment_secret_key(reference)
         try:
             return self._values[key]
         except KeyError as exc:
             raise ProviderLocalRuntimeRefused(
                 "secret_epoch_unavailable", f"environment secret epoch {reference.epoch!r} absent"
             ) from exc
+
+
+def provider_environment_secret_key(reference: ProviderSecretReferenceV1) -> str:
+    """Return a collision-free daemon custody key for one secret epoch."""
+
+    identity_digest = provider_secret_binding_identity_digest(
+        ProviderSecretBindingIdentityV1(realm=reference.realm, name=reference.name)
+    ).removeprefix("sha256:")
+    epoch = reference.epoch.encode("utf-8")
+    return f"CRUXIBLE_PROVIDER_SECRET_{identity_digest}_{len(epoch)}_{epoch.hex()}"
 
 
 class FileProviderSecretStore:
@@ -203,13 +216,11 @@ class ProviderLocalRuntimeInvoker:
         self._process_leases = process_leases
         self._driver = driver or LocalProviderExecutionDriver()
 
-    def invoke_provider(
+    def bind_provider(
         self,
         *,
         occurrence: ProviderExternalOccurrencePlanV1,
-        context: ProviderRuntimeRunContextV1,
-        invocation_id: str,
-    ) -> ProviderDriverOutcomeV1:
+    ) -> BoundLocalProviderV1:
         try:
             deployment = self._deployments[occurrence.local_execution.deployment_digest]
         except KeyError as exc:
@@ -242,8 +253,27 @@ class ProviderLocalRuntimeInvoker:
                 "acceptance_divergence",
                 "spawn-time Provider binding differs from the admitted binding",
             )
+        return bound
+
+    def invoke_provider(
+        self,
+        *,
+        occurrence: ProviderExternalOccurrencePlanV1,
+        context: ProviderRuntimeRunContextV1,
+        invocation_id: str,
+        bound: BoundLocalProviderV1,
+    ) -> ProviderDriverOutcomeV1:
+        # Rebind immediately before every spawn.  The earlier bound value is
+        # journal-before-progress evidence; this second read closes mutation
+        # between the durable start and process creation.
+        fresh = self.bind_provider(occurrence=occurrence)
+        if fresh != bound:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "Provider binding changed after the durable invocation start",
+            )
         return self._driver.invoke(
-            bound,
+            fresh,
             context,
             secret_plan=occurrence.secret_plan,
             secret_resolvers=self._secret_resolvers,
@@ -635,7 +665,16 @@ def _open_secret_channel(secrets: Mapping[str, str]) -> Iterator[int | None]:
 
 
 def _assert_no_secret(payload: bytes, secrets: Mapping[str, str], *, where: str) -> None:
-    leaked = sorted(ref for ref, value in secrets.items() if value and value.encode() in payload)
+    leaked = sorted(
+        ref
+        for ref, value in secrets.items()
+        if value
+        and any(
+            variant in payload
+            for raw in (value.encode("utf-8"),)
+            for variant in (raw, raw[::-1], base64.b64encode(raw))
+        )
+    )
     if leaked:
         raise ProviderLocalRuntimeRefused("secret_leak", f"secret material leaked in {where}")
 
@@ -849,5 +888,6 @@ __all__ = [
     "ProviderLocalRuntimeRefused",
     "ProviderLocalRuntimeInvoker",
     "ProviderSecretResolverRegistry",
+    "provider_environment_secret_key",
     "translate_provider_budget",
 ]

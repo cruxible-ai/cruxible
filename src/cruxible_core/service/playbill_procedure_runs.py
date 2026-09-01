@@ -47,6 +47,7 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionMaterialManifestV1,
     ProcedureAdmissionRefusalV1,
+    ProcedureBudgetBoundaryObservationV1,
     ProcedureBudgetExceededDetailV1,
     ProcedureBudgetExhaustedV1,
     ProcedureBudgetRefusalDetailV1,
@@ -62,7 +63,9 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureProviderBindingV2,
     ProcedureReplayInputProjectionV1,
     ProcedureRunAttributionV1,
+    ProcedureRunBudgetDeclaredV1,
     ProcedureRunBudgetDeclaredV2,
+    ProcedureRunBudgetObservedV1,
     ProcedureRunBudgetV1,
     ProcedureRunBudgetV2,
     ProcedureRunNodePinSetV1,
@@ -75,8 +78,15 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.provider_execution import (
+    ProviderEgressObservationV1,
     ProviderInvocationCompletedV1,
+    ProviderInvocationOutcomeV1,
+    ProviderInvocationReceiptV1,
     ProviderInvocationStartedV1,
+    ProviderSecretBindingIdentityV1,
+    ProviderSecretReceiptReferenceV1,
+    provider_invocation_receipt_digest,
+    provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
@@ -98,6 +108,7 @@ from cruxible_core.playbill.exhaust import (
 )
 from cruxible_core.playbill.exhaust.promotions import VerifiedExhaustRecordV1
 from cruxible_core.playbill.exhaust.records import parse_journal_payload
+from cruxible_core.playbill.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.material_reservations import ProcedureMaterialReservationStore
 from cruxible_core.playbill.procedures.execution import (
@@ -126,6 +137,7 @@ from cruxible_core.playbill.procedures.execution import (
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
+from cruxible_core.playbill.provider_outcomes import map_provider_refusal
 from cruxible_core.playbill.service.documents import PlaybillAcceptedCoordinate
 from cruxible_core.service.playbill_procedures import (
     PlaybillProcedureStateTapReader,
@@ -1454,14 +1466,221 @@ def service_get_playbill_procedure_run(
     return _state_from_records(instance, run_id=run_id)
 
 
+def service_recover_provider_invocations(
+    instance: PlaybillInstance,
+    *,
+    invocation_ids: tuple[str, ...],
+    recorded_at: datetime,
+) -> tuple[str, ...]:
+    """Close exact durable starts whose child groups were recovered at startup."""
+
+    if not invocation_ids:
+        return ()
+    wanted = set(invocation_ids)
+    journal, _root = _journal_for_write(instance)
+    stream = _stream(instance)
+    bodies = instance.body_store()
+    access = BodyAccessContext(principal_id="provider-recovery", can_read_body=True)
+    recovered: list[str] = []
+    for partition_id in journal.partition_ids(stream):
+        records = journal.all_records(stream, partition_id)
+        admission: ProcedureRunAdmissionV5 | None = None
+        plan = None
+        starts: dict[str, ProviderInvocationStartedV1] = {}
+        completed: set[str] = set()
+        for stored in records:
+            payload = parse_journal_payload(
+                bodies.read(stored.record.payload_digest, access=access)
+            )
+            if stored.record.event_kind == "admission_bound" and isinstance(payload, dict):
+                if payload.get("tag") == "playbill-procedure-admission-bound-payload-v5":
+                    bound = ProcedureAdmissionBoundPayloadV5.model_validate(payload)
+                    admission = bound.admission
+                    plan = bound.acquisition_plan
+            elif stored.record.event_kind == "provider_invocation_started":
+                started = ProviderInvocationStartedV1.model_validate(payload)
+                starts[started.invocation_id] = started
+            elif stored.record.event_kind == "provider_invocation_completed":
+                completed.add(ProviderInvocationCompletedV1.model_validate(payload).invocation_id)
+        if admission is None or plan is None:
+            continue
+        writer = ProcedureExhaustWriter(
+            journal=journal,
+            bodies=bodies,
+            fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+        )
+        writer_state = journal.writer_state(stream, partition_id)
+        if (
+            writer_state is not None
+            and writer_state.active
+            and writer_state.fencing_token != PROCEDURE_RUN_FENCING_TOKEN
+        ):
+            journal.fence_writer(
+                stream,
+                partition_id,
+                expected_fencing_token=writer_state.fencing_token,
+            )
+        _activate_writer(journal, stream, partition_id)
+        for invocation_id in sorted(wanted & set(starts) - completed, key=str.encode):
+            started = starts[invocation_id]
+            occurrences = tuple(
+                item
+                for item in plan.external_occurrences
+                if item.occurrence_path == started.occurrence_path
+                and item.implementation_digest == started.implementation_digest
+                and item.local_execution.materialization_digest == started.materialization_digest
+            )
+            if len(occurrences) != 1:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: recovered Provider start has no exact "
+                    "admitted occurrence"
+                )
+            occurrence = occurrences[0]
+            outcome = map_provider_refusal(
+                "provider_process_group_survived_recovery",
+                message="Daemon startup terminated an incomplete Provider process group.",
+                detail={},
+            )
+            assert isinstance(outcome, ProviderInvocationOutcomeV1)
+            declared = tuple(
+                endpoint
+                for endpoint in occurrence.local_execution.declared_endpoints
+                if not endpoint.startswith("dynamic:")
+            )
+            dynamic = tuple(
+                endpoint
+                for endpoint in occurrence.local_execution.declared_endpoints
+                if endpoint == "dynamic:target-from-run-input"
+            )
+            receipt = ProviderInvocationReceiptV1(
+                invocation_id=invocation_id,
+                occurrence_path=occurrence.occurrence_path,
+                run_id=admission.run_id,
+                admission_binding_digest=admission.admission_binding_digest,
+                provider_artifact_digest=occurrence.local_execution.provider_artifact_digest,
+                implementation_digest=occurrence.local_execution.implementation_digest,
+                materialization_digest=occurrence.local_execution.materialization_digest,
+                deployment_digest=occurrence.local_execution.deployment_digest,
+                interface_id=occurrence.local_execution.interface_id,
+                interface_digest=occurrence.local_execution.interface_digest,
+                protocol_version=occurrence.local_execution.protocol_version,
+                input_bucket=started.input_bucket,
+                capture_contract_digest=occurrence.capture_contract_digest,
+                input_digest=started.input_digest,
+                outcome=outcome,
+                egress=ProviderEgressObservationV1(
+                    declared_endpoints=declared,
+                    observed_endpoints=(),
+                    dynamic_endpoint_forms=dynamic,
+                    observer_backend="child-self-report",
+                    observer_grade="attribution",
+                ),
+                secret_references=tuple(
+                    sorted(
+                        (
+                            ProviderSecretReceiptReferenceV1(
+                                binding_identity_digest=provider_secret_binding_identity_digest(
+                                    ProviderSecretBindingIdentityV1(
+                                        realm=reference.realm,
+                                        name=reference.name,
+                                    )
+                                ),
+                                purpose=reference.purpose,
+                            )
+                            for reference in occurrence.secret_plan.references
+                        ),
+                        key=lambda item: item.binding_identity_digest.encode("ascii"),
+                    )
+                ),
+                budget_translation=occurrence.budget_translation,
+                duration_microseconds=0,
+                trace={},
+                stderr="",
+            )
+            completion = ProviderInvocationCompletedV1(
+                invocation_id=invocation_id,
+                receipt=receipt,
+                receipt_digest=provider_invocation_receipt_digest(receipt),
+            )
+            common = dict(
+                stream=stream,
+                partition_id=partition_id,
+                accepted_coordinate=admission.accepted_coordinate,
+                procedure_artifact_digest=admission.procedure_artifact_digest,
+                definition_digest=admission.definition_digest,
+                run_id=admission.run_id,
+                line_spec_digest=admission.line_spec_digest,
+                occurrence_id=admission.occurrence_id,
+                attempt=admission.attempt,
+                admission_binding_digest=admission.admission_binding_digest,
+                actor_context=admission.actor_context,
+                recorded_at=recorded_at,
+            )
+            writer.append(
+                **common,
+                event_kind="provider_invocation_completed",
+                payload=completion.model_dump(mode="json"),
+            )
+            writer.append(
+                **common,
+                event_kind="attempt_finalized",
+                payload={
+                    "status": "failed",
+                    "output": None,
+                    "refusal": None,
+                    "failure": "Provider invocation was terminated during daemon recovery.",
+                    "failure_code": "provider_completion_not_durable",
+                    "failure_details": {
+                        "provider_refusal_code": "provider_process_group_survived_recovery"
+                    },
+                    "halt": None,
+                    "semantic_result_digest": None,
+                    "provider_calls": 1,
+                    "capture_bytes": 0,
+                    "invocation_receipt_digests": [completion.receipt_digest],
+                    "budget": ProcedureRunBudgetV1(
+                        declared=ProcedureRunBudgetDeclaredV1(
+                            budget=admission.budget,
+                            hard_caps=admission.hard_caps,
+                        ),
+                        observed=ProcedureRunBudgetObservedV1(
+                            max_items=ProcedureBudgetBoundaryObservationV1(high_water=0),
+                            result_bytes=ProcedureBudgetBoundaryObservationV1(high_water=0),
+                            provider_calls=1,
+                            capture_bytes=0,
+                            wall_clock_microseconds=0,
+                        ),
+                    ).model_dump(mode="json"),
+                },
+            )
+            recovered.append(invocation_id)
+    return tuple(sorted(recovered, key=str.encode))
+
+
 def service_prepare_playbill_line_admission(
     instance: PlaybillInstance,
     *,
-    admission: ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4,
+    admission: ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | ProcedureRunAdmissionV5,
     accepted_line: AcceptedLineSpecV1,
-) -> ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | ProcedureAdmissionRefusalV1:
+) -> (
+    ProcedureRunAdmissionV3
+    | ProcedureRunAdmissionV4
+    | ProcedureRunAdmissionV5
+    | ProcedureAdmissionRefusalV1
+):
     """Bind the accepted runtime policy into a Line admission before publication."""
 
+    if isinstance(admission, ProcedureRunAdmissionV5) and bool(admission.exhaust_inputs) != (
+        admission.exhaust_access_binding_digest is not None
+    ):
+        return ProcedureAdmissionRefusalV1(
+            code="exhaust_binding_carrier_required",
+            message="Exhaust inputs require exactly one opaque access-binding carrier.",
+            details={
+                "exhaust_input_count": len(admission.exhaust_inputs),
+                "carrier_present": admission.exhaust_access_binding_digest is not None,
+            },
+        )
     tree = instance.tree_at(admission.bound_coordinate.git_oid)
     try:
         policy = resolve_procedure_runtime_policy(tree)

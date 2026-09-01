@@ -8,7 +8,6 @@ import pytest
 
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_core.playbill.provider_classifiers import (
-    CORE_PROVIDER_BUCKET_CLASSIFIERS_V1,
     ProviderBucketClassifierRegistry,
     ProviderClassifierInstallationRefused,
     core_provider_bucket_conformance_fixtures,
@@ -115,18 +114,16 @@ def test_classifier_install_order_does_not_change_digest_keyed_availability() ->
     )
 
 
-def test_core_catalog_is_nonempty_and_reproves_an_accepted_registration_on_demand() -> None:
+def test_production_catalog_carries_fixtures_but_no_demo_executable() -> None:
     accepted = accepted_interface()
     digest = accepted.registration.classifier_digest
     registry = ProviderBucketClassifierRegistry()
 
     assert set(core_provider_bucket_conformance_fixtures()) == {"demo.small"}
-    assert set(CORE_PROVIDER_BUCKET_CLASSIFIERS_V1) == {digest}
-    installed = registry.require_accepted(accepted)
-
-    assert installed.classifier_digest == digest
-    assert installed.classify({"size": 3}) == "size=small"
-    assert registry.installation(digest).results[0].fixture_id == "demo.small"
+    with pytest.raises(ProviderClassifierInstallationRefused) as absent:
+        registry.require_accepted(accepted)
+    assert absent.value.code == "classifier_not_installed"
+    assert registry.installed_classifier_digests == frozenset()
 
 
 def test_accepted_registration_cannot_select_unshipped_classifier_code() -> None:

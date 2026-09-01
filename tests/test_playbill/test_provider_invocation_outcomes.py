@@ -60,6 +60,23 @@ def test_unknown_refusal_and_error_envelope_are_not_implementation_faults() -> N
     )
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "provider_process_lease_invalid",
+        "provider_process_lease_missing",
+        "provider_process_lease_echo_failed",
+        "provider_process_lease_echo_mismatch",
+        "provider_process_group_survived_recovery",
+    ],
+)
+def test_every_process_fence_refusal_has_a_typed_local_outcome(code: str) -> None:
+    outcome = map_provider_refusal(code, message="fence refused", detail={})
+    assert outcome.code == code
+    assert outcome.outcome_class == "internal"
+    assert outcome.attribution == "executor"
+
+
 def test_ok_refusal_and_finite_float_translation_preserve_wire_facts() -> None:
     ok = map_provider_envelope(
         ProviderRuntimeResultEnvelopeV1(

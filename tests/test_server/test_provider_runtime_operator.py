@@ -164,6 +164,7 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(tmp_path: Path
         occurrence=occurrence,  # type: ignore[arg-type]
         context=context,
         invocation_id=_digest("daemon-invocation"),
+        bound=invoker.bind_provider(occurrence=occurrence),  # type: ignore[arg-type]
     )
     assert outcome.envelope.output == {"echo": "served"}
     assert outcome.verified_binding == admitted_binding

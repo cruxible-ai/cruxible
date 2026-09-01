@@ -94,7 +94,10 @@ from cruxible_client.contracts.provider_execution import (
     ProviderInvocationCompletedV1,
     ProviderInvocationReceiptV1,
     ProviderInvocationStartedV1,
+    ProviderSecretBindingIdentityV1,
+    ProviderSecretReceiptReferenceV1,
     provider_invocation_receipt_digest,
+    provider_secret_binding_identity_digest,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
@@ -171,6 +174,7 @@ from cruxible_core.playbill.provider_classifiers import (
     ProviderClassifierInstallationRefused,
 )
 from cruxible_core.playbill.provider_local_runtime import (
+    BoundLocalProviderV1,
     ProviderDriverOutcomeV1,
     ProviderLocalRuntimeRefused,
 )
@@ -1002,12 +1006,19 @@ class ProviderExecutorProtocol(Protocol):
 
 
 class ProviderRuntimeInvokerProtocol(Protocol):
+    def bind_provider(
+        self,
+        *,
+        occurrence: ProviderExternalOccurrencePlanV1,
+    ) -> BoundLocalProviderV1: ...
+
     def invoke_provider(
         self,
         *,
         occurrence: ProviderExternalOccurrencePlanV1,
         context: ProviderRuntimeRunContextV1,
         invocation_id: str,
+        bound: BoundLocalProviderV1,
     ) -> ProviderDriverOutcomeV1: ...
 
 
@@ -3337,12 +3348,30 @@ class ProcedureExecutor:
                 "admission_binding_digest": admission.admission_binding_digest,
             },
         ).tagged
+        try:
+            bound = self.provider_runtime_invoker.bind_provider(occurrence=occurrence)
+        except ProviderLocalRuntimeRefused as exc:
+            outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
+            if outcome.outcome_class == "node_refusal":
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCodeV1, outcome.code),
+                    outcome.message or "Provider binding refused.",
+                    node_id=node_id,
+                ) from exc
+            if outcome.outcome_class == "operational":
+                raise _OperationalFailure(
+                    outcome.code or "provider_execution_error", details=outcome.detail
+                ) from exc
+            raise _InternalFailure(
+                outcome.code or "provider_protocol_violation", details=outcome.detail
+            ) from exc
         started = ProviderInvocationStartedV1(
             invocation_id=invocation_id,
             occurrence_path=occurrence.occurrence_path,
             implementation_digest=occurrence.implementation_digest,
             materialization_digest=occurrence.local_execution.materialization_digest,
             input_digest=input_digest,
+            input_bucket=measured_bucket,
         )
         self._append_event(
             admission,
@@ -3398,6 +3427,7 @@ class ProcedureExecutor:
                 occurrence=occurrence,
                 context=context,
                 invocation_id=invocation_id,
+                bound=bound,
             )
             outcome = map_provider_envelope(driver_result.envelope)
         except ProviderLocalRuntimeRefused as exc:
@@ -3459,7 +3489,23 @@ class ProcedureExecutor:
             outcome=outcome,
             output=output,
             egress=egress,
-            secret_references=occurrence.secret_plan.references,
+            secret_references=tuple(
+                sorted(
+                    (
+                        ProviderSecretReceiptReferenceV1(
+                            binding_identity_digest=provider_secret_binding_identity_digest(
+                                ProviderSecretBindingIdentityV1(
+                                    realm=reference.realm,
+                                    name=reference.name,
+                                )
+                            ),
+                            purpose=reference.purpose,
+                        )
+                        for reference in occurrence.secret_plan.references
+                    ),
+                    key=lambda item: item.binding_identity_digest.encode("ascii"),
+                )
+            ),
             budget_translation=budget,
             duration_microseconds=duration_microseconds,
             trace=trace,

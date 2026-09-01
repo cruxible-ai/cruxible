@@ -14,6 +14,7 @@ from cruxible_client.contracts.errors import (
     PlaybillFormatError,
     PlaybillReseedRequired,
 )
+from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.types import OperatingProfile, PlaybillTrustRoot, PrincipalRecord
 from cruxible_core.errors import InstanceNotFoundError
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -210,7 +211,22 @@ class PlaybillInstanceManager:
     def recover_provider_runtime(self) -> tuple[str, ...]:
         """Recover process fences before the daemon accepts requests."""
 
-        return self.provider_runtime_operator().recover_all()
+        recovered = self.provider_runtime_operator().recover_all()
+        if not recovered:
+            return ()
+        from cruxible_core.service.playbill_procedure_runs import (
+            service_recover_provider_invocations,
+        )
+
+        for record in get_registry().list_instances():
+            if record.backend != GOVERNED_DAEMON_BACKEND:
+                continue
+            service_recover_provider_invocations(
+                self.get(record.instance_id),
+                invocation_ids=recovered,
+                recorded_at=utc_now(),
+            )
+        return recovered
 
 
 _manager = PlaybillInstanceManager()
