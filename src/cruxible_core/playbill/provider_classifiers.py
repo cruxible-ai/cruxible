@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Protocol
 
 from cruxible_client.contracts.canonical import CanonicalValue
@@ -11,9 +12,12 @@ from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
     ProviderBucketClassifierInstallationResultV1,
     ProviderBucketClassifierInstallationV1,
+    ProviderBucketConformanceFixtureProofV1,
     ProviderBucketConformanceFixtureV1,
     ProviderInterfaceRegistrationV1,
+    provider_bucket_classifier_digest,
     provider_bucket_fixture_digest,
+    provider_bucket_fixture_set_digest,
 )
 
 
@@ -40,10 +44,53 @@ class ProviderClassifierInstallationRefused(PlaybillExecutionError):
         super().__init__(f"{code}: {message}")
 
 
-# Provider interfaces are compiler extensions. Each release adds its exact fixture
-# bytes here before an accepted registration using them can pass its law. An empty
-# initial catalog is deliberate: proposal content cannot mint its own test oracle.
-CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1: Mapping[str, ProviderBucketConformanceFixtureV1] = {}
+_CORE_DEMO_SIZE_FIXTURE_V1 = ProviderBucketConformanceFixtureV1(
+    fixture_id="demo.small",
+    canonical_input={"size": 3},
+    measured_bucket_id="size=small",
+)
+
+
+@dataclass(frozen=True)
+class _CoreDemoSizeClassifierV1:
+    classifier_identity: str = "core.demo.size"
+    classifier_version: int = 1
+    classifier_digest: str = provider_bucket_classifier_digest(
+        classifier_identity="core.demo.size",
+        classifier_version=1,
+        conformance_fixture_set_digest=provider_bucket_fixture_set_digest(
+            (
+                ProviderBucketConformanceFixtureProofV1(
+                    selector="size=*",
+                    fixture_id=_CORE_DEMO_SIZE_FIXTURE_V1.fixture_id,
+                    fixture_digest=provider_bucket_fixture_digest(_CORE_DEMO_SIZE_FIXTURE_V1),
+                    measured_bucket_id=_CORE_DEMO_SIZE_FIXTURE_V1.measured_bucket_id,
+                ),
+            )
+        ),
+    )
+
+    def classify(self, canonical_input: CanonicalValue) -> str:
+        if not isinstance(canonical_input, dict):
+            raise ProviderClassifierInstallationRefused(
+                "unclassified_input", "core.demo.size requires an object input"
+            )
+        size = canonical_input.get("size")
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise ProviderClassifierInstallationRefused(
+                "unclassified_input", "core.demo.size requires a nonnegative integer size"
+            )
+        return "size=small" if size <= 3 else "size=large"
+
+
+# This compiler-owned catalog is the oracle for accepted fixture proofs. Proposal
+# content can cite it but cannot add a fixture or executable classifier.
+CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1: Mapping[str, ProviderBucketConformanceFixtureV1] = {
+    _CORE_DEMO_SIZE_FIXTURE_V1.fixture_id: _CORE_DEMO_SIZE_FIXTURE_V1
+}
+CORE_PROVIDER_BUCKET_CLASSIFIERS_V1: Mapping[str, ProviderBucketClassifierProtocol] = {
+    _CoreDemoSizeClassifierV1().classifier_digest: _CoreDemoSizeClassifierV1(),
+}
 
 
 def core_provider_bucket_conformance_fixtures() -> Mapping[str, ProviderBucketConformanceFixtureV1]:
@@ -143,6 +190,26 @@ class ProviderBucketClassifierRegistry:
         self.require(classifier_digest)
         return self._installations[classifier_digest]
 
+    def require_accepted(
+        self,
+        accepted: AcceptedProviderInterfaceRegistrationV1,
+    ) -> ProviderBucketClassifierProtocol:
+        """Install a core classifier only after re-proving this accepted registration."""
+
+        digest = accepted.registration.classifier_digest
+        try:
+            return self.require(digest)
+        except ProviderClassifierInstallationRefused:
+            try:
+                classifier = CORE_PROVIDER_BUCKET_CLASSIFIERS_V1[digest]
+            except KeyError as exc:
+                raise ProviderClassifierInstallationRefused(
+                    "classifier_not_installed",
+                    f"accepted classifier {digest} has no core implementation",
+                ) from exc
+            self.install(accepted, classifier)
+            return self.require(digest)
+
 
 # The runtime and discovery surface share this daemon-local installation registry.
 # Accepted registrations remain governed; installed classifier code remains local.
@@ -151,6 +218,7 @@ PROVIDER_BUCKET_CLASSIFIER_REGISTRY = ProviderBucketClassifierRegistry()
 
 __all__ = [
     "CORE_PROVIDER_BUCKET_CONFORMANCE_FIXTURES_V1",
+    "CORE_PROVIDER_BUCKET_CLASSIFIERS_V1",
     "ProviderBucketClassifierProtocol",
     "ProviderBucketClassifierRegistry",
     "PROVIDER_BUCKET_CLASSIFIER_REGISTRY",

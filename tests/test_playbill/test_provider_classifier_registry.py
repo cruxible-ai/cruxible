@@ -8,8 +8,10 @@ import pytest
 
 from cruxible_client.contracts.canonical import CanonicalValue
 from cruxible_core.playbill.provider_classifiers import (
+    CORE_PROVIDER_BUCKET_CLASSIFIERS_V1,
     ProviderBucketClassifierRegistry,
     ProviderClassifierInstallationRefused,
+    core_provider_bucket_conformance_fixtures,
 )
 from tests.test_playbill._p2b1_support import (
     accepted_interface,
@@ -111,3 +113,34 @@ def test_classifier_install_order_does_not_change_digest_keyed_availability() ->
     assert first.installation(registration.classifier_digest) == second.installation(
         registration.classifier_digest
     )
+
+
+def test_core_catalog_is_nonempty_and_reproves_an_accepted_registration_on_demand() -> None:
+    accepted = accepted_interface()
+    digest = accepted.registration.classifier_digest
+    registry = ProviderBucketClassifierRegistry()
+
+    assert set(core_provider_bucket_conformance_fixtures()) == {"demo.small"}
+    assert set(CORE_PROVIDER_BUCKET_CLASSIFIERS_V1) == {digest}
+    installed = registry.require_accepted(accepted)
+
+    assert installed.classifier_digest == digest
+    assert installed.classify({"size": 3}) == "size=small"
+    assert registry.installation(digest).results[0].fixture_id == "demo.small"
+
+
+def test_accepted_registration_cannot_select_unshipped_classifier_code() -> None:
+    accepted = accepted_interface()
+    changed = accepted.model_copy(
+        update={
+            "registration": accepted.registration.model_copy(
+                update={"classifier_digest": f"sha256:{'f' * 64}"}
+            )
+        }
+    )
+    registry = ProviderBucketClassifierRegistry()
+
+    with pytest.raises(ProviderClassifierInstallationRefused) as caught:
+        registry.require_accepted(changed)
+    assert caught.value.code == "classifier_not_installed"
+    assert registry.installed_classifier_digests == frozenset()
