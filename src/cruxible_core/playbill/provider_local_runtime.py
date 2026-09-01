@@ -41,8 +41,13 @@ from cruxible_client.contracts.providers import (
     ProviderV2,
 )
 from cruxible_core.playbill.provider_process_leases import (
+    ProviderDescendantProcessV1,
     ProviderLocalRuntimeRefused,
     ProviderProcessLeaseStore,
+    descendant_is_live,
+    descendant_processes,
+    kill_descendants,
+    processes_naming_invocation,
 )
 from cruxible_core.playbill.provider_runtime_contract import (
     MAX_PROVIDER_SECRET_BUNDLE_BYTES,
@@ -632,6 +637,45 @@ class _ProcessOutcome:
     duration_seconds: float
 
 
+class _DescendantTracker:
+    """Best-effort observation of descendants that leave the child session."""
+
+    def __init__(self, pid: int, *, invocation_id: str) -> None:
+        self.pid = pid
+        self.invocation_id = invocation_id
+        self._observed: dict[tuple[int, str], ProviderDescendantProcessV1] = {}
+        self._baseline = {
+            (item.pid, item.process_start_time)
+            for item in processes_naming_invocation(invocation_id)
+        }
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._track, daemon=True)
+        self.observe()
+        self._thread.start()
+
+    def observe(self) -> None:
+        candidates = (
+            *descendant_processes(self.pid),
+            *processes_naming_invocation(self.invocation_id),
+        )
+        for item in candidates:
+            if (item.pid, item.process_start_time) in self._baseline or item.pid == self.pid:
+                continue
+            self._observed[(item.pid, item.process_start_time)] = item
+
+    def snapshot(self) -> tuple[ProviderDescendantProcessV1, ...]:
+        self.observe()
+        return tuple(sorted(self._observed.values(), key=lambda item: item.pid))
+
+    def close(self, *, timeout_seconds: float) -> None:
+        self._stop.set()
+        self._thread.join(timeout=timeout_seconds)
+
+    def _track(self) -> None:
+        while not self._stop.wait(0.01):
+            self.observe()
+
+
 @contextmanager
 def _open_secret_channel(secrets: Mapping[str, str]) -> Iterator[int | None]:
     if not secrets:
@@ -731,11 +775,7 @@ def _run_child(
             start_new_session=True,
             close_fds=True,
         )
-        if secret_fd is not None:
-            # The child owns its inherited duplicate from this point. Keeping a
-            # parent reader open would defeat EOF-based secret-channel custody.
-            with contextlib.suppress(OSError):
-                os.close(secret_fd)
+        descendants = _DescendantTracker(process.pid, invocation_id=invocation_id)
         try:
             process_leases.publish(
                 invocation_id,
@@ -746,23 +786,50 @@ def _run_child(
         except ProviderLocalRuntimeRefused:
             # A child that cannot prove its own lease must not outlive the
             # failed invocation boundary.
-            _terminate_process_group(process, process_leases.recovery_timeout_seconds)
+            descendants.close(timeout_seconds=process_leases.recovery_timeout_seconds)
+            _terminate_process_group(
+                process,
+                process_leases.recovery_timeout_seconds,
+                descendants=descendants.snapshot(),
+            )
             record_path, control_path = process_leases.paths(invocation_id)
             for path in (record_path, control_path):
                 with contextlib.suppress(FileNotFoundError):
                     path.unlink()
             raise
 
+        refusal: ProviderLocalRuntimeRefused | None = None
+        succeeded = False
         try:
-            return _collect_child_output(
+            outcome = _collect_child_output(
                 process,
                 context=context,
                 budgets=budgets,
                 started=started,
             )
+            succeeded = True
+            return outcome
+        except ProviderLocalRuntimeRefused as exc:
+            refusal = exc
+            raise
         finally:
-            _terminate_process_group(process, process_leases.recovery_timeout_seconds)
-            process_leases.release(lease)
+            descendants.close(timeout_seconds=process_leases.recovery_timeout_seconds)
+            try:
+                _terminate_process_group(
+                    process,
+                    process_leases.recovery_timeout_seconds,
+                    descendants=descendants.snapshot(),
+                    successful=succeeded,
+                )
+            except ProviderLocalRuntimeRefused as fence:
+                if refusal is None:
+                    raise
+                refusal.details["process_fence_failure"] = {
+                    "code": fence.code,
+                    "message": str(fence),
+                }
+            else:
+                process_leases.release(lease)
 
 
 def _collect_child_output(
@@ -810,12 +877,12 @@ def _collect_child_output(
                 buffers[key.fd].extend(chunk)
         if refusal is not None:
             raise ProviderLocalRuntimeRefused(*refusal)
-        try:
-            process.wait(timeout=max(deadline - time.monotonic(), 0.001))
-        except subprocess.TimeoutExpired as exc:
-            raise ProviderLocalRuntimeRefused(
-                "budget_wall_clock", "provider exceeded wall-clock budget"
-            ) from exc
+        while not _process_exited_without_reaping(process.pid):
+            if time.monotonic() >= deadline:
+                raise ProviderLocalRuntimeRefused(
+                    "budget_wall_clock", "provider exceeded wall-clock budget"
+                )
+            time.sleep(0.005)
         writer.join(timeout=1)
         return _ProcessOutcome(
             stdout=bytes(buffers[process.stdout.fileno()]),
@@ -826,23 +893,42 @@ def _collect_child_output(
         selector.close()
 
 
-def _terminate_process_group(process: subprocess.Popen[bytes], timeout_seconds: float) -> None:
-    """SIGKILL and verify one child-owned group before releasing its fence."""
+def _process_exited_without_reaping(pid: int) -> bool:
+    """Observe child exit without releasing its pid for reuse."""
 
-    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-        os.killpg(process.pid, signal.SIGKILL)
+    try:
+        waitid = getattr(os, "waitid")
+        result = waitid(
+            os.P_PID,
+            pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except ChildProcessError:
+        return True
+    return result is not None
+
+
+def _terminate_process_group(
+    process: subprocess.Popen[bytes],
+    timeout_seconds: float,
+    *,
+    descendants: tuple[ProviderDescendantProcessV1, ...] = (),
+    successful: bool = False,
+) -> None:
+    """Kill before reap, sweep escaped descendants, then verify exact identities."""
+
+    if not successful and process.returncode is None:
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(process.pid, signal.SIGKILL)
+    kill_descendants(descendants)
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         try:
             process.wait(timeout=min(0.05, max(deadline - time.monotonic(), 0.001)))
         except subprocess.TimeoutExpired:
             continue
-        try:
-            os.killpg(process.pid, 0)
-        except ProcessLookupError:
+        if not any(descendant_is_live(item) for item in descendants):
             return
-        except PermissionError:
-            continue
     raise ProviderLocalRuntimeRefused(
         "provider_process_group_survived_recovery",
         "provider process group survived its configured termination deadline",
@@ -852,7 +938,9 @@ def _terminate_process_group(process: subprocess.Popen[bytes], timeout_seconds: 
 _CHILD_FENCE_WRAPPER = """\
 import os
 import runpy
+import signal
 import socket
+import subprocess
 import sys
 import threading
 
@@ -874,7 +962,38 @@ def echo():
 
 threading.Thread(target=echo, daemon=True).start()
 sys.argv = ["cruxible_provider_runtime.child", "--entrypoint", entrypoint]
-runpy.run_module("cruxible_provider_runtime.child", run_name="__main__")
+
+def sweep_descendants():
+    rows = []
+    completed = subprocess.run(
+        ["ps", "-Ao", "pid=,ppid=,sid="], capture_output=True, text=True, check=False
+    )
+    for line in completed.stdout.splitlines():
+        try:
+            pid, ppid, sid = (int(item) for item in line.split())
+        except (TypeError, ValueError):
+            continue
+        rows.append((pid, ppid, sid))
+    children = {}
+    for row in rows:
+        children.setdefault(row[1], []).append(row)
+    root = os.getpid()
+    root_session = os.getsid(root)
+    pending = [root]
+    while pending:
+        parent = pending.pop()
+        for pid, _ppid, sid in children.get(parent, []):
+            pending.append(pid)
+            if sid != root_session:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+
+try:
+    runpy.run_module("cruxible_provider_runtime.child", run_name="__main__")
+finally:
+    sweep_descendants()
 """
 
 

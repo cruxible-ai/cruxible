@@ -95,6 +95,14 @@ class ProviderProcessRecoveryResultV1:
         )
 
 
+@dataclass(frozen=True)
+class ProviderDescendantProcessV1:
+    """One observed descendant identity, protected against later pid reuse."""
+
+    pid: int
+    process_start_time: str
+
+
 def _current_boot_id() -> str:
     """Return an OS-owned boot identity used only as a local recovery fence."""
 
@@ -147,6 +155,110 @@ def _process_start_time(pid: int) -> str:
         "provider_process_lease_invalid",
         "the operating-system process start time is unavailable",
     )
+
+
+def _process_rows() -> tuple[tuple[int, int, int, int], ...]:
+    completed = subprocess.run(
+        ["ps", "-Ao", "pid=,ppid=,pgid=,sid="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return ()
+    rows: list[tuple[int, int, int, int]] = []
+    for line in completed.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 4:
+            continue
+        try:
+            process_id, parent_id, group_id, session_id = (int(item) for item in fields)
+        except ValueError:
+            continue
+        rows.append((process_id, parent_id, group_id, session_id))
+    return tuple(rows)
+
+
+def descendant_processes(pid: int) -> tuple[ProviderDescendantProcessV1, ...]:
+    """Snapshot descendants that escaped the root process's session."""
+
+    rows = _process_rows()
+    root = next((row for row in rows if row[0] == pid), None)
+    if root is None:
+        return ()
+    root_session = root[3]
+    children: dict[int, list[tuple[int, int, int, int]]] = {}
+    for row in rows:
+        children.setdefault(row[1], []).append(row)
+    pending = [pid]
+    found: list[ProviderDescendantProcessV1] = []
+    while pending:
+        parent = pending.pop()
+        for row in children.get(parent, []):
+            child_pid, _parent_pid, _group_id, session_id = row
+            pending.append(child_pid)
+            if session_id == root_session:
+                continue
+            try:
+                start_time = _process_start_time(child_pid)
+            except ProviderLocalRuntimeRefused:
+                continue
+            found.append(
+                ProviderDescendantProcessV1(
+                    pid=child_pid,
+                    process_start_time=start_time,
+                )
+            )
+    return tuple(sorted(found, key=lambda item: item.pid))
+
+
+def processes_naming_invocation(invocation_id: str) -> tuple[ProviderDescendantProcessV1, ...]:
+    """Find processes retaining the daemon-injected invocation argv token."""
+
+    completed = subprocess.run(
+        ["ps", "-Ao", "pid=,command="],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return ()
+    found: list[ProviderDescendantProcessV1] = []
+    for line in completed.stdout.splitlines():
+        fields = line.strip().split(maxsplit=1)
+        if len(fields) != 2 or invocation_id not in fields[1]:
+            continue
+        try:
+            process_id = int(fields[0])
+            start_time = _process_start_time(process_id)
+        except (ValueError, ProviderLocalRuntimeRefused):
+            continue
+        found.append(
+            ProviderDescendantProcessV1(
+                pid=process_id,
+                process_start_time=start_time,
+            )
+        )
+    return tuple(sorted(found, key=lambda item: item.pid))
+
+
+def descendant_is_live(identity: ProviderDescendantProcessV1) -> bool:
+    """Return true only while this exact descendant identity remains live."""
+
+    try:
+        return _process_start_time(identity.pid) == identity.process_start_time
+    except ProviderLocalRuntimeRefused:
+        return False
+
+
+def kill_descendants(identities: tuple[ProviderDescendantProcessV1, ...]) -> None:
+    """Best-effort SIGKILL of still-matching escaped descendants."""
+
+    for identity in identities:
+        if not descendant_is_live(identity):
+            continue
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.kill(identity.pid, signal.SIGKILL)
 
 
 class ProviderProcessLeaseStore:
@@ -305,9 +417,7 @@ class ProviderProcessLeaseStore:
                     invocation_id=str(document["invocation_id"]),
                     pid=int(document["pid"]),
                     process_group_id=int(document["process_group_id"]),
-                    boot_id=(
-                        None if document.get("boot_id") is None else str(document["boot_id"])
-                    ),
+                    boot_id=(None if document.get("boot_id") is None else str(document["boot_id"])),
                     process_start_time=(
                         None
                         if document.get("process_start_time") is None
@@ -379,9 +489,7 @@ class ProviderProcessLeaseStore:
                     invocation_id=invocation_id,
                     pid=int(document["pid"]),
                     process_group_id=int(document["process_group_id"]),
-                    boot_id=(
-                        None if document.get("boot_id") is None else str(document["boot_id"])
-                    ),
+                    boot_id=(None if document.get("boot_id") is None else str(document["boot_id"])),
                     process_start_time=(
                         None
                         if document.get("process_start_time") is None
@@ -459,37 +567,42 @@ class ProviderProcessLeaseStore:
             return False
 
     def _kill_and_verify(self, lease: ProviderProcessLeaseV1) -> None:
+        descendants = descendant_processes(lease.pid)
+        group_alive = True
         try:
             os.killpg(lease.process_group_id, 0)
         except ProcessLookupError:
-            return
+            group_alive = False
         except PermissionError:
             # Lack of permission is not proof of death; SIGKILL will either
             # succeed or leave the record fenced for another recovery attempt.
             pass
-        try:
-            os.killpg(lease.process_group_id, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-        except OSError as exc:
-            raise ProviderLocalRuntimeRefused(
-                "provider_process_group_survived_recovery",
-                "process group could not be terminated during recovery",
-            ) from exc
+        if group_alive:
+            try:
+                os.killpg(lease.process_group_id, signal.SIGKILL)
+            except ProcessLookupError:
+                group_alive = False
+            except OSError as exc:
+                raise ProviderLocalRuntimeRefused(
+                    "provider_process_group_survived_recovery",
+                    "process group could not be terminated during recovery",
+                ) from exc
+        kill_descendants(descendants)
         deadline = time.monotonic() + self.recovery_timeout_seconds
         while time.monotonic() < deadline:
             try:
-                waited, _status = os.waitpid(lease.pid, os.WNOHANG)
-                if waited == lease.pid:
-                    return
+                os.waitpid(lease.pid, os.WNOHANG)
             except ChildProcessError:
                 pass
-            try:
-                os.killpg(lease.process_group_id, 0)
-            except ProcessLookupError:
+            if group_alive:
+                try:
+                    os.killpg(lease.process_group_id, 0)
+                except ProcessLookupError:
+                    group_alive = False
+                except PermissionError:
+                    pass
+            if not group_alive and not any(descendant_is_live(item) for item in descendants):
                 return
-            except PermissionError:
-                pass
             time.sleep(0.01)
         raise ProviderLocalRuntimeRefused(
             "provider_process_group_survived_recovery",
@@ -498,10 +611,15 @@ class ProviderProcessLeaseStore:
 
 
 __all__ = [
+    "ProviderDescendantProcessV1",
     "ProviderLocalRuntimeRefused",
     "ProviderProcessLeaseRemovalV1",
     "ProviderProcessLeaseStore",
     "ProviderProcessLeaseV1",
     "ProviderProcessRecoveryFailureV1",
     "ProviderProcessRecoveryResultV1",
+    "descendant_is_live",
+    "descendant_processes",
+    "kill_descendants",
+    "processes_naming_invocation",
 ]

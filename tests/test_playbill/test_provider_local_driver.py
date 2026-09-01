@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import cruxible_core.playbill.provider_local_runtime as local_runtime_module
 import cruxible_core.playbill.provider_process_leases as process_lease_module
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDurationV1
@@ -45,6 +47,7 @@ from cruxible_core.playbill.provider_local_runtime import (
     ProviderLocalRuntimeRefused,
     ProviderSecretResolverRegistry,
     _assert_no_secret,
+    _open_secret_channel,
     _run_child,
     provider_environment_secret_key,
     translate_provider_budget,
@@ -410,6 +413,49 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> 
     assert caught.value.code == "secret_leak"
 
 
+def test_secret_channel_read_descriptor_has_exactly_one_parent_owner(tmp_path: Path) -> None:
+    leases = ProviderProcessLeaseStore(tmp_path / "secret-owner-leases")
+    with _open_secret_channel({"ref": "secret"}) as secret_fd:
+        assert secret_fd is not None
+        outcome = _run_child(
+            _fake_interpreter(tmp_path / "secret-owner-python"),
+            entrypoint="demo.runtime:Provider",
+            context=b'{"run_id":"RUN-secret-owner","input":{"value":"ok"}}',
+            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+            secret_fd=secret_fd,
+            invocation_id=_digest("secret-owner"),
+            process_leases=leases,
+        )
+        assert json.loads(outcome.stdout)["status"] == "ok"
+        os.fstat(secret_fd)
+    with pytest.raises(OSError):
+        os.fstat(secret_fd)
+
+
+def test_successful_invocation_never_signals_an_already_reaped_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    signals: list[tuple[int, int]] = []
+    real_killpg = os.killpg
+
+    def observe(process_group_id: int, sent_signal: int) -> None:
+        signals.append((process_group_id, sent_signal))
+        real_killpg(process_group_id, sent_signal)
+
+    monkeypatch.setattr(os, "killpg", observe)
+    outcome = _run_child(
+        _fake_interpreter(tmp_path / "success-python"),
+        entrypoint="demo.runtime:Provider",
+        context=b'{"run_id":"RUN-success","input":{"value":"ok"}}',
+        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+        secret_fd=None,
+        invocation_id=_digest("successful-child"),
+        process_leases=ProviderProcessLeaseStore(tmp_path / "success-leases"),
+    )
+    assert json.loads(outcome.stdout)["status"] == "ok"
+    assert [item for item in signals if item[1] == signal.SIGKILL] == []
+
+
 def test_process_recovery_kills_an_echo_verified_invocation_group(tmp_path: Path) -> None:
     interpreter = _fake_interpreter(tmp_path / "fake-python")
     leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
@@ -469,6 +515,7 @@ def test_process_recovery_waits_through_a_transient_permission_probe(
         record_path=record_path,
     )
     monkeypatch.setattr(leases, "require_echo", lambda value: None)
+    monkeypatch.setattr(process_lease_module, "descendant_processes", lambda _pid: ())
     monkeypatch.setattr("os.waitpid", lambda pid, flags: (0, 0))
     probes = iter((PermissionError(), ProcessLookupError()))
 
@@ -494,6 +541,7 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
 
     class _Process:
         pid = 707
+        returncode = None
 
         @staticmethod
         def wait(*, timeout: float):
@@ -503,6 +551,12 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
     monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: _Process())
     monkeypatch.setattr(process_lease_module, "_current_boot_id", lambda: "boot")
     monkeypatch.setattr(process_lease_module, "_process_start_time", lambda _pid: "start")
+    monkeypatch.setattr(local_runtime_module, "descendant_processes", lambda _pid: ())
+    monkeypatch.setattr(
+        local_runtime_module,
+        "processes_naming_invocation",
+        lambda _invocation_id: (),
+    )
     monkeypatch.setattr(
         leases,
         "require",
@@ -586,6 +640,83 @@ with open({str(marker)!r}, "a") as handle:
     time.sleep(0.2)
     second = marker.read_text().count("alive") if marker.exists() else 0
     assert second == first
+
+
+def test_descendant_sweep_reaps_a_grandchild_that_leaves_the_process_session(
+    tmp_path: Path,
+) -> None:
+    interpreter = tmp_path / "setsid-grandchild-python"
+    marker = tmp_path / "setsid-grandchild.txt"
+    interpreter.write_text(
+        """#!/usr/bin/env python3
+import json, os, socket, sys, threading, time
+invocation_id, control_path, marker = sys.argv[2:5]
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(control_path)
+os.chmod(control_path, 0o600)
+server.listen(2)
+def echo():
+    while True:
+        try:
+            connection, _ = server.accept()
+        except OSError:
+            return
+        with connection:
+            data = connection.recv(4096).decode("utf-8")
+            connection.sendall(invocation_id.encode() if data == invocation_id else b"")
+threading.Thread(target=echo, daemon=True).start()
+document = json.loads(sys.stdin.buffer.read())
+pid = os.fork()
+if pid == 0:
+    os.setsid()
+    null = os.open(os.devnull, os.O_RDWR)
+    for fd in (0, 1, 2):
+        os.dup2(null, fd)
+    with open(marker, "a") as handle:
+        for _ in range(400):
+            time.sleep(0.05)
+            handle.write("alive\\n")
+            handle.flush()
+    os._exit(0)
+json.dump({"protocol_version":"1.0","run_id":document["run_id"],"status":"ok",
+           "output":{"echo":"ok"},"refusal":None,"error":None,
+           "trace":{"endpoints_contacted":[],"events":[],"metrics":{}}},
+          sys.stdout, sort_keys=True, separators=(",", ":"))
+sys.stdout.flush()
+""",
+        encoding="utf-8",
+    )
+    interpreter.chmod(0o755)
+    leases = ProviderProcessLeaseStore(tmp_path / "setsid-leases")
+    try:
+        outcome = _run_child(
+            interpreter,
+            entrypoint=str(marker),
+            context=b'{"run_id":"RUN-setsid","input":{"value":"ok"}}',
+            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=3, output_bytes=65_536),
+            secret_fd=None,
+            invocation_id=_digest("setsid-grandchild"),
+            process_leases=leases,
+        )
+        assert json.loads(outcome.stdout)["status"] == "ok"
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and not marker.exists():
+            time.sleep(0.02)
+        assert marker.exists()
+        first = marker.read_text().count("alive")
+        time.sleep(0.4)
+        assert marker.read_text().count("alive") == first
+        assert tuple(leases.root.glob("*.json")) == ()
+    finally:
+        for line in subprocess.run(
+            ["ps", "-Ao", "pid=,command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.splitlines():
+            if "setsid-grandchild-python" in line:
+                with contextlib.suppress(OSError, ValueError):
+                    os.kill(int(line.split()[0]), signal.SIGKILL)
 
 
 def test_recovery_removes_dead_records_without_starving_later_records(tmp_path: Path) -> None:
@@ -673,9 +804,7 @@ def test_recovery_isolates_a_survivor_and_continues_to_later_records(
     result = leases.recover_all()
 
     assert result.recovered == (invocation_ids[1],)
-    assert tuple(item.invocation_id for item in result.could_not_clean) == (
-        invocation_ids[0],
-    )
+    assert tuple(item.invocation_id for item in result.could_not_clean) == (invocation_ids[0],)
     first_record, _ = leases.paths(invocation_ids[0])
     second_record, _ = leases.paths(invocation_ids[1])
     assert first_record.exists()
