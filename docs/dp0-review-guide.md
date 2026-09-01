@@ -865,6 +865,7 @@ tests/goldens/playbill/journal_corpus/vectors/stream-identity-alpha.json
 tests/goldens/playbill/journal_corpus/vectors/stream-identity-beta.json
 tests/goldens/playbill/merkle-manifest-v1.json
 tests/goldens/playbill/oracles-v1.json
+tests/goldens/playbill/p2-b0-artifact-codec-v1.json
 tests/goldens/playbill/projection-v1.json
 tests/goldens/playbill/query-definition-v1.json
 tests/goldens/playbill/semantic-genesis-v1.json
