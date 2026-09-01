@@ -408,8 +408,15 @@ def _readiness(
                 for body in node.body
                 if body.operation != "transform"
             )
-    unsupported = tuple(unsupported_rows)
     slots = _required_slots(accepted.procedure)
+    if slots and accepted.procedure.definition.graph_format == 4:
+        unsupported_rows.append(
+            ProcedureUnsupportedNodeV1(
+                node_id=accepted.procedure.identity.name,
+                kind="graph_v4_line_closure_required",
+            )
+        )
+    unsupported = tuple(unsupported_rows)
     if unsupported:
         state: Literal["ready", "binding_required", "unsupported"] = "unsupported"
         operation = ProcedureNextOperationV1(kind="terminal")

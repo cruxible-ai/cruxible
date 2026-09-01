@@ -1207,6 +1207,16 @@ def test_graph_v4_bind_routes_only_through_line_closure(tmp_path: Path, monkeypa
         lambda *_args, **_kwargs: accepted,
     )
 
+    readiness = service_playbill_procedure_readiness(
+        instance,
+        name=accepted.procedure.identity.name,
+        request=ProcedureReadinessRequestV1(evaluation_time=READ_TIME),
+    )
+    assert readiness.state == "unsupported"
+    assert readiness.next_operation.kind == "terminal"
+    assert readiness.required_slots == ("provider",)
+    assert readiness.unsupported_nodes[-1].kind == "graph_v4_line_closure_required"
+
     with pytest.raises(
         ProcedureBindingGraphV4LineClosureRequired,
         match="resolved only by accepted Line closure",
