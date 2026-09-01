@@ -1751,13 +1751,30 @@ def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) ->
     bodies = ContentAddressedBodyStore(bodies_root)
     with pytest.raises(Exception) as exc_info:
         execution_module.read_admission_material_body(bodies, member)
-    assert getattr(exc_info.value, "code") == "replay_material_unavailable"
+    assert getattr(exc_info.value, "code") == "admission_material_unavailable_by_policy"
     assert getattr(exc_info.value, "details")["input_name"] == "capture"
 
     optional = member.model_copy(update={"body_retention": "optional"})
     with pytest.raises(Exception) as optional_exc:
         execution_module.read_admission_material_body(bodies, optional)
-    assert getattr(optional_exc.value, "code") == "replay_material_unavailable"
+    assert getattr(optional_exc.value, "code") == "admission_material_unavailable_by_policy"
+
+    absent_optional = optional.model_copy(update={"body_digest": _digest("absent-optional")})
+    with pytest.raises(Exception) as absent_optional_exc:
+        execution_module.read_admission_material_body(bodies, absent_optional)
+    assert getattr(absent_optional_exc.value, "code") == "admission_material_unavailable_by_policy"
+
+    required_missing = ProcedureAdmissionMaterialMemberV1.model_validate(
+        {
+            **optional.model_dump(mode="python"),
+            "body_digest": _digest("absent-required"),
+            "body_retention": "required_for_duration",
+            "retain_until": NOW + timedelta(seconds=3),
+        }
+    )
+    with pytest.raises(Exception) as required_missing_exc:
+        execution_module.read_admission_material_body(bodies, required_missing)
+    assert getattr(required_missing_exc.value, "code") == "replay_material_unavailable"
 
     stored = bodies.store(b'{"capture":"retained"}')
     retained_optional = optional.model_copy(update={"body_digest": stored.digest})

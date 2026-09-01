@@ -1191,7 +1191,7 @@ def read_admission_material_body(
     }
     if member.body_digest is None:
         raise _OperationalFailure(
-            "replay_material_unavailable",
+            "admission_material_unavailable_by_policy",
             details=details,
         )
     access = BodyAccessContext(principal_id="procedure-material-replay", can_read_body=True)
@@ -1204,7 +1204,11 @@ def read_admission_material_body(
         ) from exc
     if not metadata.present:
         raise _OperationalFailure(
-            "replay_material_unavailable",
+            (
+                "admission_material_unavailable_by_policy"
+                if member.body_retention in {"never_materialize", "optional"}
+                else "replay_material_unavailable"
+            ),
             details={**details, "body_digest": member.body_digest},
         )
     try:

@@ -102,6 +102,7 @@ ProcedureOperationalFailureCodeV1: TypeAlias = Literal[
     "journal_read_failed",
     "journal_conflict",
     "run_recovery_required",
+    "admission_material_unavailable_by_policy",
     "replay_material_unavailable",
     "admission_material_corrupt",
     "unsupported_protocol",

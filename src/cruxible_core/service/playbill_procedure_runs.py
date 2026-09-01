@@ -992,9 +992,12 @@ def _state_from_records(
                         "wall_clock_exhausted": (
                             "Procedure execution exceeded its wall-clock budget."
                         ),
+                        "admission_material_unavailable_by_policy": (
+                            "Admitted Procedure material is unavailable under its governed "
+                            "retention policy."
+                        ),
                         "replay_material_unavailable": (
-                            "Admitted Procedure replay material is unavailable; local loss and "
-                            "governed erasure are indistinguishable in this format."
+                            "Required admitted Procedure replay material is unavailable."
                         ),
                         "admission_material_corrupt": (
                             "Admitted Procedure replay material fails its content address."
