@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import tempfile
 from pathlib import Path
@@ -10,9 +11,25 @@ from types import SimpleNamespace
 
 import pytest
 
+import cruxible_core.playbill.procedures.execution as execution_module
 import cruxible_core.runtime.playbill_manager as playbill_manager_module
 import cruxible_core.service.playbill_procedure_runs as procedure_run_service
 from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.procedure_runtime_policy import (
+    PROCEDURE_RUNTIME_POLICY_PATH,
+    render_procedure_runtime_policy,
+)
+from cruxible_client.contracts.procedures.artifacts import procedure_artifact_digest
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
+from cruxible_client.contracts.procedures.line_specs import (
+    AcceptedLineSpecV1,
+    LineSpecV2,
+    evaluate_line_spec_law,
+    line_spec_digest,
+    line_spec_path,
+)
+from cruxible_client.contracts.procedures.models import ProviderNodeV4
+from cruxible_client.contracts.procedures.results import procedure_acquisition_plan_digest
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlanV1
 from cruxible_client.contracts.provider_interfaces import render_provider_interface
 from cruxible_client.contracts.providers import (
@@ -22,6 +39,17 @@ from cruxible_client.contracts.providers import (
     provider_expected_implementation_records,
     render_provider,
 )
+from cruxible_core.playbill.bootstrap import seeded_procedure_runtime_policy
+from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.exhaust.records import parse_journal_payload
+from cruxible_core.playbill.procedures.execution import (
+    PreparedProcedureRunV5,
+    ProcedureRunAdmissionV5,
+    procedure_admission_digest,
+    procedure_line_run_id,
+    procedure_semantic_replay_key_digest,
+)
+from cruxible_core.playbill.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.playbill.provider_local_runtime import LocalProviderDeploymentV1
 from cruxible_core.playbill.provider_process_leases import (
     ProviderLocalRuntimeRefused,
@@ -34,7 +62,21 @@ from cruxible_core.playbill.provider_runtime_contract import (
 from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
 from cruxible_core.service.playbill_procedure_runs import ProcedureRunRecoveryRequired
-from tests.test_playbill._p2b1_support import accepted_interface, provider_v2
+from cruxible_core.service.playbill_procedures import service_execute_direct_procedure
+from tests.test_playbill._p2b1_support import (
+    accepted_interface,
+    install_demo_classifier,
+    provider_v2,
+)
+from tests.test_playbill.test_procedure_execution import (
+    _accepted_line_for_admission,
+)
+from tests.test_playbill.test_provider_invocation_journal import (
+    _accepted_one_provider,
+    _Authority,
+    _Contracts,
+    _prepared_v5,
+)
 from tests.test_playbill.test_provider_local_driver import _fake_interpreter
 
 
@@ -46,8 +88,147 @@ def _sha256_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _procedure_bound_to_provider(accepted_provider: AcceptedProviderV1):  # type: ignore[no-untyped-def]
+    accepted = _accepted_one_provider()
+    definition = accepted.procedure.definition
+    node = definition.nodes[0]
+    assert isinstance(node, ProviderNodeV4)
+    provider_pin = node.provider
+    assert not isinstance(provider_pin, str)
+    provider_pin = provider_pin.model_copy(
+        update={"artifact_digest": accepted_provider.artifact_digest}
+    )
+    implementation_digest = accepted_provider.provider.implementations[0].implementation_digest
+    node = node.model_copy(
+        update={
+            "provider": provider_pin,
+            "implementation_digest": implementation_digest,
+            "input": {"size": 3, "value": "line-served"},
+        }
+    )
+    definition = definition.model_copy(update={"nodes": (node,)})
+    pins = tuple(
+        sorted(
+            (
+                provider_pin if item.role == "provider" and item.target.kind == "Provider" else item
+                for item in accepted.procedure.pins
+            ),
+            key=lambda item: (
+                item.role.encode(),
+                item.target.qualified.encode(),
+                item.artifact_digest.encode(),
+            ),
+        )
+    )
+    procedure = accepted.procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
+            "pins": pins,
+        }
+    )
+    return accepted.model_copy(
+        update={
+            "procedure": procedure,
+            "artifact_digest": procedure_artifact_digest(procedure).tagged,
+        }
+    )
+
+
+def _complete_line_for_admission(
+    admission: ProcedureRunAdmissionV5,
+    accepted_procedure,  # type: ignore[no-untyped-def]
+    *,
+    accepted_provider: AcceptedProviderV1,
+    interface,  # type: ignore[no-untyped-def]
+) -> AcceptedLineSpecV1:
+    historical = _accepted_line_for_admission(admission, accepted_procedure).line
+    definition = accepted_procedure.procedure.definition
+    line = LineSpecV2.model_validate(
+        {
+            **historical.model_dump(mode="json"),
+            "artifact_format": "playbill-line-v2",
+            "budgets": {
+                "max_capture_bytes": definition.budget.max_capture_bytes,
+                "max_items": definition.budget.max_items,
+                "max_provider_calls": definition.budget.max_provider_calls,
+                "max_wall_clock_microseconds": definition.budget.wall_clock.microseconds,
+            },
+            "provider_implementation_closures": [],
+        }
+    )
+    path = line_spec_path(line.identity.name)
+    law = evaluate_line_spec_law(
+        line,
+        path=path,
+        procedure=accepted_procedure,
+        interface_digests={
+            accepted_provider.artifact_digest: interface.registration.interface_digest
+        },
+        predecessor=None,
+        providers={accepted_provider.artifact_digest: accepted_provider},
+        provider_interfaces={interface.artifact_digest: interface},
+    )
+    assert law.verdict == "accepted", law.diagnostics
+    return AcceptedLineSpecV1(
+        path=path,
+        line=line,
+        artifact_digest=line_spec_digest(line).tagged,
+    )
+
+
+def _rebind_prepared_line(
+    prepared: PreparedProcedureRunV5,
+    accepted_line: AcceptedLineSpecV1,
+) -> PreparedProcedureRunV5:
+    plan = prepared.acquisition_plan.model_copy(
+        update={"line_spec_digest": accepted_line.artifact_digest}
+    )
+    plan_digest = procedure_acquisition_plan_digest(plan)
+    fields = {
+        name: getattr(prepared.admission, name)
+        for name in ProcedureRunAdmissionV5.model_fields
+        if name != "tag"
+    }
+    fields.update(
+        {
+            "line_spec_digest": accepted_line.artifact_digest,
+            "acquisition_plan_digest": plan_digest,
+            "semantic_replay_key_digest": _digest("line-replay-placeholder"),
+            "admission_binding_digest": _digest("line-admission-placeholder"),
+            "run_id": "RUN-" + "0" * 64,
+        }
+    )
+    provisional = ProcedureRunAdmissionV5.model_construct(**fields)
+    provisional = provisional.model_copy(
+        update={"semantic_replay_key_digest": procedure_semantic_replay_key_digest(provisional)}
+    )
+    admission_digest = procedure_admission_digest(provisional)
+    admission = ProcedureRunAdmissionV5.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "admission_binding_digest": admission_digest,
+            "run_id": procedure_line_run_id(
+                occurrence_id=provisional.occurrence_id or "",
+                attempt=provisional.attempt,
+                admission_binding_digest=admission_digest,
+                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
+            ),
+        }
+    )
+    return PreparedProcedureRunV5.model_validate(
+        {
+            **prepared.model_dump(mode="python"),
+            "admission": admission,
+            "acquisition_plan": plan,
+            "acquisition_plan_digest": plan_digest,
+        }
+    )
+
+
 def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state_root = Path(tempfile.mkdtemp(prefix=".provider-state-", dir=Path.cwd()))
     request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
@@ -188,6 +369,73 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
     )
     assert outcome.envelope.output == {"echo": "served"}
     assert outcome.verified_binding == admitted_binding
+    assert tuple(operator.process_leases.root.glob("*.json")) == ()
+
+    accepted_procedure = _procedure_bound_to_provider(accepted_provider)
+    (state_root / "line-service").mkdir()
+    prepared, line_fixture = _prepared_v5(
+        accepted_procedure,
+        state_root / "line-service",
+        provider=accepted_provider,
+        interface=interface,
+        local_binding=admitted_binding,
+    )
+    accepted_line = _complete_line_for_admission(
+        prepared.admission,
+        accepted_procedure,
+        accepted_provider=accepted_provider,
+        interface=interface,
+    )
+    prepared = _rebind_prepared_line(prepared, accepted_line)
+    policy_tree = {
+        PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
+            seeded_procedure_runtime_policy()
+        )
+    }
+    bound = procedure_run_service.service_prepare_playbill_line_admission(
+        SimpleNamespace(tree_at=lambda _oid: policy_tree),  # type: ignore[arg-type]
+        admission=prepared.admission,
+        accepted_line=accepted_line,
+    )
+    assert isinstance(bound, ProcedureRunAdmissionV5)
+    prepared = PreparedProcedureRunV5.model_validate(
+        {**prepared.model_dump(mode="python"), "admission": bound}
+    )
+    classifier_registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(classifier_registry)
+    monkeypatch.setattr(
+        execution_module,
+        "PROVIDER_BUCKET_CLASSIFIER_REGISTRY",
+        classifier_registry,
+    )
+    result = service_execute_direct_procedure(
+        prepared,
+        accepted_procedure,
+        journal=line_fixture.journal,
+        bodies=line_fixture.bodies,
+        run_index_path=state_root / "line-run-index.sqlite",
+        fencing_token="writer",
+        activation_authority=_Authority(accepted_procedure.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=invoker,
+    )
+    records = line_fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    payloads = [
+        parse_journal_payload(
+            line_fixture.bodies.read(
+                item.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+        for item in records
+    ]
+    assert result.status == "succeeded", json.dumps(payloads[-1], indent=2)
+    assert result.receipt is not None
+    assert result.output == {"echo": "line-served"}
+    assert [item.record.event_kind for item in records].count("provider_invocation_completed") == 1
     assert tuple(operator.process_leases.root.glob("*.json")) == ()
 
 
