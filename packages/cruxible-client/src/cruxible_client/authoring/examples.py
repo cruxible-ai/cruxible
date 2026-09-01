@@ -22,10 +22,11 @@ from cruxible_client.authoring.inputs import (
 )
 from cruxible_client.contracts.approval_policy import ApprovalPolicyV1
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
+from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.documents import DocumentLifecycle, DocumentShell
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.models import CanonicalDurationV1, ProcedureHardCapsV3
+from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionV1,
     QueryEvaluationPolicyV1,

@@ -24,6 +24,7 @@ from cruxible_client.contracts.laws import (
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_ACCEPTANCE_LAW,
+    PROCEDURE_MANDATE_ACCEPTANCE_LAW,
     PROCEDURE_REVISION_5_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     PROCEDURE_V2_ACCEPTANCE_LAW,
@@ -40,6 +41,7 @@ from cruxible_client.contracts.laws import (
 from cruxible_core.playbill.compiler import (
     P2_B0_COMPILER,
     P2_B1_COMPILER,
+    P2_C_COMPILER,
     PC_E1_COMPILER,
     PC_HR_COMPILER,
 )
@@ -159,6 +161,13 @@ LAW_COORDINATES: tuple[
         "playbill-standing-mandate-v1",
         3,
         "sha256:ab79c01eee9bd149a301d2de27b82d3bb46d4e18717907020e54c4e9d3a75fe7",
+    ),
+    (
+        PROCEDURE_MANDATE_ACCEPTANCE_LAW,
+        "playbill.procedure-mandate.v1",
+        "playbill-procedure-mandate-v1",
+        1,
+        "sha256:dc874c06567d0405554a80cbc12f2f586765b9c6fcbe03a60634b72a06312ae9",
     ),
     (
         PROCEDURE_ACCEPTANCE_LAW,
@@ -300,3 +309,16 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         },
     )
     assert P2_B1_COMPILER.rule_digest == p2_b1_expected
+    p2_c_expected = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "projection_content": "claims-procedures-runtime-v1",
+            "schema_version": 1,
+            "semantic_revision": 14,
+        },
+    )
+    assert p2_c_expected == (
+        "sha256:189154dd919b8f88091da2053b1fe07c80e5074e93e7290c3b5a11c01370da1e"
+    )
+    assert P2_C_COMPILER.rule_digest == p2_c_expected

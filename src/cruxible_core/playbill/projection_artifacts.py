@@ -231,6 +231,22 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-source-acquisition-policy-v1",
                 "playbill-standing-mandate-v1",
                 "playbill-procedure-mandate-v1",
+                "playbill-procedure-calibration-cohort-membership-witness-v1",
+                "playbill-procedure-calibration-cohort-v1",
+                "playbill-procedure-calibration-reading-artifact-v1",
+                "playbill-procedure-calibration-reading-v1",
+                "playbill-procedure-calibration-relation-cohort-witness-v1",
+                "playbill-procedure-calibration-score-v1",
+                "playbill-procedure-resolution-v2",
+                "playbill-resolution-claim-endpoint-v1",
+                "playbill-resolution-contract-activation-v2",
+                "playbill-settled-outcome-history-v1",
+                "playbill-settled-outcome-relation-v1",
+                "playbill-settled-outcome-row-v1",
+                "playbill-settled-outcomes-access-profile-v1",
+                "playbill-settled-outcomes-query-receipt-v1",
+                "playbill-settled-outcomes-query-request-v1",
+                "playbill-settled-outcomes-query-result-v1",
             },
         )
         for tag in (
@@ -272,6 +288,22 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-source-acquisition-policy-v1",
             "playbill-standing-mandate-v1",
             "playbill-procedure-mandate-v1",
+            "playbill-procedure-calibration-cohort-membership-witness-v1",
+            "playbill-procedure-calibration-cohort-v1",
+            "playbill-procedure-calibration-reading-artifact-v1",
+            "playbill-procedure-calibration-reading-v1",
+            "playbill-procedure-calibration-relation-cohort-witness-v1",
+            "playbill-procedure-calibration-score-v1",
+            "playbill-procedure-resolution-v2",
+            "playbill-resolution-claim-endpoint-v1",
+            "playbill-resolution-contract-activation-v2",
+            "playbill-settled-outcome-history-v1",
+            "playbill-settled-outcome-relation-v1",
+            "playbill-settled-outcome-row-v1",
+            "playbill-settled-outcomes-access-profile-v1",
+            "playbill-settled-outcomes-query-receipt-v1",
+            "playbill-settled-outcomes-query-request-v1",
+            "playbill-settled-outcomes-query-result-v1",
         )
     )
 )
@@ -1351,21 +1383,23 @@ def parse_projection_tree(
                     procedure_mandate_digest,
                 )
 
-                mandate = parse_procedure_mandate(content, path=path, codec=artifact_codec)
-                identity = mandate.identity.qualified
+                procedure_mandate = parse_procedure_mandate(
+                    content, path=path, codec=artifact_codec
+                )
+                identity = procedure_mandate.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
                 identities[identity] = path
                 input_digest = file_digest(content).tagged
-                artifact_digest = procedure_mandate_digest(mandate).tagged
+                artifact_digest = procedure_mandate_digest(procedure_mandate).tagged
                 envelopes.append(
                     ArtifactEnvelopeRow(
                         identity=identity,
                         kind="procedure-mandate",
-                        format_tag=mandate.artifact_format,
+                        format_tag=procedure_mandate.artifact_format,
                         path=path,
                         artifact_digest=artifact_digest,
-                        predecessor_digest=mandate.lifecycle.predecessor_digest,
+                        predecessor_digest=procedure_mandate.lifecycle.predecessor_digest,
                         revision=projected_revision(
                             accepted_change_sets,
                             path=path,
@@ -1377,8 +1411,8 @@ def parse_projection_tree(
                 pins.append(
                     PinRow(
                         source_identity=identity,
-                        target_identity=mandate.procedure.target.qualified,
-                        target_digest=mandate.procedure.artifact_digest,
+                        target_identity=procedure_mandate.procedure.target.qualified,
+                        target_digest=procedure_mandate.procedure.artifact_digest,
                     )
                 )
                 semantic_facts.append(
@@ -1387,7 +1421,7 @@ def parse_projection_tree(
                         schema_version=1,
                         subject_identity=identity,
                         fact_key="finite_grant",
-                        value=mandate.model_dump(mode="json"),
+                        value=procedure_mandate.model_dump(mode="json"),
                     )
                 )
                 continue

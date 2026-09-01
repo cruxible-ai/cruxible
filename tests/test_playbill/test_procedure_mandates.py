@@ -16,6 +16,7 @@ from cruxible_client.contracts.procedure_mandates import (
     evaluate_procedure_mandate_law,
     parse_procedure_mandate,
     procedure_mandate_digest,
+    procedure_mandate_evaluation_digest,
     procedure_mandate_path,
     render_procedure_mandate,
 )
@@ -120,7 +121,9 @@ def test_procedure_mandate_runtime_refusals_are_complete_and_deterministic() -> 
         evaluation_time=datetime(2026, 6, 1, tzinfo=timezone.utc),
         accepted_mandate_digest=digest,
     )
-    assert evaluate_procedure_mandate(mandate, invocation).verdict == "permitted"
+    permitted = evaluate_procedure_mandate(mandate, invocation)
+    assert permitted.verdict == "permitted"
+    assert procedure_mandate_evaluation_digest(permitted).startswith("sha256:")
 
     refused = evaluate_procedure_mandate(
         mandate,
@@ -141,6 +144,14 @@ def test_procedure_mandate_runtime_refusals_are_complete_and_deterministic() -> 
         "procedure_mandate_procedure_mismatch",
         "procedure_mandate_superseded",
     )
+    rung_two = mandate.model_copy(update={"rung": 2})
+    rung_refused = evaluate_procedure_mandate(
+        rung_two,
+        invocation.model_copy(
+            update={"accepted_mandate_digest": procedure_mandate_digest(rung_two).tagged}
+        ),
+    )
+    assert rung_refused.refusal_codes == ("procedure_mandate_rung_insufficient",)
 
 
 def test_procedure_mandate_successor_requires_exact_predecessor() -> None:

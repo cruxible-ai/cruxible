@@ -1616,7 +1616,7 @@ def create_authoring_intent(
 
     \b
     Input kind family: claim | procedure | subject | query_definition |
-    approval_policy | procedure_runtime_policy | change_set (tagless).
+    approval_policy | procedure_runtime_policy | procedure_mandate | change_set (tagless).
 
     Use --example for a model-generated starting point.
     """

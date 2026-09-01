@@ -297,15 +297,15 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
                 lifecycle=procedure.lifecycle,
             )
         if path.startswith("procedure-mandates/"):
-            mandate = parse_procedure_mandate(content, path=path)
+            procedure_mandate = parse_procedure_mandate(content, path=path)
             return ArtifactDependencyStateV1(
                 path=path,
                 artifact_kind="procedure-mandate",
-                artifact_tag=mandate.artifact_format,
-                identity=mandate.identity,
-                artifact_digest=procedure_mandate_digest(mandate).tagged,
-                pins=mandate.pins,
-                lifecycle=mandate.lifecycle,
+                artifact_tag=procedure_mandate.artifact_format,
+                identity=procedure_mandate.identity,
+                artifact_digest=procedure_mandate_digest(procedure_mandate).tagged,
+                pins=procedure_mandate.pins,
+                lifecycle=procedure_mandate.lifecycle,
             )
         if path.startswith("lines/"):
             line = parse_line_spec(content, path=path)
