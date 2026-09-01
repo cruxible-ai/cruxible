@@ -732,12 +732,7 @@ class CoverageMiddlewareV1:
             windows.setdefault(hit.path, set()).add((hit.line, hit.line))
 
         named = sorted(whole | set(windows))[: self._config.max_observed_paths]
-        floor = (
-            self._config.floor_output
-            if isinstance(self._config, CoverageWorkspaceConfigV2)
-            else None
-        )
-        floor_paths = [] if floor is None else [path for path in named if self._is_floor_path(path)]
+        floor_paths = [path for path in named if self._is_floor_path(path)]
         evidence_paths = [path for path in named if path not in floor_paths]
         bindings, unbound = self._config.bindings_for(evidence_paths)
         unbound = tuple(sorted((*unbound, *floor_paths)))

@@ -150,6 +150,34 @@ def test_recover_admin_mints_new_admin_and_records_audit(
     assert events[0]["hostname"]
 
 
+def test_recover_admin_uses_the_state_root_environment_default(
+    monkeypatch: pytest.MonkeyPatch,
+    runner: CliRunner,
+    tmp_path: Path,
+) -> None:
+    _state_dir, (instance_id,) = _seed_admin_state(tmp_path, monkeypatch)
+
+    result = runner.invoke(cli, ["credential", "recover-admin", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout)["credential"]["instance_id"] == instance_id
+
+
+def test_recover_admin_refuses_obsolete_and_empty_state_root(
+    runner: CliRunner,
+) -> None:
+    obsolete = runner.invoke(
+        cli,
+        ["credential", "recover-admin", "--state-dir", "/tmp/old-state"],
+    )
+    empty = runner.invoke(cli, ["credential", "recover-admin", "--state-root", ""])
+
+    assert obsolete.exit_code == 2
+    assert "--state-dir is obsolete; use --state-root" in obsolete.output
+    assert empty.exit_code == 2
+    assert "--state-root may not be empty" in empty.output
+
+
 def test_recover_admin_refuses_non_owner_without_writing(
     monkeypatch: pytest.MonkeyPatch,
     runner: CliRunner,

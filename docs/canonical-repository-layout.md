@@ -74,9 +74,12 @@ state are daemon-global. The obsolete `CRUXIBLE_SERVER_STATE_DIR` variable is
 refused rather than silently assigned precedence.
 
 Pre-PC-HR instances used a nested layout and compact `.yaml` artifact codec.
-Archive and re-seed them; do not transcode signed history. Historical compiler
-verifiers remain available for frozen material, but a current mutable instance
-must use the current layout and compiler.
+Archive the managed instance directory together with its matching out-of-band
+`trust/<instance-id>.json`, then re-seed under a new instance ID; do not transcode
+signed history. Leaving only one half is a typed re-seed-required state, never a
+partly initialized state. Historical compiler verifiers remain available for
+frozen material, but a current mutable instance must use the current layout and
+compiler.
 
 ## Advisory ledger remote
 

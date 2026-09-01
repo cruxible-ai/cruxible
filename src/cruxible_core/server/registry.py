@@ -40,7 +40,8 @@ class InstanceRegistry:
     """SQLite-backed registry of server-owned instance IDs."""
 
     def __init__(self, db_path: Path) -> None:
-        self.db_path = db_path
+        self.db_path = db_path.resolve()
+        self.state_root = self.db_path.parent.parent
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -187,8 +188,7 @@ class InstanceRegistry:
     def governed_instance_location(self, instance_id: str) -> Path:
         """Return the server-owned governed instance path for a valid instance ID."""
         _validate_instance_id(instance_id)
-        state_root = get_server_state_root()
-        return (state_root / "instances" / instance_id).resolve()
+        return (self.state_root / "instances" / instance_id).resolve()
 
     def create_governed_instance_with_id(
         self,
@@ -299,7 +299,7 @@ class InstanceRegistry:
         workspace_root: str | None,
     ) -> RegisteredInstance:
         instance_id = new_id("inst", length=16, separator="_")
-        location = str((get_server_state_root() / "instances" / instance_id).resolve())
+        location = str((self.state_root / "instances" / instance_id).resolve())
         return self._insert_instance(
             backend=GOVERNED_DAEMON_BACKEND,
             location=location,

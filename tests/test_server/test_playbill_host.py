@@ -113,6 +113,56 @@ def test_pre_pc_hr_nested_instance_requires_reseed(host_client: TestClient) -> N
         get_playbill_manager().get("inst_legacy_nested")
 
 
+def test_managed_root_and_trust_root_must_be_archived_together(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    created = host_client.post(
+        "/api/v1/runtime/instances",
+        json={"instance_id": "inst_archive_pair"},
+    )
+    record = get_registry().get(created.json()["instance_id"])
+    assert record is not None
+    managed_root = Path(record.location)
+    owner = generate_client_principal_key(
+        tmp_path / "archive-owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(managed_root,),
+    )
+    initialized = host_client.post(
+        "/api/v1/inst_archive_pair/playbill/init",
+        json={"principals": [owner.principal.model_dump(mode="json")]},
+    )
+    assert initialized.status_code == 200
+    managed_root.rename(tmp_path / "archived-instance")
+    get_playbill_manager().clear()
+
+    with pytest.raises(PlaybillReseedRequired):
+        get_playbill_manager().get("inst_archive_pair")
+    with pytest.raises(PlaybillReseedRequired):
+        get_playbill_manager().initialize(
+            "inst_archive_pair",
+            client_principals=(owner.principal,),
+        )
+
+
+def test_registry_state_root_is_frozen_for_instance_and_trust_paths(
+    host_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del host_client
+    registry = get_registry()
+    original_root = registry.state_root
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "other-state"))
+
+    record = registry.create_governed_instance_with_id("inst_frozen_state").record
+
+    assert Path(record.location).is_relative_to(original_root)
+    assert not Path(record.location).is_relative_to(tmp_path / "other-state")
+
+
 def test_playbill_bootstrap_is_the_first_semantic_write(
     host_client: TestClient,
     tmp_path: Path,
@@ -142,7 +192,9 @@ def test_playbill_bootstrap_is_the_first_semantic_write(
     assert initialized.json()["approval_policy_mode"] == "self_approval_allowed"
     assert managed_root.is_dir()
     assert not (managed_root / ".cruxible" / "state.db").exists()
-    assert (tmp_path / "server-state" / "trust" / "inst_dp0b_bootstrap.json").is_file()
+    trust_directory = tmp_path / "server-state" / "trust"
+    assert (trust_directory / "inst_dp0b_bootstrap.json").is_file()
+    assert trust_directory.stat().st_mode & 0o777 == 0o700
 
 
 def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(

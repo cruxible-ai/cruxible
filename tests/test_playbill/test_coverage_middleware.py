@@ -532,6 +532,42 @@ def test_floor_hits_are_freshness_only_and_a_stale_floor_gets_one_batch_line(
     )
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        CoverageWorkspaceConfigV1(
+            rules=(
+                CoveragePathPrefixRuleV1(
+                    path_prefix=".playbill/floor/",
+                    plane="external",
+                    identity_prefix="floor.",
+                ),
+            )
+        ),
+        CoverageWorkspaceConfigV2(
+            rules=(
+                CoveragePathPrefixRuleV1(
+                    path_prefix=".playbill/floor/",
+                    plane="external",
+                    identity_prefix="floor.",
+                ),
+            )
+        ),
+    ],
+)
+def test_floor_hits_never_become_evidence_without_a_floor_declaration(
+    workspace: Path,
+    config: CoverageWorkspaceConfigV1 | CoverageWorkspaceConfigV2,
+) -> None:
+    recorder = _Recorder()
+    delivery = coverage_middleware(root=workspace, config=config, resolve=recorder).after_tool(
+        HarnessToolEventV1(kind="read", paths=(".playbill/floor/claim.json",))
+    )
+
+    assert recorder.calls == []
+    assert delivery.unbound_paths == (".playbill/floor/claim.json",)
+
+
 def test_current_floor_is_silent_and_invalid_floor_is_explicitly_unavailable(
     workspace: Path,
 ) -> None:

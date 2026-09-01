@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-state_root="${CRUXIBLE_STATE_ROOT:-/var/lib/cruxible/server}"
+state_root="${CRUXIBLE_STATE_ROOT:-/var/lib/cruxible}"
 
 python - "$state_root" <<'PY'
 from __future__ import annotations

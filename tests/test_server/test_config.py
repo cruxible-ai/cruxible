@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from cruxible_client.contracts.errors import PlaybillReseedRequired
 from cruxible_core.errors import ConfigError
 from cruxible_core.mcp.permissions import reset_permissions
 from cruxible_core.server import app as server_app
@@ -20,6 +21,7 @@ from cruxible_core.server.config import (
     volatile_state_path_warnings,
 )
 from cruxible_core.server.credentials import (
+    RuntimeCredentialStore,
     get_runtime_credential_store,
     reset_runtime_credential_store,
 )
@@ -155,8 +157,27 @@ def test_server_state_root_defaults_to_cruxible_home(
 
 @pytest.mark.parametrize("value", ["", "/tmp/old-cruxible-state"])
 def test_obsolete_server_state_dir_is_a_typed_refusal(value: str) -> None:
-    with pytest.raises(ConfigError, match="CRUXIBLE_SERVER_STATE_DIR is obsolete"):
+    with pytest.raises(ConfigError, match="CRUXIBLE_SERVER_STATE_DIR is obsolete") as raised:
         get_server_state_root({"CRUXIBLE_SERVER_STATE_DIR": value})
+    assert raised.value.error_code == "cruxible.server.state_configuration_invalid"
+
+
+def test_empty_server_state_root_is_a_typed_refusal() -> None:
+    with pytest.raises(ConfigError, match="CRUXIBLE_STATE_ROOT may not be empty") as raised:
+        get_server_state_root({"CRUXIBLE_STATE_ROOT": ""})
+    assert raised.value.error_code == "cruxible.server.state_configuration_invalid"
+
+
+def test_pre_pc_hr_state_tree_preserves_the_auth_latch_by_refusing_reseed(
+    tmp_path: Path,
+) -> None:
+    state_root = tmp_path / "state"
+    legacy_store = RuntimeCredentialStore(state_root / "server" / "runtime_credentials.db")
+    legacy_store.mark_auth_required("legacy-auth-enabled")
+    assert legacy_store.is_auth_required()
+
+    with pytest.raises(PlaybillReseedRequired):
+        get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
 
 
 def test_server_log_path_defaults_under_state_root(tmp_path: Path) -> None:

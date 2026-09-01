@@ -14,6 +14,7 @@ service, and no fixture writes accepted state on the test's behalf.
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -438,7 +439,10 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
 
     # 8. Materialize the floor and prove it carries the accepted facts bound to
     #    the coordinate they were projected from.
-    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    subdirectory = tmp_path / "nested"
+    subdirectory.mkdir()
+    monkeypatch.chdir(subdirectory)
     floor = tmp_path / ".playbill/floor"
     exported = cruxible.json("playbill", "floor", "export")
     manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
@@ -470,6 +474,7 @@ def test_cli_floor_export_refuses_to_overwrite_a_non_empty_directory(
     cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
     cruxible.bootstrap(tmp_path)
 
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
     monkeypatch.chdir(tmp_path)
     floor = tmp_path / ".playbill/floor"
     floor.mkdir(parents=True)

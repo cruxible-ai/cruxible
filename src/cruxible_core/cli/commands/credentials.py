@@ -13,6 +13,7 @@ import click
 from cruxible_client import CruxibleClient, contracts
 from cruxible_core.cli.commands import _common
 from cruxible_core.cli.main import handle_errors
+from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.credentials import (
     RuntimeCredentialRecord,
     RuntimeCredentialRecoveryBusyError,
@@ -219,14 +220,15 @@ def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
 @credential_group.command("recover-admin")
 @click.option(
     "--state-root",
-    required=True,
-    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
     help=(
-        "Server state root containing daemon/runtime_credentials.db. Stop the daemon "
-        "first; the lock check only refuses a writer caught mid-transaction and "
-        "does not detect an idle running daemon."
+        "Server state root containing daemon/runtime_credentials.db (default: "
+        "CRUXIBLE_STATE_ROOT or ~/.cruxible). Stop the daemon first; the lock check "
+        "only refuses a writer caught mid-transaction and does not detect an idle "
+        "running daemon."
     ),
 )
+@click.option("--state-dir", default=None, hidden=True)
 @click.option(
     "--instance-id",
     default=None,
@@ -241,7 +243,8 @@ def _select_recovery_instance_id(db_path: Path, instance_id: str | None) -> str:
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
 def recover_admin_cmd(
-    state_root: Path,
+    state_root: str | None,
+    state_dir: str | None,
     instance_id: str | None,
     label: str,
     output_json: bool,
@@ -257,7 +260,14 @@ def recover_admin_cmd(
     Existing credentials are not revoked automatically.
     """
     _refuse_recover_admin_server_mode()
-    resolved_state_root = state_root.expanduser().resolve()
+    if state_dir is not None:
+        raise click.UsageError("--state-dir is obsolete; use --state-root")
+    if state_root is not None:
+        if not state_root.strip():
+            raise click.UsageError("--state-root may not be empty")
+        resolved_state_root = Path(state_root).expanduser().resolve()
+    else:
+        resolved_state_root = get_server_state_root()
     db_path = resolved_state_root / "daemon" / "runtime_credentials.db"
     uid = os.getuid()
     _require_owned_path(resolved_state_root, description="State root", uid=uid, directory=True)

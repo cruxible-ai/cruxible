@@ -21,7 +21,6 @@ from cruxible_core.playbill.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
 )
-from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 
 
@@ -41,7 +40,8 @@ class PlaybillInstanceManager:
         self._lock = threading.RLock()
 
     def _paths(self, instance_id: str) -> tuple[Path, Path, tuple[Path, ...]]:
-        record = get_registry().get(instance_id)
+        registry = get_registry()
+        record = registry.get(instance_id)
         if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
             raise InstanceNotFoundError(instance_id)
         managed_root = Path(record.location).resolve(strict=False)
@@ -50,7 +50,9 @@ class PlaybillInstanceManager:
             legacy_root / "playbill-trust-root-v1.json"
         ).exists():
             raise PlaybillReseedRequired()
-        trust_root = get_server_state_root() / "trust" / f"{instance_id}.json"
+        trust_root = registry.state_root / "trust" / f"{instance_id}.json"
+        if managed_root.exists() != trust_root.exists():
+            raise PlaybillReseedRequired()
         workspaces = (
             (Path(record.workspace_root).resolve(strict=False),)
             if record.workspace_root is not None
@@ -101,7 +103,8 @@ class PlaybillInstanceManager:
                 operating_profile=operating_profile,
                 require_independent_approval=require_independent_approval,
             )
-            trust_path.parent.mkdir(parents=True, exist_ok=True)
+            trust_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(trust_path.parent, 0o700)
             payload = canonical_bytes(instance.trust_root.model_dump(mode="json")) + b"\n"
             descriptor: int | None = None
             try:

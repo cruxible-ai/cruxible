@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 from urllib.parse import urlsplit
 
+from cruxible_client.contracts.errors import PlaybillReseedRequired
 from cruxible_core.errors import ConfigError
 
 _VOLATILE_STATE_ROOTS = (
@@ -18,6 +19,12 @@ _VOLATILE_STATE_ROOTS = (
     Path("/private/var/tmp"),
     Path("/private/var/folders"),
 )
+
+
+class ServerStateConfigurationError(ConfigError):
+    """A server state-root setting is present but cannot be used safely."""
+
+    error_code = "cruxible.server.state_configuration_invalid"
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -78,14 +85,27 @@ def get_server_state_root(environ: Mapping[str, str] | None = None) -> Path:
     """Return the canonical server-owned state root."""
     env = os.environ if environ is None else environ
     if "CRUXIBLE_SERVER_STATE_DIR" in env:
-        raise ConfigError(
+        raise ServerStateConfigurationError(
             "CRUXIBLE_SERVER_STATE_DIR is obsolete; use CRUXIBLE_STATE_ROOT and re-seed "
             "pre-PC-HR instances"
         )
     raw = env.get("CRUXIBLE_STATE_ROOT")
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return (Path.home() / ".cruxible").resolve()
+    if raw is not None:
+        if not raw.strip():
+            raise ServerStateConfigurationError("CRUXIBLE_STATE_ROOT may not be empty")
+        state_root = Path(raw).expanduser().resolve()
+    else:
+        state_root = (Path.home() / ".cruxible").resolve()
+    legacy = state_root / "server"
+    legacy_files = (
+        legacy / "registry.db",
+        legacy / "runtime_credentials.db",
+        state_root / "registry.db",
+        state_root / "runtime_credentials.db",
+    )
+    if any(path.exists() for path in legacy_files):
+        raise PlaybillReseedRequired()
+    return state_root
 
 
 def get_server_log_path(environ: Mapping[str, str] | None = None) -> Path:

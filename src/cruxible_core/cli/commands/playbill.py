@@ -3084,7 +3084,10 @@ def export_floor(
         lambda client, instance_id: client.export_playbill_floor(instance_id),
         command_name="playbill floor export",
     )
-    written = materialize_playbill_floor(Path.cwd(), export=result, force=force)
+    workspace_root = _local_git_workspace_root()
+    if workspace_root is None:
+        raise click.UsageError("playbill floor export must run inside one Git worktree")
+    written = materialize_playbill_floor(workspace_root, export=result, force=force)
     if output_json:
         _emit_json(result.manifest)
         return

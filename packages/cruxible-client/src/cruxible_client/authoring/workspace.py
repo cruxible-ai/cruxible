@@ -224,17 +224,6 @@ def _workspace_root(workspace: str | Path) -> Path:
 def _relative_destination(workspace: Path, relative_path: str) -> Path:
     if relative_path != PLAYBILL_FLOOR_PATH:
         raise PlaybillWorkspaceError(f"floor output path is fixed at {PLAYBILL_FLOOR_PATH}")
-    path = PurePosixPath(relative_path)
-    if (
-        not relative_path
-        or path.is_absolute()
-        or path.as_posix() != relative_path
-        or ".." in path.parts
-        or not path.parts
-    ):
-        raise PlaybillWorkspaceError(
-            "floor output path must be a normalized workspace-relative directory"
-        )
     destination = workspace / relative_path
     try:
         resolved = destination.resolve()
