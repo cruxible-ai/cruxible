@@ -68,11 +68,13 @@ from cruxible_client.contracts.procedures.models import (
     ProcedureTransformSpecV1,
     ProjectNodeV3,
     ProviderNodeV3,
+    ProviderNodeV4,
     RepeatBodyNodeV3,
     RepeatBodyNodeV4,
     RepeatNodeV3,
     RepeatNodeV4,
     SourceNodeV3,
+    SourceNodeV4,
     StateTapNodeV3,
     TransformNodeV3,
 )
@@ -145,6 +147,9 @@ from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.service.playbill_procedure_runs import service_prepare_playbill_line_admission
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_graph_v4_provider_closure import (
+    _accepted_procedure as _accepted_provider_v4_procedure,
+)
 
 NOW = datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc)
 
@@ -1653,6 +1658,81 @@ def test_three_plane_projection_is_stable_and_material_digest_free(tmp_path) -> 
         "material_body_digest"
         not in canonical_bytes([item.model_dump(mode="json") for item in projected]).decode()
     )
+
+
+def test_executor_recognizes_graph_v4_source_as_a_landed_capture_input(tmp_path) -> None:
+    accepted = _accepted_provider_v4_procedure()
+    definition = accepted.procedure.definition
+    provider = definition.nodes[0]
+    assert isinstance(provider, ProviderNodeV4)
+    capture_contract = _pin("capture-contract", "CaptureContract", "v4-source")
+    source = SourceNodeV4(
+        node_id="source",
+        capture_contract=capture_contract,
+        provider=provider.provider,
+        interface=provider.interface,
+        interface_digest=provider.interface_digest,
+        implementation_digest=provider.implementation_digest,
+        request={},
+        as_="capture",
+    )
+    source_definition = definition.model_copy(
+        update={"nodes": (source,), "returns": "capture", "pin_slots": ()}
+    )
+    pins = tuple(
+        sorted(
+            (*accepted.procedure.pins, capture_contract),
+            key=lambda pin: (
+                pin.role.encode("utf-8"),
+                pin.target.qualified.encode("utf-8"),
+                pin.artifact_digest.encode("ascii"),
+            ),
+        )
+    )
+    procedure = accepted.procedure.model_copy(
+        update={
+            "definition": source_definition,
+            "definition_digest": compute_procedure_definition_digest_v4(source_definition).tagged,
+            "pins": pins,
+        }
+    )
+    source_accepted = AcceptedProcedureV1(
+        path=accepted.path,
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    fixture = _fixture(tmp_path)
+    landed = LandedCaptureRunInputV1(
+        input_name="capture",
+        capture_digest=_digest("v4-source-capture"),
+        capture_contract_digest=capture_contract.artifact_digest,
+        landing_cursor="partition:0001",
+    )
+    admission = _line_admission(
+        source_accepted,
+        fixture,
+        landed_capture_inputs=(landed,),
+    )
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(source_accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    )
+
+    executor._verify_input_planes(admission, source_accepted)  # noqa: SLF001
+
+    with pytest.raises(PlaybillExecutionError, match="names no Procedure input node"):
+        executor._verify_input_planes(  # noqa: SLF001
+            admission.model_copy(
+                update={
+                    "landed_capture_inputs": (landed.model_copy(update={"input_name": "missing"}),)
+                }
+            ),
+            source_accepted,
+        )
 
 
 def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) -> None:

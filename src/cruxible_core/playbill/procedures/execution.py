@@ -2114,7 +2114,7 @@ class ProcedureExecutor:
             node = nodes.get(run_input.input_name)
             if node is None:
                 raise PlaybillExecutionError(
-                    f"admitted input {run_input.input_name!r} names no v3 input node"
+                    f"admitted input {run_input.input_name!r} names no Procedure input node"
                 )
             try:
                 validate_node_input_plane(node, run_input)
