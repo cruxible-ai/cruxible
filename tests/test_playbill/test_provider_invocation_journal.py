@@ -36,6 +36,7 @@ from cruxible_client.contracts.provider_execution import (
     ProviderExternalOccurrencePlanV1,
     ProviderInvocationCompletedV1,
     ProviderInvocationReceiptV1,
+    ProviderInvocationStartedV1,
     ProviderSecretBindingIdentityV1,
     ProviderSecretReceiptReferenceV1,
     ProviderSecretReferenceV1,
@@ -50,6 +51,7 @@ from cruxible_client.contracts.provider_interfaces import (
 from cruxible_client.contracts.providers import AcceptedProviderV1
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import parse_journal_payload
+from cruxible_core.playbill.exhaust.writer import ProcedureExhaustWriter
 from cruxible_core.playbill.procedures.execution import (
     PreparedProcedureRunV5,
     ProcedureExecutor,
@@ -640,7 +642,215 @@ def test_startup_recovery_closes_the_exact_start_and_terminalizes_the_attempt(
     )
     assert kinds.count("provider_invocation_completed") == 1
     assert kinds[-1] == "attempt_finalized"
+    writer_state = fixture.journal.writer_state(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    assert writer_state is not None
+    assert not writer_state.active
     assert executor.execute(prepared, accepted).status == "failed"
+
+
+def test_recovery_aggregates_prior_provider_receipts_and_budget_observations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accepted = _accepted_one_provider()
+    successful_root = tmp_path / "successful"
+    successful_root.mkdir()
+    successful, successful_fixture = _prepared_v5(accepted, successful_root)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    ProcedureExecutor(
+        journal=successful_fixture.journal,
+        bodies=successful_fixture.bodies,
+        run_index=successful_fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_Invoker(),
+        provider_classifier_registry=registry,
+    ).execute(successful, accepted)
+    successful_completion_record = next(
+        item
+        for item in successful_fixture.journal.all_records(
+            successful.admission.journal_stream,
+            successful.admission.journal_partition_id,
+        )
+        if item.record.event_kind == "provider_invocation_completed"
+    )
+    successful_completion = ProviderInvocationCompletedV1.model_validate(
+        parse_journal_payload(
+            successful_fixture.bodies.read(
+                successful_completion_record.record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+    )
+
+    orphan_root = tmp_path / "orphan"
+    orphan_root.mkdir()
+    prepared, fixture = _prepared_v5(accepted, orphan_root)
+    crashing = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_CrashingInvoker(),
+        provider_classifier_registry=registry,
+    )
+    with pytest.raises(PlaybillExecutionError, match="provider_completion_not_durable"):
+        crashing.execute(prepared, accepted)
+    orphan_records = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    orphan_start = ProviderInvocationStartedV1.model_validate(
+        parse_journal_payload(
+            fixture.bodies.read(
+                next(
+                    item
+                    for item in orphan_records
+                    if item.record.event_kind == "provider_invocation_started"
+                ).record.payload_digest,
+                access=BodyAccessContext(principal_id="test", can_read_body=True),
+            )
+        )
+    )
+    prior_invocation_id = _digest("prior-completed-invocation")
+    prior_start = orphan_start.model_copy(update={"invocation_id": prior_invocation_id})
+    prior_receipt = successful_completion.receipt.model_copy(
+        update={
+            "invocation_id": prior_invocation_id,
+            "run_id": prepared.admission.run_id,
+            "admission_binding_digest": prepared.admission.admission_binding_digest,
+            "occurrence_path": orphan_start.occurrence_path,
+            "implementation_digest": orphan_start.implementation_digest,
+            "materialization_digest": orphan_start.materialization_digest,
+            "input_digest": orphan_start.input_digest,
+            "input_bucket": orphan_start.input_bucket,
+        }
+    )
+    prior_completion = ProviderInvocationCompletedV1(
+        invocation_id=prior_invocation_id,
+        receipt=prior_receipt,
+        receipt_digest=provider_invocation_receipt_digest(prior_receipt),
+    )
+    writer = ProcedureExhaustWriter(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        fencing_token="writer",
+    )
+    for event_kind, payload in (
+        ("provider_invocation_started", prior_start),
+        ("provider_invocation_completed", prior_completion),
+    ):
+        writer.append(
+            stream=prepared.admission.journal_stream,
+            partition_id=prepared.admission.journal_partition_id,
+            event_kind=event_kind,  # type: ignore[arg-type]
+            accepted_coordinate=prepared.admission.accepted_coordinate,
+            procedure_artifact_digest=prepared.admission.procedure_artifact_digest,
+            definition_digest=prepared.admission.definition_digest,
+            run_id=prepared.admission.run_id,
+            line_spec_digest=prepared.admission.line_spec_digest,
+            occurrence_id=prepared.admission.occurrence_id,
+            attempt=prepared.admission.attempt,
+            admission_binding_digest=prepared.admission.admission_binding_digest,
+            actor_context=prepared.admission.actor_context,
+            recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            payload=payload.model_dump(mode="json"),
+        )
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_journal_for_write",
+        lambda _instance: (fixture.journal, tmp_path),
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_stream",
+        lambda _instance: prepared.admission.journal_stream,
+    )
+    assert procedure_run_service.service_recover_provider_invocations(
+        _Instance(),  # type: ignore[arg-type]
+        invocation_ids=(orphan_start.invocation_id,),
+        recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    ) == (orphan_start.invocation_id,)
+    final_record = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )[-1]
+    final = parse_journal_payload(
+        fixture.bodies.read(
+            final_record.record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert final["provider_calls"] == 2  # type: ignore[index]
+    assert len(final["invocation_receipt_digests"]) == 2  # type: ignore[index]
+    assert final["budget"]["observed"]["provider_calls"] == 2  # type: ignore[index]
+    assert final["budget"]["observed"]["wall_clock_microseconds"] == 1234  # type: ignore[index]
+
+
+def test_recovery_does_not_touch_a_healthy_partition_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    registry = ProviderBucketClassifierRegistry()
+    install_demo_classifier(registry)
+    ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_Invoker(),
+        provider_classifier_registry=registry,
+    ).execute(prepared, accepted)
+    before = fixture.journal.writer_state(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_journal_for_write",
+        lambda _instance: (fixture.journal, tmp_path),
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_stream",
+        lambda _instance: prepared.admission.journal_stream,
+    )
+    assert (
+        procedure_run_service.service_recover_provider_invocations(
+            _Instance(),  # type: ignore[arg-type]
+            invocation_ids=(_digest("unrelated"),),
+            recorded_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
+        == ()
+    )
+    assert (
+        fixture.journal.writer_state(
+            prepared.admission.journal_stream,
+            prepared.admission.journal_partition_id,
+        )
+        == before
+    )
 
 
 def test_typed_start_failure_journals_completion_and_is_replayable(tmp_path: Path) -> None:

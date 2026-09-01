@@ -1487,7 +1487,7 @@ def service_recover_provider_invocations(
         admission: ProcedureRunAdmissionV5 | None = None
         plan = None
         starts: dict[str, ProviderInvocationStartedV1] = {}
-        completed: set[str] = set()
+        completed: dict[str, ProviderInvocationCompletedV1] = {}
         for stored in records:
             payload = parse_journal_payload(
                 bodies.read(stored.record.payload_digest, access=access)
@@ -1501,9 +1501,29 @@ def service_recover_provider_invocations(
                 started = ProviderInvocationStartedV1.model_validate(payload)
                 starts[started.invocation_id] = started
             elif stored.record.event_kind == "provider_invocation_completed":
-                completed.add(ProviderInvocationCompletedV1.model_validate(payload).invocation_id)
+                parsed_completion = ProviderInvocationCompletedV1.model_validate(payload)
+                completed[parsed_completion.invocation_id] = parsed_completion
         if admission is None or plan is None:
             continue
+        pending_ids = tuple(sorted(wanted & set(starts) - set(completed), key=str.encode))
+        if not pending_ids:
+            continue
+        resolved_occurrences = []
+        for invocation_id in pending_ids:
+            started = starts[invocation_id]
+            occurrences = tuple(
+                item
+                for item in plan.external_occurrences
+                if item.occurrence_path == started.occurrence_path
+                and item.implementation_digest == started.implementation_digest
+                and item.local_execution.materialization_digest == started.materialization_digest
+            )
+            if len(occurrences) != 1:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: run {admission.run_id} recovered "
+                    "Provider start has no exact admitted occurrence"
+                )
+            resolved_occurrences.append((invocation_id, started, occurrences[0]))
         writer = ProcedureExhaustWriter(
             journal=journal,
             bodies=bodies,
@@ -1521,105 +1541,102 @@ def service_recover_provider_invocations(
                 expected_fencing_token=writer_state.fencing_token,
             )
         _activate_writer(journal, stream, partition_id)
-        for invocation_id in sorted(wanted & set(starts) - completed, key=str.encode):
-            started = starts[invocation_id]
-            occurrences = tuple(
-                item
-                for item in plan.external_occurrences
-                if item.occurrence_path == started.occurrence_path
-                and item.implementation_digest == started.implementation_digest
-                and item.local_execution.materialization_digest == started.materialization_digest
-            )
-            if len(occurrences) != 1:
-                raise ProcedureRunRecoveryRequired(
-                    f"{ProcedureRunRecoveryRequired.code}: recovered Provider start has no exact "
-                    "admitted occurrence"
+        try:
+            for invocation_id, started, occurrence in resolved_occurrences:
+                outcome = map_provider_refusal(
+                    "provider_process_group_survived_recovery",
+                    message="Daemon startup terminated an incomplete Provider process group.",
+                    detail={},
                 )
-            occurrence = occurrences[0]
-            outcome = map_provider_refusal(
-                "provider_process_group_survived_recovery",
-                message="Daemon startup terminated an incomplete Provider process group.",
-                detail={},
-            )
-            assert isinstance(outcome, ProviderInvocationOutcomeV1)
-            declared = tuple(
-                endpoint
-                for endpoint in occurrence.local_execution.declared_endpoints
-                if not endpoint.startswith("dynamic:")
-            )
-            dynamic = cast(
-                tuple[Literal["dynamic:target-from-run-input"], ...],
-                tuple(
+                assert isinstance(outcome, ProviderInvocationOutcomeV1)
+                declared = tuple(
                     endpoint
                     for endpoint in occurrence.local_execution.declared_endpoints
-                    if endpoint == "dynamic:target-from-run-input"
-                ),
-            )
-            receipt = ProviderInvocationReceiptV1(
-                invocation_id=invocation_id,
-                occurrence_path=occurrence.occurrence_path,
-                run_id=admission.run_id,
-                admission_binding_digest=admission.admission_binding_digest,
-                provider_artifact_digest=occurrence.local_execution.provider_artifact_digest,
-                implementation_digest=occurrence.local_execution.implementation_digest,
-                materialization_digest=occurrence.local_execution.materialization_digest,
-                deployment_digest=occurrence.local_execution.deployment_digest,
-                interface_id=occurrence.local_execution.interface_id,
-                interface_digest=occurrence.local_execution.interface_digest,
-                protocol_version=occurrence.local_execution.protocol_version,
-                input_bucket=started.input_bucket,
-                capture_contract_digest=occurrence.capture_contract_digest,
-                input_digest=started.input_digest,
-                outcome=outcome,
-                egress=ProviderEgressObservationV1(
-                    declared_endpoints=declared,
-                    observed_endpoints=(),
-                    dynamic_endpoint_forms=dynamic,
-                    observer_backend="child-self-report",
-                    observer_grade="attribution",
-                ),
-                secret_references=tuple(
-                    sorted(
-                        (
-                            ProviderSecretReceiptReferenceV1(
-                                binding_identity_digest=provider_secret_binding_identity_digest(
-                                    ProviderSecretBindingIdentityV1(
-                                        realm=reference.realm,
-                                        name=reference.name,
-                                    )
-                                ),
-                                purpose=reference.purpose,
-                            )
-                            for reference in occurrence.secret_plan.references
-                        ),
-                        key=lambda item: item.binding_identity_digest.encode("ascii"),
-                    )
-                ),
-                budget_translation=occurrence.budget_translation,
-                duration_microseconds=0,
-                trace={},
-                stderr="",
-            )
-            completion = ProviderInvocationCompletedV1(
-                invocation_id=invocation_id,
-                receipt=receipt,
-                receipt_digest=provider_invocation_receipt_digest(receipt),
-            )
-            writer.append(
-                stream=stream,
-                partition_id=partition_id,
-                event_kind="provider_invocation_completed",
-                accepted_coordinate=admission.accepted_coordinate,
-                procedure_artifact_digest=admission.procedure_artifact_digest,
-                definition_digest=admission.definition_digest,
-                run_id=admission.run_id,
-                line_spec_digest=admission.line_spec_digest,
-                occurrence_id=admission.occurrence_id,
-                attempt=admission.attempt,
-                admission_binding_digest=admission.admission_binding_digest,
-                actor_context=admission.actor_context,
-                recorded_at=recorded_at,
-                payload=completion.model_dump(mode="json"),
+                    if not endpoint.startswith("dynamic:")
+                )
+                dynamic = cast(
+                    tuple[Literal["dynamic:target-from-run-input"], ...],
+                    tuple(
+                        endpoint
+                        for endpoint in occurrence.local_execution.declared_endpoints
+                        if endpoint == "dynamic:target-from-run-input"
+                    ),
+                )
+                receipt = ProviderInvocationReceiptV1(
+                    invocation_id=invocation_id,
+                    occurrence_path=occurrence.occurrence_path,
+                    run_id=admission.run_id,
+                    admission_binding_digest=admission.admission_binding_digest,
+                    provider_artifact_digest=occurrence.local_execution.provider_artifact_digest,
+                    implementation_digest=occurrence.local_execution.implementation_digest,
+                    materialization_digest=occurrence.local_execution.materialization_digest,
+                    deployment_digest=occurrence.local_execution.deployment_digest,
+                    interface_id=occurrence.local_execution.interface_id,
+                    interface_digest=occurrence.local_execution.interface_digest,
+                    protocol_version=occurrence.local_execution.protocol_version,
+                    input_bucket=started.input_bucket,
+                    capture_contract_digest=occurrence.capture_contract_digest,
+                    input_digest=started.input_digest,
+                    outcome=outcome,
+                    egress=ProviderEgressObservationV1(
+                        declared_endpoints=declared,
+                        observed_endpoints=(),
+                        dynamic_endpoint_forms=dynamic,
+                        observer_backend="child-self-report",
+                        observer_grade="attribution",
+                    ),
+                    secret_references=tuple(
+                        sorted(
+                            (
+                                ProviderSecretReceiptReferenceV1(
+                                    binding_identity_digest=(
+                                        provider_secret_binding_identity_digest(
+                                            ProviderSecretBindingIdentityV1(
+                                                realm=reference.realm,
+                                                name=reference.name,
+                                            )
+                                        )
+                                    ),
+                                    purpose=reference.purpose,
+                                )
+                                for reference in occurrence.secret_plan.references
+                            ),
+                            key=lambda item: item.binding_identity_digest.encode("ascii"),
+                        )
+                    ),
+                    budget_translation=occurrence.budget_translation,
+                    duration_microseconds=0,
+                    trace={},
+                    stderr="",
+                )
+                completion = ProviderInvocationCompletedV1(
+                    invocation_id=invocation_id,
+                    receipt=receipt,
+                    receipt_digest=provider_invocation_receipt_digest(receipt),
+                )
+                writer.append(
+                    stream=stream,
+                    partition_id=partition_id,
+                    event_kind="provider_invocation_completed",
+                    accepted_coordinate=admission.accepted_coordinate,
+                    procedure_artifact_digest=admission.procedure_artifact_digest,
+                    definition_digest=admission.definition_digest,
+                    run_id=admission.run_id,
+                    line_spec_digest=admission.line_spec_digest,
+                    occurrence_id=admission.occurrence_id,
+                    attempt=admission.attempt,
+                    admission_binding_digest=admission.admission_binding_digest,
+                    actor_context=admission.actor_context,
+                    recorded_at=recorded_at,
+                    payload=completion.model_dump(mode="json"),
+                )
+                completed[invocation_id] = completion
+                recovered.append(invocation_id)
+            ordered_completions = tuple(completed[item] for item in starts if item in completed)
+            provider_calls = len(ordered_completions)
+            invocation_receipt_digests = tuple(item.receipt_digest for item in ordered_completions)
+            wall_clock_microseconds = sum(
+                item.receipt.duration_microseconds for item in ordered_completions
             )
             writer.append(
                 stream=stream,
@@ -1646,9 +1663,9 @@ def service_recover_provider_invocations(
                     },
                     "halt": None,
                     "semantic_result_digest": None,
-                    "provider_calls": 1,
+                    "provider_calls": provider_calls,
                     "capture_bytes": 0,
-                    "invocation_receipt_digests": [completion.receipt_digest],
+                    "invocation_receipt_digests": list(invocation_receipt_digests),
                     "budget": ProcedureRunBudgetV1(
                         declared=ProcedureRunBudgetDeclaredV1(
                             budget=admission.budget,
@@ -1657,14 +1674,19 @@ def service_recover_provider_invocations(
                         observed=ProcedureRunBudgetObservedV1(
                             max_items=ProcedureBudgetBoundaryObservationV1(high_water=0),
                             result_bytes=ProcedureBudgetBoundaryObservationV1(high_water=0),
-                            provider_calls=1,
+                            provider_calls=provider_calls,
                             capture_bytes=0,
-                            wall_clock_microseconds=0,
+                            wall_clock_microseconds=wall_clock_microseconds,
                         ),
                     ).model_dump(mode="json"),
                 },
             )
-            recovered.append(invocation_id)
+        finally:
+            journal.fence_writer(
+                stream,
+                partition_id,
+                expected_fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
+            )
     return tuple(sorted(recovered, key=str.encode))
 
 
