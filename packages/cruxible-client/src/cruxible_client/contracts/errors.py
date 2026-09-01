@@ -115,8 +115,8 @@ class PlaybillReseedRequired(PlaybillFormatError):
 
     def __init__(self) -> None:
         super().__init__(
-            f"{self.error_code}: this instance uses the frozen pre-PC-HR artifact codec; "
-            "archive it and initialize a fresh instance"
+            f"{self.error_code}: this instance's compiler selects the frozen compact "
+            "artifact codec from before PC-HR; archive it and initialize a fresh instance"
         )
 
 

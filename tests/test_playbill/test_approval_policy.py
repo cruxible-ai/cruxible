@@ -25,7 +25,12 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     render_procedure_runtime_policy,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.compiler import PC_E1_COMPILER
+from cruxible_core.playbill.compiler import (
+    P2_B0_COMPILER,
+    P2_B1_COMPILER,
+    PC_HR_COMPILER,
+    current_compiler_coordinate,
+)
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.playbill.procedures.execution import resolve_procedure_runtime_policy
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
@@ -151,44 +156,60 @@ def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
     assert row.policy["provider_output_bytes_cap"] == 2_097_152
 
 
-def test_legacy_compiler_requires_reseed_before_candidate_time(
+@pytest.mark.parametrize(
+    ("compiler", "write_allowed"),
+    (
+        (P2_B0_COMPILER, False),
+        (PC_HR_COMPILER, True),
+        (P2_B1_COMPILER, True),
+        (current_compiler_coordinate(), True),
+    ),
+)
+def test_write_gate_uses_artifact_codec_lineage_before_candidate_time(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    compiler,  # type: ignore[no-untyped-def]
+    write_allowed: bool,
 ) -> None:
-    with monkeypatch.context() as legacy:
-        legacy.setattr(
+    with monkeypatch.context() as selected:
+        selected.setattr(
             playbill_instance_module,
             "current_compiler_coordinate",
-            lambda: PC_E1_COMPILER,
+            lambda: compiler,
         )
-        legacy.setattr(
-            playbill_instance_module,
-            "seeded_procedure_runtime_policy",
-            lambda: None,
-        )
-        legacy.setattr(
-            playbill_bootstrap_module,
-            "seeded_procedure_runtime_policy",
-            lambda: None,
-        )
+        if compiler == P2_B0_COMPILER:
+            selected.setattr(
+                playbill_instance_module,
+                "seeded_procedure_runtime_policy",
+                lambda: None,
+            )
+            selected.setattr(
+                playbill_bootstrap_module,
+                "seeded_procedure_runtime_policy",
+                lambda: None,
+            )
         instance, _owner = initialize_local(tmp_path)
 
     base = instance.accepted_coordinate()
     tree = instance.tree_at(base.git_oid)
-    assert instance.descriptor.compiler == PC_E1_COMPILER
-    assert PROCEDURE_RUNTIME_POLICY_PATH not in tree
+    assert instance.descriptor.compiler == compiler
+    candidate_tree = {
+        **tree,
+        APPROVAL_POLICY_PATH: render_approval_policy(
+            ApprovalPolicyV1(mode="independent_approval_required")
+        ),
+    }
 
-    with pytest.raises(PlaybillReseedRequired):
-        _submit_tree(
-            instance,
-            {
-                **tree,
-                PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
-                    ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576)
-                ),
-            },
-            name="seed-runtime-policy-on-legacy-instance",
-        )
+    if write_allowed:
+        result = _submit_tree(instance, candidate_tree, name="codec-lineage-write")
+        assert result.candidate is not None
+    else:
+        with pytest.raises(
+            PlaybillReseedRequired,
+            match="compiler selects the frozen compact artifact codec from before PC-HR",
+        ):
+            _submit_tree(instance, candidate_tree, name="codec-lineage-write")
+        assert service_list_playbill_proposals(instance).entries == ()
 
     assert instance.accepted_coordinate() == base
 

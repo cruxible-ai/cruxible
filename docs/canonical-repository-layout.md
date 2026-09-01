@@ -43,8 +43,10 @@ The floor is excluded from evidence observation, so reading generated cards
 cannot recursively manufacture coverage. Delete and re-export it at any time.
 
 The `.yaml` source-catalog names are intentional workspace formats. Governed
-ledger artifacts use the current compiler's pretty canonical JSON codec and
-`.json` paths; those are separate domains.
+ledger artifacts in the installed PC-HR compiler lineage use the pretty canonical
+JSON codec and `.json` paths; those are separate domains. A mutable instance need
+not use the executable's newest compiler coordinate, but its compiler must select
+that current artifact-codec lineage.
 
 ## Daemon state root
 

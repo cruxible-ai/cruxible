@@ -259,7 +259,7 @@ from cruxible_core.playbill.closure import (
     update_dependency_index,
 )
 from cruxible_core.playbill.compiler import (
-    current_compiler_coordinate,
+    PC_HR_ARTIFACT_CODEC_COMPILERS,
     projection_registry_for_compiler,
 )
 from cruxible_core.playbill.exhaust.promotions import (
@@ -3489,7 +3489,7 @@ class ProposalService:
         if "propose" not in actor.capabilities:
             raise ProposalAdmissionError("authenticated actor lacks the propose capability")
         current = self._current_coordinate()
-        if current.compiler != current_compiler_coordinate():
+        if current.compiler not in PC_HR_ARTIFACT_CODEC_COMPILERS:
             raise PlaybillReseedRequired()
         namespace = request.target_ref.split("/")[2]
         if namespace != actor.actor_id:

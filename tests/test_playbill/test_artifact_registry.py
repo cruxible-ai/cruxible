@@ -21,6 +21,8 @@ from cruxible_client.contracts.projection_extensions import fixture_extension_re
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject, render_subject
 from cruxible_core.playbill.compiler import (
     P2_B0_COMPILER,
+    PC_HR_ARTIFACT_CODEC_COMPILERS,
+    SUPPORTED_COMPILERS,
     artifact_kinds_for_compiler,
     current_compiler_coordinate,
 )
@@ -106,6 +108,11 @@ def test_pc_hr_codec_succeeds_without_changing_the_p2_b0_verifier() -> None:
     )
     with pytest.raises(SubjectFormatError):
         parse_subject(render_subject(subject), path="subjects/project.work_item/wi-1.yaml")
+
+
+def test_current_codec_lineage_is_closed_over_installed_compilers() -> None:
+    assert PC_HR_ARTIFACT_CODEC_COMPILERS <= set(SUPPORTED_COMPILERS)
+    assert P2_B0_COMPILER not in PC_HR_ARTIFACT_CODEC_COMPILERS
 
 
 def test_p2_b0_compact_bytes_are_pinned_for_every_non_changeset_governed_kind() -> None:

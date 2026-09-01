@@ -95,6 +95,13 @@ SUPPORTED_COMPILERS = (
     P2_B1_COMPILER,
     P2_C_COMPILER,
 )
+PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
+    {
+        PC_HR_COMPILER,
+        P2_B1_COMPILER,
+        P2_C_COMPILER,
+    }
+)
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
@@ -118,7 +125,7 @@ def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindReg
 def artifact_codec_for_compiler(compiler: CompilerCoordinate) -> ArtifactCodec:
     """Return the frozen byte codec selected by one compiler coordinate."""
 
-    if compiler in {PC_HR_COMPILER, P2_B1_COMPILER, P2_C_COMPILER}:
+    if compiler in PC_HR_ARTIFACT_CODEC_COMPILERS:
         return CURRENT_ARTIFACT_CODEC
     if compiler in SUPPORTED_COMPILERS:
         return P2_B0_ARTIFACT_CODEC
@@ -171,6 +178,7 @@ __all__ = [
     "P2_B1_COMPILER",
     "P2_C_COMPILER",
     "PC_HR_COMPILER",
+    "PC_HR_ARTIFACT_CODEC_COMPILERS",
     "SUPPORTED_COMPILERS",
     "current_compiler_coordinate",
     "artifact_codec_for_compiler",
