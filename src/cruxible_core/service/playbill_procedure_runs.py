@@ -40,6 +40,7 @@ from cruxible_client.contracts.procedures.models import (
     ProcedurePinSlotRefV1,
     ProviderNodeV3,
     RepeatNodeV3,
+    RepeatNodeV4,
     SourceNodeV3,
     iter_pin_bindings,
 )
@@ -69,6 +70,11 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV5,
     ProcedureSelectionDecisionV1,
     ProcedureTerminalV1,
+)
+from cruxible_client.contracts.provider_interfaces import (
+    parse_provider_interface,
+    provider_interface_digest,
+    provider_interface_path,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.workspace_advertisement import (
@@ -161,6 +167,10 @@ class ProcedureBindingInterfaceMismatch(ProcedureSurfaceError):
 
 class ProcedureBindingStaleCoordinate(ProcedureSurfaceError):
     code = "playbill.procedure.binding_stale_coordinate"
+
+
+class ProcedureBindingGraphV4LineClosureRequired(ProcedureSurfaceError):
+    code = "playbill.procedure.binding.graph_v4_line_closure_required"
 
 
 class ProcedureEffectfulUnsupported(ProcedureSurfaceError):
@@ -389,7 +399,7 @@ def _readiness(
             unsupported_rows.append(
                 ProcedureUnsupportedNodeV1(node_id=node.node_id, kind=node.kind)
             )
-        if isinstance(node, RepeatNodeV3):
+        if isinstance(node, RepeatNodeV3 | RepeatNodeV4):
             unsupported_rows.extend(
                 ProcedureUnsupportedNodeV1(
                     node_id=f"{node.node_id}.{body.node_id}",
@@ -522,6 +532,11 @@ def service_bind_playbill_procedure(
 ) -> ProcedureBindResultV2:
     coordinate = instance.accepted_coordinate()
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
+    if accepted.procedure.definition.graph_format == 4:
+        raise ProcedureBindingGraphV4LineClosureRequired(
+            f"{ProcedureBindingGraphV4LineClosureRequired.code}: graph-v4 Provider slots "
+            "are resolved only by accepted Line closure"
+        )
     tree = instance.tree_at(coordinate.git_oid)
     index = build_dependency_index(tree)
     declarations = {item.slot_name: item for item in accepted.procedure.definition.pin_slots}
@@ -548,10 +563,18 @@ def service_bind_playbill_procedure(
                 f"{ProcedureBindingKindMismatch.code}: slot {item.slot_name} requires "
                 f"{declaration.artifact_kind}"
             )
-        interface_pin = next((pin for pin in state.pins if pin.role == "interface"), None)
-        interface_digests[state.artifact_digest] = (
-            state.artifact_digest if interface_pin is None else interface_pin.artifact_digest
+        interface_digests[state.artifact_digest] = state.artifact_digest
+        interface_pin = next(
+            (pin for pin in state.pins if pin.role == "provider-interface"),
+            None,
         )
+        if interface_pin is not None:
+            interface_path = provider_interface_path(interface_pin.target.name)
+            interface_content = tree.get(interface_path)
+            if interface_content is not None:
+                registration = parse_provider_interface(interface_content, path=interface_path)
+                if provider_interface_digest(registration).tagged == interface_pin.artifact_digest:
+                    interface_digests[state.artifact_digest] = registration.interface_digest
         lowered.append(
             LineSlotBindingV1(
                 slot_name=item.slot_name,
@@ -1183,7 +1206,9 @@ def service_run_playbill_procedure(
         coordinate.git_oid
     )
     head_at_admission = instance.accepted_coordinate()
-    lane: Literal["current", "replay"] = "replay" if request.at is not None else "current"
+    # ``at`` binds a live invocation to an accepted coordinate. Exact replay is
+    # addressed only by run_id through service_get_playbill_procedure_run.
+    lane: Literal["current", "replay"] = "current"
     accepted = _accepted_procedure(instance, name=name, coordinate=coordinate)
     readiness = _readiness(
         accepted,
@@ -1214,15 +1239,10 @@ def service_run_playbill_procedure(
         refusal_code: Literal[
             "unsupported_node",
             "provider_explicit_implementation_required",
-            "provider_replay_receipt_required",
         ] = "unsupported_node"
         refusal_message = "Procedure contains node kinds unavailable on the served run lane."
         if legacy_external:
-            refusal_code = (
-                "provider_replay_receipt_required"
-                if lane == "replay"
-                else "provider_explicit_implementation_required"
-            )
+            refusal_code = "provider_explicit_implementation_required"
             refusal_message = (
                 "Graph-v3 Source/Provider occurrences require explicit graph-v4 "
                 "implementation pins for live invocation."
@@ -1271,7 +1291,7 @@ def service_run_playbill_procedure(
         admitted_at=evaluation_time,
     )
     _activate_writer(journal, stream, prepared.admission.journal_partition_id)
-    if lane == "current" and instance.accepted_coordinate() != coordinate:
+    if request.at is None and instance.accepted_coordinate() != coordinate:
         raise ProcedureRunNotCurrent(
             f"{ProcedureRunNotCurrent.code}: accepted coordinate advanced before append"
         )
@@ -1373,6 +1393,7 @@ __all__ = [
     "PROCEDURE_RUN_ID_DOMAIN",
     "ProcedureBindRequestV1",
     "ProcedureBindResultV2",
+    "ProcedureBindingGraphV4LineClosureRequired",
     "ProcedurePendingSuccessorV1",
     "ProcedureReadinessRequestV1",
     "ProcedureReadinessResultV1",

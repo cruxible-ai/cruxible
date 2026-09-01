@@ -46,6 +46,7 @@ from cruxible_client.contracts.procedures.contracts import (
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     compute_procedure_definition_digest_v3,
+    compute_procedure_definition_digest_v4,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
@@ -62,12 +63,15 @@ from cruxible_client.contracts.procedures.models import (
     PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
+    ProcedureDefinitionV4,
     ProcedureHardCapsV3,
     ProcedureTransformSpecV1,
     ProjectNodeV3,
     ProviderNodeV3,
     RepeatBodyNodeV3,
+    RepeatBodyNodeV4,
     RepeatNodeV3,
+    RepeatNodeV4,
     SourceNodeV3,
     StateTapNodeV3,
     TransformNodeV3,
@@ -2459,6 +2463,60 @@ def test_repeat_body_dispatches_through_kernel_with_attempt_lineage(
     assert isinstance(branch, dict)
     assert branch["repeat_attempt"] == 1
     assert branch["body_lineage"]["shaped"]["items"] == [[], []]  # type: ignore[index]
+
+
+def test_graph_v4_transform_only_repeat_dispatches_through_existing_kernel(
+    tmp_path,
+) -> None:
+    accepted_v3 = _repeat_transform_procedure()
+    definition_v3 = accepted_v3.procedure.definition
+    repeat_v3 = definition_v3.nodes[0]
+    assert isinstance(repeat_v3, RepeatNodeV3)
+    body_v3 = repeat_v3.body[0]
+    repeat_v4 = RepeatNodeV4(
+        node_id=repeat_v3.node_id,
+        max_attempts=repeat_v3.max_attempts,
+        body=(
+            RepeatBodyNodeV4(
+                node_id=body_v3.node_id,
+                operation="transform",
+                transform_kind=body_v3.transform_kind,
+                contract_in=body_v3.contract_in,
+                contract_out=body_v3.contract_out,
+                spec=body_v3.spec.model_dump(mode="json"),
+                as_=body_v3.as_,
+            ),
+        ),
+        until=repeat_v3.until,
+        as_=repeat_v3.as_,
+    )
+    definition_v4 = ProcedureDefinitionV4(
+        **definition_v3.model_dump(mode="python", exclude={"graph_format", "nodes"}),
+        nodes=(repeat_v4,),
+    )
+    procedure_v4 = accepted_v3.procedure.model_copy(
+        update={
+            "definition": definition_v4,
+            "definition_digest": compute_procedure_definition_digest_v4(definition_v4).tagged,
+        }
+    )
+    accepted_v4 = AcceptedProcedureV1(
+        path=accepted_v3.path,
+        procedure=procedure_v4,
+        artifact_digest=procedure_artifact_digest(procedure_v4).tagged,
+    )
+    fixture = _fixture(tmp_path)
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted_v4.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(_prepare(accepted_v4, fixture, _StateReader()), accepted_v4)
+
+    assert result.status == "succeeded"
 
 
 def test_repeat_body_does_not_charge_without_a_list_contract_path(tmp_path) -> None:

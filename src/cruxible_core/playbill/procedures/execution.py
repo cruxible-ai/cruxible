@@ -60,8 +60,11 @@ from cruxible_client.contracts.procedures.models import (
     ProposeChangeSetNodeV3,
     ProviderNodeV3,
     RepeatBodyNodeV3,
+    RepeatBodyNodeV4,
     RepeatNodeV3,
+    RepeatNodeV4,
     SourceNodeV3,
+    SourceNodeV4,
     StateTapNodeV3,
     TransformNodeV3,
     iter_pin_bindings,
@@ -2105,7 +2108,7 @@ class ProcedureExecutor:
         nodes = {
             node.as_: node
             for node in accepted.procedure.definition.nodes
-            if isinstance(node, StateTapNodeV3 | SourceNodeV3 | ExhaustTapNodeV3)
+            if isinstance(node, StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3)
         }
         for run_input in admission.run_inputs:
             node = nodes.get(run_input.input_name)
@@ -2448,7 +2451,7 @@ class ProcedureExecutor:
                 },
             )
             return "on_true" if verdict else "on_false"
-        if isinstance(node, RepeatNodeV3):
+        if isinstance(node, RepeatNodeV3 | RepeatNodeV4):
             self._run_repeat(
                 node,
                 admission=admission,
@@ -3007,7 +3010,7 @@ class ProcedureExecutor:
 
     def _run_repeat(
         self,
-        node: RepeatNodeV3,
+        node: RepeatNodeV3 | RepeatNodeV4,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -3085,7 +3088,7 @@ class ProcedureExecutor:
 
     def _run_repeat_body(
         self,
-        body: RepeatBodyNodeV3,
+        body: RepeatBodyNodeV3 | RepeatBodyNodeV4,
         *,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
@@ -3159,6 +3162,12 @@ class ProcedureExecutor:
                 base=_base_tokens(body, local_state, declared_spec),
             )
             return
+        if isinstance(body, RepeatBodyNodeV4):
+            raise _RunRefusal(
+                "provider_unavailable",
+                "Graph-v4 repeat Provider execution requires completed Line runtime binding.",
+                node_id=body.node_id,
+            )
         if self.provider_executor is None or body.provider is None or body.environment is None:
             raise _RunRefusal(
                 "provider_unavailable",
@@ -3417,7 +3426,7 @@ def _base_tokens(
 
 
 def _transform_provenance(
-    node: TransformNodeV3 | RepeatBodyNodeV3,
+    node: TransformNodeV3 | RepeatBodyNodeV3 | RepeatBodyNodeV4,
     *,
     state: _RunState,
     lineage: tuple[tuple[tuple[str, int], ...], ...] | None,
