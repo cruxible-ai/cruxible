@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -14,7 +13,8 @@ from cruxible_client.contracts.candidates import (
     canonical_candidate_timestamp,
 )
 from cruxible_client.contracts.canonical import CandidateDigest, ProposalDigest, Sha256Value
-from cruxible_client.contracts.errors import PlaybillFormatError
+from cruxible_client.contracts.errors import PlaybillFormatError, PrincipalIntegrityError
+from cruxible_client.contracts.principals import principal_registry_from_tree
 from cruxible_client.contracts.procedure_mandates import ProcedureMandateV1
 from cruxible_core.playbill.procedures.egress import (
     TerminalEgressChildReceiptV1,
@@ -22,13 +22,16 @@ from cruxible_core.playbill.procedures.egress import (
     TerminalEgressRequestV2,
     require_procedure_mandate,
 )
+from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
     ProposalAdmissionRequest,
     ProposalService,
 )
+from cruxible_core.playbill.service.documents import service_activate_playbill_proposal
 
 if TYPE_CHECKING:
+    from cruxible_core.playbill.instance import PlaybillInstance
     from cruxible_core.playbill.procedures.execution import ProcedureRunAdmissionV1
 
 
@@ -103,14 +106,104 @@ class SettlementDoorProtocol(Protocol):
     ) -> SettlementDoorResultV1: ...
 
 
-@dataclass(frozen=True)
-class SettlementCandidateInspection:
+class SettlementCandidateInspection(_StrictTerminalServiceModel):
     """Read-only candidate facts derived by the sole settlement door."""
 
     proposal_id: str
     candidate_digest: str
     base_semantic_root: str
     target_paths: tuple[str, ...]
+
+
+class PlaybillSettlementDoor:
+    """Concrete exact-candidate door over the existing proposal/activation services."""
+
+    def __init__(
+        self,
+        *,
+        instance: PlaybillInstance,
+        admitted_coordinate: AcceptedCoordinate,
+    ) -> None:
+        self.instance = instance
+        self.admitted_coordinate = admitted_coordinate
+
+    def inspect_exact_candidate(
+        self,
+        *,
+        target: SettlementTargetV1,
+    ) -> SettlementCandidateInspection:
+        evidence = self.instance.proposal_evidence()
+        proposal_id = evidence.resolve_proposal_id(target.proposal_id)
+        if proposal_id != target.proposal_id:
+            raise EffectfulTerminalError(
+                "settlement_proposal_id_mismatch: target must name the full proposal id"
+            )
+        admission = evidence.read_admission(proposal_id)
+        evaluation = evidence.read_evaluation(proposal_id)
+        if (
+            admission.proposal_id != proposal_id
+            or evaluation.proposal_id != proposal_id
+            or evaluation.candidate_digest != target.candidate_digest
+            or evaluation.evaluated_tree_oid is None
+        ):
+            raise EffectfulTerminalError(
+                "settlement_candidate_mismatch: proposal evidence names another candidate"
+            )
+        candidate = evidence.read_candidate(target.candidate_digest)
+        if candidate.candidate_digest != target.candidate_digest:
+            raise EffectfulTerminalError(
+                "settlement_candidate_mismatch: candidate bytes do not reproduce"
+            )
+        base = self.instance.coordinate_for_oid(evaluation.evaluated_base_oid)
+        if (
+            AcceptedCoordinate.from_internal(base) != self.admitted_coordinate
+            or base.semantic_root != target.base_semantic_root
+            or candidate.candidate.parent_semantic_root != target.base_semantic_root
+        ):
+            raise EffectfulTerminalError(
+                "settlement_base_semantic_root_mismatch: candidate is not based at admission"
+            )
+        base_tree = self.instance.tree_at(evaluation.evaluated_base_oid)
+        candidate_tree = self.instance.proposal_tree(evaluation.evaluated_tree_oid)
+        return SettlementCandidateInspection(
+            proposal_id=proposal_id,
+            candidate_digest=candidate.candidate_digest,
+            base_semantic_root=base.semantic_root,
+            target_paths=_changed_paths(base_tree, candidate_tree),
+        )
+
+    def activate_exact_candidate(
+        self,
+        *,
+        target: SettlementTargetV1,
+        actor_id: str,
+    ) -> SettlementDoorResultV1:
+        self.inspect_exact_candidate(target=target)
+        current = self.instance.accepted_coordinate()
+        if AcceptedCoordinate.from_internal(current) != self.admitted_coordinate:
+            raise EffectfulTerminalError(
+                "settlement_activation_coordinate_changed: accepted state advanced"
+            )
+        principals = principal_registry_from_tree(
+            self.instance.tree_at(self.admitted_coordinate.git_oid),
+            semantic_root=self.admitted_coordinate.semantic_root,
+        )
+        try:
+            principals.require_active(actor_id)
+        except PrincipalIntegrityError as exc:
+            raise EffectfulTerminalError(
+                "settlement_actor_principal_invalid: actor is not active at admission"
+            ) from exc
+        activated = service_activate_playbill_proposal(
+            self.instance,
+            proposal_id=target.proposal_id,
+            activated_by=actor_id,
+        )
+        return SettlementDoorResultV1(
+            status=activated.status,
+            proposal_id=target.proposal_id,
+            candidate_digest=target.candidate_digest,
+        )
 
 
 def _changed_paths(base: Mapping[str, bytes], candidate: Mapping[str, bytes]) -> tuple[str, ...]:
@@ -274,6 +367,7 @@ class SettlementTerminalAdapter:
 __all__ = [
     "EffectfulTerminalError",
     "ProposalTerminalAdapter",
+    "PlaybillSettlementDoor",
     "SettlementCandidateInspection",
     "SettlementDoorProtocol",
     "SettlementDoorResultV1",

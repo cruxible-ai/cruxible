@@ -6,15 +6,21 @@ from datetime import timedelta
 
 import pytest
 
-from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
 from cruxible_client.contracts.errors import PlaybillCasError, PlaybillExecutionError
+from cruxible_client.contracts.procedures.results import (
+    ProcedureProviderBindingV1,
+    ProcedureRunReceiptV4,
+)
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.procedures.calibration import (
     ProcedureCalibrationCohortMembershipWitnessV1,
     ProcedureCalibrationReadingV1,
     ProcedureCalibrationRelationCohortWitnessV1,
     ProcedureCalibrationWitnessError,
+    VerifiedProcedureCalibrationRunReceiptV1,
     build_procedure_calibration_cohort,
+    build_procedure_calibration_membership_witness,
     load_procedure_calibration_reading,
     procedure_calibration_cohort_membership_witness_digest,
     procedure_calibration_reading_digest,
@@ -22,10 +28,14 @@ from cruxible_core.playbill.procedures.calibration import (
     store_procedure_calibration_reading,
 )
 from cruxible_core.playbill.procedures.resolution import (
+    ProcedureProofReferenceV1,
     append_procedure_resolution,
+    build_procedure_resolution_v2,
+    build_settled_outcome_relation,
     resolution_contract_partition_id,
 )
 from cruxible_core.playbill.procedures.settled_outcomes import (
+    SettledOutcomeRowV1,
     SettledOutcomesAccessProfileV1,
     SettledOutcomesQueryRequestV1,
     query_settled_outcomes,
@@ -144,6 +154,93 @@ def test_reading_scores_both_settled_outcomes_and_ignores_verdict_fields(tmp_pat
     reading_fields = reading.model_dump(mode="json")
     assert "verdict" not in reading_fields
     assert "claim_attestation_digests" not in reading_fields
+
+
+def test_membership_witness_is_built_only_from_reproducing_run_receipts(tmp_path) -> None:
+    activations, _bodies, result, _query_receipt = _query(tmp_path)
+    procedure_digest = activations[0].procedure_artifact_digest
+    implementation_digest = _digest("provider-implementation-a")
+    binding = ProcedureProviderBindingV1(
+        node_id="provider",
+        provider_artifact_digest=_digest("provider"),
+        interface_artifact_digest=_digest("interface-artifact"),
+        interface_digest=_digest("interface"),
+        classifier_digest=_digest("classifier"),
+        accepted_bucket_selectors=("size=*",),
+        implementation_digest=implementation_digest,
+        secret_binding_identity_digests=(),
+    )
+    receipt = ProcedureRunReceiptV4.model_construct(
+        tag="playbill-procedure-run-receipt-v4",
+        status="succeeded",
+        resolved_provider_bindings=(binding,),
+    )
+    receipt_digest = typed_digest(
+        Sha256Value,
+        "playbill-procedure-run-receipt-v4",
+        {"receipt": receipt.model_dump(mode="json")},
+    ).tagged
+    rewritten_rows = []
+    for row in result.rows:
+        if row.relation.activation.procedure_artifact_digest != procedure_digest:
+            rewritten_rows.append(row)
+            continue
+        original = row.relation.resolution
+        resolution = build_procedure_resolution_v2(
+            row.relation.activation,
+            sequence=original.sequence,
+            verdict=original.verdict,
+            settlement=original.settlement,
+            settlement_outcome=original.settlement_outcome,
+            value=original.value,
+            evidence_refs=tuple(
+                sorted(
+                    (
+                        *original.evidence_refs,
+                        ProcedureProofReferenceV1(kind="run_receipt", digest=receipt_digest),
+                    ),
+                    key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+                )
+            ),
+            observed_at=original.observed_at,
+            recorded_at=original.recorded_at,
+            actor_context=original.actor_context,
+            note=original.note,
+        )
+        relation = build_settled_outcome_relation(row.relation.activation, resolution)
+        rewritten_rows.append(
+            SettledOutcomeRowV1(
+                relation=relation,
+                relation_digest=relation.relation_digest,
+            )
+        )
+    rewritten = result.model_copy(update={"rows": tuple(rewritten_rows)})
+    cohort = _cohort(procedure_digest, implementation_digest)
+    evidence = VerifiedProcedureCalibrationRunReceiptV1(
+        procedure_artifact_digest=procedure_digest,
+        receipt_digest=receipt_digest,
+        receipt=receipt,
+    )
+
+    witness = build_procedure_calibration_membership_witness(
+        result=rewritten,
+        cohort=cohort,
+        verified_run_receipts={receipt_digest: evidence},
+    )
+    assert witness.relations
+    assert all(item.run_receipt_digests == (receipt_digest,) for item in witness.relations)
+    with pytest.raises(ProcedureCalibrationWitnessError, match="bytes do not reproduce"):
+        build_procedure_calibration_membership_witness(
+            result=rewritten,
+            cohort=cohort,
+            verified_run_receipts={
+                receipt_digest: VerifiedProcedureCalibrationRunReceiptV1(
+                    procedure_artifact_digest=procedure_digest,
+                    receipt_digest=receipt_digest,
+                    receipt=receipt.model_copy(update={"run_id": "tampered"}),
+                )
+            },
+        )
 
 
 def test_empty_settled_selection_is_honest_cold_start(tmp_path) -> None:

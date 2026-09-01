@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -15,6 +17,13 @@ from cruxible_client.contracts.canonical import (
     typed_digest,
 )
 from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.procedures.results import (
+    ProcedureRunReceiptV2,
+    ProcedureRunReceiptV3,
+    ProcedureRunReceiptV4,
+    ProcedureRunReceiptV5,
+    ProcedureRunReceiptV6,
+)
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.procedures.settled_outcomes import (
     SettledOutcomeRowV1,
@@ -180,6 +189,126 @@ def procedure_calibration_cohort_membership_witness_digest(
         "playbill-procedure-calibration-cohort-membership-witness-v1",
         {"witness": witness.model_dump(mode="json")},
     ).tagged
+
+
+ProcedureCalibrationRunReceiptV1 = (
+    ProcedureRunReceiptV2
+    | ProcedureRunReceiptV3
+    | ProcedureRunReceiptV4
+    | ProcedureRunReceiptV5
+    | ProcedureRunReceiptV6
+)
+
+
+@dataclass(frozen=True)
+class VerifiedProcedureCalibrationRunReceiptV1:
+    """One service-verified public run receipt plus its Procedure association."""
+
+    procedure_artifact_digest: str
+    receipt_digest: str
+    receipt: ProcedureCalibrationRunReceiptV1
+
+
+def _public_run_receipt_digest(receipt: ProcedureCalibrationRunReceiptV1) -> str:
+    domains = {
+        "playbill-procedure-run-receipt-v2": "playbill-procedure-run-receipt-v2",
+        "playbill-procedure-run-receipt-v3": "playbill-procedure-run-receipt-v3",
+        "playbill-procedure-run-receipt-v4": "playbill-procedure-run-receipt-v4",
+        "playbill-procedure-run-receipt-v5": "playbill-procedure-run-receipt-v5",
+        "playbill-procedure-run-receipt-v6": "playbill-procedure-run-receipt-v6",
+    }
+    return typed_digest(
+        Sha256Value,
+        domains[receipt.tag],
+        {"receipt": receipt.model_dump(mode="json")},
+    ).tagged
+
+
+def build_procedure_calibration_membership_witness(
+    *,
+    result: SettledOutcomesQueryResultV1,
+    cohort: ProcedureCalibrationCohortV1,
+    verified_run_receipts: Mapping[str, VerifiedProcedureCalibrationRunReceiptV1],
+) -> ProcedureCalibrationCohortMembershipWitnessV1:
+    """Construct membership only from exact receipts named by each settled relation."""
+
+    relations: list[ProcedureCalibrationRelationCohortWitnessV1] = []
+    rows = select_settled_outcomes_for_calibration(
+        result,
+        procedure_artifact_digest=cohort.procedure_artifact_digest,
+    )
+    for row in rows:
+        run_receipt_digests = tuple(
+            sorted(
+                {
+                    proof.digest
+                    for proof in row.relation.resolution.evidence_refs
+                    if proof.kind == "run_receipt"
+                },
+                key=lambda item: item.encode("ascii"),
+            )
+        )
+        if not run_receipt_digests:
+            raise ProcedureCalibrationWitnessError(
+                "calibration.cohort_witness_missing",
+                "selected relation has no run-receipt proof",
+            )
+        implementation_digests: set[str] = set()
+        for digest in run_receipt_digests:
+            evidence = verified_run_receipts.get(digest)
+            if evidence is None or evidence.receipt_digest != digest:
+                raise ProcedureCalibrationWitnessError(
+                    "calibration.cohort_witness_missing",
+                    f"run receipt {digest} is not available as verified evidence",
+                )
+            if _public_run_receipt_digest(evidence.receipt) != digest:
+                raise ProcedureCalibrationWitnessError(
+                    "calibration.cohort_witness_relation_mismatch",
+                    f"run receipt {digest} bytes do not reproduce",
+                )
+            if evidence.procedure_artifact_digest != cohort.procedure_artifact_digest:
+                raise ProcedureCalibrationWitnessError(
+                    "calibration.cohort_witness_procedure_mismatch",
+                    "run receipt names another Procedure artifact",
+                )
+            if not isinstance(evidence.receipt, ProcedureRunReceiptV4):
+                raise ProcedureCalibrationWitnessError(
+                    "calibration.cohort_witness_implementation_mismatch",
+                    "run receipt predates implementation-bound Line receipts",
+                )
+            if evidence.receipt.status != "succeeded":
+                raise ProcedureCalibrationWitnessError(
+                    "calibration.cohort_witness_relation_mismatch",
+                    "only succeeded run receipts can witness calibration membership",
+                )
+            implementation_digests.update(
+                binding.implementation_digest
+                for binding in evidence.receipt.resolved_provider_bindings
+            )
+        sorted_implementations = tuple(
+            sorted(implementation_digests, key=lambda item: item.encode("ascii"))
+        )
+        if sorted_implementations != cohort.provider_implementation_digests:
+            raise ProcedureCalibrationWitnessError(
+                "calibration.cohort_witness_implementation_mismatch",
+                "verified run receipts do not reproduce the selected implementation cohort",
+            )
+        relations.append(
+            ProcedureCalibrationRelationCohortWitnessV1(
+                relation_digest=row.relation_digest,
+                procedure_artifact_digest=cohort.procedure_artifact_digest,
+                provider_implementation_digests=sorted_implementations,
+                run_receipt_digests=run_receipt_digests,
+            )
+        )
+    return ProcedureCalibrationCohortMembershipWitnessV1(
+        relations=tuple(
+            sorted(
+                relations,
+                key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+            )
+        )
+    )
 
 
 class ProcedureCalibrationScoreV1(_StrictCalibrationModel):
@@ -460,7 +589,10 @@ __all__ = [
     "ProcedureCalibrationRelationCohortWitnessV1",
     "ProcedureCalibrationScoreV1",
     "ProcedureCalibrationWitnessError",
+    "ProcedureCalibrationRunReceiptV1",
+    "VerifiedProcedureCalibrationRunReceiptV1",
     "build_procedure_calibration_cohort",
+    "build_procedure_calibration_membership_witness",
     "load_procedure_calibration_reading",
     "procedure_calibration_cohort_key",
     "procedure_calibration_cohort_membership_witness_digest",

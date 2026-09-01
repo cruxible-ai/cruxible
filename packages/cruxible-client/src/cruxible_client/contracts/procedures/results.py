@@ -20,7 +20,6 @@ from cruxible_client.contracts.temporal import ensure_utc
 ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "binding_required",
     "unsupported_node",
-    "effectful_unsupported",
     "not_current",
     "artifact_binding_mismatch",
     "pin_binding_mismatch",

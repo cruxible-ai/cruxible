@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -31,6 +32,7 @@ from cruxible_core.playbill.procedures.execution import (
 )
 from cruxible_core.playbill.procedures.terminal_services import (
     EffectfulTerminalError,
+    PlaybillSettlementDoor,
     ProposalTerminalAdapter,
     SettlementCandidateInspection,
     SettlementDoorResultV1,
@@ -463,6 +465,131 @@ def _settlement_door(
             target_paths=target_paths,
         ),
     )
+
+
+class _SettlementEvidence:
+    def __init__(
+        self,
+        *,
+        target: SettlementTargetV1,
+        base_oid: str,
+        candidate_tree_oid: str,
+    ) -> None:
+        self.target = target
+        self.base_oid = base_oid
+        self.candidate_tree_oid = candidate_tree_oid
+
+    def resolve_proposal_id(self, value: str) -> str:
+        return value
+
+    def read_admission(self, value: str):
+        return SimpleNamespace(proposal_id=value)
+
+    def read_evaluation(self, value: str):
+        return SimpleNamespace(
+            proposal_id=value,
+            candidate_digest=self.target.candidate_digest,
+            evaluated_base_oid=self.base_oid,
+            evaluated_tree_oid=self.candidate_tree_oid,
+        )
+
+    def read_candidate(self, value: str):
+        return SimpleNamespace(
+            candidate_digest=value,
+            candidate=SimpleNamespace(parent_semantic_root=self.target.base_semantic_root),
+        )
+
+
+class _SettlementInstance:
+    def __init__(self, *, admission: ProcedureRunAdmissionV1, target: SettlementTargetV1) -> None:
+        self.admission = admission
+        self.target = target
+        self.candidate_tree_oid = "b" * 40
+        self.evidence = _SettlementEvidence(
+            target=target,
+            base_oid=admission.accepted_coordinate.git_oid,
+            candidate_tree_oid=self.candidate_tree_oid,
+        )
+        self.current_coordinate = self._internal_coordinate(admission.accepted_coordinate)
+
+    @staticmethod
+    def _internal_coordinate(coordinate: AcceptedCoordinate):
+        return SimpleNamespace(
+            git_oid=coordinate.git_oid,
+            semantic_root=coordinate.semantic_root,
+            generation_root=coordinate.generation_root,
+            compiler=SimpleNamespace(rule_digest=coordinate.compiler_digest),
+        )
+
+    def proposal_evidence(self):
+        return self.evidence
+
+    def coordinate_for_oid(self, oid: str):
+        assert oid == self.admission.accepted_coordinate.git_oid
+        return self._internal_coordinate(self.admission.accepted_coordinate)
+
+    def tree_at(self, oid: str):
+        assert oid == self.admission.accepted_coordinate.git_oid
+        return {
+            "claims/changed.json": b"old",
+            "claims/removed.json": b"removed",
+            "claims/same.json": b"same",
+        }
+
+    def proposal_tree(self, oid: str):
+        assert oid == self.candidate_tree_oid
+        return {
+            "claims/added.json": b"added",
+            "claims/changed.json": b"new",
+            "claims/same.json": b"same",
+        }
+
+    def accepted_coordinate(self):
+        return self.current_coordinate
+
+
+def test_concrete_settlement_door_resolves_at_admission_and_rechecks_activation(
+    tmp_path, monkeypatch
+) -> None:
+    admission = _admission(tmp_path)
+    target = _settlement_target(admission)
+    instance = _SettlementInstance(admission=admission, target=target)
+    required: list[str] = []
+    activated: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "cruxible_core.playbill.procedures.terminal_services.principal_registry_from_tree",
+        lambda tree, *, semantic_root: SimpleNamespace(
+            require_active=lambda actor_id: required.append(actor_id)
+        ),
+    )
+    monkeypatch.setattr(
+        "cruxible_core.playbill.procedures.terminal_services.service_activate_playbill_proposal",
+        lambda passed_instance, *, proposal_id, activated_by: (
+            activated.append((proposal_id, activated_by))
+            or SimpleNamespace(status="accepted")
+        ),
+    )
+    door = PlaybillSettlementDoor(
+        instance=instance,
+        admitted_coordinate=admission.accepted_coordinate,
+    )
+
+    inspection = door.inspect_exact_candidate(target=target)
+    assert inspection.target_paths == (
+        "claims/added.json",
+        "claims/changed.json",
+        "claims/removed.json",
+    )
+    assert door.activate_exact_candidate(target=target, actor_id="operator").status == "accepted"
+    assert required == ["operator"]
+    assert activated == [(target.proposal_id, "operator")]
+
+    instance.current_coordinate = instance._internal_coordinate(
+        admission.accepted_coordinate.model_copy(update={"git_oid": "c" * 40})
+    )
+    with pytest.raises(EffectfulTerminalError, match="coordinate_changed"):
+        door.activate_exact_candidate(target=target, actor_id="operator")
+    assert activated == [(target.proposal_id, "operator")]
 
 
 def test_settlement_adapter_delegates_only_after_exact_authority(tmp_path) -> None:
