@@ -59,6 +59,7 @@ from cruxible_client.contracts.procedures.models import (
     ProjectNodeV3,
     ProposeChangeSetNodeV3,
     ProviderNodeV3,
+    ProviderNodeV4,
     RepeatBodyNodeV3,
     RepeatBodyNodeV4,
     RepeatNodeV3,
@@ -86,6 +87,14 @@ from cruxible_client.contracts.procedures.results import (
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
     procedure_selection_decision_digest,
+)
+from cruxible_client.contracts.provider_execution import (
+    ProviderEgressObservationV1,
+    ProviderExternalOccurrencePlanV1,
+    ProviderInvocationCompletedV1,
+    ProviderInvocationReceiptV1,
+    ProviderInvocationStartedV1,
+    provider_invocation_receipt_digest,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime, utc_now
@@ -156,6 +165,25 @@ from cruxible_core.playbill.procedures.terminal_dependencies import (
     terminal_item_manifest_digest,
 )
 from cruxible_core.playbill.projection import AcceptedCoordinate
+from cruxible_core.playbill.provider_classifiers import (
+    PROVIDER_BUCKET_CLASSIFIER_REGISTRY,
+    ProviderBucketClassifierRegistry,
+    ProviderClassifierInstallationRefused,
+)
+from cruxible_core.playbill.provider_local_runtime import (
+    ProviderDriverOutcomeV1,
+    ProviderLocalRuntimeRefused,
+)
+from cruxible_core.playbill.provider_outcomes import (
+    map_provider_envelope,
+    map_provider_refusal,
+    provider_canonical_value,
+)
+from cruxible_core.playbill.provider_runtime_contract import (
+    ProviderRuntimeBudgetsV1,
+    ProviderRuntimeRunContextV1,
+    ProviderRuntimeWireError,
+)
 
 ProcedureRunStatusV1 = Literal[
     "succeeded",
@@ -941,6 +969,16 @@ class ProviderExecutorProtocol(Protocol):
     ) -> ProviderInvocationResultV1: ...
 
 
+class ProviderRuntimeInvokerProtocol(Protocol):
+    def invoke_provider(
+        self,
+        *,
+        occurrence: ProviderExternalOccurrencePlanV1,
+        context: ProviderRuntimeRunContextV1,
+        invocation_id: str,
+    ) -> ProviderDriverOutcomeV1: ...
+
+
 class ContractValidatorProtocol(Protocol):
     def validate_contract(
         self,
@@ -1710,15 +1748,17 @@ class _BudgetExceeded(Exception):
 class _OperationalFailure(Exception):
     def __init__(
         self,
-        code: Literal[
-            "cas_unavailable_at_replay",
-            "replay_material_mismatch",
-            "replay_material_unavailable",
-            "admission_material_corrupt",
-        ],
+        code: str,
         *,
         details: object | None = None,
     ) -> None:
+        super().__init__(code)
+        self.code = code
+        self.details = normalize_canonical({} if details is None else details)
+
+
+class _InternalFailure(Exception):
+    def __init__(self, code: str, *, details: object | None = None) -> None:
         super().__init__(code)
         self.code = code
         self.details = normalize_canonical({} if details is None else details)
@@ -1755,6 +1795,10 @@ class _RunState:
     result_bytes_boundary: str | None = None
     result_bytes_field_path: str | None = None
     wall_clock_microseconds: int = 0
+    acquisition_plan: ProcedureAcquisitionPlanV2 | None = None
+    invocation_receipt_digests: list[str] = dataclass_field(default_factory=list)
+    provider_invocations_started: int = 0
+    provider_invocations_completed: int = 0
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -1821,6 +1865,8 @@ class ProcedureExecutor:
         activation_authority: ProcedureActivationAuthorityProtocol,
         contract_validator: ContractValidatorProtocol,
         provider_executor: ProviderExecutorProtocol | None = None,
+        provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
+        provider_classifier_registry: ProviderBucketClassifierRegistry | None = None,
         source_acquirer: ProcedureSourceAcquirerProtocol | None = None,
         acquisition_policy: SourceAcquisitionPolicyV1 | None = None,
         default_authorizations: tuple[str, ...] = (),
@@ -1838,6 +1884,10 @@ class ProcedureExecutor:
         self.activation_authority = activation_authority
         self.contract_validator = contract_validator
         self.provider_executor = provider_executor
+        self.provider_runtime_invoker = provider_runtime_invoker
+        self.provider_classifier_registry = (
+            provider_classifier_registry or PROVIDER_BUCKET_CLASSIFIER_REGISTRY
+        )
         self.source_acquirer = source_acquirer
         self.acquisition_policy = acquisition_policy
         self.default_authorizations = default_authorizations
@@ -1880,8 +1930,16 @@ class ProcedureExecutor:
                 if indexed.effect_intent_count != indexed.effect_result_count
                 else ""
             )
+            provider_state = (
+                " with an incomplete Provider invocation"
+                if indexed.provider_invocation_started_count
+                != indexed.provider_invocation_completed_count
+                else ""
+            )
             raise PlaybillExecutionError(
-                "run_recovery_required: admitted run has incomplete exhaust" + effect_state
+                "run_recovery_required: admitted run has incomplete exhaust"
+                + effect_state
+                + provider_state
             )
         self._require_current(admission)
         if isinstance(prepared, PreparedProcedureRunV5):
@@ -2023,6 +2081,11 @@ class ProcedureExecutor:
             failure_code = exc.code
             failure_details = exc.details
             failure_message = "Procedure execution failed."
+        except _InternalFailure as exc:
+            status = "failed"
+            failure_code = exc.code
+            failure_details = exc.details
+            failure_message = "Procedure execution failed."
         except PlaybillExecutionError:
             status = "failed"
             failure_code = "unexpected_exception"
@@ -2032,6 +2095,10 @@ class ProcedureExecutor:
             failure_message = f"{type(exc).__name__}: {exc}"
             failure_code = "unexpected_exception"
 
+        if state.provider_invocations_started != state.provider_invocations_completed:
+            raise PlaybillExecutionError(
+                "provider_completion_not_durable: Provider result was not committed"
+            )
         semantic_result_digest = None
         if isinstance(admission, ProcedureRunAdmissionV2) and status in {
             "succeeded",
@@ -2056,6 +2123,7 @@ class ProcedureExecutor:
             "semantic_result_digest": semantic_result_digest,
             "provider_calls": state.provider_calls,
             "capture_bytes": state.capture_bytes,
+            "invocation_receipt_digests": state.invocation_receipt_digests,
             "budget": ProcedureRunBudgetV1(
                 declared=ProcedureRunBudgetDeclaredV1(
                     budget=admission.budget,
@@ -2102,6 +2170,9 @@ class ProcedureExecutor:
             input_payload=normalize_canonical(admission.invocation_input),
             parameters={},
             outcomes={item.input_name: item for item in prepared.acquisition_outcomes},
+            acquisition_plan=(
+                prepared.acquisition_plan if isinstance(prepared, PreparedProcedureRunV5) else None
+            ),
         )
         for accepted_state in prepared.accepted_state_materials:
             if isinstance(accepted_state, AcceptedStateRunMaterialV2):
@@ -2518,6 +2589,14 @@ class ProcedureExecutor:
             self._extend_alias(state, node.as_, _node_policy_tokens(node) | state.control)
             return None
         if isinstance(node, HaltNodeV3):
+            return None
+        if isinstance(node, ProviderNodeV4):
+            self._run_provider_v4(
+                node,
+                admission=admission,
+                state=state,
+                records=records,
+            )
             return None
         if isinstance(node, ProviderNodeV3):
             self._run_provider(
@@ -3067,6 +3146,355 @@ class ProcedureExecutor:
             )
         return tuple(receipts), tuple(values)
 
+    @staticmethod
+    def _bucket_is_accepted(bucket: str, selectors: tuple[str, ...]) -> bool:
+        try:
+            actual = dict(part.split("=", 1) for part in bucket.split(";"))
+        except ValueError:
+            return False
+        for selector in selectors:
+            try:
+                expected = dict(part.split("=", 1) for part in selector.split(";"))
+            except ValueError:
+                continue
+            if set(actual) == set(expected) and all(
+                expected[name] == "*" or expected[name] == actual[name] for name in expected
+            ):
+                return True
+        return False
+
+    def _planned_provider_occurrence(
+        self,
+        *,
+        state: _RunState,
+        node_id: str,
+        repeat_node_id: str | None,
+    ) -> ProviderExternalOccurrencePlanV1:
+        plan = state.acquisition_plan
+        if plan is None:
+            raise _RunRefusal(
+                "provider_acquisition_plan_required",
+                "Graph-v4 Provider execution requires a complete admitted acquisition plan.",
+                node_id=node_id,
+            )
+        matches = tuple(
+            item
+            for item in plan.external_occurrences
+            if item.occurrence_kind == "provider"
+            and item.node_id == node_id
+            and item.repeat_node_id == repeat_node_id
+        )
+        if len(matches) != 1:
+            raise _RunRefusal(
+                "provider_acquisition_plan_mismatch",
+                "The admitted acquisition plan does not name this Provider occurrence exactly.",
+                node_id=node_id,
+            )
+        return matches[0]
+
+    def _invoke_provider_v4(
+        self,
+        *,
+        node_id: str,
+        repeat_node_id: str | None,
+        effect_policy: ArtifactPin | ProcedurePinSlotRefV1 | None,
+        payload: CanonicalValue,
+        contract_out: ArtifactPin,
+        admission: ProcedureRunAdmissionV1,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> CanonicalValue:
+        occurrence = self._planned_provider_occurrence(
+            state=state,
+            node_id=node_id,
+            repeat_node_id=repeat_node_id,
+        )
+        if self.provider_runtime_invoker is None:
+            raise _RunRefusal(
+                "provider_unavailable",
+                "No local Provider runtime invoker is installed.",
+                node_id=node_id,
+            )
+        try:
+            classifier = self.provider_classifier_registry.require(occurrence.classifier_digest)
+            measured_bucket = classifier.classify(payload)
+        except ProviderClassifierInstallationRefused as exc:
+            raise _RunRefusal(exc.code, str(exc), node_id=node_id) from exc
+        if not self._bucket_is_accepted(measured_bucket, occurrence.accepted_bucket_selectors):
+            raise _RunRefusal(
+                "unclaimed_bucket",
+                "The measured Provider input bucket is outside the admitted selectors.",
+                node_id=node_id,
+            )
+        if not isinstance(payload, dict):
+            raise _RunRefusal(
+                "provider_protocol_violation",
+                "Provider runtime input must be a canonical object.",
+                node_id=node_id,
+            )
+        effectful = occurrence.effect_class == "external_mutation"
+        if effectful != (effect_policy is not None):
+            raise _RunRefusal(
+                "provider_effect_declaration_mismatch",
+                "The node effect-policy presence differs from governed interface authority.",
+                node_id=node_id,
+            )
+        input_digest = run_value_digest("provider-input", payload)
+        effect_id = typed_digest(
+            ArtifactDigest,
+            "playbill-procedure-effect-intent-v1",
+            {
+                "run_id": admission.run_id,
+                "node_id": node_id,
+                "provider_digest": occurrence.provider_artifact_digest,
+                "implementation_digest": occurrence.implementation_digest,
+                "input_digest": input_digest,
+            },
+        ).tagged
+        if effectful:
+            assert effect_policy is not None
+            self._checkpoint_current(admission, effect=True)
+            self._append_event(
+                admission,
+                records,
+                "effect_intent",
+                {
+                    "effect_id": effect_id,
+                    "node_id": node_id,
+                    "provider_artifact_digest": occurrence.provider_artifact_digest,
+                    "implementation_digest": occurrence.implementation_digest,
+                    "effect_policy": self._pin(
+                        effect_policy,
+                        label=f"provider {node_id!r} effect policy",
+                    ).model_dump(mode="json"),
+                    "input_digest": input_digest,
+                },
+            )
+            refusal = effect_dispatch_refusal(
+                invocation_origin=admission.invocation_origin,
+                actor_context=admission.actor_context,
+                declared_effect_grants=self.declared_effect_grants,
+            )
+            if refusal is not None:
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCodeV1, refusal[0]),
+                    refusal[1],
+                    node_id=node_id,
+                )
+        if state.provider_calls >= admission.budget.max_provider_calls:
+            raise _BudgetExceeded(
+                "max_provider_calls",
+                limit=admission.budget.max_provider_calls,
+                observed=state.provider_calls + 1,
+                node_id=node_id,
+            )
+        state.provider_calls += 1
+        invocation_id = typed_digest(
+            Sha256Value,
+            "playbill-provider-invocation-v1",
+            {
+                "run_id": admission.run_id,
+                "occurrence_path": occurrence.occurrence_path,
+                "provider_call_ordinal": state.provider_calls,
+                "admission_binding_digest": admission.admission_binding_digest,
+            },
+        ).tagged
+        started = ProviderInvocationStartedV1(
+            invocation_id=invocation_id,
+            occurrence_path=occurrence.occurrence_path,
+            implementation_digest=occurrence.implementation_digest,
+            materialization_digest=occurrence.local_execution.materialization_digest,
+            input_digest=input_digest,
+        )
+        self._append_event(
+            admission,
+            records,
+            "provider_invocation_started",
+            started.model_dump(mode="json"),
+        )
+        state.provider_invocations_started += 1
+        budget = occurrence.budget_translation
+        context = ProviderRuntimeRunContextV1(
+            protocol_version=occurrence.local_execution.protocol_version,
+            run_id=admission.run_id,
+            interface_id=occurrence.interface_id,
+            interface_digest=occurrence.interface_digest,
+            implementation_digest=occurrence.implementation_digest,
+            entrypoint=occurrence.local_execution.entrypoint,
+            coordinates={
+                "accepted_coordinate": admission.accepted_coordinate.model_dump(mode="json"),
+                "occurrence_path": occurrence.occurrence_path,
+                "invocation_id": invocation_id,
+            },
+            input=payload,
+            input_bucket=measured_bucket,
+            capture_contract=occurrence.capture_contract_digest,
+            budgets=ProviderRuntimeBudgetsV1(
+                wall_clock_seconds=float(budget.runtime_wall_clock_seconds),
+                output_bytes=budget.runtime_output_bytes_cap,
+                cost_units=None,
+            ),
+            declared_endpoints=occurrence.local_execution.declared_endpoints,
+        )
+        driver_result: ProviderDriverOutcomeV1 | None = None
+        try:
+            driver_result = self.provider_runtime_invoker.invoke_provider(
+                occurrence=occurrence,
+                context=context,
+                invocation_id=invocation_id,
+            )
+            outcome = map_provider_envelope(driver_result.envelope)
+        except ProviderLocalRuntimeRefused as exc:
+            outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
+        except ProviderRuntimeWireError as exc:
+            outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
+        if driver_result is None:
+            egress = ProviderEgressObservationV1(
+                declared_endpoints=tuple(
+                    item
+                    for item in occurrence.local_execution.declared_endpoints
+                    if not item.startswith("dynamic:")
+                ),
+                dynamic_endpoint_forms=cast(
+                    tuple[Literal["dynamic:target-from-run-input"], ...],
+                    tuple(
+                        item
+                        for item in occurrence.local_execution.declared_endpoints
+                        if item == "dynamic:target-from-run-input"
+                    ),
+                ),
+                observer_backend="local-instrumented-client",
+                observer_grade="attribution",
+            )
+            output = None
+            trace: CanonicalValue = {}
+            stderr = ""
+            duration_microseconds = 0
+        else:
+            egress = driver_result.egress
+            output = (
+                provider_canonical_value(driver_result.envelope.output)
+                if driver_result.envelope.output is not None
+                else None
+            )
+            trace = provider_canonical_value(driver_result.envelope.trace.model_dump(mode="python"))
+            stderr = driver_result.stderr
+            duration_microseconds = max(0, round(driver_result.duration_seconds * 1_000_000))
+        receipt = ProviderInvocationReceiptV1(
+            invocation_id=invocation_id,
+            occurrence_path=occurrence.occurrence_path,
+            run_id=admission.run_id,
+            admission_binding_digest=admission.admission_binding_digest,
+            provider_artifact_digest=occurrence.provider_artifact_digest,
+            implementation_digest=occurrence.implementation_digest,
+            materialization_digest=occurrence.local_execution.materialization_digest,
+            deployment_digest=occurrence.local_execution.deployment_digest,
+            interface_id=occurrence.interface_id,
+            interface_digest=occurrence.interface_digest,
+            protocol_version=occurrence.local_execution.protocol_version,
+            input_bucket=measured_bucket,
+            capture_contract_digest=occurrence.capture_contract_digest,
+            input_digest=input_digest,
+            outcome=outcome,
+            output=output,
+            egress=egress,
+            secret_references=occurrence.secret_plan.references,
+            budget_translation=budget,
+            duration_microseconds=duration_microseconds,
+            trace=trace,
+            stderr=stderr,
+        )
+        receipt_digest = provider_invocation_receipt_digest(receipt)
+        completed = ProviderInvocationCompletedV1(
+            invocation_id=invocation_id,
+            receipt=receipt,
+            receipt_digest=receipt_digest,
+        )
+        self._append_event(
+            admission,
+            records,
+            "provider_invocation_completed",
+            completed.model_dump(mode="json"),
+        )
+        state.provider_invocations_completed += 1
+        state.invocation_receipt_digests.append(receipt_digest)
+        if outcome.status != "ok":
+            if outcome.outcome_class == "node_refusal":
+                raise _RunRefusal(
+                    cast(ProcedureNodeRefusalCodeV1, outcome.code),
+                    outcome.message or "Provider invocation refused.",
+                    node_id=node_id,
+                )
+            if outcome.outcome_class == "operational":
+                raise _OperationalFailure(
+                    outcome.code or "provider_execution_error", details=outcome.detail
+                )
+            raise _InternalFailure(
+                outcome.code or "provider_protocol_violation", details=outcome.detail
+            )
+        assert output is not None
+        validated = _validate_node_contract(
+            self.contract_validator,
+            contract=contract_out,
+            payload=output,
+            direction="output",
+            node_id=node_id,
+            max_items=_effective_max_items(admission),
+            observe_items=state.observe_items,
+        )
+        if effectful:
+            self._append_event(
+                admission,
+                records,
+                "effect_result",
+                {
+                    "effect_id": effect_id,
+                    "node_id": node_id,
+                    "output_digest": run_value_digest("provider-output", validated),
+                    "invocation_receipt_digest": receipt_digest,
+                },
+            )
+        return validated
+
+    def _run_provider_v4(
+        self,
+        node: ProviderNodeV4,
+        *,
+        admission: ProcedureRunAdmissionV1,
+        state: _RunState,
+        records: list[StoredProcedureJournalRecordV1],
+    ) -> None:
+        contract_in = self._pin(node.contract_in, label=f"provider {node.node_id!r} input")
+        contract_out = self._pin(node.contract_out, label=f"provider {node.node_id!r} output")
+        resolved = normalize_canonical(
+            _resolve_template(
+                node.input,
+                input_payload=state.input_payload,
+                outputs=state.outputs,
+            )
+        )
+        payload = _validate_node_contract(
+            self.contract_validator,
+            contract=contract_in,
+            payload=resolved,
+            direction="input",
+            node_id=node.node_id,
+            max_items=_effective_max_items(admission),
+            observe_items=state.observe_items,
+        )
+        output = self._invoke_provider_v4(
+            node_id=node.node_id,
+            repeat_node_id=None,
+            effect_policy=node.effect_policy,
+            payload=payload,
+            contract_out=contract_out,
+            admission=admission,
+            state=state,
+            records=records,
+        )
+        state.outputs[node.as_] = output
+        state.provenance[node.as_] = AliasProvenanceV1(whole=_base_tokens(node, state, node.input))
+
     def _run_provider(
         self,
         node: ProviderNodeV3,
@@ -3199,6 +3627,7 @@ class ProcedureExecutor:
             for body in node.body:
                 self._run_repeat_body(
                     body,
+                    repeat_node_id=node.node_id,
                     admission=admission,
                     state=state,
                     local_outputs=local_outputs,
@@ -3265,6 +3694,7 @@ class ProcedureExecutor:
         self,
         body: RepeatBodyNodeV3 | RepeatBodyNodeV4,
         *,
+        repeat_node_id: str,
         admission: ProcedureRunAdmissionV1,
         state: _RunState,
         local_outputs: dict[str, CanonicalValue],
@@ -3338,11 +3768,40 @@ class ProcedureExecutor:
             )
             return
         if isinstance(body, RepeatBodyNodeV4):
-            raise _RunRefusal(
-                "provider_unavailable",
-                "Graph-v4 repeat Provider execution requires completed Line runtime binding.",
+            contract_in = self._pin(body.contract_in, label=f"repeat {body.node_id!r} input")
+            contract_out = self._pin(body.contract_out, label=f"repeat {body.node_id!r} output")
+            validated_input = _validate_node_contract(
+                self.contract_validator,
+                contract=contract_in,
+                payload=spec,
+                direction="input",
                 node_id=body.node_id,
+                max_items=_effective_max_items(admission),
+                observe_items=state.observe_items,
             )
+            local_outputs[body.as_] = self._invoke_provider_v4(
+                node_id=body.node_id,
+                repeat_node_id=repeat_node_id,
+                effect_policy=None,
+                payload=validated_input,
+                contract_out=contract_out,
+                admission=admission,
+                state=state,
+                records=records,
+            )
+            local_state = _RunState(
+                outputs=combined,
+                input_payload=state.input_payload,
+                parameters=state.parameters,
+                provenance={**state.provenance, **local_provenance},
+                facts=state.facts,
+                outcomes=state.outcomes,
+                control=state.control,
+            )
+            local_provenance[body.as_] = AliasProvenanceV1(
+                whole=_base_tokens(body, local_state, body.spec)
+            )
+            return
         if self.provider_executor is None or body.provider is None or body.environment is None:
             raise _RunRefusal(
                 "provider_unavailable",

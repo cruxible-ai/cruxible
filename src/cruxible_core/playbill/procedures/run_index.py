@@ -37,6 +37,8 @@ class ProcedureRunIndexEntryV1(BaseModel):
     final_payload_digest: str | None = None
     effect_intent_count: int = 0
     effect_result_count: int = 0
+    provider_invocation_started_count: int = 0
+    provider_invocation_completed_count: int = 0
 
     @field_validator("admission_binding_digest", "final_payload_digest")
     @classmethod
@@ -56,6 +58,8 @@ CREATE TABLE IF NOT EXISTS procedure_run_index (
     final_payload_digest TEXT,
     effect_intent_count INTEGER NOT NULL DEFAULT 0,
     effect_result_count INTEGER NOT NULL DEFAULT 0
+    , provider_invocation_started_count INTEGER NOT NULL DEFAULT 0
+    , provider_invocation_completed_count INTEGER NOT NULL DEFAULT 0
 )
 """
 
@@ -72,6 +76,18 @@ class ProcedureRunIndex:
         self._conn = sqlite3.connect(path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_INDEX_SCHEMA)
+        columns = {
+            str(row[1]) for row in self._conn.execute("PRAGMA table_info(procedure_run_index)")
+        }
+        for column in (
+            "provider_invocation_started_count",
+            "provider_invocation_completed_count",
+        ):
+            if column not in columns:
+                self._conn.execute(
+                    f"ALTER TABLE procedure_run_index ADD COLUMN {column} "
+                    "INTEGER NOT NULL DEFAULT 0"
+                )
         self._conn.commit()
 
     def close(self) -> None:
@@ -93,6 +109,8 @@ class ProcedureRunIndex:
             final_payload_digest=row["final_payload_digest"],
             effect_intent_count=int(row["effect_intent_count"]),
             effect_result_count=int(row["effect_result_count"]),
+            provider_invocation_started_count=int(row["provider_invocation_started_count"]),
+            provider_invocation_completed_count=int(row["provider_invocation_completed_count"]),
         )
 
     def apply_record(
@@ -144,6 +162,31 @@ class ProcedureRunIndex:
                 "WHERE run_id = ?",
                 (record.run_id,),
             )
+        elif record.event_kind == "provider_invocation_started":
+            if not isinstance(payload, dict) or not isinstance(payload.get("invocation_id"), str):
+                raise PlaybillExecutionError("Provider invocation start payload is invalid")
+            self._conn.execute(
+                "UPDATE procedure_run_index SET provider_invocation_started_count = "
+                "provider_invocation_started_count + 1 WHERE run_id = ?",
+                (record.run_id,),
+            )
+        elif record.event_kind == "provider_invocation_completed":
+            current = self.get(record.run_id)
+            if (
+                current is None
+                or current.provider_invocation_completed_count
+                >= current.provider_invocation_started_count
+            ):
+                raise PlaybillExecutionError(
+                    "Provider invocation completion has no unmatched durable start"
+                )
+            if not isinstance(payload, dict) or not isinstance(payload.get("receipt_digest"), str):
+                raise PlaybillExecutionError("Provider invocation completion payload is invalid")
+            self._conn.execute(
+                "UPDATE procedure_run_index SET provider_invocation_completed_count = "
+                "provider_invocation_completed_count + 1 WHERE run_id = ?",
+                (record.run_id,),
+            )
         elif record.event_kind == "attempt_finalized":
             if not isinstance(payload, dict) or payload.get("status") not in {
                 "succeeded",
@@ -153,6 +196,15 @@ class ProcedureRunIndex:
                 "halted",
             }:
                 raise PlaybillExecutionError("attempt-finalized payload has no valid status")
+            current = self.get(record.run_id)
+            if (
+                current is None
+                or current.provider_invocation_started_count
+                != current.provider_invocation_completed_count
+            ):
+                raise PlaybillExecutionError(
+                    "provider_completion_not_durable: run has an unmatched invocation start"
+                )
             self._conn.execute(
                 "UPDATE procedure_run_index SET status = ?, final_payload_digest = ? "
                 "WHERE run_id = ?",

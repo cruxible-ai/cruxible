@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ from cruxible_core.playbill.provider_local_runtime import (
     ProviderSecretResolverRegistry,
     translate_provider_budget,
 )
+from cruxible_core.playbill.provider_process_leases import ProviderProcessLeaseStore
 from cruxible_core.playbill.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
@@ -149,7 +151,31 @@ def test_secret_identity_is_epoch_and_resolver_independent_and_file_store_is_pri
 def _fake_interpreter(path: Path) -> Path:
     path.write_text(
         """#!/usr/bin/python3
-import json, sys
+import json, os, socket, sys, threading
+if len(sys.argv) > 1 and sys.argv[1].endswith("provider_child_fence.py"):
+    invocation_id, record_path, control_path = sys.argv[2:5]
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(control_path)
+    os.chmod(control_path, 0o600)
+    server.listen(2)
+    def echo():
+        while True:
+            try:
+                connection, _ = server.accept()
+            except OSError:
+                return
+            with connection:
+                received = connection.recv(4096).decode("utf-8")
+                answer = invocation_id.encode("utf-8") if received == invocation_id else b""
+                connection.sendall(answer)
+    threading.Thread(target=echo, daemon=True).start()
+    document = {
+        "invocation_id": invocation_id,
+        "pid": os.getpid(),
+        "process_group_id": os.getpgrp(),
+    }
+    with open(record_path, "wb") as handle:
+        handle.write(json.dumps(document, sort_keys=True, separators=(",", ":")).encode())
 document = json.loads(sys.stdin.buffer.read())
 json.dump({
     "protocol_version": "1.0",
@@ -294,14 +320,21 @@ def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_
         budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=16_384),
     )
 
+    leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
     outcome = LocalProviderExecutionDriver().invoke(
-        binding, context, secret_plan=plan, secret_resolvers=registry
+        binding,
+        context,
+        secret_plan=plan,
+        secret_resolvers=registry,
+        invocation_id=_digest("invocation"),
+        process_leases=leases,
     )
 
     assert outcome.envelope.output == {"echo": "hello"}
     assert outcome.egress.observer_grade == "attribution"
     assert outcome.egress.observed_endpoints == ("https://example.test",)
     assert "credential-value" not in repr(outcome)
+    assert tuple(leases.root.iterdir()) == ()
 
 
 def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> None:
@@ -345,3 +378,32 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> 
             bound, context, secret_plan=_secret_plan(), secret_resolvers=registry
         )
     assert caught.value.code == "secret_leak"
+
+
+def test_process_recovery_kills_only_an_echo_verified_invocation_group(tmp_path: Path) -> None:
+    interpreter = _fake_interpreter(tmp_path / "fake-python")
+    leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
+    invocation_id = _digest("orphaned-invocation")
+    record_path, control_path = leases.paths(invocation_id)
+    wrapper = tmp_path / "provider_child_fence.py"
+    wrapper.write_text("# marker", encoding="utf-8")
+    process = subprocess.Popen(
+        [
+            str(interpreter),
+            str(wrapper),
+            invocation_id,
+            str(record_path),
+            str(control_path),
+            "demo.runtime:Provider",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    lease = leases.require(invocation_id)
+    assert lease.pid == process.pid
+
+    assert leases.recover_all() == (invocation_id,)
+    process.wait(timeout=1)
+    assert tuple(leases.root.iterdir()) == ()

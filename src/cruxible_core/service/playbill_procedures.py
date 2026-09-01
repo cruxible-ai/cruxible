@@ -31,6 +31,7 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureExecutor,
     ProcedureRunResultV1,
     ProviderExecutorProtocol,
+    ProviderRuntimeInvokerProtocol,
     StateTapReaderProtocol,
     StateTapReadResultV1,
 )
@@ -189,6 +190,7 @@ def service_execute_direct_procedure(
     activation_authority: ProcedureActivationAuthorityProtocol,
     contract_validator: ContractValidatorProtocol | None = None,
     provider_executor: ProviderExecutorProtocol | None = None,
+    provider_runtime_invoker: ProviderRuntimeInvokerProtocol | None = None,
     clock: ProcedureClockProtocol | None = None,
 ) -> ProcedureRunResultV1:
     """Execute through the shared runtime; no transport duplicates orchestration."""
@@ -204,6 +206,7 @@ def service_execute_direct_procedure(
             activation_authority=activation_authority,
             contract_validator=validator,
             provider_executor=provider_executor,
+            provider_runtime_invoker=provider_runtime_invoker,
             clock=clock,
         ).execute(prepared, accepted)
     finally:

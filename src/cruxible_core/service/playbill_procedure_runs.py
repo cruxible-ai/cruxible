@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -51,9 +51,11 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureBudgetExhaustedV1,
     ProcedureBudgetRefusalDetailV1,
     ProcedureHaltTerminalV1,
+    ProcedureInternalFailureCodeV1,
     ProcedureInternalFailureV1,
     ProcedureJournalCoordinateV1,
     ProcedureNodeRefusalV1,
+    ProcedureOperationalFailureCodeV1,
     ProcedureOperationalFailureV1,
     ProcedurePendingSuccessorV1,
     ProcedureProviderBindingV1,
@@ -72,6 +74,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureSelectionDecisionV1,
     ProcedureTerminalV1,
 )
+from cruxible_client.contracts.provider_execution import ProviderInvocationCompletedV1
 from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
     provider_interface_digest,
@@ -810,6 +813,7 @@ def _state_from_records(
     acquisition_plan_digest: str | None = None
     final = None
     outcomes: list[ProcedureRunOutcomeV1] = []
+    invocation_receipt_digests: list[str] = []
     for stored in records:
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
         if stored.record.event_kind == "admission_bound":
@@ -853,6 +857,15 @@ def _state_from_records(
             )
         if stored.record.event_kind == "attempt_finalized":
             final = payload
+        if stored.record.event_kind == "provider_invocation_completed":
+            try:
+                invocation_receipt_digests.append(
+                    ProviderInvocationCompletedV1.model_validate(payload).receipt_digest
+                )
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider invocation receipt is invalid"
+                ) from exc
     if admission is None:
         raise ProcedureRunRecoveryRequired(
             f"{ProcedureRunRecoveryRequired.code}: run lacks a supported admission_bound"
@@ -967,13 +980,7 @@ def _state_from_records(
                 )
             elif raw_status == "failed":
                 failure_code = final.get("failure_code")
-                if failure_code in {
-                    "cas_unavailable_at_replay",
-                    "replay_material_mismatch",
-                    "wall_clock_exhausted",
-                    "replay_material_unavailable",
-                    "admission_material_corrupt",
-                }:
+                if failure_code in set(get_args(ProcedureOperationalFailureCodeV1)):
                     status = "operational_failed"
                     messages = {
                         "cas_unavailable_at_replay": (
@@ -996,9 +1003,23 @@ def _state_from_records(
                     terminal = ProcedureOperationalFailureV1.model_validate(
                         {
                             "code": failure_code,
-                            "message": messages[str(failure_code)],
+                            "message": messages.get(
+                                str(failure_code),
+                                "Provider execution failed for an operational reason.",
+                            ),
                             "journal_coordinate": _journal_coordinate(final_record),
                             "details": final.get("failure_details", {}),
+                        }
+                    )
+                elif failure_code in set(get_args(ProcedureInternalFailureCodeV1)):
+                    terminal = ProcedureInternalFailureV1.model_validate(
+                        {
+                            "code": failure_code,
+                            "message": (
+                                "Provider execution violated an internal integrity contract."
+                            ),
+                            "correlation_id": run_id,
+                            "journal_coordinate": _journal_coordinate(final_record),
                         }
                     )
                 else:
@@ -1156,7 +1177,7 @@ def _state_from_records(
                     ),
                     acquisition_plan_digest=acquisition_plan_digest,
                     exhaust_access_binding_digest=(admission.exhaust_access_binding_digest),
-                    invocation_receipt_digests=(),
+                    invocation_receipt_digests=tuple(invocation_receipt_digests),
                     source_capture_associations=(),
                 )
             elif isinstance(admission, ProcedureRunAdmissionV4):

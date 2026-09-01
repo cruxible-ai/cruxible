@@ -56,6 +56,8 @@ JournalEventKindV1 = Literal[
     "item_dependencies",
     "effect_intent",
     "effect_result",
+    "provider_invocation_started",
+    "provider_invocation_completed",
     "terminal_egress",
     "attempt_finalized",
     "resolution_activation",

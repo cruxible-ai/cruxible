@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from cruxible_client.contracts.canonical import Sha256Value, typed_digest
+from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical, typed_digest
 
 
 class _StrictProviderExecutionModel(BaseModel):
@@ -328,14 +328,186 @@ def provider_external_occurrence_plan_digest(
     return typed_digest(Sha256Value, PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN, payload).tagged
 
 
+ProviderInvocationOutcomeClassV1 = Literal[
+    "ok",
+    "node_refusal",
+    "operational",
+    "internal",
+]
+ProviderInvocationAttributionV1 = Literal[
+    "none",
+    "implementation",
+    "governed_binding",
+    "closure_mirror_drift",
+    "interface_registration",
+    "runtime_compatibility",
+    "executor",
+    "local_deployment_binding",
+    "materialization_integrity",
+    "resolver",
+    "cache",
+    "deployment",
+    "cache_integrity",
+    "input",
+    "input_budget",
+    "custody",
+    "binding_input",
+    "input_upstream_response",
+    "executor_mirror_drift",
+    "provider_runtime",
+]
+
+
+class ProviderInvocationOutcomeV1(_StrictProviderExecutionModel):
+    tag: Literal["playbill-provider-invocation-outcome-v1"] = (
+        "playbill-provider-invocation-outcome-v1"
+    )
+    status: Literal["ok", "refused", "error"]
+    outcome_class: ProviderInvocationOutcomeClassV1
+    attribution: ProviderInvocationAttributionV1
+    code: str | None = None
+    message: str | None = None
+    detail: object = Field(default_factory=dict)
+
+    @field_validator("detail", mode="before")
+    @classmethod
+    def _detail(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _status_correspondence(self) -> ProviderInvocationOutcomeV1:
+        if self.status == "ok":
+            if (
+                self.outcome_class != "ok"
+                or self.attribution != "none"
+                or self.code is not None
+                or self.message is not None
+                or self.detail != {}
+            ):
+                raise ValueError("ok Provider outcome cannot carry refusal facts")
+        elif self.outcome_class == "ok" or self.attribution == "none" or self.code is None:
+            raise ValueError("non-ok Provider outcome requires class, attribution, and code")
+        return self
+
+
+PROVIDER_INVOCATION_OUTCOME_DOMAIN = "playbill-provider-invocation-outcome-v1"
+
+
+def provider_invocation_outcome_digest(outcome: ProviderInvocationOutcomeV1) -> str:
+    payload = outcome.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(Sha256Value, PROVIDER_INVOCATION_OUTCOME_DOMAIN, payload).tagged
+
+
+class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
+    tag: Literal["playbill-provider-invocation-receipt-v1"] = (
+        "playbill-provider-invocation-receipt-v1"
+    )
+    invocation_id: str
+    occurrence_path: str
+    run_id: str
+    admission_binding_digest: str
+    provider_artifact_digest: str
+    implementation_digest: str
+    materialization_digest: str
+    deployment_digest: str
+    interface_id: str
+    interface_digest: str
+    protocol_version: str
+    input_bucket: str
+    capture_contract_digest: str | None = None
+    input_digest: str
+    outcome: ProviderInvocationOutcomeV1
+    output: object | None = None
+    egress: ProviderEgressObservationV1
+    secret_references: tuple[ProviderSecretReferenceV1, ...] = ()
+    budget_translation: ProviderBudgetTranslationV1
+    duration_microseconds: int = Field(ge=0)
+    trace: object = Field(default_factory=dict)
+    stderr: str = ""
+
+    @field_validator("output", "trace", mode="before")
+    @classmethod
+    def _canonical(cls, value: object | None) -> object | None:
+        return None if value is None else normalize_canonical(value)
+
+    _digests = field_validator(
+        "admission_binding_digest",
+        "provider_artifact_digest",
+        "implementation_digest",
+        "materialization_digest",
+        "deployment_digest",
+        "interface_digest",
+        "capture_contract_digest",
+        "input_digest",
+    )(_digest)
+
+    @model_validator(mode="after")
+    def _outcome_correspondence(self) -> ProviderInvocationReceiptV1:
+        if (self.output is not None) != (self.outcome.status == "ok"):
+            raise ValueError("only an ok Provider invocation may carry output")
+        return self
+
+
+PROVIDER_INVOCATION_RECEIPT_DOMAIN = "playbill-provider-invocation-receipt-v1"
+
+
+def provider_invocation_receipt_digest(receipt: ProviderInvocationReceiptV1) -> str:
+    payload = receipt.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(Sha256Value, PROVIDER_INVOCATION_RECEIPT_DOMAIN, payload).tagged
+
+
+class ProviderInvocationStartedV1(_StrictProviderExecutionModel):
+    tag: Literal["playbill-provider-invocation-started-v1"] = (
+        "playbill-provider-invocation-started-v1"
+    )
+    invocation_id: str
+    occurrence_path: str
+    implementation_digest: str
+    materialization_digest: str
+    input_digest: str
+
+    _digests = field_validator("implementation_digest", "materialization_digest", "input_digest")(
+        _digest
+    )
+
+
+class ProviderInvocationCompletedV1(_StrictProviderExecutionModel):
+    tag: Literal["playbill-provider-invocation-completed-v1"] = (
+        "playbill-provider-invocation-completed-v1"
+    )
+    invocation_id: str
+    receipt: ProviderInvocationReceiptV1
+    receipt_digest: str
+
+    _receipt_digest = field_validator("receipt_digest")(_digest)
+
+    @model_validator(mode="after")
+    def _receipt_correspondence(self) -> ProviderInvocationCompletedV1:
+        if self.invocation_id != self.receipt.invocation_id:
+            raise ValueError("completed Provider event names another invocation")
+        if self.receipt_digest != provider_invocation_receipt_digest(self.receipt):
+            raise ValueError("completed Provider receipt digest does not reproduce")
+        return self
+
+
 __all__ = [
     "PROVIDER_BUDGET_TRANSLATION_DOMAIN",
     "PROVIDER_EGRESS_OBSERVATION_DOMAIN",
     "PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN",
+    "PROVIDER_INVOCATION_OUTCOME_DOMAIN",
+    "PROVIDER_INVOCATION_RECEIPT_DOMAIN",
     "PROVIDER_SECRET_BINDING_IDENTITY_DOMAIN",
     "ProviderBudgetTranslationV1",
     "ProviderEgressObservationV1",
     "ProviderExternalOccurrencePlanV1",
+    "ProviderInvocationAttributionV1",
+    "ProviderInvocationCompletedV1",
+    "ProviderInvocationOutcomeClassV1",
+    "ProviderInvocationOutcomeV1",
+    "ProviderInvocationReceiptV1",
+    "ProviderInvocationStartedV1",
     "ProviderSecretBindingIdentityV1",
     "ProviderSecretReferenceV1",
     "ProviderSecretResolutionPlanV1",
@@ -343,5 +515,7 @@ __all__ = [
     "provider_budget_translation_digest",
     "provider_egress_observation_digest",
     "provider_external_occurrence_plan_digest",
+    "provider_invocation_outcome_digest",
+    "provider_invocation_receipt_digest",
     "provider_secret_binding_identity_digest",
 ]
