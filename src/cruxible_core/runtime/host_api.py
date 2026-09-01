@@ -18,7 +18,6 @@ from cruxible_core.server.config import (
     get_server_state_root,
     is_server_auth_enabled,
     is_server_required,
-    resolve_server_settings,
 )
 from cruxible_core.server.credentials import get_runtime_credential_store
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
@@ -28,6 +27,7 @@ def create_playbill_host(
     *,
     instance_id: str | None = None,
     workspace_root: str | None = None,
+    workspace_attachment_authorized: bool = False,
 ) -> contracts.PlaybillHostResult:
     """Allocate one empty daemon-owned host record for later Playbill bootstrap."""
 
@@ -35,9 +35,10 @@ def create_playbill_host(
     selected = (instance_id or "").strip() or registry.generate_governed_instance_id()
     check_permission("cruxible_playbill_host_create", instance_id=selected)
     require_unscoped_operator("cruxible_playbill_host_create")
-    if workspace_root is not None and resolve_server_settings().server_socket is None:
+    if workspace_root is not None and not workspace_attachment_authorized:
         raise ConfigError(
-            "Workspace attachment requires a daemon served through CRUXIBLE_SERVER_SOCKET"
+            "Workspace attachment requires a caller connected directly through the local "
+            "Unix socket"
         )
 
     existing = registry.get(selected)

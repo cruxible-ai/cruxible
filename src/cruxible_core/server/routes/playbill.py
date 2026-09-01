@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Request, Response
 
 from cruxible_client import contracts
 from cruxible_client.contracts.claim_attestations import (
@@ -18,6 +18,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_core.playbill.claim_type_migrations import ClaimTypeMigrationRequest
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.runtime import playbill_api
+from cruxible_core.server.config import resolve_server_settings
 from cruxible_core.server.playbill_request_models import (
     PlaybillApprovalChallengeRequest,
     PlaybillApprovalRequest,
@@ -105,9 +106,10 @@ def _coordinate(
 
 
 @router.post("/{instance_id}/playbill/init", response_model=contracts.PlaybillInitResult)
-async def playbill_init(
+def playbill_init(
     instance_id: str,
     req: PlaybillInitRequest,
+    request: Request,
 ) -> contracts.PlaybillInitResult:
     return playbill_api.playbill_init(
         resolve_server_instance_id(instance_id),
@@ -115,6 +117,10 @@ async def playbill_init(
         operating_profile=req.operating_profile,
         require_independent_approval=req.require_independent_approval,
         workspace_root=req.workspace_root,
+        workspace_attachment_authorized=(
+            request.scope.get("client") is None
+            and resolve_server_settings().server_socket is not None
+        ),
     )
 
 
@@ -135,7 +141,7 @@ async def store_body(
     "/{instance_id}/playbill/documents/proposals",
     response_model=contracts.PlaybillProposalInspection,
 )
-async def propose_document(
+def propose_document(
     instance_id: str,
     req: PlaybillProposeDocumentRequest,
 ) -> contracts.PlaybillProposalInspection:
@@ -152,7 +158,7 @@ async def propose_document(
     "/{instance_id}/playbill/principals/proposals",
     response_model=contracts.PlaybillProposalInspection,
 )
-async def propose_principal(
+def propose_principal(
     instance_id: str,
     req: PlaybillProposePrincipalRequest,
 ) -> contracts.PlaybillProposalInspection:
@@ -211,7 +217,7 @@ async def inspect_proposal(
     "/{instance_id}/playbill/proposals/{proposal_id}/readmit",
     response_model=contracts.PlaybillProposalReadmitResult,
 )
-async def readmit_proposal(
+def readmit_proposal(
     instance_id: str,
     proposal_id: str,
     _req: PlaybillProposalReadmitRequest,
@@ -288,7 +294,7 @@ async def submit_approval(
     "/{instance_id}/playbill/proposals/{proposal_id}/activate",
     response_model=contracts.PlaybillActivationReceipt,
 )
-async def activate_proposal(
+def activate_proposal(
     instance_id: str,
     proposal_id: str,
 ) -> contracts.PlaybillActivationReceipt:
@@ -403,7 +409,7 @@ async def check_sources(
     "/{instance_id}/playbill/sources/proposals",
     response_model=contracts.PlaybillProposalInspection,
 )
-async def propose_sources(
+def propose_sources(
     instance_id: str,
     req: PlaybillSourceProposeRequest,
 ) -> contracts.PlaybillProposalInspection:
@@ -419,7 +425,7 @@ async def propose_sources(
     "/{instance_id}/playbill/subjects/proposals",
     response_model=contracts.PlaybillProposalInspection,
 )
-async def propose_subject(
+def propose_subject(
     instance_id: str,
     req: PlaybillProposeSubjectRequest,
 ) -> contracts.PlaybillProposalInspection:
@@ -489,7 +495,7 @@ async def subject_history(
         contracts.PlaybillProposalInspection | contracts.PlaybillClaimTypeInputProposalResult
     ),
 )
-async def propose_claim_type(
+def propose_claim_type(
     instance_id: str,
     req: PlaybillProposeClaimTypeRequest | PlaybillProposeClaimTypeInputRequest,
 ) -> contracts.PlaybillProposalInspection | contracts.PlaybillClaimTypeInputProposalResult:
@@ -511,7 +517,7 @@ async def propose_claim_type(
     "/{instance_id}/playbill/claim-types/migrations",
     response_model=contracts.PlaybillClaimTypeMigrationResponse,
 )
-async def migrate_claim_type(
+def migrate_claim_type(
     instance_id: str,
     req: ClaimTypeMigrationRequest,
 ) -> contracts.PlaybillClaimTypeMigrationResponse:
@@ -561,7 +567,7 @@ async def get_claim_type(
     "/{instance_id}/playbill/claims/{claim_id}/retire",
     response_model=contracts.PlaybillClaimRetireResponse,
 )
-async def retire_claim(
+def retire_claim(
     instance_id: str,
     claim_id: str,
     req: ClaimRetireRequestV1,
@@ -742,7 +748,7 @@ async def preflight_authoring_intent(
     "/{instance_id}/playbill/authoring/intents/{intent_id}/submit",
     response_model=contracts.PlaybillAuthoringSubmitResult,
 )
-async def submit_authoring_intent(
+def submit_authoring_intent(
     instance_id: str,
     intent_id: str,
     _req: PlaybillAuthoringSubmitRequest,
@@ -888,7 +894,7 @@ async def explain_claim(
     "/{instance_id}/playbill/queries/proposals",
     response_model=contracts.PlaybillProposalInspection,
 )
-async def propose_query_definition(
+def propose_query_definition(
     instance_id: str,
     req: PlaybillProposeQueryDefinitionRequest,
 ) -> contracts.PlaybillProposalInspection:
@@ -982,7 +988,7 @@ async def procedure_readiness(
     "/{instance_id}/playbill/procedures/{name}/bind",
     response_model=contracts.PlaybillProcedureBindResult,
 )
-async def bind_procedure(
+def bind_procedure(
     instance_id: str,
     name: str,
     req: ProcedureBindRequestV1,

@@ -584,7 +584,14 @@ class PlaybillInstance:
 
         if self._workspace_advertiser is None:
             return NOT_ATTACHED_ADVERTISEMENT
-        return self._workspace_advertiser()
+        try:
+            return self._workspace_advertiser()
+        except BaseException:
+            return PlaybillWorkspaceAdvertisement(
+                status="failed",
+                workspace_path=None,
+                failure_code="unexpected_failure",
+            )
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""

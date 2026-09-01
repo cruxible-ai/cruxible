@@ -3339,11 +3339,17 @@ class ProposalService:
             self.evidence.write_candidate(outcome.candidate)
         if self.transport.read_main() != current.git_oid:
             raise ProposalIntegrityError("proposal evaluation changed or raced accepted main")
-        advertisement = (
-            NOT_ATTACHED_ADVERTISEMENT
-            if self.workspace_advertiser is None
-            else self.workspace_advertiser()
-        )
+        if self.workspace_advertiser is None:
+            advertisement = NOT_ATTACHED_ADVERTISEMENT
+        else:
+            try:
+                advertisement = self.workspace_advertiser()
+            except BaseException:
+                advertisement = PlaybillWorkspaceAdvertisement(
+                    status="failed",
+                    workspace_path=None,
+                    failure_code="unexpected_failure",
+                )
         return ProposalResult(
             admission=admission,
             evaluation=evaluation,

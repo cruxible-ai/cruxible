@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from cruxible_client.contracts.errors import PlaybillReseedRequired
 from cruxible_core.playbill.keys import generate_client_principal_key
+from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.runtime.permissions import reset_permissions
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.app import create_app
@@ -78,7 +79,7 @@ def test_remote_http_host_cannot_attach_a_daemon_local_workspace(
     )
 
     assert refused.status_code == 400
-    assert "CRUXIBLE_SERVER_SOCKET" in refused.text
+    assert "directly through the local Unix socket" in refused.text
     assert get_registry().get("inst_remote_path") is None
 
 
@@ -156,12 +157,18 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
         check=True,
         capture_output=True,
     )
-    created = host_client.post(
+    refused = host_client.post(
         "/api/v1/runtime/instances",
-        json={"instance_id": "inst_attached", "workspace_root": str(workspace)},
+        json={"instance_id": "inst_attached_http", "workspace_root": str(workspace)},
     )
-    assert created.status_code == 200, created.text
-    # Filesystem attachment is admitted only by a local Unix-socket daemon.
+    assert refused.status_code == 400
+
+    created = host_api.create_playbill_host(
+        instance_id="inst_attached",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    assert created.status == "created"
     record = get_registry().get("inst_attached")
     assert record is not None
     owner = generate_client_principal_key(
@@ -171,16 +178,15 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
         forbidden_roots=(workspace,),
     )
 
-    initialized = host_client.post(
-        "/api/v1/inst_attached/playbill/init",
-        json={"principals": [owner.principal.model_dump(mode="json")]},
+    initialized = playbill_api.playbill_init(
+        "inst_attached",
+        principals=(owner.principal,),
+        workspace_attachment_authorized=True,
     )
 
-    assert initialized.status_code == 200, initialized.text
     assert get_playbill_manager().get("inst_attached").descriptor.git_object_format == "sha1"
-    advertised = initialized.json()["workspace_advertisement"]
-    assert advertised["status"] == "updated"
-    assert advertised["advertised_refs"] == ["refs/remotes/playbill/main"]
+    assert initialized.workspace_advertisement.status == "updated"
+    assert initialized.workspace_advertisement.advertised_refs == ("refs/remotes/playbill/main",)
     remote_url = subprocess.run(
         ["git", "-C", str(workspace), "remote", "get-url", "playbill"],
         check=True,
@@ -188,6 +194,89 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
         text=True,
     ).stdout.strip()
     assert remote_url.endswith("ledger.git")
+
+
+def test_failed_init_rolls_back_a_new_workspace_attachment(
+    host_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del host_client
+    workspace = tmp_path / "rollback-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(instance_id="inst_rollback")
+    record = get_registry().get("inst_rollback")
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "rollback-owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+
+    def fail_initialize(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("simulated initialization failure")
+
+    monkeypatch.setattr(get_playbill_manager(), "initialize", fail_initialize)
+    with pytest.raises(RuntimeError, match="simulated initialization failure"):
+        playbill_api.playbill_init(
+            "inst_rollback",
+            principals=(owner.principal,),
+            workspace_root=str(workspace),
+            workspace_attachment_authorized=True,
+        )
+
+    rolled_back = get_registry().get("inst_rollback")
+    assert rolled_back is not None
+    assert rolled_back.workspace_root is None
+
+
+def test_init_survives_an_advertiser_that_raises(
+    host_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del host_client
+    workspace = tmp_path / "raising-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_raising_advertiser",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    record = get_registry().get("inst_raising_advertiser")
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "raising-owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(Path(record.location),),
+    )
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise MemoryError("simulated advertiser failure")
+
+    monkeypatch.setattr(
+        "cruxible_core.runtime.playbill_manager.advertise_workspace_refs",
+        explode,
+    )
+    initialized = playbill_api.playbill_init(
+        "inst_raising_advertiser",
+        principals=(owner.principal,),
+        workspace_attachment_authorized=True,
+    )
+
+    assert initialized.workspace_advertisement.status == "failed"
+    assert initialized.workspace_advertisement.failure_code == "unexpected_failure"
+    assert get_playbill_manager().get("inst_raising_advertiser") is not None
 
 
 def test_independent_approval_init_requires_and_accepts_a_second_ordinary_principal(

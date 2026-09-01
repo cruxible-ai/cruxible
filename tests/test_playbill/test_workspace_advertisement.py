@@ -69,6 +69,105 @@ def test_advertisement_fetches_only_remote_tracking_refs(
     )
     assert _git(workspace, "status", "--porcelain=v1") == before_status
     assert _git(workspace, "symbolic-ref", "--short", "HEAD") == "main"
+    assert _git(workspace, "config", "--get-all", "remote.playbill.fetch").splitlines() == [
+        "+refs/heads/main:refs/remotes/playbill/main",
+        "+refs/proposals/*:refs/remotes/playbill/proposals/*",
+    ]
+    assert _git(workspace, "config", "--get", "remote.playbill.tagOpt") == "--no-tags"
+    assert _git(workspace, "config", "--get", "remote.playbill.skipFetchAll") == "true"
+
+
+def test_advertisement_does_not_fetch_ledger_tags(tmp_path: Path) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    head = _git(workspace, "rev-parse", "HEAD")
+    _git(ledger, "update-ref", "refs/tags/daemon-only", head)
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "updated"
+    assert _git(workspace, "tag", "--list", "daemon-only") == ""
+
+
+def test_advertisement_resolves_relative_remote_url_from_workspace(tmp_path: Path) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    relative = str(ledger.relative_to(workspace.parent))
+    _git(workspace, "config", "--add", "remote.playbill.url", f"../{relative}")
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "updated"
+
+
+def test_advertisement_ignores_executable_workspace_git_config(tmp_path: Path) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    fsmonitor_marker = tmp_path / "fsmonitor-executed"
+    uploadpack_marker = tmp_path / "uploadpack-executed"
+    _git(workspace, "config", "core.fsmonitor", f"touch {fsmonitor_marker}")
+    _git(
+        workspace,
+        "config",
+        "remote.playbill.uploadpack",
+        f"touch {uploadpack_marker}; git-upload-pack",
+    )
+    fsmonitor_marker.unlink(missing_ok=True)
+    uploadpack_marker.unlink(missing_ok=True)
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "updated"
+    assert not fsmonitor_marker.exists()
+    assert not uploadpack_marker.exists()
+
+
+def test_advertisement_reports_git_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    monkeypatch.setenv("PATH", "")
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "failed"
+    assert result.failure_code == "git_unavailable"
+
+
+def test_advertisement_is_total_for_unexpected_failures(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise MemoryError("simulated")
+
+    monkeypatch.setattr(
+        "cruxible_core.playbill.workspace_advertisement._advertise_workspace_refs",
+        explode,
+    )
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "failed"
+    assert result.failure_code == "unexpected_failure"
 
 
 def test_advertisement_refuses_remote_name_conflict(tmp_path: Path) -> None:

@@ -10,9 +10,11 @@ WorkspaceAdvertisementFailureCode: TypeAlias = Literal[
     "workspace_missing",
     "workspace_not_git",
     "workspace_path_invalid",
+    "git_unavailable",
     "remote_conflict",
     "object_format_mismatch",
     "fetch_failed",
+    "unexpected_failure",
 ]
 
 
@@ -37,7 +39,7 @@ class PlaybillWorkspaceAdvertisement(BaseModel):
         ):
             raise ValueError("not-attached workspace advertisement has an invalid result shape")
         if self.status == "failed" and (
-            self.workspace_path is None or self.failure_code is None or self.advertised_refs
+            self.failure_code is None or self.advertised_refs
         ):
             raise ValueError("failed workspace advertisement has an invalid result shape")
         return self

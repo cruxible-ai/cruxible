@@ -261,7 +261,7 @@ def service_inspect_playbill_proposal(
             evaluation=evaluation,
             candidate=candidate,
         ),
-        workspace_advertisement=instance.advertise_workspace(),
+        workspace_advertisement=NOT_ATTACHED_ADVERTISEMENT,
         accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
             instance.accepted_coordinate()
         ),

@@ -268,6 +268,31 @@ class InstanceRegistry:
         assert record is not None
         return record
 
+    def detach_governed_workspace(
+        self,
+        instance_id: str,
+        *,
+        expected_workspace_root: str | Path,
+    ) -> InstanceRecord:
+        """Roll back only the exact attachment made by a failed initialization."""
+
+        _validate_instance_id(instance_id)
+        expected = str(Path(expected_workspace_root).expanduser().resolve(strict=False))
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE instances
+                SET workspace_root = NULL
+                WHERE instance_id = ? AND workspace_root = ?
+                """,
+                (instance_id, expected),
+            )
+        if cursor.rowcount != 1:
+            raise ConfigError("Playbill workspace attachment changed during rollback")
+        record = self.get(instance_id)
+        assert record is not None
+        return record
+
     def _create_governed_instance(
         self,
         *,
