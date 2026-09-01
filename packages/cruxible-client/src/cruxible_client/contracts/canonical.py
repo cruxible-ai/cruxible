@@ -105,9 +105,9 @@ def artifact_path_for_codec(current_path: str, codec: ArtifactCodec) -> str:
 
     if not current_path.endswith(".json"):
         raise CanonicalEncodingError("current artifact path must end in .json")
-    if codec is CURRENT_ARTIFACT_CODEC:
+    if codec is ArtifactCodec.CURRENT_PRETTY_JSON:
         return current_path
-    if codec is P2_B0_ARTIFACT_CODEC:
+    if codec is ArtifactCodec.P2_B0_COMPACT_JSON:
         return current_path.removesuffix(".json") + ".yaml"
     raise CanonicalEncodingError(f"unsupported artifact codec: {codec!r}")
 
@@ -120,15 +120,17 @@ def artifact_bytes_for_codec(
 ) -> bytes:
     """Encode bytes from the compiler-selected codec; suffix only checks consistency."""
 
-    allowed_suffixes = (".json",) if codec is CURRENT_ARTIFACT_CODEC else (".yaml", ".json")
+    allowed_suffixes = (
+        (".json",) if codec is ArtifactCodec.CURRENT_PRETTY_JSON else (".yaml", ".json")
+    )
     if not path.endswith(allowed_suffixes):
         raise CanonicalEncodingError(
             f"artifact path is inconsistent with {codec.value}: expected one of "
             f"{allowed_suffixes!r}"
         )
-    if codec is CURRENT_ARTIFACT_CODEC:
+    if codec is ArtifactCodec.CURRENT_PRETTY_JSON:
         return rendered_current
-    if codec is P2_B0_ARTIFACT_CODEC:
+    if codec is ArtifactCodec.P2_B0_COMPACT_JSON:
         return canonical_bytes(json.loads(rendered_current)) + b"\n"
     raise CanonicalEncodingError(f"unsupported artifact codec: {codec!r}")
 
