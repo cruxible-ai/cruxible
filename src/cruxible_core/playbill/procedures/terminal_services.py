@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from cruxible_client.contracts.candidates import (
     CandidateMemberEvidence,
@@ -37,6 +37,12 @@ if TYPE_CHECKING:
 
 class EffectfulTerminalError(PlaybillFormatError):
     """An effectful terminal cannot traverse the governed service door."""
+
+
+class SettlementLostCas(EffectfulTerminalError):
+    """Activation lost its exact-head race and must be prepared again."""
+
+    code = "settlement_lost_cas"
 
 
 class _StrictTerminalServiceModel(BaseModel):
@@ -75,6 +81,7 @@ class SettlementDoorResultV1(_StrictTerminalServiceModel):
     status: Literal["accepted", "lost_cas"]
     proposal_id: str
     candidate_digest: str
+    observed_head: AcceptedCoordinate | None = None
 
     @field_validator("proposal_id")
     @classmethod
@@ -87,6 +94,12 @@ class SettlementDoorResultV1(_StrictTerminalServiceModel):
     def _candidate_digest(cls, value: str) -> str:
         CandidateDigest.from_tagged(value)
         return value
+
+    @model_validator(mode="after")
+    def _lost_cas_head(self) -> "SettlementDoorResultV1":
+        if (self.observed_head is not None) != (self.status == "lost_cas"):
+            raise ValueError("only a lost-CAS settlement result names the observed head")
+        return self
 
 
 class SettlementDoorProtocol(Protocol):
@@ -203,6 +216,11 @@ class PlaybillSettlementDoor:
             status=activated.status,
             proposal_id=target.proposal_id,
             candidate_digest=target.candidate_digest,
+            observed_head=(
+                AcceptedCoordinate.from_internal(self.instance.accepted_coordinate())
+                if activated.status == "lost_cas"
+                else None
+            ),
         )
 
 
@@ -345,6 +363,12 @@ class SettlementTerminalAdapter:
             raise EffectfulTerminalError(
                 "settlement receipt does not reproduce the exact approved candidate"
             )
+        if result.status == "lost_cas":
+            assert result.observed_head is not None
+            raise SettlementLostCas(
+                f"{SettlementLostCas.code}: accepted head advanced to "
+                f"{result.observed_head.git_oid}; re-prepare at the new head"
+            )
         assert request.bound_artifact_pin is not None  # request shape
         assert request.operation_key is not None  # request shape
         return TerminalEgressReceiptV2(
@@ -371,6 +395,7 @@ __all__ = [
     "SettlementCandidateInspection",
     "SettlementDoorProtocol",
     "SettlementDoorResultV1",
+    "SettlementLostCas",
     "SettlementTargetV1",
     "SettlementTerminalAdapter",
 ]

@@ -36,6 +36,7 @@ from cruxible_core.playbill.procedures.terminal_services import (
     ProposalTerminalAdapter,
     SettlementCandidateInspection,
     SettlementDoorResultV1,
+    SettlementLostCas,
     SettlementTargetV1,
     SettlementTerminalAdapter,
 )
@@ -618,6 +619,39 @@ def test_settlement_adapter_delegates_only_after_exact_authority(tmp_path) -> No
     verify_terminal_egress_receipt(request, receipt)
     assert receipt.disposition == "settled"
     assert door.calls == 1
+
+
+def test_lost_cas_refuses_with_observed_head_and_reprepare_repair(tmp_path) -> None:
+    admission = _admission(tmp_path)
+    target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
+    target = _settlement_target(admission)
+    mandate = _runtime_mandate(admission, namespace=("claims",))
+    mandate_digest = procedure_mandate_digest(mandate).tagged
+    request = _effectful_request(
+        "mandate_settlement",
+        admission=admission,
+        item=_item("candidate", value=target.model_dump(mode="json")),
+        target_paths=(target_path,),
+        mandate_digest=mandate_digest,
+        bound=_pin("target-law", "ClaimType", "prediction"),
+    )
+    observed = admission.accepted_coordinate.model_copy(update={"git_oid": "f" * 40})
+    door = _settlement_door(target, target_paths=(target_path,))
+    door.result = SettlementDoorResultV1(
+        status="lost_cas",
+        proposal_id=target.proposal_id,
+        candidate_digest=target.candidate_digest,
+        observed_head=observed,
+    )
+
+    with pytest.raises(SettlementLostCas) as caught:
+        SettlementTerminalAdapter(door=door).deliver(
+            request=request,
+            admission=admission,
+            accepted_mandates={mandate_digest: mandate},
+        )
+    assert observed.git_oid in str(caught.value)
+    assert "re-prepare at the new head" in str(caught.value)
 
 
 def test_settlement_refuses_mandate_expired_between_admission_and_egress(tmp_path) -> None:
