@@ -68,6 +68,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
+    ProcedureRunReceiptV6,
     ProcedureSelectionDecisionV1,
     ProcedureTerminalV1,
 )
@@ -98,13 +99,16 @@ from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RUN_RECEIPT_V3_DOMAIN,
     PROCEDURE_RUN_RECEIPT_V4_DOMAIN,
     PROCEDURE_RUN_RECEIPT_V5_DOMAIN,
+    PROCEDURE_RUN_RECEIPT_V6_DOMAIN,
     ProcedureAdmissionBoundPayloadV2,
     ProcedureAdmissionBoundPayloadV3,
     ProcedureAdmissionBoundPayloadV4,
+    ProcedureAdmissionBoundPayloadV5,
     ProcedureClockProtocol,
     ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV3,
     ProcedureRunAdmissionV4,
+    ProcedureRunAdmissionV5,
     ProcedureRunReceiptV1,
     ProcedureRuntimePolicyAbsent,
     bind_line_admission_runtime_policy,
@@ -326,6 +330,7 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
         | ProcedureRunReceiptV3
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
+        | ProcedureRunReceiptV6
         | None
     ) = None
     receipt_digest: str | None = None
@@ -792,11 +797,17 @@ def _state_from_records(
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="procedure-runtime", can_read_body=True)
     admission: (
-        ProcedureRunAdmissionV2 | ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | None
+        ProcedureRunAdmissionV2
+        | ProcedureRunAdmissionV3
+        | ProcedureRunAdmissionV4
+        | ProcedureRunAdmissionV5
+        | None
     ) = None
     admission_count = 0
     admission_material_manifest = None
     admission_material_manifest_digest: str | None = None
+    acquisition_plan = None
+    acquisition_plan_digest: str | None = None
     final = None
     outcomes: list[ProcedureRunOutcomeV1] = []
     for stored in records:
@@ -804,6 +815,15 @@ def _state_from_records(
         if stored.record.event_kind == "admission_bound":
             admission_count += 1
             if isinstance(payload, dict) and payload.get("tag") == (
+                "playbill-procedure-admission-bound-payload-v5"
+            ):
+                bound_v5 = ProcedureAdmissionBoundPayloadV5.model_validate(payload)
+                admission = bound_v5.admission
+                admission_material_manifest = bound_v5.admission_material_manifest
+                admission_material_manifest_digest = bound_v5.admission_material_manifest_digest
+                acquisition_plan = bound_v5.acquisition_plan
+                acquisition_plan_digest = bound_v5.acquisition_plan_digest
+            elif isinstance(payload, dict) and payload.get("tag") == (
                 "playbill-procedure-admission-bound-payload-v4"
             ):
                 bound_v4 = ProcedureAdmissionBoundPayloadV4.model_validate(payload)
@@ -1011,6 +1031,7 @@ def _state_from_records(
         | ProcedureRunReceiptV3
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
+        | ProcedureRunReceiptV6
         | None
     ) = None
     receipt_digest = None
@@ -1122,7 +1143,23 @@ def _state_from_records(
                     observed=parsed_budget.observed,
                 ),
             )
-            if isinstance(admission, ProcedureRunAdmissionV4):
+            if isinstance(admission, ProcedureRunAdmissionV5):
+                if acquisition_plan is None or acquisition_plan_digest is None:
+                    raise ProcedureRunRecoveryRequired(
+                        f"{ProcedureRunRecoveryRequired.code}: v5 acquisition plan is absent"
+                    )
+                public_receipt = ProcedureRunReceiptV6(
+                    **shared_line_fields,
+                    resolved_provider_bindings=tuple(
+                        ProcedureProviderBindingV2.model_validate(item.model_dump(mode="json"))
+                        for item in admission.resolved_provider_bindings
+                    ),
+                    acquisition_plan_digest=acquisition_plan_digest,
+                    exhaust_access_binding_digest=(admission.exhaust_access_binding_digest),
+                    invocation_receipt_digests=(),
+                    source_capture_associations=(),
+                )
+            elif isinstance(admission, ProcedureRunAdmissionV4):
                 public_receipt = ProcedureRunReceiptV5(
                     **shared_line_fields,
                     resolved_provider_bindings=tuple(
@@ -1139,7 +1176,9 @@ def _state_from_records(
                     ),
                 )
             receipt_domain = (
-                PROCEDURE_RUN_RECEIPT_V5_DOMAIN
+                PROCEDURE_RUN_RECEIPT_V6_DOMAIN
+                if isinstance(admission, ProcedureRunAdmissionV5)
+                else PROCEDURE_RUN_RECEIPT_V5_DOMAIN
                 if isinstance(admission, ProcedureRunAdmissionV4)
                 else PROCEDURE_RUN_RECEIPT_V4_DOMAIN
             )

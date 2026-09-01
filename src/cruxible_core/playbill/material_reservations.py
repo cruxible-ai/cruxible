@@ -25,6 +25,7 @@ from cruxible_core.playbill.exhaust.records import (
 
 PENDING_RESERVATION_DOMAIN = "playbill-pending-admission-material-reservation-v1"
 RUN_RESERVATION_DOMAIN = "playbill-run-material-reservation-v1"
+RUN_RESERVATION_V2_DOMAIN = "playbill-run-material-reservation-v2"
 RUN_MATERIAL_INVOCATION_DOMAIN = "playbill-run-material-invocation-v1"
 _STORE_MARKER_NAME = ".procedure-material-store-v1"
 _STORE_MARKER_BYTES = b"playbill-procedure-material-store-v1\n"
@@ -94,7 +95,33 @@ class RunMaterialReservationV1(_StrictReservationModel):
         return self
 
 
-MaterialReservationV1 = PendingAdmissionMaterialReservationV1 | RunMaterialReservationV1
+class RunMaterialReservationV2(_StrictReservationModel):
+    """Runtime lease keyed by the actual Provider invocation identity."""
+
+    tag: Literal["playbill-run-material-reservation-v2"] = "playbill-run-material-reservation-v2"
+    reservation_id: str
+    instance_id: str
+    run_id: str
+    admission_binding_digest: str
+    journal_partition_id: str
+    invocation_id: str
+    body_digest: str
+    intended_event_kind: JournalEventKindV1
+
+    _digests = field_validator(
+        "reservation_id", "admission_binding_digest", "invocation_id", "body_digest"
+    )(_sha256)
+
+    @model_validator(mode="after")
+    def _identity(self) -> RunMaterialReservationV2:
+        if self.reservation_id != run_reservation_v2_id(self):
+            raise ValueError("run-material v2 reservation id does not reproduce")
+        return self
+
+
+MaterialReservationV1 = (
+    PendingAdmissionMaterialReservationV1 | RunMaterialReservationV1 | RunMaterialReservationV2
+)
 
 
 def _reservation_preimage(record: MaterialReservationV1) -> dict[str, object]:
@@ -116,6 +143,14 @@ def run_reservation_id(record: RunMaterialReservationV1) -> str:
     return typed_digest(
         Sha256Value,
         RUN_RESERVATION_DOMAIN,
+        _reservation_preimage(record),
+    ).tagged
+
+
+def run_reservation_v2_id(record: RunMaterialReservationV2) -> str:
+    return typed_digest(
+        Sha256Value,
+        RUN_RESERVATION_V2_DOMAIN,
         _reservation_preimage(record),
     ).tagged
 
@@ -200,6 +235,34 @@ def make_run_reservation(
         {
             **provisional.model_dump(mode="json"),
             "reservation_id": run_reservation_id(provisional),
+        }
+    )
+
+
+def make_run_reservation_v2(
+    *,
+    instance_id: str,
+    run_id: str,
+    admission_binding_digest: str,
+    partition_id: str,
+    invocation_id: str,
+    body_digest: str,
+    event_kind: JournalEventKindV1,
+) -> RunMaterialReservationV2:
+    provisional = RunMaterialReservationV2.model_construct(
+        reservation_id="sha256:" + "0" * 64,
+        instance_id=instance_id,
+        run_id=run_id,
+        admission_binding_digest=admission_binding_digest,
+        journal_partition_id=partition_id,
+        invocation_id=invocation_id,
+        body_digest=body_digest,
+        intended_event_kind=event_kind,
+    )
+    return RunMaterialReservationV2.model_validate(
+        {
+            **provisional.model_dump(mode="json"),
+            "reservation_id": run_reservation_v2_id(provisional),
         }
     )
 
@@ -414,6 +477,8 @@ class ProcedureMaterialReservationStore:
                     if tag == "playbill-pending-admission-material-reservation-v1"
                     else RunMaterialReservationV1
                     if tag == "playbill-run-material-reservation-v1"
+                    else RunMaterialReservationV2
+                    if tag == "playbill-run-material-reservation-v2"
                     else None
                 )
                 if model is None:
@@ -484,6 +549,25 @@ class ProcedureMaterialReservationStore:
                     if record.run_id != reservation.run_id:
                         continue
                     if record.admission_binding_digest != reservation.admission_binding_digest:
+                        continue
+                    if isinstance(reservation, RunMaterialReservationV2):
+                        if record.partition_id != reservation.journal_partition_id:
+                            continue
+                        try:
+                            payload = parse_journal_payload(
+                                bodies.read(record.payload_digest, access=access)
+                            )
+                        except Exception as exc:
+                            raise ProcedureMaterialRecoveryRequired(
+                                "run_recovery_required: runtime material reference cannot "
+                                "be authenticated"
+                            ) from exc
+                        if (
+                            record.payload_digest == reservation.body_digest
+                            and isinstance(payload, dict)
+                            and payload.get("invocation_id") == reservation.invocation_id
+                        ):
+                            matches.append(stored)
                         continue
                     if isinstance(reservation, RunMaterialReservationV1):
                         expected_invocation = run_material_invocation_id(
@@ -569,6 +653,7 @@ def _validated_admission_material_members(payload: object) -> tuple[Any, ...]:
         "playbill-procedure-admission-bound-payload-v2",
         "playbill-procedure-admission-bound-payload-v3",
         "playbill-procedure-admission-bound-payload-v4",
+        "playbill-procedure-admission-bound-payload-v5",
     }:
         raise ProcedureMaterialRecoveryRequired(
             "run_recovery_required: admission payload version is unsupported"
@@ -578,13 +663,16 @@ def _validated_admission_material_members(payload: object) -> tuple[Any, ...]:
             ProcedureAdmissionBoundPayloadV2,
             ProcedureAdmissionBoundPayloadV3,
             ProcedureAdmissionBoundPayloadV4,
+            ProcedureAdmissionBoundPayloadV5,
         )
 
         if tag == "playbill-procedure-admission-bound-payload-v2":
             ProcedureAdmissionBoundPayloadV2.model_validate(payload)
             return ()
         bound = (
-            ProcedureAdmissionBoundPayloadV4.model_validate(payload)
+            ProcedureAdmissionBoundPayloadV5.model_validate(payload)
+            if tag == "playbill-procedure-admission-bound-payload-v5"
+            else ProcedureAdmissionBoundPayloadV4.model_validate(payload)
             if tag == "playbill-procedure-admission-bound-payload-v4"
             else ProcedureAdmissionBoundPayloadV3.model_validate(payload)
         )
@@ -601,10 +689,13 @@ __all__ = [
     "ProcedureMaterialReservationError",
     "ProcedureMaterialReservationStore",
     "RunMaterialReservationV1",
+    "RunMaterialReservationV2",
     "make_pending_reservation",
     "make_run_reservation",
+    "make_run_reservation_v2",
     "pending_reservation_id",
     "run_material_invocation_id",
     "run_reservation_id",
+    "run_reservation_v2_id",
     "reserve_admission_material_body",
 ]

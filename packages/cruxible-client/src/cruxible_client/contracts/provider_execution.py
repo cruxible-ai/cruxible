@@ -139,7 +139,7 @@ class ProviderBudgetTranslationV1(_StrictProviderExecutionModel):
     hard_cap_wall_clock_microseconds: int = Field(ge=1)
     runtime_wall_clock_seconds: int = Field(ge=1)
     procedure_output_bytes_cap: int | None = Field(default=None, ge=1)
-    hard_output_bytes_cap: int = Field(ge=1)
+    hard_output_bytes_cap: int | None = Field(default=None, ge=1)
     policy_output_bytes_cap: int = Field(ge=1)
     runtime_output_bytes_cap: int = Field(ge=1)
     max_provider_calls: int = Field(ge=0)
@@ -159,7 +159,9 @@ class ProviderBudgetTranslationV1(_StrictProviderExecutionModel):
             // 1_000_000
         ):
             raise ValueError("provider wall-clock translation does not reproduce")
-        output_candidates = [self.hard_output_bytes_cap, self.policy_output_bytes_cap]
+        output_candidates = [self.policy_output_bytes_cap]
+        if self.hard_output_bytes_cap is not None:
+            output_candidates.append(self.hard_output_bytes_cap)
         if self.procedure_output_bytes_cap is not None:
             output_candidates.append(self.procedure_output_bytes_cap)
         if self.runtime_output_bytes_cap != min(output_candidates):
@@ -235,17 +237,111 @@ class VerifiedProviderBindingV1(_StrictProviderExecutionModel):
         return value
 
 
+class ProviderExternalOccurrencePlanV1(_StrictProviderExecutionModel):
+    """Complete static Provider closure for one graph-v4 external occurrence."""
+
+    tag: Literal["playbill-provider-external-occurrence-plan-v1"] = (
+        "playbill-provider-external-occurrence-plan-v1"
+    )
+    occurrence_path: str
+    occurrence_kind: Literal["provider", "source"]
+    node_id: str
+    repeat_node_id: str | None = None
+    input_name: str | None = None
+    provider_artifact_digest: str
+    interface_artifact_digest: str
+    interface_id: str
+    interface_digest: str
+    vocabulary_digest: str
+    classifier_digest: str
+    accepted_bucket_selectors: tuple[str, ...]
+    implementation_digest: str
+    effect_class: Literal["none", "external_read", "external_mutation"]
+    capture_contract_digest: str | None = None
+    contract_input_digest: str | None = None
+    contract_output_digest: str | None = None
+    local_execution: VerifiedProviderBindingV1
+    secret_plan: ProviderSecretResolutionPlanV1
+    budget_translation: ProviderBudgetTranslationV1
+    source_runtime_plan_digest: str | None = None
+
+    _digests = field_validator(
+        "provider_artifact_digest",
+        "interface_artifact_digest",
+        "interface_digest",
+        "vocabulary_digest",
+        "classifier_digest",
+        "implementation_digest",
+        "capture_contract_digest",
+        "contract_input_digest",
+        "contract_output_digest",
+        "source_runtime_plan_digest",
+    )(_digest)
+
+    @field_validator("accepted_bucket_selectors")
+    @classmethod
+    def _selectors(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value or value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("accepted bucket selectors must be sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> ProviderExternalOccurrencePlanV1:
+        local = self.local_execution
+        for label, expected, actual in (
+            ("Provider", self.provider_artifact_digest, local.provider_artifact_digest),
+            ("interface artifact", self.interface_artifact_digest, local.interface_artifact_digest),
+            ("interface id", self.interface_id, local.interface_id),
+            ("interface", self.interface_digest, local.interface_digest),
+            ("implementation", self.implementation_digest, local.implementation_digest),
+        ):
+            if expected != actual:
+                raise ValueError(f"external occurrence {label} differs from local binding")
+        if self.occurrence_kind == "source":
+            if (
+                self.input_name is None
+                or self.capture_contract_digest is None
+                or self.source_runtime_plan_digest is None
+                or self.contract_input_digest is not None
+                or self.contract_output_digest is not None
+            ):
+                raise ValueError("Source occurrence requires only its Source runtime fields")
+        elif (
+            self.input_name is not None
+            or self.capture_contract_digest is not None
+            or self.source_runtime_plan_digest is not None
+            or self.contract_input_digest is None
+            or self.contract_output_digest is None
+        ):
+            raise ValueError("Provider occurrence requires only its contract fields")
+        return self
+
+
+PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN = "playbill-provider-external-occurrence-plan-v1"
+
+
+def provider_external_occurrence_plan_digest(
+    plan: ProviderExternalOccurrencePlanV1,
+) -> str:
+    payload = plan.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(Sha256Value, PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN, payload).tagged
+
+
 __all__ = [
     "PROVIDER_BUDGET_TRANSLATION_DOMAIN",
     "PROVIDER_EGRESS_OBSERVATION_DOMAIN",
+    "PROVIDER_EXTERNAL_OCCURRENCE_PLAN_DOMAIN",
     "PROVIDER_SECRET_BINDING_IDENTITY_DOMAIN",
     "ProviderBudgetTranslationV1",
     "ProviderEgressObservationV1",
+    "ProviderExternalOccurrencePlanV1",
     "ProviderSecretBindingIdentityV1",
     "ProviderSecretReferenceV1",
     "ProviderSecretResolutionPlanV1",
     "VerifiedProviderBindingV1",
     "provider_budget_translation_digest",
     "provider_egress_observation_digest",
+    "provider_external_occurrence_plan_digest",
     "provider_secret_binding_identity_digest",
 ]

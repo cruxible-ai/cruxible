@@ -12,6 +12,9 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.canonical import Sha256Value, normalize_canonical, typed_digest
 from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
+from cruxible_client.contracts.provider_execution import (
+    ProviderExternalOccurrencePlanV1,
+)
 from cruxible_client.contracts.temporal import ensure_utc
 
 ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
@@ -622,6 +625,88 @@ def procedure_selection_decision_digest(decision: ProcedureSelectionDecisionV1) 
     ).tagged
 
 
+class ProcedureAcquisitionPlanV2(_StrictResultModel):
+    """Digest-composed, result-free external acquisition plan for one Line run."""
+
+    tag: Literal["playbill-procedure-acquisition-plan-v2"] = (
+        "playbill-procedure-acquisition-plan-v2"
+    )
+    stage: Literal["complete"] = "complete"
+    accepted_coordinate: AcceptedCoordinate
+    line_identity: ArtifactIdentity
+    line_spec_digest: str
+    occurrence_id: str
+    occurrence_evaluation_time: datetime
+    acquisition_policy_format: str
+    acquisition_policy_digest: str
+    selection_receipt_digest: str | None = None
+    selection_decision: ProcedureSelectionDecisionV1
+    selection_decision_digest: str
+    has_exhaust_occurrences: bool = False
+    exhaust_access_binding_digest: str | None = None
+    external_occurrences: tuple[ProviderExternalOccurrencePlanV1, ...] = ()
+
+    _digests = field_validator(
+        "line_spec_digest",
+        "acquisition_policy_digest",
+        "selection_receipt_digest",
+        "selection_decision_digest",
+        "exhaust_access_binding_digest",
+    )(_digest)
+
+    @field_validator("occurrence_evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @field_validator("external_occurrences")
+    @classmethod
+    def _occurrences(
+        cls,
+        value: tuple[ProviderExternalOccurrencePlanV1, ...],
+    ) -> tuple[ProviderExternalOccurrencePlanV1, ...]:
+        paths = tuple(item.occurrence_path for item in value)
+        if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("external occurrence plans must be path-sorted and unique")
+        return value
+
+    @model_validator(mode="after")
+    def _correspondence(self) -> ProcedureAcquisitionPlanV2:
+        if self.line_identity.kind != "Line":
+            raise ValueError("acquisition plan requires a Line identity")
+        if self.selection_decision.policy_digest != self.acquisition_policy_digest:
+            raise ValueError("acquisition plan selection names another policy")
+        if self.selection_decision_digest != procedure_selection_decision_digest(
+            self.selection_decision
+        ):
+            raise ValueError("acquisition plan selection digest does not reproduce")
+        if self.has_exhaust_occurrences != (self.exhaust_access_binding_digest is not None):
+            raise ValueError(
+                "exhaust_binding_carrier_required: Exhaust presence and binding digest disagree"
+            )
+        return self
+
+
+PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN = "playbill-procedure-acquisition-plan-v2"
+
+
+def procedure_acquisition_plan_digest(plan: ProcedureAcquisitionPlanV2) -> str:
+    payload = plan.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(Sha256Value, PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN, payload).tagged
+
+
+class ProcedureSourceCaptureAssociationV1(_StrictResultModel):
+    tag: Literal["playbill-procedure-source-capture-association-v1"] = (
+        "playbill-procedure-source-capture-association-v1"
+    )
+    occurrence_path: str
+    invocation_receipt_digest: str
+    capture_digest: str
+
+    _digests = field_validator("invocation_receipt_digest", "capture_digest")(_digest)
+
+
 class ProcedureRunBudgetDeclaredV2(_StrictResultModel):
     tag: Literal["playbill-procedure-run-budget-declared-v2"] = (
         "playbill-procedure-run-budget-declared-v2"
@@ -776,13 +861,49 @@ class ProcedureRunReceiptV5(ProcedureRunReceiptV4):
         return value
 
 
+class ProcedureRunReceiptV6(ProcedureRunReceiptV5):
+    """Receipt successor exposing the complete B2 plan and durable call evidence."""
+
+    tag: Literal["playbill-procedure-run-receipt-v6"] = "playbill-procedure-run-receipt-v6"  # type: ignore[assignment]
+    acquisition_plan_digest: str
+    exhaust_access_binding_digest: str | None = None
+    invocation_receipt_digests: tuple[str, ...] = ()
+    source_capture_associations: tuple[ProcedureSourceCaptureAssociationV1, ...] = ()
+
+    _v6_digests = field_validator("acquisition_plan_digest", "exhaust_access_binding_digest")(
+        _digest
+    )
+
+    @field_validator("invocation_receipt_digests")
+    @classmethod
+    def _invocation_receipts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("invocation receipt digests must be unique in durable order")
+        for item in value:
+            _digest(item)
+        return value
+
+    @field_validator("source_capture_associations")
+    @classmethod
+    def _source_associations(
+        cls,
+        value: tuple[ProcedureSourceCaptureAssociationV1, ...],
+    ) -> tuple[ProcedureSourceCaptureAssociationV1, ...]:
+        paths = tuple(item.occurrence_path for item in value)
+        if paths != tuple(sorted(set(paths), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("Source Capture associations must be path-sorted and unique")
+        return value
+
+
 __all__ = [
     "PROCEDURE_ADMISSION_MATERIAL_DOMAIN",
+    "PROCEDURE_ACQUISITION_PLAN_V2_DOMAIN",
     "PROCEDURE_SELECTION_DECISION_DOMAIN",
     "ProcedureAdmissionMaterialManifestV1",
     "ProcedureAdmissionMaterialMemberV1",
     "ProcedureAdmissionRefusalCodeV1",
     "ProcedureAdmissionRefusalV1",
+    "ProcedureAcquisitionPlanV2",
     "ProcedureBudgetBoundaryObservationV1",
     "ProcedureBudgetExceededDetailV1",
     "ProcedureBudgetExhaustedV1",
@@ -811,8 +932,11 @@ __all__ = [
     "ProcedureRunReceiptV3",
     "ProcedureRunReceiptV4",
     "ProcedureRunReceiptV5",
+    "ProcedureRunReceiptV6",
+    "ProcedureSourceCaptureAssociationV1",
     "ProcedureSelectionDecisionV1",
     "ProcedureTerminalV1",
     "procedure_admission_material_digest",
+    "procedure_acquisition_plan_digest",
     "procedure_selection_decision_digest",
 ]

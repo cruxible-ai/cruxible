@@ -208,12 +208,14 @@ def translate_provider_budget(
         raise ProviderLocalRuntimeRefused(
             "budget_output_size", "Capture-producing provider has a zero-byte output budget"
         )
-    hard_output_cap = hard_caps.max_capture_bytes
-    if hard_output_cap < 1:
+    hard_output_cap = hard_caps.max_capture_bytes if produces_capture else None
+    if produces_capture and hard_output_cap == 0:
         raise ProviderLocalRuntimeRefused(
             "budget_output_size", "Procedure hard cap allows no provider output bytes"
         )
-    candidates = [hard_output_cap, runtime_policy.provider_output_bytes_cap]
+    candidates = [runtime_policy.provider_output_bytes_cap]
+    if hard_output_cap is not None:
+        candidates.append(hard_output_cap)
     if procedure_output_cap is not None:
         candidates.append(procedure_output_cap)
     return ProviderBudgetTranslationV1(
