@@ -618,6 +618,11 @@ class ProcedureSelectionDecisionV1(_StrictResultModel):
 
 
 class ProcedureAdmissionMaterialMemberV1(_StrictResultModel):
+    """One admission-material retention decision.
+
+    ``retain_until`` reads VALIDITY WINDOW.
+    """
+
     tag: Literal["playbill-procedure-admission-material-member-v1"] = (
         "playbill-procedure-admission-material-member-v1"
     )
@@ -696,7 +701,11 @@ def procedure_selection_decision_digest(decision: ProcedureSelectionDecisionV1) 
 
 
 class ProcedureAcquisitionPlanV2(_StrictResultModel):
-    """Digest-composed, result-free external acquisition plan for one Line run."""
+    """Digest-composed, result-free external acquisition plan for one Line run.
+
+    ``accepted_coordinate.generation`` reads SETTLEMENT ORDER.
+    ``occurrence_evaluation_time`` reads EVALUATION INSTANT.
+    """
 
     tag: Literal["playbill-procedure-acquisition-plan-v2"] = (
         "playbill-procedure-acquisition-plan-v2"
@@ -932,7 +941,16 @@ class ProcedureRunReceiptV5(ProcedureRunReceiptV4):
 
 
 class ProcedureRunReceiptV6(ProcedureRunReceiptV5):
-    """Receipt successor exposing the complete B2 plan and durable call evidence."""
+    """Receipt successor exposing the complete B2 plan and durable call evidence.
+
+    The inherited ``bound_coordinate.generation`` and
+    ``head_at_admission.generation`` fields and the inherited
+    ``first_sequence``/``last_sequence`` journal range read SETTLEMENT ORDER.
+    The inherited ``evaluation_time``, ``occurrence_evaluation_time``, and
+    ``attribution.recorded_time`` fields read EVALUATION INSTANT.  Every nested
+    ``admission_material_manifest.members[].retain_until`` and Provider budget
+    or duration field reads VALIDITY WINDOW.
+    """
 
     tag: Literal["playbill-procedure-run-receipt-v6"] = "playbill-procedure-run-receipt-v6"  # type: ignore[assignment]
     acquisition_plan_digest: str

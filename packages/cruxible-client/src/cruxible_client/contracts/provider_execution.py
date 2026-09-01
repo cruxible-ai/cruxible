@@ -131,6 +131,13 @@ class ProviderSecretResolutionPlanV1(_StrictProviderExecutionModel):
 
 
 class ProviderBudgetTranslationV1(_StrictProviderExecutionModel):
+    """Provider budget window selected at admission.
+
+    ``remaining_wall_clock_microseconds``, ``procedure_wall_clock_microseconds``,
+    ``hard_cap_wall_clock_microseconds``, and ``runtime_wall_clock_seconds`` all
+    read VALIDITY WINDOW.
+    """
+
     tag: Literal["playbill-provider-budget-translation-v1"] = (
         "playbill-provider-budget-translation-v1"
     )
@@ -400,6 +407,13 @@ def provider_invocation_outcome_digest(outcome: ProviderInvocationOutcomeV1) -> 
 
 
 class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
+    """Durable evidence for one Provider call.
+
+    ``duration_microseconds`` reads VALIDITY WINDOW.  The call's start and
+    completion instants are carried by the enclosing journal records, whose
+    ``recorded_at`` fields read EVALUATION INSTANT.
+    """
+
     tag: Literal["playbill-provider-invocation-receipt-v1"] = (
         "playbill-provider-invocation-receipt-v1"
     )
@@ -459,6 +473,8 @@ def provider_invocation_receipt_digest(receipt: ProviderInvocationReceiptV1) -> 
 
 
 class ProviderInvocationStartedV1(_StrictProviderExecutionModel):
+    """Provider-start payload whose journal ``recorded_at`` reads EVALUATION INSTANT."""
+
     tag: Literal["playbill-provider-invocation-started-v1"] = (
         "playbill-provider-invocation-started-v1"
     )
@@ -474,6 +490,8 @@ class ProviderInvocationStartedV1(_StrictProviderExecutionModel):
 
 
 class ProviderInvocationCompletedV1(_StrictProviderExecutionModel):
+    """Provider-completion payload whose journal ``recorded_at`` reads EVALUATION INSTANT."""
+
     tag: Literal["playbill-provider-invocation-completed-v1"] = (
         "playbill-provider-invocation-completed-v1"
     )

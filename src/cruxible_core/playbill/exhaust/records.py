@@ -336,7 +336,12 @@ def verify_journal_head_manifest(
 
 
 class ProcedureJournalRecordDraftV1(_StrictJournalModel):
-    """Packing-free Procedure exhaust content before chain coordinates are assigned."""
+    """Packing-free Procedure exhaust content before chain coordinates are assigned.
+
+    ``accepted_coordinate.generation`` reads SETTLEMENT ORDER and
+    ``recorded_at`` reads EVALUATION INSTANT.  This declaration also governs B2
+    Provider invocation-start and invocation-completion draft records.
+    """
 
     tag: Literal["playbill-procedure-journal-record-draft-v1"] = (
         "playbill-procedure-journal-record-draft-v1"
@@ -406,7 +411,12 @@ class ProcedureJournalRecordDraftV1(_StrictJournalModel):
 
 
 class ProcedureJournalRecordV1(_StrictJournalModel):
-    """One immutable record whose digest commits the exact partition prefix."""
+    """One immutable record whose digest commits the exact partition prefix.
+
+    ``accepted_coordinate.generation`` and ``sequence`` read SETTLEMENT ORDER;
+    ``recorded_at`` reads EVALUATION INSTANT.  This declaration also governs B2
+    Provider invocation-start and invocation-completion records.
+    """
 
     tag: Literal["playbill-procedure-journal-record-v1"] = "playbill-procedure-journal-record-v1"
     stream: JournalStreamIdentityV1

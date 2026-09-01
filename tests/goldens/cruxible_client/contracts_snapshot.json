@@ -16224,6 +16224,9 @@
                 "$ref": "#/$defs/ProcedureRunReceiptV5"
               },
               {
+                "$ref": "#/$defs/ProcedureRunReceiptV6"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -16637,6 +16640,7 @@
           },
           "ProcedureAdmissionMaterialMemberV1": {
             "additionalProperties": false,
+            "description": "One admission-material retention decision.\n\n``retain_until`` reads VALIDITY WINDOW.",
             "properties": {
               "body_digest": {
                 "anyOf": [
@@ -16734,7 +16738,6 @@
                 "enum": [
                   "binding_required",
                   "unsupported_node",
-                  "effectful_unsupported",
                   "not_current",
                   "artifact_binding_mismatch",
                   "pin_binding_mismatch",
@@ -16743,7 +16746,10 @@
                   "replay_material_mismatch",
                   "procedure_runtime_policy_absent",
                   "provider_explicit_implementation_required",
-                  "provider_replay_receipt_required"
+                  "provider_replay_receipt_required",
+                  "classifier_not_installed",
+                  "classifier_digest_mismatch",
+                  "exhaust_binding_carrier_required"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -17131,7 +17137,37 @@
                   "unexpected_exception",
                   "journal_integrity_error",
                   "run_record_invalid",
-                  "compiler_invariant_broken"
+                  "compiler_invariant_broken",
+                  "provider_refusal_taxonomy_unknown",
+                  "unknown_manifest_field",
+                  "manifest_divergence",
+                  "acceptance_divergence",
+                  "unaccepted_provider",
+                  "undeclared_interface",
+                  "ambiguous_implementation",
+                  "unknown_interface",
+                  "interface_digest_mismatch",
+                  "bucket_fixture_missing",
+                  "invalid_bucket_vocabulary",
+                  "unknown_run_context_field",
+                  "provider_protocol_violation",
+                  "lock_mismatch",
+                  "lock_bytes_mismatch",
+                  "lock_missing_hash",
+                  "lock_ambiguous_fork",
+                  "index_not_pinned",
+                  "index_redirect",
+                  "artifact_hash_mismatch",
+                  "cache_integrity",
+                  "environment_divergence",
+                  "undeclared_egress",
+                  "secret_leak",
+                  "non_finite_output",
+                  "non_finite_result",
+                  "image_provenance_mismatch",
+                  "provider_runtime_not_in_materialization",
+                  "provider_process_lease_invalid",
+                  "provider_process_lease_missing"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -17271,7 +17307,32 @@
                   "terminal_rung_capped_by_line_requested_rung",
                   "terminal_rung_capped_by_propagated_sensitivity",
                   "terminal_rung_capped_by_mandate_grant",
-                  "terminal_rung_capped_by_calibration"
+                  "terminal_rung_capped_by_calibration",
+                  "provider_acquisition_plan_required",
+                  "provider_acquisition_plan_mismatch",
+                  "provider_effect_declaration_mismatch",
+                  "unknown_extra",
+                  "budget_wall_clock",
+                  "budget_output_size",
+                  "budget_cost",
+                  "provider_declined",
+                  "secret_bundle_too_large",
+                  "insufficient_series_length",
+                  "non_finite_input",
+                  "degenerate_scale",
+                  "mismatched_lengths",
+                  "unknown_method",
+                  "unknown_test_name",
+                  "declared_family_mismatch",
+                  "unsupported_aggregation",
+                  "unknown_column",
+                  "malformed_model_ref",
+                  "undeclared_match_parameters",
+                  "invalid_parameter",
+                  "cross_origin_credentialed_redirect",
+                  "unsupported_redirect_scheme",
+                  "redirect_limit",
+                  "provider_protocol_violation"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -17348,8 +17409,21 @@
                   "journal_read_failed",
                   "journal_conflict",
                   "run_recovery_required",
+                  "admission_material_unavailable_by_policy",
                   "replay_material_unavailable",
-                  "admission_material_corrupt"
+                  "admission_material_corrupt",
+                  "unsupported_protocol",
+                  "unsupported_backend",
+                  "no_compatible_artifact",
+                  "unresolvable_source",
+                  "air_gapped_cache_miss",
+                  "network_disabled",
+                  "cache_permissions",
+                  "unresolved_secret_ref",
+                  "secret_epoch_unavailable",
+                  "secret_resolver_not_installed",
+                  "provider_execution_error",
+                  "provider_completion_not_durable"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -18744,6 +18818,352 @@
             "title": "ProcedureRunReceiptV5",
             "type": "object"
           },
+          "ProcedureRunReceiptV6": {
+            "additionalProperties": false,
+            "description": "Receipt successor exposing the complete B2 plan and durable call evidence.\n\nThe inherited ``bound_coordinate.generation`` and\n``head_at_admission.generation`` fields and the inherited\n``first_sequence``/``last_sequence`` journal range read SETTLEMENT ORDER.\nThe inherited ``evaluation_time``, ``occurrence_evaluation_time``, and\n``attribution.recorded_time`` fields read EVALUATION INSTANT.  Every nested\n``admission_material_manifest.members[].retain_until`` and Provider budget\nor duration field reads VALIDITY WINDOW.",
+            "properties": {
+              "acquisition_plan_digest": {
+                "title": "Acquisition Plan Digest",
+                "type": "string"
+              },
+              "acquisition_policy_digest": {
+                "title": "Acquisition Policy Digest",
+                "type": "string"
+              },
+              "admission_binding_digest": {
+                "title": "Admission Binding Digest",
+                "type": "string"
+              },
+              "admission_material_manifest": {
+                "$ref": "#/$defs/ProcedureAdmissionMaterialManifestV1"
+              },
+              "admission_material_manifest_digest": {
+                "title": "Admission Material Manifest Digest",
+                "type": "string"
+              },
+              "admitted_inputs": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Admitted Inputs",
+                "type": "array"
+              },
+              "attribution": {
+                "$ref": "#/$defs/ProcedureRunAttributionV1"
+              },
+              "bound_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "budget": {
+                "$ref": "#/$defs/ProcedureRunBudgetV2"
+              },
+              "calibration_coordinate_digest": {
+                "title": "Calibration Coordinate Digest",
+                "type": "string"
+              },
+              "chain_head_digest": {
+                "title": "Chain Head Digest",
+                "type": "string"
+              },
+              "deployment_snapshot_digest": {
+                "title": "Deployment Snapshot Digest",
+                "type": "string"
+              },
+              "epsilon_member": {
+                "title": "Epsilon Member",
+                "type": "boolean"
+              },
+              "evaluation_time": {
+                "format": "date-time",
+                "title": "Evaluation Time",
+                "type": "string"
+              },
+              "exhaust_access_binding_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Exhaust Access Binding Digest"
+              },
+              "first_sequence": {
+                "minimum": 1,
+                "title": "First Sequence",
+                "type": "integer"
+              },
+              "head_at_admission": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "invocation_origin": {
+                "const": "line",
+                "default": "line",
+                "title": "Invocation Origin",
+                "type": "string"
+              },
+              "invocation_receipt_digests": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Invocation Receipt Digests",
+                "type": "array"
+              },
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "lane": {
+                "enum": [
+                  "current",
+                  "replay"
+                ],
+                "title": "Lane",
+                "type": "string"
+              },
+              "last_sequence": {
+                "minimum": 1,
+                "title": "Last Sequence",
+                "type": "integer"
+              },
+              "line_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "line_spec_digest": {
+                "title": "Line Spec Digest",
+                "type": "string"
+              },
+              "mandate_coordinate_digest": {
+                "title": "Mandate Coordinate Digest",
+                "type": "string"
+              },
+              "node_pin_sets": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureRunNodePinSetV1"
+                },
+                "title": "Node Pin Sets",
+                "type": "array"
+              },
+              "occurrence_evaluation_time": {
+                "format": "date-time",
+                "title": "Occurrence Evaluation Time",
+                "type": "string"
+              },
+              "occurrence_id": {
+                "title": "Occurrence Id",
+                "type": "string"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "pin_set_digest": {
+                "title": "Pin Set Digest",
+                "type": "string"
+              },
+              "record_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Record Digests",
+                "type": "array"
+              },
+              "replay_input_vector": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureReplayInputProjectionV1"
+                },
+                "title": "Replay Input Vector",
+                "type": "array"
+              },
+              "resolved_provider_bindings": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureProviderBindingV2"
+                },
+                "title": "Resolved Provider Bindings",
+                "type": "array"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "selection_decision": {
+                "$ref": "#/$defs/ProcedureSelectionDecisionV1"
+              },
+              "selection_decision_digest": {
+                "title": "Selection Decision Digest",
+                "type": "string"
+              },
+              "selection_receipt_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Selection Receipt Digest"
+              },
+              "semantic_replay_key_digest": {
+                "title": "Semantic Replay Key Digest",
+                "type": "string"
+              },
+              "semantic_result_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Semantic Result Digest"
+              },
+              "sensitivity_policy_digest": {
+                "title": "Sensitivity Policy Digest",
+                "type": "string"
+              },
+              "source_capture_associations": {
+                "default": [],
+                "items": {
+                  "$ref": "#/$defs/ProcedureSourceCaptureAssociationV1"
+                },
+                "title": "Source Capture Associations",
+                "type": "array"
+              },
+              "status": {
+                "enum": [
+                  "succeeded",
+                  "node_refused",
+                  "operational_failed",
+                  "internal_failed",
+                  "halted"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-receipt-v6",
+                "default": "playbill-procedure-run-receipt-v6",
+                "title": "Tag",
+                "type": "string"
+              },
+              "taint_labels": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Taint Labels",
+                "type": "array"
+              },
+              "terminal": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusalV1",
+                        "playbill-procedure-budget-exhausted-v1": "#/$defs/ProcedureBudgetExhaustedV1",
+                        "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
+                        "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
+                        "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                      },
+                      "propertyName": "tag"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/ProcedureAdmissionRefusalV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureNodeRefusalV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureOperationalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureInternalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureHaltTerminalV1"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Terminal"
+              },
+              "validated_pins": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Validated Pins",
+                "type": "array"
+              }
+            },
+            "required": [
+              "run_id",
+              "admission_binding_digest",
+              "semantic_replay_key_digest",
+              "semantic_result_digest",
+              "bound_coordinate",
+              "head_at_admission",
+              "lane",
+              "evaluation_time",
+              "validated_pins",
+              "admitted_inputs",
+              "attribution",
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "first_sequence",
+              "last_sequence",
+              "record_digests",
+              "chain_head_digest",
+              "status",
+              "terminal",
+              "budget",
+              "line_identity",
+              "line_spec_digest",
+              "occurrence_id",
+              "occurrence_evaluation_time",
+              "node_pin_sets",
+              "pin_set_digest",
+              "replay_input_vector",
+              "deployment_snapshot_digest",
+              "acquisition_policy_digest",
+              "selection_receipt_digest",
+              "selection_decision",
+              "selection_decision_digest",
+              "resolved_provider_bindings",
+              "sensitivity_policy_digest",
+              "mandate_coordinate_digest",
+              "calibration_coordinate_digest",
+              "taint_labels",
+              "epsilon_member",
+              "admission_material_manifest",
+              "admission_material_manifest_digest",
+              "acquisition_plan_digest"
+            ],
+            "title": "ProcedureRunReceiptV6",
+            "type": "object"
+          },
           "ProcedureSelectionDecisionV1": {
             "additionalProperties": false,
             "properties": {
@@ -18791,6 +19211,36 @@
               "decisions"
             ],
             "title": "ProcedureSelectionDecisionV1",
+            "type": "object"
+          },
+          "ProcedureSourceCaptureAssociationV1": {
+            "additionalProperties": false,
+            "properties": {
+              "capture_digest": {
+                "title": "Capture Digest",
+                "type": "string"
+              },
+              "invocation_receipt_digest": {
+                "title": "Invocation Receipt Digest",
+                "type": "string"
+              },
+              "occurrence_path": {
+                "title": "Occurrence Path",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-source-capture-association-v1",
+                "default": "playbill-procedure-source-capture-association-v1",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "occurrence_path",
+              "invocation_receipt_digest",
+              "capture_digest"
+            ],
+            "title": "ProcedureSourceCaptureAssociationV1",
             "type": "object"
           },
           "ProviderBucketClassificationPlanV1": {
@@ -18916,6 +19366,9 @@
               },
               {
                 "$ref": "#/$defs/ProcedureRunReceiptV5"
+              },
+              {
+                "$ref": "#/$defs/ProcedureRunReceiptV6"
               },
               {
                 "type": "null"

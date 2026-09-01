@@ -85,6 +85,8 @@ class BoundLocalProviderV1:
 
 @dataclass(frozen=True)
 class ProviderDriverOutcomeV1:
+    """Local result whose ``duration_seconds`` reads VALIDITY WINDOW."""
+
     envelope: ProviderRuntimeResultEnvelopeV1
     stderr: str
     duration_seconds: float
@@ -552,6 +554,8 @@ class LocalProviderExecutionDriver:
 
 @dataclass(frozen=True)
 class _ProcessOutcome:
+    """Child-process result whose ``duration_seconds`` reads VALIDITY WINDOW."""
+
     stdout: bytes
     stderr: bytes
     duration_seconds: float
@@ -605,6 +609,8 @@ def _run_child(
     invocation_id: str | None = None,
     process_leases: ProviderProcessLeaseStore | None = None,
 ) -> _ProcessOutcome:
+    """Run one child; ``started``/``deadline``/elapsed duration read VALIDITY WINDOW."""
+
     if (invocation_id is None) != (process_leases is None):
         raise ProviderLocalRuntimeRefused(
             "provider_process_lease_invalid",

@@ -553,7 +553,13 @@ class ProcedureRunAdmissionV4(ProcedureRunAdmissionV3):
 
 
 class ProcedureRunAdmissionV5(ProcedureRunAdmissionV4):
-    """Line admission successor binding the complete B2 acquisition plan."""
+    """Line admission successor binding the complete B2 acquisition plan.
+
+    The inherited ``accepted_coordinate.generation``,
+    ``bound_coordinate.generation``, and ``head_at_admission.generation`` fields
+    read SETTLEMENT ORDER.  The inherited ``admitted_at`` and
+    ``occurrence_evaluation_time`` fields read EVALUATION INSTANT.
+    """
 
     tag: Literal["playbill-procedure-run-admission-v5"] = "playbill-procedure-run-admission-v5"  # type: ignore[assignment]
     acquisition_plan_digest: str
@@ -676,6 +682,13 @@ class PreparedProcedureRunV4(PreparedProcedureRunV3):
 
 
 class PreparedProcedureRunV5(PreparedProcedureRunV4):
+    """Prepared B2 run carrying admission and acquisition-plan clock declarations.
+
+    Nested coordinate generations read SETTLEMENT ORDER; nested ``admitted_at``
+    and ``occurrence_evaluation_time`` read EVALUATION INSTANT; nested retention
+    deadlines and Provider budget windows read VALIDITY WINDOW.
+    """
+
     tag: Literal["playbill-prepared-procedure-run-v5"] = "playbill-prepared-procedure-run-v5"  # type: ignore[assignment]
     admission: ProcedureRunAdmissionV5
     acquisition_plan: ProcedureAcquisitionPlanV2
@@ -784,6 +797,13 @@ class ProcedureAdmissionBoundPayloadV4(ProcedureAdmissionBoundPayloadV3):
 
 
 class ProcedureAdmissionBoundPayloadV5(ProcedureAdmissionBoundPayloadV4):
+    """Durable B2 admission carrier preserving its nested clock declarations.
+
+    Nested coordinate generations read SETTLEMENT ORDER; nested ``admitted_at``
+    and ``occurrence_evaluation_time`` read EVALUATION INSTANT; nested retention
+    deadlines and Provider budget windows read VALIDITY WINDOW.
+    """
+
     tag: Literal["playbill-procedure-admission-bound-payload-v5"] = (
         "playbill-procedure-admission-bound-payload-v5"  # type: ignore[assignment]
     )

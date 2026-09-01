@@ -178,6 +178,8 @@ class ProviderRuntimeProtocolVersionV1(_StrictRuntimeModel):
 
 
 class ProviderRuntimeBudgetsV1(_StrictRuntimeModel):
+    """Child-process budgets whose ``wall_clock_seconds`` reads VALIDITY WINDOW."""
+
     wall_clock_seconds: float
     output_bytes: int
     cost_units: float | None = None

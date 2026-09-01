@@ -43,6 +43,7 @@ from cruxible_client.contracts.laws import (
 from cruxible_core.playbill.compiler import (
     P2_B0_COMPILER,
     P2_B1_COMPILER,
+    P2_B2_COMPILER,
     P2_C_COMPILER,
     PC_DF2_COMPILER,
     PC_E1_COMPILER,
@@ -349,3 +350,16 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         "sha256:b8865b17412aa7d8606e44ee7d713858dbac9a4845e7b953e0e6a6800fb8735d"
     )
     assert PC_DF2_COMPILER.rule_digest == pc_df2_expected
+    p2_b2_expected = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "projection_content": "claims-procedures-runtime-v1",
+            "schema_version": 1,
+            "semantic_revision": 16,
+        },
+    )
+    assert p2_b2_expected == (
+        "sha256:dbe2bd6c03327a15e49712acd40c5cc6528e9b135374793c513519c83c687648"
+    )
+    assert P2_B2_COMPILER.rule_digest == p2_b2_expected

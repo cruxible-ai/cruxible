@@ -21,6 +21,8 @@ from cruxible_client.contracts.projection_extensions import fixture_extension_re
 from cruxible_client.contracts.subjects import SubjectShell, parse_subject, render_subject
 from cruxible_core.playbill.compiler import (
     P2_B0_COMPILER,
+    P2_B2_COMPILER,
+    PC_DF2_COMPILER,
     PC_HR_ARTIFACT_CODEC_COMPILERS,
     SUPPORTED_COMPILERS,
     artifact_kinds_for_compiler,
@@ -113,6 +115,7 @@ def test_pc_hr_codec_succeeds_without_changing_the_p2_b0_verifier() -> None:
 def test_current_codec_lineage_is_closed_over_installed_compilers() -> None:
     assert PC_HR_ARTIFACT_CODEC_COMPILERS <= set(SUPPORTED_COMPILERS)
     assert current_compiler_coordinate() in PC_HR_ARTIFACT_CODEC_COMPILERS
+    assert {PC_DF2_COMPILER, P2_B2_COMPILER} <= PC_HR_ARTIFACT_CODEC_COMPILERS
     assert P2_B0_COMPILER not in PC_HR_ARTIFACT_CODEC_COMPILERS
 
 
@@ -216,7 +219,7 @@ def test_historical_claim_type_path_error_names_the_historical_spelling() -> Non
         )
 
 
-def test_p2_c_reserves_every_current_artifact_tag() -> None:
+def test_p2_b2_reserves_every_current_artifact_tag() -> None:
     assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == (
         "playbill-accepted-state-run-input-v1",
         "playbill-approval-policy-v1",
@@ -231,7 +234,10 @@ def test_p2_c_reserves_every_current_artifact_tag() -> None:
         "playbill-line-v1",
         "playbill-line-v2",
         "playbill-prepared-procedure-run-v4",
+        "playbill-prepared-procedure-run-v5",
+        "playbill-procedure-acquisition-plan-v2",
         "playbill-procedure-admission-bound-payload-v4",
+        "playbill-procedure-admission-bound-payload-v5",
         "playbill-procedure-calibration-cohort-membership-witness-v1",
         "playbill-procedure-calibration-cohort-v1",
         "playbill-procedure-calibration-reading-artifact-v1",
@@ -246,25 +252,39 @@ def test_p2_c_reserves_every_current_artifact_tag() -> None:
         "playbill-procedure-provider-binding-v2",
         "playbill-procedure-resolution-v2",
         "playbill-procedure-run-admission-v4",
+        "playbill-procedure-run-admission-v5",
         "playbill-procedure-run-receipt-v5",
+        "playbill-procedure-run-receipt-v6",
         "playbill-procedure-runtime-policy-v1",
+        "playbill-procedure-source-capture-association-v1",
         "playbill-procedure-v1",
         "playbill-procedure-v2",
         "playbill-provider-bucket-classification-plan-v1",
         "playbill-provider-bucket-classifier-installation-v1",
         "playbill-provider-bucket-conformance-fixture-proof-v1",
         "playbill-provider-bucket-conformance-fixture-v1",
+        "playbill-provider-budget-translation-v1",
         "playbill-provider-container-materialization-reference-v1",
+        "playbill-provider-egress-observation-v1",
+        "playbill-provider-external-occurrence-plan-v1",
         "playbill-provider-extras-environment-pin-map-v1",
         "playbill-provider-implementation-closure-v1",
         "playbill-provider-implementation-v1",
         "playbill-provider-interface-v1",
+        "playbill-provider-invocation-completed-v1",
+        "playbill-provider-invocation-outcome-v1",
+        "playbill-provider-invocation-receipt-v1",
+        "playbill-provider-invocation-started-v1",
         "playbill-provider-local-materialization-reference-v1",
+        "playbill-provider-secret-binding-identity-v1",
+        "playbill-provider-secret-reference-v1",
+        "playbill-provider-secret-resolution-plan-v1",
         "playbill-provider-v1",
         "playbill-provider-v2",
         "playbill-query-definition-v1",
         "playbill-resolution-claim-endpoint-v1",
         "playbill-resolution-contract-activation-v2",
+        "playbill-run-material-reservation-v2",
         "playbill-settled-outcome-history-v1",
         "playbill-settled-outcome-relation-v1",
         "playbill-settled-outcome-row-v1",
@@ -274,6 +294,7 @@ def test_p2_c_reserves_every_current_artifact_tag() -> None:
         "playbill-settled-outcomes-query-result-v1",
         "playbill-source-acquisition-policy-v1",
         "playbill-standing-mandate-v1",
+        "playbill-verified-provider-binding-v1",
     )
     assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == ()
     # Calibration readings are compute-produced, CAS-pinned artifacts. Registering a

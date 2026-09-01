@@ -19,6 +19,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
     ProcedureRunReceiptV5,
+    ProcedureRunReceiptV6,
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.workspace_advertisement import (
@@ -976,6 +977,7 @@ class PlaybillProcedureRunState(BaseModel):
         | ProcedureRunReceiptV3
         | ProcedureRunReceiptV4
         | ProcedureRunReceiptV5
+        | ProcedureRunReceiptV6
         | None
     ) = None
     receipt_digest: str | None = None

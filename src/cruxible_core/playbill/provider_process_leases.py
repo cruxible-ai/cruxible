@@ -18,6 +18,8 @@ from cruxible_client.contracts.errors import PlaybillExecutionError
 
 @dataclass(frozen=True)
 class ProviderProcessLeaseV1:
+    """Process fence whose acquisition and recovery deadlines read VALIDITY WINDOW."""
+
     invocation_id: str
     pid: int
     process_group_id: int
@@ -50,6 +52,8 @@ class ProviderProcessLeaseStore:
         *,
         timeout_seconds: float = 5.0,
     ) -> ProviderProcessLeaseV1:
+        """Wait within a VALIDITY WINDOW for the child-owned lease echo."""
+
         record_path, control_path = self.paths(invocation_id)
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
@@ -95,6 +99,8 @@ class ProviderProcessLeaseStore:
                 path.unlink()
 
     def recover_all(self) -> tuple[str, ...]:
+        """Kill fenced children within a VALIDITY WINDOW recovery deadline."""
+
         recovered: list[str] = []
         for record_path in sorted(self.root.glob("*.json"), key=lambda item: item.name.encode()):
             try:
