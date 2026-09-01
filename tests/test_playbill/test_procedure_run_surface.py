@@ -1038,7 +1038,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     assert halted.receipt.terminal == halted.terminal
 
 
-def test_unsupported_source_refuses_before_opening_a_journal(
+def test_graph_v3_source_live_and_receiptless_replay_refuse_before_journal(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1105,5 +1105,20 @@ def test_unsupported_source_refuses_before_opening_a_journal(
 
     assert result.status == "admission_refused"
     assert isinstance(result.terminal, ProcedureAdmissionRefusalV1)
-    assert result.terminal.code == "unsupported_node"
+    assert result.terminal.code == "provider_explicit_implementation_required"
+    assert result.terminal.details["legacy_external_occurrences"] == ["source"]
+    assert not journal_root.exists()
+
+    replay = service_run_playbill_procedure(
+        instance,
+        name=unsupported.identity.name,
+        request=ProcedureRunRequestV2(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            input={},
+        ),
+        actor_context=_actor(instance),
+    )
+    assert replay.status == "admission_refused"
+    assert isinstance(replay.terminal, ProcedureAdmissionRefusalV1)
+    assert replay.terminal.code == "provider_replay_receipt_required"
     assert not journal_root.exists()

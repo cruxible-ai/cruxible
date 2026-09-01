@@ -38,7 +38,9 @@ from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
 from cruxible_client.contracts.procedures.models import (
     ProcedureDefinitionV3,
     ProcedurePinSlotRefV1,
+    ProviderNodeV3,
     RepeatNodeV3,
+    SourceNodeV3,
     iter_pin_bindings,
 )
 from cruxible_client.contracts.procedures.results import (
@@ -54,6 +56,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureOperationalFailureV1,
     ProcedurePendingSuccessorV1,
     ProcedureProviderBindingV1,
+    ProcedureProviderBindingV2,
     ProcedureReplayInputProjectionV1,
     ProcedureRunAttributionV1,
     ProcedureRunBudgetDeclaredV2,
@@ -63,6 +66,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
+    ProcedureRunReceiptV5,
     ProcedureSelectionDecisionV1,
     ProcedureTerminalV1,
 )
@@ -87,11 +91,14 @@ from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RUN_RECEIPT_V2_DOMAIN,
     PROCEDURE_RUN_RECEIPT_V3_DOMAIN,
     PROCEDURE_RUN_RECEIPT_V4_DOMAIN,
+    PROCEDURE_RUN_RECEIPT_V5_DOMAIN,
     ProcedureAdmissionBoundPayloadV2,
     ProcedureAdmissionBoundPayloadV3,
+    ProcedureAdmissionBoundPayloadV4,
     ProcedureClockProtocol,
     ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV3,
+    ProcedureRunAdmissionV4,
     ProcedureRunReceiptV1,
     ProcedureRuntimePolicyAbsent,
     bind_line_admission_runtime_policy,
@@ -308,7 +315,13 @@ class ProcedureRunStateV2(_StrictProcedureSurfaceModel):
     attribution: ProcedureRunAttributionV1 | None = None
     semantic_replay_key_digest: str | None = None
     semantic_result_digest: str | None = None
-    receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | ProcedureRunReceiptV4 | None = None
+    receipt: (
+        ProcedureRunReceiptV2
+        | ProcedureRunReceiptV3
+        | ProcedureRunReceiptV4
+        | ProcedureRunReceiptV5
+        | None
+    ) = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
 
@@ -407,6 +420,23 @@ def _readiness(
         unsupported_nodes=unsupported,
         next_operation=operation,
     )
+
+
+def _graph_v3_external_occurrences(accepted: AcceptedProcedureV1) -> tuple[str, ...]:
+    definition = accepted.procedure.definition
+    if definition.graph_format != 3:
+        return ()
+    rows: list[str] = []
+    for node in definition.nodes:
+        if isinstance(node, SourceNodeV3 | ProviderNodeV3):
+            rows.append(node.node_id)
+        elif isinstance(node, RepeatNodeV3):
+            rows.extend(
+                f"{node.node_id}.{body.node_id}"
+                for body in node.body
+                if body.operation == "provider"
+            )
+    return tuple(rows)
 
 
 def service_playbill_procedure_readiness(
@@ -735,7 +765,9 @@ def _state_from_records(
         raise ProcedureRunNotFound(f"{ProcedureRunNotFound.code}: {run_id}")
     bodies = instance.body_store()
     access = BodyAccessContext(principal_id="procedure-runtime", can_read_body=True)
-    admission: ProcedureRunAdmissionV2 | ProcedureRunAdmissionV3 | None = None
+    admission: (
+        ProcedureRunAdmissionV2 | ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | None
+    ) = None
     admission_count = 0
     admission_material_manifest = None
     admission_material_manifest_digest: str | None = None
@@ -746,6 +778,13 @@ def _state_from_records(
         if stored.record.event_kind == "admission_bound":
             admission_count += 1
             if isinstance(payload, dict) and payload.get("tag") == (
+                "playbill-procedure-admission-bound-payload-v4"
+            ):
+                bound_v4 = ProcedureAdmissionBoundPayloadV4.model_validate(payload)
+                admission = bound_v4.admission
+                admission_material_manifest = bound_v4.admission_material_manifest
+                admission_material_manifest_digest = bound_v4.admission_material_manifest_digest
+            elif isinstance(payload, dict) and payload.get("tag") == (
                 "playbill-procedure-admission-bound-payload-v3"
             ):
                 bound = ProcedureAdmissionBoundPayloadV3.model_validate(payload)
@@ -941,9 +980,13 @@ def _state_from_records(
         request_id=admission.actor_context.request_id,
         recorded_time=admission.actor_context.timestamp,
     )
-    public_receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | ProcedureRunReceiptV4 | None = (
-        None
-    )
+    public_receipt: (
+        ProcedureRunReceiptV2
+        | ProcedureRunReceiptV3
+        | ProcedureRunReceiptV4
+        | ProcedureRunReceiptV5
+        | None
+    ) = None
     receipt_digest = None
     if final is not None:
         stream = records[0].record.stream
@@ -992,7 +1035,7 @@ def _state_from_records(
                     f"{ProcedureRunRecoveryRequired.code}: Line admission is incomplete"
                 )
             parsed_budget = ProcedureRunBudgetV1.model_validate(raw_budget_block)
-            public_receipt = ProcedureRunReceiptV4(
+            shared_line_fields = dict(
                 **{
                     **receipt_fields,
                     "admitted_inputs": tuple(
@@ -1032,10 +1075,6 @@ def _state_from_records(
                     admission.selection_decision.model_dump(mode="json")
                 ),
                 selection_decision_digest=admission.selection_decision_digest,
-                resolved_provider_bindings=tuple(
-                    ProcedureProviderBindingV1.model_validate(item.model_dump(mode="json"))
-                    for item in admission.resolved_provider_bindings
-                ),
                 sensitivity_policy_digest=cast(str, admission.sensitivity_policy_digest),
                 mandate_coordinate_digest=cast(str, admission.mandate_coordinate_digest),
                 calibration_coordinate_digest=cast(str, admission.calibration_coordinate_digest),
@@ -1057,7 +1096,27 @@ def _state_from_records(
                     observed=parsed_budget.observed,
                 ),
             )
-            receipt_domain = PROCEDURE_RUN_RECEIPT_V4_DOMAIN
+            if isinstance(admission, ProcedureRunAdmissionV4):
+                public_receipt = ProcedureRunReceiptV5(
+                    **shared_line_fields,
+                    resolved_provider_bindings=tuple(
+                        ProcedureProviderBindingV2.model_validate(item.model_dump(mode="json"))
+                        for item in admission.resolved_provider_bindings
+                    ),
+                )
+            else:
+                public_receipt = ProcedureRunReceiptV4(
+                    **shared_line_fields,
+                    resolved_provider_bindings=tuple(
+                        ProcedureProviderBindingV1.model_validate(item.model_dump(mode="json"))
+                        for item in admission.resolved_provider_bindings
+                    ),
+                )
+            receipt_domain = (
+                PROCEDURE_RUN_RECEIPT_V5_DOMAIN
+                if isinstance(admission, ProcedureRunAdmissionV4)
+                else PROCEDURE_RUN_RECEIPT_V4_DOMAIN
+            )
         elif isinstance(raw_budget_block, dict):
             public_receipt = ProcedureRunReceiptV3(
                 **receipt_fields,
@@ -1151,6 +1210,23 @@ def service_run_playbill_procedure(
             ),
         )
     if readiness.state == "unsupported":
+        legacy_external = _graph_v3_external_occurrences(accepted)
+        refusal_code: Literal[
+            "unsupported_node",
+            "provider_explicit_implementation_required",
+            "provider_replay_receipt_required",
+        ] = "unsupported_node"
+        refusal_message = "Procedure contains node kinds unavailable on the served run lane."
+        if legacy_external:
+            refusal_code = (
+                "provider_replay_receipt_required"
+                if lane == "replay"
+                else "provider_explicit_implementation_required"
+            )
+            refusal_message = (
+                "Graph-v3 Source/Provider occurrences require explicit graph-v4 "
+                "implementation pins for live invocation."
+            )
         return ProcedureRunStateV2(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
@@ -1164,12 +1240,13 @@ def service_run_playbill_procedure(
             outcomes=(),
             next_operation=ProcedureNextOperationV1(kind="terminal"),
             terminal=ProcedureAdmissionRefusalV1(
-                code="unsupported_node",
-                message="Procedure contains node kinds unavailable on the served run lane.",
+                code=refusal_code,
+                message=refusal_message,
                 details={
                     "unsupported_nodes": [
                         item.model_dump(mode="json") for item in readiness.unsupported_nodes
-                    ]
+                    ],
+                    "legacy_external_occurrences": list(legacy_external),
                 },
             ),
         )
@@ -1232,9 +1309,9 @@ def service_get_playbill_procedure_run(
 def service_prepare_playbill_line_admission(
     instance: PlaybillInstance,
     *,
-    admission: ProcedureRunAdmissionV3,
+    admission: ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4,
     accepted_line: AcceptedLineSpecV1,
-) -> ProcedureRunAdmissionV3 | ProcedureAdmissionRefusalV1:
+) -> ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4 | ProcedureAdmissionRefusalV1:
     """Bind the accepted runtime policy into a Line admission before publication."""
 
     tree = instance.tree_at(admission.bound_coordinate.git_oid)

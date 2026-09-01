@@ -41,7 +41,7 @@ from cruxible_client.contracts.procedures.contracts import (
     ProcedureContractItemBudgetExceeded,
     ValidatedProcedureContract,
 )
-from cruxible_client.contracts.procedures.graph import analyze_procedure_v3
+from cruxible_client.contracts.procedures.graph import analyze_procedure_v3, analyze_procedure_v4
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
 from cruxible_client.contracts.procedures.models import (
     TERMINAL_REQUIRED_RUNGS,
@@ -73,6 +73,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureBudgetRefusalDetailV1,
     ProcedureNodeRefusalCodeV1,
     ProcedureProviderBindingV1,
+    ProcedureProviderBindingV2,
     ProcedureReplayInputProjectionV1,
     ProcedureRunBudgetDeclaredV1,
     ProcedureRunBudgetObservedV1,
@@ -163,7 +164,9 @@ PROCEDURE_SEMANTIC_REPLAY_KEY_DOMAIN = "playbill-procedure-semantic-replay-key-v
 PROCEDURE_SEMANTIC_RESULT_DOMAIN = "playbill-procedure-semantic-result-v1"
 PROCEDURE_ADMISSION_BINDING_V2_DOMAIN = "playbill-procedure-run-admission-v2"
 PROCEDURE_ADMISSION_BINDING_V3_DOMAIN = "playbill-procedure-run-admission-v3"
+PROCEDURE_ADMISSION_BINDING_V4_DOMAIN = "playbill-procedure-run-admission-v4"
 PROCEDURE_SEMANTIC_REPLAY_KEY_V3_DOMAIN = "playbill-procedure-semantic-replay-key-v3"
+PROCEDURE_SEMANTIC_REPLAY_KEY_V4_DOMAIN = "playbill-procedure-semantic-replay-key-v4"
 PROCEDURE_INPUT_PROVENANCE_DOMAIN = "playbill-procedure-replay-input-provenance-v1"
 PROCEDURE_LINE_RUN_ID_DOMAIN = "playbill-procedure-line-run-id-v1"
 PROCEDURE_LINE_PARTITION_DOMAIN = "playbill-line-journal-partition-v1"
@@ -171,6 +174,7 @@ PROCEDURE_RUN_ID_V2_DOMAIN = "playbill-procedure-run-id-v2"
 PROCEDURE_RUN_RECEIPT_V2_DOMAIN = "playbill-procedure-run-receipt-v2"
 PROCEDURE_RUN_RECEIPT_V3_DOMAIN = "playbill-procedure-run-receipt-v3"
 PROCEDURE_RUN_RECEIPT_V4_DOMAIN = "playbill-procedure-run-receipt-v4"
+PROCEDURE_RUN_RECEIPT_V5_DOMAIN = "playbill-procedure-run-receipt-v5"
 
 
 class _StrictExecutionModel(BaseModel):
@@ -494,6 +498,24 @@ class ProcedureRunAdmissionV3(ProcedureRunAdmissionV2):
         return self
 
 
+class ProcedureRunAdmissionV4(ProcedureRunAdmissionV3):
+    """Line admission successor carrying the complete Provider binding v2."""
+
+    tag: Literal["playbill-procedure-run-admission-v4"] = "playbill-procedure-run-admission-v4"  # type: ignore[assignment]
+    resolved_provider_bindings: tuple[ProcedureProviderBindingV2, ...]  # type: ignore[assignment]
+
+    @field_validator("resolved_provider_bindings")
+    @classmethod
+    def _provider_bindings_v2(
+        cls,
+        value: tuple[ProcedureProviderBindingV2, ...],
+    ) -> tuple[ProcedureProviderBindingV2, ...]:
+        node_ids = tuple(item.node_id for item in value)
+        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("resolved Provider v2 bindings must be sorted and node-id unique")
+        return value
+
+
 class LandedCaptureRunMaterialV1(_StrictExecutionModel):
     """One admitted landed Capture and the exact envelope its digest reproduces."""
 
@@ -587,6 +609,11 @@ class PreparedProcedureRunV3(PreparedProcedureRunV2):
         return self
 
 
+class PreparedProcedureRunV4(PreparedProcedureRunV3):
+    tag: Literal["playbill-prepared-procedure-run-v4"] = "playbill-prepared-procedure-run-v4"  # type: ignore[assignment]
+    admission: ProcedureRunAdmissionV4
+
+
 class ProcedureAdmissionBoundPayloadV2(_StrictExecutionModel):
     tag: Literal["playbill-procedure-admission-bound-payload-v2"] = (
         "playbill-procedure-admission-bound-payload-v2"
@@ -614,6 +641,13 @@ class ProcedureAdmissionBoundPayloadV3(_StrictExecutionModel):
             self.admission_material_manifest,
         )
         return self
+
+
+class ProcedureAdmissionBoundPayloadV4(ProcedureAdmissionBoundPayloadV3):
+    tag: Literal["playbill-procedure-admission-bound-payload-v4"] = (
+        "playbill-procedure-admission-bound-payload-v4"  # type: ignore[assignment]
+    )
+    admission: ProcedureRunAdmissionV4
 
 
 class ProcedureRunRefusalV1(_StrictExecutionModel):
@@ -1093,9 +1127,9 @@ def resolve_procedure_runtime_policy(
 
 
 def bind_line_admission_runtime_policy(
-    admission: ProcedureRunAdmissionV3,
+    admission: ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4,
     policy: ProcedureRuntimePolicyV1,
-) -> ProcedureRunAdmissionV3:
+) -> ProcedureRunAdmissionV3 | ProcedureRunAdmissionV4:
     """Derive the complete Line admission identity from its governed runtime cap."""
 
     provisional = admission.model_copy(
@@ -1117,7 +1151,12 @@ def bind_line_admission_runtime_policy(
         admission_binding_digest=admission_digest,
         occurrence_evaluation_time=provisional.occurrence_evaluation_time,
     )
-    return ProcedureRunAdmissionV3.model_validate(
+    admission_type = (
+        ProcedureRunAdmissionV4
+        if isinstance(admission, ProcedureRunAdmissionV4)
+        else ProcedureRunAdmissionV3
+    )
+    return admission_type.model_validate(
         {
             **provisional.model_dump(mode="python"),
             "run_id": run_id,
@@ -1127,6 +1166,40 @@ def bind_line_admission_runtime_policy(
 
 
 def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> str:
+    if isinstance(admission, ProcedureRunAdmissionV4):
+        pins = [pin.model_dump(mode="json") for pin in admission.full_pins]
+        pins.sort(key=canonical_bytes)
+        return typed_digest(
+            Sha256Value,
+            PROCEDURE_SEMANTIC_REPLAY_KEY_V4_DOMAIN,
+            {
+                "procedure_identity": admission.procedure_identity.model_dump(mode="json"),
+                "procedure_artifact_digest": admission.procedure_artifact_digest,
+                "invocation_input": admission.invocation_input,
+                "bound_coordinate": admission.bound_coordinate.model_dump(mode="json"),
+                "validated_pins": pins,
+                "node_pin_sets": [item.model_dump(mode="json") for item in admission.node_pin_sets],
+                "pin_set_digest": admission.pin_set_digest,
+                "replay_input_vector": [
+                    item.model_dump(mode="json")
+                    for item in procedure_replay_input_vector(admission)
+                ],
+                "budget": admission.budget.model_dump(mode="json"),
+                "hard_caps": admission.hard_caps.model_dump(mode="json"),
+                "acquisition_policy_digest": admission.acquisition_policy_digest,
+                "selection_decision": admission.selection_decision.model_dump(mode="json"),
+                "resolved_provider_bindings": [
+                    item.model_dump(mode="json") for item in admission.resolved_provider_bindings
+                ],
+                "mandate_coordinate_digest": admission.mandate_coordinate_digest,
+                "calibration_coordinate_digest": admission.calibration_coordinate_digest,
+                "sensitivity_policy_digest": admission.sensitivity_policy_digest,
+                "lane": admission.lane,
+                "taint_labels": list(admission.taint_labels),
+                "epsilon_member": admission.epsilon_member,
+                "provider_output_bytes_cap": admission.provider_output_bytes_cap,
+            },
+        ).tagged
     if isinstance(admission, ProcedureRunAdmissionV3):
         pins = [pin.model_dump(mode="json") for pin in admission.full_pins]
         pins.sort(key=canonical_bytes)
@@ -1200,6 +1273,12 @@ def procedure_semantic_replay_key_digest(admission: ProcedureRunAdmissionV2) -> 
 
 
 def procedure_admission_digest(admission: ProcedureRunAdmissionV1) -> str:
+    if isinstance(admission, ProcedureRunAdmissionV4):
+        return typed_digest(
+            ArtifactDigest,
+            PROCEDURE_ADMISSION_BINDING_V4_DOMAIN,
+            {"semantic_replay_key_digest": admission.semantic_replay_key_digest},
+        ).tagged
     if isinstance(admission, ProcedureRunAdmissionV3):
         return typed_digest(
             ArtifactDigest,
@@ -1665,7 +1744,16 @@ class ProcedureExecutor:
             records,
             "admission_bound",
             (
-                ProcedureAdmissionBoundPayloadV3(
+                ProcedureAdmissionBoundPayloadV4(
+                    admission=admission,
+                    admission_material_manifest=prepared.admission_material_manifest,
+                    admission_material_manifest_digest=(
+                        prepared.admission_material_manifest_digest
+                    ),
+                ).model_dump(mode="json")
+                if isinstance(admission, ProcedureRunAdmissionV4)
+                and isinstance(prepared, PreparedProcedureRunV4)
+                else ProcedureAdmissionBoundPayloadV3(
                     admission=admission,
                     admission_material_manifest=prepared.admission_material_manifest,
                     admission_material_manifest_digest=(
@@ -2112,7 +2200,11 @@ class ProcedureExecutor:
         started_ns: int,
     ) -> CanonicalValue:
         definition = accepted.procedure.definition
-        graph = analyze_procedure_v3(definition)
+        graph = (
+            analyze_procedure_v3(definition)
+            if definition.graph_format == 3
+            else analyze_procedure_v4(definition)
+        )
         nodes = {node.node_id: node for node in definition.nodes}
         current = definition.nodes[0].node_id
         while True:
@@ -4175,11 +4267,14 @@ __all__ = [
     "ExhaustRunMaterialV1",
     "LandedCaptureRunMaterialV1",
     "PreparedProcedureRunV1",
+    "PreparedProcedureRunV4",
+    "ProcedureAdmissionBoundPayloadV4",
     "ProcedureActivationAuthorityProtocol",
     "ProcedureClockProtocol",
     "ProcedureExecutor",
     "ProcedureNodePinSetV1",
     "ProcedureRunAdmissionV1",
+    "ProcedureRunAdmissionV4",
     "ProcedureRunReceiptV1",
     "ProcedureRunRefusalV1",
     "ProcedureRunResultV1",

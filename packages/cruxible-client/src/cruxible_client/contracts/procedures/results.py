@@ -25,6 +25,8 @@ ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "state_tap_refused",
     "replay_material_mismatch",
     "procedure_runtime_policy_absent",
+    "provider_explicit_implementation_required",
+    "provider_replay_receipt_required",
 ]
 ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "guard_refused",
@@ -47,6 +49,8 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "terminal_not_available",
     "terminal_egress_unverified",
     "provider_unavailable",
+    "unclassified_input",
+    "unclaimed_bucket",
     "playbill.acquisition.unavailable",
     "playbill.acquisition.stale",
     "playbill.acquisition.oversized",

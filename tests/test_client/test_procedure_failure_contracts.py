@@ -109,6 +109,8 @@ def test_node_refusal_vocabulary_covers_every_executor_code() -> None:
         "terminal_not_available",
         "terminal_egress_unverified",
         "provider_unavailable",
+        "unclassified_input",
+        "unclaimed_bucket",
         "playbill.acquisition.unavailable",
         "playbill.acquisition.stale",
         "playbill.acquisition.oversized",

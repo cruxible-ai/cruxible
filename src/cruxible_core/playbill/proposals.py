@@ -266,6 +266,9 @@ from cruxible_core.playbill.exhaust.promotions import (
 )
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.playbill.provider_classifiers import (
+    core_provider_bucket_conformance_fixtures,
+)
 from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 from cruxible_core.playbill.query.engine import (
     evaluate_claim_query,
@@ -1769,14 +1772,11 @@ def _provider_interface_member(context: _MemberContext) -> _MemberVerdict:
             registration=previous,
             artifact_digest=provider_interface_digest(previous).tagged,
         )
-    # V1 fixture authority is compiler-shipped. The implementation unit installs
-    # the catalog alongside the classifier registry; proposal evaluation receives
-    # the exact accepted proof bytes through this deterministic catalog helper.
     law = evaluate_provider_interface_law(
         registration,
         path=context.path,
         predecessor=predecessor,
-        conformance_fixtures={},
+        conformance_fixtures=core_provider_bucket_conformance_fixtures(),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -1793,6 +1793,8 @@ def _provider_interface_member(context: _MemberContext) -> _MemberVerdict:
         result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
         retired=registration.lifecycle.state == "retired",
     )
+
+
 def _acquisition_policy_member(context: _MemberContext) -> _MemberVerdict:
     policy = parse_acquisition_policy(context.content, path=context.path)
     predecessor: AcceptedSourceAcquisitionPolicyV1 | None = None
@@ -1921,8 +1923,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         capture_contracts=context.resolved.capture_contracts,
         capture_store=context.bodies,
         providers={
-            identity: accepted.provider
-            for identity, accepted in context.resolved.providers.items()
+            identity: accepted.provider for identity, accepted in context.resolved.providers.items()
         },
         law_digest=installed.coordinate.digest,
         instance_id=context.current.instance_id,
