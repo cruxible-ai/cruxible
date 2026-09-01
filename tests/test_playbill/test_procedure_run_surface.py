@@ -282,6 +282,8 @@ def test_explicit_historical_coordinate_obeys_live_activation_policy(tmp_path: P
         sequence=5,
         timestamp="2026-08-24T17:00:00.000000Z",
     )
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    assert not journal_root.exists()
 
     with pytest.raises(ProcedureRunNotCurrent, match="not current"):
         service_run_playbill_procedure(
@@ -293,6 +295,7 @@ def test_explicit_historical_coordinate_obeys_live_activation_policy(tmp_path: P
             ),
             actor_context=_actor(instance),
         )
+    assert not journal_root.exists()
 
 
 def test_explicit_at_equal_to_head_selects_live_lane(tmp_path: Path) -> None:
@@ -1215,7 +1218,19 @@ def test_graph_v4_bind_routes_only_through_line_closure(tmp_path: Path, monkeypa
     assert readiness.state == "unsupported"
     assert readiness.next_operation.kind == "terminal"
     assert readiness.required_slots == ("provider",)
+    assert readiness.unsupported_nodes[-1].node_id == "procedure"
     assert readiness.unsupported_nodes[-1].kind == "graph_v4_line_closure_required"
+
+    refused = service_run_playbill_procedure(
+        instance,
+        name=accepted.procedure.identity.name,
+        request=ProcedureRunRequestV2(input={}),
+        actor_context=_actor(instance),
+    )
+    assert isinstance(refused.terminal, ProcedureAdmissionRefusalV1)
+    assert refused.terminal.message == (
+        "Graph-v4 Provider slots require accepted Line closure before execution."
+    )
 
     with pytest.raises(
         ProcedureBindingGraphV4LineClosureRequired,

@@ -412,7 +412,7 @@ def _readiness(
     if slots and accepted.procedure.definition.graph_format == 4:
         unsupported_rows.append(
             ProcedureUnsupportedNodeV1(
-                node_id=accepted.procedure.identity.name,
+                node_id="procedure",
                 kind="graph_v4_line_closure_required",
             )
         )
@@ -1254,6 +1254,12 @@ def service_run_playbill_procedure(
                 "Graph-v3 Source/Provider occurrences require explicit graph-v4 "
                 "implementation pins for live invocation."
             )
+        elif any(
+            item.kind == "graph_v4_line_closure_required" for item in readiness.unsupported_nodes
+        ):
+            refusal_message = (
+                "Graph-v4 Provider slots require accepted Line closure before execution."
+            )
         return ProcedureRunStateV2(
             run_id=None,
             procedure_identity=accepted.procedure.identity,
@@ -1276,6 +1282,14 @@ def service_run_playbill_procedure(
                     "legacy_external_occurrences": list(legacy_external),
                 },
             ),
+        )
+    current_digest = _CurrentProcedureAuthority(instance).current_procedure_digest(
+        accepted.procedure.identity,
+        coordinate=AcceptedCoordinate.from_internal(coordinate),
+    )
+    if current_digest != accepted.artifact_digest:
+        raise ProcedureRunNotCurrent(
+            f"{ProcedureRunNotCurrent.code}: Procedure is not current before journal creation"
         )
     stream = _stream(instance)
     journal, root = _journal_for_write(instance)
