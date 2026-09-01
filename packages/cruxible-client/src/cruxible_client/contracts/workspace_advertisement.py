@@ -38,9 +38,7 @@ class PlaybillWorkspaceAdvertisement(BaseModel):
             self.workspace_path is not None or self.advertised_refs or self.failure_code is not None
         ):
             raise ValueError("not-attached workspace advertisement has an invalid result shape")
-        if self.status == "failed" and (
-            self.failure_code is None or self.advertised_refs
-        ):
+        if self.status == "failed" and (self.failure_code is None or self.advertised_refs):
             raise ValueError("failed workspace advertisement has an invalid result shape")
         return self
 
