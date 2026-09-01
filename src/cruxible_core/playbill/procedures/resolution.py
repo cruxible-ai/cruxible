@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Literal, Mapping
@@ -48,7 +49,10 @@ from cruxible_core.playbill.exhaust import (
 from cruxible_core.playbill.projection import AcceptedCoordinate
 
 ResolutionVerdictV1 = Literal["satisfied", "contradicted", "indeterminate"]
+ResolutionSettlementVerdictV2 = Literal["satisfied", "contradicted"]
 ResolutionDispositionVerdictV1 = Literal["upheld", "overturned"]
+
+_OUTCOME_CLASS_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 
 
 class _StrictResolutionModel(BaseModel):
@@ -97,6 +101,26 @@ class ResolutionSubjectV1(_StrictResolutionModel):
     @classmethod
     def _content_digest(cls, value: str) -> str:
         return _digest(value, label="resolution subject content_digest")
+
+
+class ResolutionClaimEndpointV1(_StrictResolutionModel):
+    """One exact accepted Claim statement used by a settlement relation."""
+
+    tag: Literal["playbill-resolution-claim-endpoint-v1"] = "playbill-resolution-claim-endpoint-v1"
+    statement_address: SemanticAddress
+    content_digest: str
+    accepted_coordinate: AcceptedCoordinate
+
+    @field_validator("content_digest")
+    @classmethod
+    def _content_digest(cls, value: str) -> str:
+        return _digest(value, label="resolution Claim endpoint content_digest")
+
+    @model_validator(mode="after")
+    def _claim_statement(self) -> "ResolutionClaimEndpointV1":
+        if self.statement_address.selector.scheme != "claim-statement-v1":
+            raise ValueError("resolution Claim endpoint must name an exact Claim statement")
+        return self
 
 
 class ResolutionContractActivationV1(_StrictResolutionModel):
@@ -214,12 +238,16 @@ def _validate_grain_fields(
 
 def resolution_contract_id(activation: ResolutionContractActivationV1) -> str:
     payload = activation.model_dump(mode="json")
-    payload.pop("tag", None)
+    tag = payload.pop("tag", None)
     payload.pop("contract_id", None)
     payload.pop("activation_id", None)
     digest = typed_digest(
         ArtifactDigest,
-        "playbill-resolution-contract-v1",
+        (
+            "playbill-resolution-contract-v2"
+            if tag == "playbill-resolution-contract-activation-v2"
+            else "playbill-resolution-contract-v1"
+        ),
         {"activation": payload},
     ).value
     return f"RSC-{digest[:32]}"
@@ -228,13 +256,57 @@ def resolution_contract_id(activation: ResolutionContractActivationV1) -> str:
 def resolution_activation_id(activation: ResolutionContractActivationV1) -> str:
     digest = typed_digest(
         ArtifactDigest,
-        "playbill-resolution-contract-activation-v1",
+        activation.tag,
         {
             "contract_id": activation.contract_id,
             "accepted_coordinate": activation.subject.accepted_coordinate.model_dump(mode="json"),
         },
     ).value
     return f"RSA-{digest[:32]}"
+
+
+def resolution_activation_digest(activation: ResolutionContractActivationV1) -> str:
+    """Commit one complete activation without changing either historical ID law."""
+
+    return typed_digest(
+        ArtifactDigest,
+        activation.tag,
+        {"activation": activation.model_dump(mode="json")},
+    ).tagged
+
+
+class ResolutionContractActivationV2(ResolutionContractActivationV1):
+    """Activation successor committing a prediction and its correctness law."""
+
+    tag: Literal["playbill-resolution-contract-activation-v2"] = (
+        "playbill-resolution-contract-activation-v2"  # type: ignore[assignment]
+    )
+    prediction: ResolutionClaimEndpointV1
+    outcome_class: str
+    correctness_condition: object
+
+    @field_validator("outcome_class")
+    @classmethod
+    def _outcome_class(cls, value: str) -> str:
+        if not _OUTCOME_CLASS_RE.fullmatch(value):
+            raise ValueError("resolution outcome_class must be a stable canonical identifier")
+        return value
+
+    @field_validator("correctness_condition", mode="before")
+    @classmethod
+    def _correctness_condition(cls, value: object) -> CanonicalValue:
+        normalized = normalize_canonical(value)
+        if not isinstance(normalized, dict) or not normalized:
+            raise ValueError("resolution correctness_condition must be a nonempty canonical object")
+        return normalized
+
+    @model_validator(mode="after")
+    def _prediction_coordinate(self) -> "ResolutionContractActivationV2":
+        if self.prediction.accepted_coordinate != self.subject.accepted_coordinate:
+            raise ValueError(
+                "resolution prediction and activation must name the same accepted coordinate"
+            )
+        return self
 
 
 def procedure_arm_content_digest(
@@ -355,6 +427,37 @@ def derive_resolution_activations(
     return tuple(sorted(activations, key=lambda item: item.measurement_name.encode("utf-8")))
 
 
+def build_resolution_contract_activation_v2(
+    activation: ResolutionContractActivationV1,
+    *,
+    prediction: ResolutionClaimEndpointV1,
+    outcome_class: str,
+    correctness_condition: object,
+) -> ResolutionContractActivationV2:
+    """Successor one derived activation with a pre-observation settlement contract."""
+
+    values = {
+        name: getattr(activation, name)
+        for name in ResolutionContractActivationV1.model_fields
+        if name not in {"tag", "contract_id", "activation_id"}
+    }
+    provisional = ResolutionContractActivationV2.model_construct(
+        **values,
+        contract_id="",
+        activation_id="",
+        prediction=prediction,
+        outcome_class=outcome_class,
+        correctness_condition=correctness_condition,
+    )
+    contract_id = resolution_contract_id(provisional)
+    with_contract = provisional.model_copy(update={"contract_id": contract_id})
+    return ResolutionContractActivationV2.model_validate(
+        with_contract.model_copy(
+            update={"activation_id": resolution_activation_id(with_contract)}
+        ).model_dump(mode="python")
+    )
+
+
 class ProcedureResolutionV1(_StrictResolutionModel):
     tag: Literal["playbill-procedure-resolution-v1"] = "playbill-procedure-resolution-v1"
     resolution_id: str
@@ -413,16 +516,54 @@ def procedure_resolution_id(resolution: ProcedureResolutionV1) -> str:
     payload.pop("resolution_id", None)
     digest = typed_digest(
         ArtifactDigest,
-        "playbill-procedure-resolution-v1",
+        resolution.tag,
         {"resolution": payload},
     ).value
     return f"RSR-{digest[:32]}"
+
+
+def procedure_resolution_digest(resolution: ProcedureResolutionV1) -> str:
+    return typed_digest(
+        ArtifactDigest,
+        resolution.tag,
+        {"resolution": resolution.model_dump(mode="json")},
+    ).tagged
+
+
+class ProcedureResolutionV2(ProcedureResolutionV1):
+    """Settlement successor naming the exact outcome Claim and mechanical result."""
+
+    tag: Literal["playbill-procedure-resolution-v2"] = "playbill-procedure-resolution-v2"  # type: ignore[assignment]
+    verdict: ResolutionSettlementVerdictV2
+    settlement: ResolutionClaimEndpointV1
+    settlement_outcome: bool
+
+    @model_validator(mode="after")
+    def _settlement_proof(self) -> "ProcedureResolutionV2":
+        if not self.evidence_refs:
+            raise ValueError("settlement resolution requires at least one exact proof reference")
+        if any(proof.kind == "claim_attestation" for proof in self.evidence_refs):
+            raise ValueError("Claim attestations cannot prove a mechanical settlement outcome")
+        return self
 
 
 def resolution_contract_partition_id(activation: ResolutionContractActivationV1) -> str:
     """Return the sole journal partition for one derived contract activation."""
 
     return f"resolutions:{activation.contract_id}"
+
+
+def resolution_event_accepted_coordinate(
+    activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
+    resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
+) -> AcceptedCoordinate:
+    """Bind v1 history as frozen and v2 events to their exact settlement coordinate."""
+
+    if isinstance(activation, ResolutionContractActivationV2) and isinstance(
+        resolution, ProcedureResolutionV2
+    ):
+        return resolution.settlement.accepted_coordinate
+    return activation.subject.accepted_coordinate
 
 
 def build_procedure_resolution(
@@ -452,6 +593,43 @@ def build_procedure_resolution(
         note=note,
     )
     return ProcedureResolutionV1.model_validate(
+        provisional.model_copy(
+            update={"resolution_id": procedure_resolution_id(provisional)}
+        ).model_dump(mode="python")
+    )
+
+
+def build_procedure_resolution_v2(
+    activation: ResolutionContractActivationV2,
+    *,
+    sequence: int,
+    verdict: ResolutionSettlementVerdictV2,
+    settlement: ResolutionClaimEndpointV1,
+    settlement_outcome: bool,
+    value: object | None,
+    evidence_refs: tuple[ProcedureProofReferenceV1, ...],
+    observed_at: datetime,
+    recorded_at: datetime,
+    actor_context: GovernedActorContext,
+    note: str | None = None,
+) -> ProcedureResolutionV2:
+    provisional = ProcedureResolutionV2.model_construct(
+        resolution_id="",
+        contract_id=activation.contract_id,
+        sequence=sequence,
+        subject=activation.subject,
+        measurement_name=activation.measurement_name,
+        verdict=verdict,
+        settlement=settlement,
+        settlement_outcome=settlement_outcome,
+        value=value,
+        evidence_refs=evidence_refs,
+        observed_at=ensure_utc(observed_at),
+        recorded_at=ensure_utc(recorded_at),
+        actor_context=actor_context,
+        note=note,
+    )
+    return ProcedureResolutionV2.model_validate(
         provisional.model_copy(
             update={"resolution_id": procedure_resolution_id(provisional)}
         ).model_dump(mode="python")
@@ -524,6 +702,13 @@ def evaluate_procedure_resolution(
 ) -> ProcedureResolutionLawResultV1:
     """Enforce declaration-before-observation, clock, proof-kind, and expectation laws."""
 
+    activation_is_v2 = isinstance(activation, ResolutionContractActivationV2)
+    resolution_is_v2 = isinstance(resolution, ProcedureResolutionV2)
+    if activation_is_v2 != resolution_is_v2:
+        return _resolution_refused(
+            "resolution.version_mismatch",
+            "Resolution and accepted activation must use the same wire generation.",
+        )
     if (
         resolution.contract_id != activation.contract_id
         or resolution.subject != activation.subject
@@ -537,6 +722,11 @@ def evaluate_procedure_resolution(
         return _resolution_refused(
             "resolution.predates_activation",
             "Resolution evidence predates the accepted declaration.",
+        )
+    if resolution_is_v2 and resolution.observed_at == activation.activated_at:
+        return _resolution_refused(
+            "resolution.settlement_not_after_activation",
+            "Settlement observation must follow activation of its correctness contract.",
         )
     if resolution.verdict == "satisfied" and resolution.observed_at < activation.check_at:
         return _resolution_refused(
@@ -593,11 +783,70 @@ def evaluate_procedure_resolution(
         )
     return ProcedureResolutionLawResultV1(
         verdict="accepted",
-        resolution_digest=typed_digest(
-            ArtifactDigest,
-            "playbill-procedure-resolution-v1",
-            {"resolution": resolution.model_dump(mode="json")},
-        ).tagged,
+        resolution_digest=procedure_resolution_digest(resolution),
+    )
+
+
+class SettledOutcomeRelationV1(_StrictResolutionModel):
+    """Reconstructable committed pair from prediction activation to settlement."""
+
+    tag: Literal["playbill-settled-outcome-relation-v1"] = "playbill-settled-outcome-relation-v1"
+    activation: ResolutionContractActivationV2
+    resolution: ProcedureResolutionV2
+    activation_digest: str
+    resolution_digest: str
+    relation_digest: str
+
+    @field_validator("activation_digest", "resolution_digest", "relation_digest")
+    @classmethod
+    def _digests(cls, value: str, info: object) -> str:
+        return _digest(value, label=str(getattr(info, "field_name", "relation digest")))
+
+    @model_validator(mode="after")
+    def _reproduce(self) -> "SettledOutcomeRelationV1":
+        if self.activation_digest != resolution_activation_digest(self.activation):
+            raise ValueError("settled relation activation digest does not reproduce")
+        if self.resolution_digest != procedure_resolution_digest(self.resolution):
+            raise ValueError("settled relation resolution digest does not reproduce")
+        law = evaluate_procedure_resolution(self.activation, self.resolution)
+        if law.verdict != "accepted":
+            raise ValueError("settled relation pair fails its ResolutionContract law")
+        if self.relation_digest != settled_outcome_relation_digest(
+            self.activation_digest,
+            self.resolution_digest,
+        ):
+            raise ValueError("settled outcome relation digest does not reproduce")
+        return self
+
+
+def settled_outcome_relation_digest(activation_digest: str, resolution_digest: str) -> str:
+    _digest(activation_digest, label="settled relation activation digest")
+    _digest(resolution_digest, label="settled relation resolution digest")
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-settled-outcome-relation-v1",
+        {
+            "activation_digest": activation_digest,
+            "resolution_digest": resolution_digest,
+        },
+    ).tagged
+
+
+def build_settled_outcome_relation(
+    activation: ResolutionContractActivationV2,
+    resolution: ProcedureResolutionV2,
+) -> SettledOutcomeRelationV1:
+    activation_digest = resolution_activation_digest(activation)
+    resolution_digest = procedure_resolution_digest(resolution)
+    return SettledOutcomeRelationV1(
+        activation=activation,
+        resolution=resolution,
+        activation_digest=activation_digest,
+        resolution_digest=resolution_digest,
+        relation_digest=settled_outcome_relation_digest(
+            activation_digest,
+            resolution_digest,
+        ),
     )
 
 
@@ -671,12 +920,14 @@ class ProcedureResolutionBook:
 
     def __init__(
         self,
-        activations: tuple[ResolutionContractActivationV1, ...],
+        activations: tuple[ResolutionContractActivationV1 | ResolutionContractActivationV2, ...],
     ) -> None:
         self.activations = {item.contract_id: item for item in activations}
         if len(self.activations) != len(activations):
             raise PlaybillExecutionError("duplicate ResolutionContract activation")
-        self.resolutions: dict[str, list[ProcedureResolutionV1]] = defaultdict(list)
+        self.resolutions: dict[str, list[ProcedureResolutionV1 | ProcedureResolutionV2]] = (
+            defaultdict(list)
+        )
         self.dispositions: dict[str, list[ProcedureResolutionDispositionV1]] = defaultdict(list)
 
     def replay(
@@ -696,7 +947,16 @@ class ProcedureResolutionBook:
             )
             try:
                 if stored.record.event_kind == "resolution":
-                    resolution = ProcedureResolutionV1.model_validate(payload)
+                    if not isinstance(payload, dict):
+                        raise ValueError("resolution payload must be an object")
+                    if payload.get("tag") == "playbill-procedure-resolution-v1":
+                        resolution: ProcedureResolutionV1 | ProcedureResolutionV2 = (
+                            ProcedureResolutionV1.model_validate(payload)
+                        )
+                    elif payload.get("tag") == "playbill-procedure-resolution-v2":
+                        resolution = ProcedureResolutionV2.model_validate(payload)
+                    else:
+                        raise ValueError("resolution payload has an unknown version tag")
                     activation = self.activations.get(resolution.contract_id)
                     if activation is None:
                         raise PlaybillExecutionError(
@@ -706,9 +966,11 @@ class ProcedureResolutionBook:
                         resolution.subject != activation.subject
                         or resolution.measurement_name != activation.measurement_name
                         or stored.record.accepted_coordinate
-                        != activation.subject.accepted_coordinate
+                        != resolution_event_accepted_coordinate(activation, resolution)
                         or stored.record.procedure_artifact_digest
                         != activation.procedure_artifact_digest
+                        or stored.record.partition_id
+                        != resolution_contract_partition_id(activation)
                     ):
                         raise PlaybillExecutionError(
                             "resolution differs from its exact accepted activation"
@@ -734,6 +996,20 @@ class ProcedureResolutionBook:
                     disposition_target = self.resolution_by_id(disposition.resolution_id)
                     if disposition_target is None:
                         raise PlaybillExecutionError("disposition names an absent resolution")
+                    disposition_activation = self.activations[disposition_target.contract_id]
+                    if (
+                        stored.record.partition_id
+                        != resolution_contract_partition_id(disposition_activation)
+                        or stored.record.accepted_coordinate
+                        != resolution_event_accepted_coordinate(
+                            disposition_activation, disposition_target
+                        )
+                        or stored.record.procedure_artifact_digest
+                        != disposition_activation.procedure_artifact_digest
+                    ):
+                        raise PlaybillExecutionError(
+                            "resolution disposition differs from its contract partition"
+                        )
                     contract_resolutions = self.resolutions[disposition_target.contract_id]
                     if contract_resolutions[-1].resolution_id != disposition.resolution_id:
                         raise PlaybillExecutionError(
@@ -748,14 +1024,18 @@ class ProcedureResolutionBook:
             except ValueError as exc:
                 raise PlaybillExecutionError("resolution exhaust payload is invalid") from exc
 
-    def resolution_by_id(self, resolution_id: str) -> ProcedureResolutionV1 | None:
+    def resolution_by_id(
+        self, resolution_id: str
+    ) -> ProcedureResolutionV1 | ProcedureResolutionV2 | None:
         for values in self.resolutions.values():
             for resolution in values:
                 if resolution.resolution_id == resolution_id:
                     return resolution
         return None
 
-    def latest_non_overturned(self, contract_id: str) -> ProcedureResolutionV1 | None:
+    def latest_non_overturned(
+        self, contract_id: str
+    ) -> ProcedureResolutionV1 | ProcedureResolutionV2 | None:
         for resolution in reversed(self.resolutions.get(contract_id, ())):
             dispositions = self.dispositions.get(resolution.resolution_id, ())
             if not dispositions or dispositions[-1].verdict != "overturned":
@@ -766,8 +1046,8 @@ class ProcedureResolutionBook:
 def append_procedure_resolution(
     writer: ProcedureExhaustWriter,
     *,
-    activation: ResolutionContractActivationV1,
-    resolution: ProcedureResolutionV1,
+    activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
+    resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
     stream: JournalStreamIdentityV1,
 ) -> StoredProcedureJournalRecordV1:
     partition_id = resolution_contract_partition_id(activation)
@@ -790,7 +1070,7 @@ def append_procedure_resolution(
         stream=stream,
         partition_id=partition_id,
         event_kind="resolution",
-        accepted_coordinate=activation.subject.accepted_coordinate,
+        accepted_coordinate=resolution_event_accepted_coordinate(activation, resolution),
         procedure_artifact_digest=activation.procedure_artifact_digest,
         definition_digest=activation.definition_digest,
         actor_context=resolution.actor_context,
@@ -802,8 +1082,8 @@ def append_procedure_resolution(
 def append_resolution_disposition(
     writer: ProcedureExhaustWriter,
     *,
-    activation: ResolutionContractActivationV1,
-    resolution: ProcedureResolutionV1,
+    activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
+    resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
     disposition: ProcedureResolutionDispositionV1,
     stream: JournalStreamIdentityV1,
 ) -> StoredProcedureJournalRecordV1:
@@ -828,7 +1108,7 @@ def append_resolution_disposition(
         stream=stream,
         partition_id=partition_id,
         event_kind="resolution_disposition",
-        accepted_coordinate=activation.subject.accepted_coordinate,
+        accepted_coordinate=resolution_event_accepted_coordinate(activation, resolution),
         procedure_artifact_digest=activation.procedure_artifact_digest,
         definition_digest=activation.definition_digest,
         actor_context=disposition.reviewer_actor_context,
@@ -919,21 +1199,33 @@ __all__ = [
     "ProcedureResolutionDispositionV1",
     "ProcedureResolutionLawResultV1",
     "ProcedureResolutionV1",
+    "ProcedureResolutionV2",
+    "ResolutionClaimEndpointV1",
     "ResolutionContractActivationV1",
+    "ResolutionContractActivationV2",
     "ResolutionDispositionVerdictV1",
+    "ResolutionSettlementVerdictV2",
     "ResolutionSubjectV1",
     "ResolutionVerdictV1",
+    "SettledOutcomeRelationV1",
     "append_procedure_resolution",
     "append_resolution_disposition",
     "build_procedure_resolution",
+    "build_procedure_resolution_v2",
+    "build_resolution_contract_activation_v2",
     "build_resolution_disposition",
+    "build_settled_outcome_relation",
     "derive_resolution_activations",
     "evaluate_procedure_resolution",
+    "procedure_resolution_digest",
     "procedure_resolution_id",
     "procedure_arm_content_digest",
+    "resolution_activation_digest",
     "resolution_activation_id",
     "resolution_contract_id",
     "resolution_contract_partition_id",
     "resolution_disposition_id",
+    "resolution_event_accepted_coordinate",
     "resolve_authority_basis",
+    "settled_outcome_relation_digest",
 ]
