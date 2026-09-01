@@ -21,6 +21,8 @@ from cruxible_core.playbill.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
 )
+from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from cruxible_core.server.config import get_server_state_root
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
 
 
@@ -37,6 +39,7 @@ class PlaybillInstanceManager:
 
     def __init__(self) -> None:
         self._instances: dict[str, PlaybillInstance] = {}
+        self._provider_runtime_operators: dict[Path, ProviderRuntimeOperator] = {}
         self._lock = threading.RLock()
 
     def _paths(self, instance_id: str) -> tuple[Path, Path, tuple[Path, ...]]:
@@ -191,6 +194,23 @@ class PlaybillInstanceManager:
     def clear(self) -> None:
         with self._lock:
             self._instances.clear()
+            self._provider_runtime_operators.clear()
+
+    def provider_runtime_operator(self) -> ProviderRuntimeOperator:
+        """Return the daemon-local Provider operator for the active state root."""
+
+        state_root = get_server_state_root()
+        with self._lock:
+            known = self._provider_runtime_operators.get(state_root)
+            if known is None:
+                known = ProviderRuntimeOperator(state_root)
+                self._provider_runtime_operators[state_root] = known
+            return known
+
+    def recover_provider_runtime(self) -> tuple[str, ...]:
+        """Recover process fences before the daemon accepts requests."""
+
+        return self.provider_runtime_operator().recover_all()
 
 
 _manager = PlaybillInstanceManager()

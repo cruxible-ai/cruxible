@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, cast, get_args
+from typing import Literal, Protocol, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -74,7 +74,10 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureSelectionDecisionV1,
     ProcedureTerminalV1,
 )
-from cruxible_client.contracts.provider_execution import ProviderInvocationCompletedV1
+from cruxible_client.contracts.provider_execution import (
+    ProviderInvocationCompletedV1,
+    ProviderInvocationStartedV1,
+)
 from cruxible_client.contracts.provider_interfaces import (
     parse_provider_interface,
     provider_interface_digest,
@@ -114,6 +117,7 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureRunAdmissionV5,
     ProcedureRunReceiptV1,
     ProcedureRuntimePolicyAbsent,
+    ProviderRuntimeInvokerProtocol,
     bind_line_admission_runtime_policy,
     prepare_direct_procedure_run,
     procedure_replay_input_vector,
@@ -194,6 +198,15 @@ class ProcedureRunRecoveryRequired(ProcedureSurfaceError):
 
 class ProcedureNextOperationV1(_StrictProcedureSurfaceModel):
     kind: Literal["run", "bind", "retry", "done", "terminal"]
+
+
+class ProviderRuntimeOperatorProtocol(Protocol):
+    def invoker_for(
+        self,
+        instance: PlaybillInstance,
+        *,
+        accepted_oid: str,
+    ) -> ProviderRuntimeInvokerProtocol: ...
 
 
 class ProcedureUnsupportedNodeV1(_StrictProcedureSurfaceModel):
@@ -814,6 +827,7 @@ def _state_from_records(
     final = None
     outcomes: list[ProcedureRunOutcomeV1] = []
     invocation_receipt_digests: list[str] = []
+    provider_invocations: dict[str, Literal["started", "completed"]] = {}
     for stored in records:
         payload = parse_journal_payload(bodies.read(stored.record.payload_digest, access=access))
         if stored.record.event_kind == "admission_bound":
@@ -857,15 +871,40 @@ def _state_from_records(
             )
         if stored.record.event_kind == "attempt_finalized":
             final = payload
+        if stored.record.event_kind == "provider_invocation_started":
+            try:
+                started = ProviderInvocationStartedV1.model_validate(payload)
+            except (ValidationError, TypeError, ValueError) as exc:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider invocation start is invalid"
+                ) from exc
+            if started.invocation_id in provider_invocations:
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider invocation start is duplicated"
+                )
+            provider_invocations[started.invocation_id] = "started"
         if stored.record.event_kind == "provider_invocation_completed":
             try:
-                invocation_receipt_digests.append(
-                    ProviderInvocationCompletedV1.model_validate(payload).receipt_digest
-                )
+                completed = ProviderInvocationCompletedV1.model_validate(payload)
             except (ValidationError, TypeError, ValueError) as exc:
                 raise ProcedureRunRecoveryRequired(
                     f"{ProcedureRunRecoveryRequired.code}: Provider invocation receipt is invalid"
                 ) from exc
+            if provider_invocations.get(completed.invocation_id) != "started":
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider completion has no exact "
+                    "unmatched durable start"
+                )
+            if (
+                completed.receipt.run_id != run_id
+                or completed.receipt.admission_binding_digest
+                != stored.record.admission_binding_digest
+            ):
+                raise ProcedureRunRecoveryRequired(
+                    f"{ProcedureRunRecoveryRequired.code}: Provider completion names another run"
+                )
+            provider_invocations[completed.invocation_id] = "completed"
+            invocation_receipt_digests.append(completed.receipt_digest)
     if admission is None:
         raise ProcedureRunRecoveryRequired(
             f"{ProcedureRunRecoveryRequired.code}: run lacks a supported admission_bound"
@@ -1266,6 +1305,7 @@ def service_run_playbill_procedure(
     name: str,
     request: ProcedureRunRequestV2,
     actor_context: GovernedActorContext,
+    provider_runtime_operator: ProviderRuntimeOperatorProtocol | None = None,
 ) -> ProcedureRunStateV2:
     coordinate = _resolve_coordinate(instance, request.at)
     evaluation_time = request.evaluation_time or instance.accepted_evaluation_time(
@@ -1385,6 +1425,14 @@ def service_run_playbill_procedure(
             fencing_token=PROCEDURE_RUN_FENCING_TOKEN,
             activation_authority=_CurrentProcedureAuthority(instance),
             provider_executor=None,
+            provider_runtime_invoker=(
+                None
+                if provider_runtime_operator is None
+                else provider_runtime_operator.invoker_for(
+                    instance,
+                    accepted_oid=coordinate.git_oid,
+                )
+            ),
             clock=_DeterministicClock(evaluation_time),
         )
     except PlaybillExecutionError as exc:

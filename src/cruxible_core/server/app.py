@@ -22,6 +22,7 @@ from cruxible_client.contracts.temporal import ISO_8601_FORMAT_HINT
 from cruxible_core import __version__
 from cruxible_core.errors import CoreError
 from cruxible_core.runtime.permissions import init_permissions
+from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.auth import token_auth_middleware
 from cruxible_core.server.config import (
     is_server_auth_enabled,
@@ -72,6 +73,7 @@ def _format_request_validation_error(error: Mapping[str, Any]) -> str:
 def create_app() -> FastAPI:
     """Create and configure the Cruxible server app."""
     get_registry()
+    get_playbill_manager().recover_provider_runtime()
     app = FastAPI(title="cruxible", responses=STANDARD_ERROR_RESPONSES)
     app.middleware("http")(token_auth_middleware)
 

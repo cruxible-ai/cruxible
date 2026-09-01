@@ -1330,13 +1330,15 @@ def playbill_procedure_run(
     actor = _actor_context()
     if actor is None:
         raise AuthenticationError("Procedure run requires an authenticated actor identity")
+    manager = get_playbill_manager()
     result = service_run_playbill_procedure(
-        get_playbill_manager().get(instance_id),
+        manager.get(instance_id),
         name=name,
         request=request,
         actor_context=actor,
+        provider_runtime_operator=manager.provider_runtime_operator(),
     )
-    instance = get_playbill_manager().get(instance_id)
+    instance = manager.get(instance_id)
     record_consumption(
         instance,
         context=ConsumptionContextV1(
