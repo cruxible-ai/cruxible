@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
@@ -11,6 +12,17 @@ from click.testing import CliRunner
 from cruxible_client import contracts
 from cruxible_core.cli.context import CliContextState, save_cli_context
 from cruxible_core.cli.main import MUTATING_COMMAND_TARGETS, cli
+
+
+@pytest.fixture(autouse=True)
+def _isolate_target_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "CRUXIBLE_SERVER_URL",
+        "CRUXIBLE_SERVER_SOCKET",
+        "CRUXIBLE_INSTANCE_ID",
+        "CRUXIBLE_PLAYBILL_WORKSPACE",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 EXPECTED_MUTATING_COMMAND_TARGETS = {
     ("playbill", "host", "create"): "create",
@@ -143,6 +155,72 @@ def test_remembered_playbill_write_marks_remembered_target(
     )
 
 
+def test_two_attached_workspaces_route_the_same_write_to_their_own_instance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    context_path = tmp_path / "context.json"
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(context_path))
+    for name in (
+        "CRUXIBLE_SERVER_URL",
+        "CRUXIBLE_SERVER_SOCKET",
+        "CRUXIBLE_INSTANCE_ID",
+        "CRUXIBLE_PLAYBILL_WORKSPACE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    save_cli_context(
+        CliContextState(
+            server_url="https://global.example.test",
+            instance_id="inst_global",
+        )
+    )
+    calls: list[str] = []
+
+    class StubClient:
+        def store_playbill_body(
+            self, instance_id: str, content: bytes
+        ) -> contracts.PlaybillCasObjectResult:
+            calls.append(instance_id)
+            return contracts.PlaybillCasObjectResult(
+                digest="sha256:" + "1" * 64,
+                present=True,
+                byte_length=len(content),
+                redacted=False,
+            )
+
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+    body = tmp_path / "body.md"
+    body.write_text("# governed\n", encoding="utf-8")
+    for label in ("first", "second"):
+        workspace = tmp_path / label
+        (workspace / ".playbill").mkdir(parents=True)
+        (workspace / ".playbill" / "coverage.json").write_text(
+            json.dumps(
+                {
+                    "tag": "playbill-coverage-workspace-config-v2",
+                    "server_url": f"https://{label}.example.test",
+                    "instance_id": f"inst_{label}",
+                    "rules": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(workspace)
+        result = CliRunner().invoke(
+            cli,
+            ["playbill", "body", "store", str(body), "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        assert result.stderr == (
+            f"target: inst_{label} @ https://{label}.example.test (workspace)\n"
+        )
+
+    assert calls == ["inst_first", "inst_second"]
+
+
 def test_host_creation_names_explicit_requested_id(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -181,7 +259,7 @@ def test_host_creation_names_explicit_requested_id(
     )
 
 
-def test_explicit_transport_does_not_inherit_another_daemons_remembered_instance(
+def test_explicit_transport_and_remembered_instance_resolve_independently(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -196,19 +274,15 @@ def test_explicit_transport_does_not_inherit_another_daemons_remembered_instance
 
     result = CliRunner().invoke(
         cli,
-        [
-            "--server-url",
-            "https://other.example.test",
-            "playbill",
-            "proposal",
-            "activate",
-            "proposal-1",
-        ],
+        ["--server-url", "https://other.example.test", "context", "show", "--json"],
     )
 
-    assert result.exit_code == 2
-    assert "--instance-id is required in server mode" in result.output
-    assert "inst_remembered" not in result.stderr
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["server_url"] == "https://other.example.test"
+    assert payload["transport_source"] == "explicit"
+    assert payload["instance_id"] == "inst_remembered"
+    assert payload["instance_source"] == "remembered"
 
 
 def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(

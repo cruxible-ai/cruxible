@@ -225,6 +225,7 @@ def test_the_config_round_trips_through_the_committed_file_shape(workspace: Path
         json.dumps(
             {
                 "instance_id": "inst_0123456789abcdef",
+                "server_socket": "/tmp/cruxible-workspace.sock",
                 "scan_budget": {"max_scanned_bytes": 4096},
                 "max_observed_paths": 8,
                 "rules": [
@@ -244,12 +245,24 @@ def test_the_config_round_trips_through_the_committed_file_shape(workspace: Path
     loaded = load_coverage_config(workspace)
 
     assert loaded.instance_id == "inst_0123456789abcdef"
+    assert loaded.server_socket == "/tmp/cruxible-workspace.sock"
     assert loaded.source_for("corpus/handbook.md").identity == "corpus.handbook.md"  # type: ignore[union-attr]
     # Both budgets survive the round trip: the scan budget rides to the
     # operation with the caller's resolver, and the path bound is applied here.
     assert loaded.scan_budget is not None
     assert loaded.scan_budget.max_scanned_bytes == 4096
     assert loaded.max_observed_paths == 8
+
+
+@pytest.mark.parametrize("model", [CoverageWorkspaceConfigV1, CoverageWorkspaceConfigV2])
+def test_workspace_config_refuses_two_transport_bindings(
+    model: type[CoverageWorkspaceConfigV1] | type[CoverageWorkspaceConfigV2],
+) -> None:
+    with pytest.raises(ValueError, match="both URL and socket"):
+        model(
+            server_url="https://playbill.example.test",
+            server_socket="/tmp/playbill.sock",
+        )
 
 
 def test_v2_config_adds_only_the_optional_normalized_floor_output(workspace: Path) -> None:

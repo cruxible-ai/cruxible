@@ -252,5 +252,12 @@ def _dispatch_cli(
 def _require_instance_id() -> str:
     instance_id = _root_ctx_obj().get("instance_id")
     if not instance_id:
-        raise click.UsageError("--instance-id is required in server mode")
+        obj = _root_ctx_obj()
+        source = _target_source_qualifier(
+            str(obj.get("target_instance_source") or "local"),
+            str(obj.get("target_transport_source") or "local"),
+        )
+        raise click.UsageError(
+            f"--instance-id is required in server mode (target source: {source})"
+        )
     return str(instance_id)

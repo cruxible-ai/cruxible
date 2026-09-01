@@ -12,11 +12,18 @@ The public CLI has four top-level command groups.
 --version
 ~~~
 
-Server-mode instance selection defaults to remembered context.
+Target resolution is component-wise and deterministic: explicit flags, then
+`CRUXIBLE_SERVER_URL` / `CRUXIBLE_SERVER_SOCKET` / `CRUXIBLE_INSTANCE_ID`, then
+the attached workspace discovered from `CRUXIBLE_PLAYBILL_WORKSPACE` or by
+walking up from the current directory to `.playbill/coverage.json`, then the
+remembered global context. A workspace is attached when that file names an
+instance and exactly one of `server_url` or `server_socket`. The global context
+is only a fallback and entering one workspace never retargets another.
 
 ## context
 
-Manage remembered daemon and instance context:
+Manage remembered daemon and instance context. `context show` reports the
+resolved target, workspace, and the source selected for each target component:
 
 ~~~text
 cruxible context connect
@@ -564,9 +571,10 @@ input is malformed:
 - `playbill.coverage_hook.tool_response_invalid`: the Grep hook must receive its
   structured response object; fix the harness envelope rather than parsing text.
 
-The workspace config's `instance_id` is the hook's selected instance. Transport
-selection (server URL or socket) still comes from the CLI flags, environment, or
-remembered CLI context.
+The workspace config's `instance_id` is the hook's selected instance. General
+CLI and SDK target selection also reads `server_url` or `server_socket` from an
+attached workspace after explicit flags and environment and before remembered
+global context.
 
 For a harness that owns its tool executor, the vendor-neutral middleware in
 `cruxible_core.playbill.coverage.middleware` is the full-fidelity path and

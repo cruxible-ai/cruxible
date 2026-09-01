@@ -9,6 +9,7 @@ from cruxible_core.cli.commands._common import (
     _emit_json,
     _load_persisted_cli_context,
     _persist_cli_context,
+    _root_ctx_obj,
 )
 from cruxible_core.cli.main import handle_errors
 from cruxible_core.server.config import resolve_server_settings
@@ -23,20 +24,35 @@ def connect_group() -> None:
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON.")
 @handle_errors
 def context_show(output_json: bool) -> None:
-    """Show the remembered CLI context."""
-    state = _load_persisted_cli_context()
+    """Show the resolved workspace-aware CLI context and each value's source."""
+    obj = _root_ctx_obj()
+    payload = {
+        "server_url": obj.get("server_url"),
+        "server_socket": obj.get("server_socket"),
+        "instance_id": obj.get("instance_id"),
+        "transport_source": obj.get("target_transport_source", "local"),
+        "instance_source": obj.get("target_instance_source", "local"),
+        "workspace": obj.get("playbill_workspace"),
+        "workspace_source": obj.get("workspace_source", "local"),
+        "workspace_binding_path": obj.get("workspace_binding_path"),
+        "workspace_attached": bool(obj.get("workspace_attached")),
+    }
     if output_json:
-        _emit_json(state.as_json())
+        _emit_json(payload)
         return
-    if not state.server_url and not state.server_socket and not state.instance_id:
-        click.echo("No remembered CLI context.")
-        return
-    if state.server_url:
-        click.echo(f"Server URL: {state.server_url}")
-    if state.server_socket:
-        click.echo(f"Server socket: {state.server_socket}")
-    if state.instance_id:
-        click.echo(f"Instance ID: {state.instance_id}")
+    transport_source = payload["transport_source"]
+    instance_source = payload["instance_source"]
+    if payload["server_url"]:
+        click.echo(f"Server URL: {payload['server_url']} ({transport_source})")
+    elif payload["server_socket"]:
+        click.echo(f"Server socket: {payload['server_socket']} ({transport_source})")
+    else:
+        click.echo(f"Server: local ({transport_source})")
+    click.echo(f"Instance ID: {payload['instance_id'] or '<none>'} ({instance_source})")
+    attachment = "attached" if payload["workspace_attached"] else "not attached"
+    click.echo(
+        f"Workspace: {payload['workspace']} ({payload['workspace_source']}, {attachment})"
+    )
 
 
 @connect_group.command("connect")

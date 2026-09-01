@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import functools
 import importlib
-import os
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
 
-from cruxible_core.cli.context import CliContextState, load_cli_context
+from cruxible_client.authoring.context import (
+    PlaybillContextResolutionError,
+    resolve_playbill_context,
+)
+from cruxible_core.cli.context import load_cli_context
 from cruxible_core.errors import ConfigError
 from cruxible_core.server.config import resolve_server_settings
 
@@ -76,72 +78,6 @@ def _command_path(ctx: click.Context) -> tuple[str, ...]:
     return tuple(reversed(names))
 
 
-def _target_source(
-    *,
-    explicit: bool,
-    environment: bool,
-    remembered: bool,
-) -> str:
-    if explicit:
-        return "explicit"
-    if environment:
-        return "environment"
-    if remembered:
-        return "remembered"
-    return "local"
-
-
-def _resolve_cli_transport(
-    *,
-    server_url: str | None,
-    server_socket: str | None,
-) -> tuple[str | None, str | None]:
-    """Resolve transport settings atomically across flags, env, and stored context."""
-    stored = load_cli_context()
-    env_server_url = os.environ.get("CRUXIBLE_SERVER_URL")
-    env_server_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")
-
-    if server_url is not None or server_socket is not None:
-        return server_url, server_socket
-    if env_server_url is not None or env_server_socket is not None:
-        return env_server_url, env_server_socket
-    return stored.server_url, stored.server_socket
-
-
-def _normalized_transport(
-    server_url: str | None,
-    server_socket: str | None,
-) -> tuple[str, str] | None:
-    if server_url:
-        return ("url", server_url.rstrip("/"))
-    if server_socket:
-        return ("socket", str(Path(server_socket).expanduser().resolve()))
-    return None
-
-
-def _resolve_cli_instance_id(
-    instance_id: str | None,
-    *,
-    server_url: str | None,
-    server_socket: str | None,
-    stored: CliContextState,
-) -> str | None:
-    """Resolve the instance only when it belongs to the selected transport."""
-
-    if instance_id is not None:
-        return instance_id
-    stored_transport = _normalized_transport(
-        stored.server_url,
-        stored.server_socket,
-    )
-    if (
-        stored_transport is None
-        or _normalized_transport(server_url, server_socket) != stored_transport
-    ):
-        return None
-    return stored.instance_id
-
-
 def _active_transport_label(exc: httpx.TransportError) -> str:
     ctx = click.get_current_context(silent=True)
     root_obj = {}
@@ -159,6 +95,18 @@ def _active_transport_label(exc: httpx.TransportError) -> str:
     if request is not None:
         return str(request.url)
     return "configured Cruxible server"
+
+
+def _active_target_source() -> str:
+    ctx = click.get_current_context(silent=True)
+    if ctx is None or not isinstance(ctx.find_root().obj, dict):
+        return "local"
+    obj = ctx.find_root().obj
+    instance_source = str(obj.get("target_instance_source") or "local")
+    transport_source = str(obj.get("target_transport_source") or "local")
+    if instance_source == transport_source:
+        return instance_source
+    return f"instance={instance_source}, transport={transport_source}"
 
 
 LONG_RUNNING_MARKER = "_cruxible_long_running"
@@ -204,7 +152,11 @@ def handle_errors(f: Any) -> Any:
             if isinstance(exc, ServerUnreachableError):
                 # Transport failures already render as a friendly single line;
                 # the class-name prefix would only add noise.
-                click.secho(f"Error: {exc}", fg="red", err=True)
+                click.secho(
+                    f"Error: {exc} (target source: {_active_target_source()})",
+                    fg="red",
+                    err=True,
+                )
                 sys.exit(1)
             if isinstance(exc, AuthenticationError):
                 # Keep server-auth refusals actionable without obscuring the
@@ -227,7 +179,8 @@ def handle_errors(f: Any) -> Any:
             if isinstance(exc, httpx.TransportError):
                 click.secho(
                     "Error: could not reach Cruxible server at "
-                    f"{_active_transport_label(exc)}: {exc}",
+                    f"{_active_transport_label(exc)}: {exc} "
+                    f"(target source: {_active_target_source()})",
                     fg="red",
                     err=True,
                 )
@@ -749,7 +702,7 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     "context": _group(
         "Manage remembered daemon and instance context.",
         {
-            "show": _command("context", "context_show", "Show remembered CLI context."),
+            "show": _command("context", "context_show", "Show resolved CLI context."),
             "connect": _command("context", "context_connect", "Persist daemon context."),
             "use": _command("context", "context_use", "Set the active instance ID."),
             "clear": _command("context", "context_clear", "Clear remembered context."),
@@ -818,23 +771,17 @@ def cli(
     """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
     try:
         stored = load_cli_context()
-        env_server_url = os.environ.get("CRUXIBLE_SERVER_URL")
-        env_server_socket = os.environ.get("CRUXIBLE_SERVER_SOCKET")
-        resolved_url, resolved_socket = _resolve_cli_transport(
+        resolved = resolve_playbill_context(
             server_url=server_url,
             server_socket=server_socket,
-        )
-        resolved_instance_id = _resolve_cli_instance_id(
-            instance_id,
-            server_url=resolved_url,
-            server_socket=resolved_socket,
-            stored=stored,
+            instance_id=instance_id,
+            remembered=stored.as_json(),
         )
         settings = resolve_server_settings(
-            server_url=resolved_url,
-            server_socket=resolved_socket,
+            server_url=resolved.server_url,
+            server_socket=resolved.server_socket,
         )
-    except ConfigError as exc:
+    except (ConfigError, PlaybillContextResolutionError) as exc:
         raise click.UsageError(str(exc)) from exc
 
     ctx.ensure_object(dict)
@@ -842,18 +789,18 @@ def cli(
         {
             "server_url": settings.server_url,
             "server_socket": settings.server_socket,
-            "instance_id": resolved_instance_id,
+            "instance_id": resolved.instance_id,
             "require_server": settings.require_server,
             "json_compact": json_compact,
-            "target_transport_source": _target_source(
-                explicit=server_url is not None or server_socket is not None,
-                environment=env_server_url is not None or env_server_socket is not None,
-                remembered=stored.server_url is not None or stored.server_socket is not None,
+            "target_transport_source": resolved.transport_source,
+            "target_instance_source": resolved.instance_source,
+            "playbill_workspace": str(resolved.workspace),
+            "workspace_source": resolved.workspace_source,
+            "workspace_binding_path": (
+                None
+                if resolved.workspace_binding_path is None
+                else str(resolved.workspace_binding_path)
             ),
-            "target_instance_source": _target_source(
-                explicit=instance_id is not None,
-                environment=False,
-                remembered=resolved_instance_id is not None and stored.instance_id is not None,
-            ),
+            "workspace_attached": resolved.workspace_attached,
         }
     )

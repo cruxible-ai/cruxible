@@ -28,6 +28,7 @@ from cruxible_client.authoring.blocks import (
     assert_independent_projection_evidence,
     repin_projection_block,
 )
+from cruxible_client.authoring.context import resolve_playbill_context
 from cruxible_client.authoring.insertions import (
     apply_playbill_publication,
     replace_publication_file,
@@ -215,16 +216,6 @@ def _address_path(value: object) -> str:
     if isinstance(value, Mapping):
         return str(value.get("artifact_path", ""))
     return ""
-
-
-def _resolved_workspace(explicit: Path | None, from_env: str | None) -> Path:
-    """Explicit workspace, else the environment's, else the working directory."""
-
-    if explicit is not None:
-        return explicit
-    if from_env:
-        return Path(from_env).expanduser()
-    return Path.cwd()
 
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
@@ -865,35 +856,32 @@ class Playbill:
             if not isinstance(loaded, dict):
                 raise ValueError("Playbill context must contain a JSON object")
             remembered = loaded
-        # Precedence is explicit > environment > remembered context, matching the
-        # token, which already read its environment fallback. Without these an
-        # ad-hoc daemon had to be named argument-by-argument on every connect
-        # even when the environment already described it.
-        env_target = os.environ.get("CRUXIBLE_SERVER_URL")
-        env_instance = os.environ.get("CRUXIBLE_INSTANCE_ID")
-        env_workspace = os.environ.get("CRUXIBLE_PLAYBILL_WORKSPACE")
-        target = target if target is not None else env_target
-        resolved_target = target or cast(str | None, remembered.get("server_url"))
-        socket = cast(str | None, remembered.get("server_socket"))
-        if target is not None:
-            if target.startswith("unix:"):
-                resolved_target = None
-                socket = target.removeprefix("unix:")
-            else:
-                socket = None
-        if resolved_target is None and socket is None:
-            raise ValueError("Playbill connection requires a server target")
-        resolved_instance = (
-            instance or env_instance or cast(str | None, remembered.get("instance_id"))
+        explicit_url = target
+        explicit_socket = None
+        if target is not None and target.startswith("unix:"):
+            explicit_url = None
+            explicit_socket = target.removeprefix("unix:")
+        resolved = resolve_playbill_context(
+            server_url=explicit_url,
+            server_socket=explicit_socket,
+            instance_id=instance,
+            workspace=workspace,
+            remembered=remembered,
         )
-        if not resolved_instance:
+        if resolved.server_url is None and resolved.server_socket is None:
+            raise ValueError("Playbill connection requires a server target")
+        if not resolved.instance_id:
             raise ValueError("Playbill connection requires an instance")
         raw_token = (
             token.get_secret_value()
             if token is not None
             else os.environ.get("CRUXIBLE_SERVER_BEARER_TOKEN")
         )
-        client = CruxibleClient(base_url=resolved_target, socket_path=socket, token=raw_token)
+        client = CruxibleClient(
+            base_url=resolved.server_url,
+            socket_path=resolved.server_socket,
+            token=raw_token,
+        )
         try:
             daemon_version, daemon_snapshot_digest = client._version_info()
             if daemon_snapshot_digest != SDK_CONTRACT_SNAPSHOT_DIGEST:
@@ -907,8 +895,8 @@ class Playbill:
                 )
             result = cls(
                 client=client,
-                instance_id=resolved_instance,
-                workspace=_resolved_workspace(workspace, env_workspace),
+                instance_id=resolved.instance_id,
+                workspace=resolved.workspace,
                 access_profile=access_profile
                 or AccessProfile(
                     profile_id="sdk-default",

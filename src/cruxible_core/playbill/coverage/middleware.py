@@ -197,6 +197,7 @@ class CoverageWorkspaceConfigV1(_StrictMiddlewareModel):
     tag: Literal["playbill-coverage-workspace-config-v1"] = "playbill-coverage-workspace-config-v1"
     instance_id: str | None = None
     server_url: str | None = None
+    server_socket: str | None = None
     root: str = "."
     rules: tuple[CoveragePathRuleV1, ...] = ()
     scan_budget: CoverageScanBudgetV1 | None = None
@@ -204,6 +205,8 @@ class CoverageWorkspaceConfigV1(_StrictMiddlewareModel):
 
     @model_validator(mode="after")
     def _rules_are_unambiguous(self) -> "CoverageWorkspaceConfigV1":
+        if self.server_url is not None and self.server_socket is not None:
+            raise ValueError("coverage workspace cannot select both URL and socket transports")
         exact = [item.path for item in self.rules if isinstance(item, CoverageExactPathRuleV1)]
         if len(set(exact)) != len(exact):
             raise ValueError("a working path may declare at most one exact coverage rule")
@@ -271,6 +274,7 @@ class CoverageWorkspaceConfigV2(_StrictMiddlewareModel):
     tag: Literal["playbill-coverage-workspace-config-v2"] = "playbill-coverage-workspace-config-v2"
     instance_id: str | None = None
     server_url: str | None = None
+    server_socket: str | None = None
     root: str = "."
     rules: tuple[CoveragePathRuleV1, ...] = ()
     scan_budget: CoverageScanBudgetV1 | None = None
@@ -279,6 +283,8 @@ class CoverageWorkspaceConfigV2(_StrictMiddlewareModel):
 
     @model_validator(mode="after")
     def _rules_are_unambiguous(self) -> "CoverageWorkspaceConfigV2":
+        if self.server_url is not None and self.server_socket is not None:
+            raise ValueError("coverage workspace cannot select both URL and socket transports")
         exact = [item.path for item in self.rules if isinstance(item, CoverageExactPathRuleV1)]
         if len(set(exact)) != len(exact):
             raise ValueError("a working path may declare at most one exact coverage rule")
