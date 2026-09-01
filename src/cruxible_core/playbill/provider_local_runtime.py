@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
 from cruxible_client.contracts.provider_execution import (
@@ -38,9 +37,13 @@ from cruxible_client.contracts.providers import (
     ProviderImplementationManifestV1,
     ProviderV2,
 )
-from cruxible_core.playbill.provider_process_leases import ProviderProcessLeaseStore
+from cruxible_core.playbill.provider_process_leases import (
+    ProviderLocalRuntimeRefused,
+    ProviderProcessLeaseStore,
+)
 from cruxible_core.playbill.provider_runtime_contract import (
     MAX_PROVIDER_SECRET_BUNDLE_BYTES,
+    PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS,
     PROVIDER_RUNTIME_PROTOCOL,
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeResultEnvelopeV1,
@@ -52,12 +55,6 @@ from cruxible_core.playbill.provider_runtime_contract import (
 )
 
 _READ_CHUNK = 65_536
-
-
-class ProviderLocalRuntimeRefused(PlaybillExecutionError):
-    def __init__(self, code: str, message: str) -> None:
-        self.code = code
-        super().__init__(f"{code}: {message}")
 
 
 def _sha256(content: bytes) -> str:
@@ -75,6 +72,7 @@ class LocalProviderDeploymentV1:
     environment_manifest_path: Path
     environment_pin_key: str
     interpreter_path: Path
+    provider_runtime_version: str
 
 
 @dataclass(frozen=True)
@@ -91,6 +89,7 @@ class ProviderDriverOutcomeV1:
     stderr: str
     duration_seconds: float
     egress: ProviderEgressObservationV1
+    verified_binding: VerifiedProviderBindingV1
 
 
 class ProviderSecretResolverProtocol(Protocol):
@@ -190,12 +189,16 @@ class ProviderLocalRuntimeInvoker:
     def __init__(
         self,
         *,
-        interpreters_by_deployment: Mapping[str, Path],
+        deployments_by_digest: Mapping[str, LocalProviderDeploymentV1],
+        accepted_providers_by_digest: Mapping[str, AcceptedProviderV1],
+        accepted_interfaces_by_digest: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
         secret_resolvers: ProviderSecretResolverRegistry,
         process_leases: ProviderProcessLeaseStore,
         driver: LocalProviderExecutionDriver | None = None,
     ) -> None:
-        self._interpreters = dict(interpreters_by_deployment)
+        self._deployments = dict(deployments_by_digest)
+        self._accepted_providers = dict(accepted_providers_by_digest)
+        self._accepted_interfaces = dict(accepted_interfaces_by_digest)
         self._secret_resolvers = secret_resolvers
         self._process_leases = process_leases
         self._driver = driver or LocalProviderExecutionDriver()
@@ -207,19 +210,40 @@ class ProviderLocalRuntimeInvoker:
         context: ProviderRuntimeRunContextV1,
         invocation_id: str,
     ) -> ProviderDriverOutcomeV1:
-        deployment_digest = occurrence.local_execution.deployment_digest
         try:
-            interpreter = self._interpreters[deployment_digest]
+            deployment = self._deployments[occurrence.local_execution.deployment_digest]
         except KeyError as exc:
             raise ProviderLocalRuntimeRefused(
                 "no_compatible_artifact",
                 "the admitted local deployment is not installed by this operator",
             ) from exc
+        try:
+            accepted_provider = self._accepted_providers[occurrence.provider_artifact_digest]
+        except KeyError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "unaccepted_provider",
+                "the admitted Provider artifact is unavailable at the bound coordinate",
+            ) from exc
+        try:
+            accepted_interface = self._accepted_interfaces[occurrence.interface_artifact_digest]
+        except KeyError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "unknown_interface",
+                "the admitted Provider interface is unavailable at the bound coordinate",
+            ) from exc
+        bound = self._driver.bind(
+            accepted_provider,
+            accepted_interface,
+            occurrence.implementation_digest,
+            deployment,
+        )
+        if bound.binding != occurrence.local_execution:
+            raise ProviderLocalRuntimeRefused(
+                "acceptance_divergence",
+                "spawn-time Provider binding differs from the admitted binding",
+            )
         return self._driver.invoke(
-            BoundLocalProviderV1(
-                binding=occurrence.local_execution,
-                interpreter_path=interpreter,
-            ),
+            bound,
             context,
             secret_plan=occurrence.secret_plan,
             secret_resolvers=self._secret_resolvers,
@@ -354,7 +378,9 @@ class LocalProviderExecutionDriver:
             provider.runtime_artifact.local_env.lock_sha256,
             "lock_bytes_mismatch",
         )
-        environment_manifest = self._read_environment_manifest(deployment.environment_manifest_path)
+        environment_manifest, environment_manifest_bytes = self._read_environment_manifest(
+            deployment.environment_manifest_path
+        )
         if environment_manifest.get("materialization_digest") != local_ref.materialization_digest:
             raise ProviderLocalRuntimeRefused(
                 "environment_divergence", "environment seal names another materialization"
@@ -371,6 +397,11 @@ class LocalProviderExecutionDriver:
             raise ProviderLocalRuntimeRefused(
                 "provider_runtime_not_in_materialization",
                 "verified environment does not contain cruxible-provider-runtime",
+            )
+        if installed["cruxible-provider-runtime"] != deployment.provider_runtime_version:
+            raise ProviderLocalRuntimeRefused(
+                "provider_runtime_not_in_materialization",
+                "verified environment contains another cruxible-provider-runtime version",
             )
         if not deployment.interpreter_path.is_file():
             raise ProviderLocalRuntimeRefused(
@@ -419,9 +450,7 @@ class LocalProviderExecutionDriver:
                 implementation_digest=implementation_digest,
                 deployment_digest=deployment.deployment_digest,
                 materialization_digest=local_ref.materialization_digest,
-                environment_manifest_digest=_sha256(
-                    deployment.environment_manifest_path.read_bytes()
-                ),
+                environment_manifest_digest=_sha256(environment_manifest_bytes),
                 entrypoint=manifest.entrypoint,
                 declared_endpoints=tuple(
                     sorted(set(manifest.declared_endpoints), key=lambda item: item.encode())
@@ -437,8 +466,8 @@ class LocalProviderExecutionDriver:
         *,
         secret_plan: ProviderSecretResolutionPlanV1,
         secret_resolvers: ProviderSecretResolverRegistry,
-        invocation_id: str | None = None,
-        process_leases: ProviderProcessLeaseStore | None = None,
+        invocation_id: str,
+        process_leases: ProviderProcessLeaseStore,
     ) -> ProviderDriverOutcomeV1:
         if context.implementation_digest != binding.binding.implementation_digest:
             raise ProviderLocalRuntimeRefused(
@@ -447,6 +476,17 @@ class LocalProviderExecutionDriver:
         if context.protocol_version != PROVIDER_RUNTIME_PROTOCOL:
             raise ProviderLocalRuntimeRefused(
                 "unsupported_protocol", "run context protocol is unsupported"
+            )
+        unknown_dynamic = tuple(
+            endpoint
+            for endpoint in binding.binding.declared_endpoints
+            if endpoint.startswith("dynamic:")
+            and endpoint not in PROVIDER_RUNTIME_DYNAMIC_ENDPOINT_FORMS
+        )
+        if unknown_dynamic:
+            raise ProviderLocalRuntimeRefused(
+                "undeclared_egress",
+                "verified Provider binding contains an unknown dynamic endpoint form",
             )
         secrets = secret_resolvers.resolve(secret_plan)
         with _open_secret_channel(secrets) as secret_fd:
@@ -510,9 +550,10 @@ class LocalProviderExecutionDriver:
                 declared_endpoints=declared,
                 observed_endpoints=observed,
                 dynamic_endpoint_forms=dynamic,
-                observer_backend="local-instrumented-client",
+                observer_backend="child-self-report",
                 observer_grade="attribution",
             ),
+            verified_binding=binding.binding,
         )
 
     @staticmethod
@@ -537,7 +578,7 @@ class LocalProviderExecutionDriver:
             raise ProviderLocalRuntimeRefused(code, f"{path.name!r} digest does not reproduce")
 
     @staticmethod
-    def _read_environment_manifest(path: Path) -> dict[str, object]:
+    def _read_environment_manifest(path: Path) -> tuple[dict[str, object], bytes]:
         try:
             raw = path.read_bytes()
             parsed = json.loads(raw)
@@ -549,7 +590,7 @@ class LocalProviderExecutionDriver:
             raise ProviderLocalRuntimeRefused(
                 "cache_integrity", "environment seal is not canonical JSON"
             )
-        return parsed
+        return parsed, raw
 
 
 @dataclass(frozen=True)
@@ -606,16 +647,11 @@ def _run_child(
     context: bytes,
     budgets: ProviderRuntimeBudgetsV1,
     secret_fd: int | None,
-    invocation_id: str | None = None,
-    process_leases: ProviderProcessLeaseStore | None = None,
+    invocation_id: str,
+    process_leases: ProviderProcessLeaseStore,
 ) -> _ProcessOutcome:
     """Run one child; ``started``/``deadline``/elapsed duration read VALIDITY WINDOW."""
 
-    if (invocation_id is None) != (process_leases is None):
-        raise ProviderLocalRuntimeRefused(
-            "provider_process_lease_invalid",
-            "invocation identity and process-lease store must be supplied together",
-        )
     started = time.monotonic()
     environment = {
         "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -625,6 +661,9 @@ def _run_child(
         "PYTHONDONTWRITEBYTECODE": "1",
     }
     with tempfile.TemporaryDirectory(prefix="cruxible-provider-") as scratch:
+        os.chmod(scratch, 0o700)
+        environment["HOME"] = scratch
+        environment["TMPDIR"] = scratch
         command = [
             str(interpreter),
             "-m",
@@ -632,18 +671,16 @@ def _run_child(
             "--entrypoint",
             entrypoint,
         ]
-        if invocation_id is not None and process_leases is not None:
-            record_path, control_path = process_leases.paths(invocation_id)
-            wrapper = Path(scratch) / "provider_child_fence.py"
-            wrapper.write_text(_CHILD_FENCE_WRAPPER, encoding="utf-8")
-            command = [
-                str(interpreter),
-                str(wrapper),
-                invocation_id,
-                str(record_path),
-                str(control_path),
-                entrypoint,
-            ]
+        control_path = process_leases.prepare_control_path(invocation_id)
+        wrapper = Path(scratch) / "provider_child_fence.py"
+        wrapper.write_text(_CHILD_FENCE_WRAPPER, encoding="utf-8")
+        command = [
+            str(interpreter),
+            str(wrapper),
+            invocation_id,
+            str(control_path),
+            entrypoint,
+        ]
         process = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
@@ -655,39 +692,62 @@ def _run_child(
             start_new_session=True,
             close_fds=True,
         )
+        if secret_fd is not None:
+            # The child owns its inherited duplicate from this point. Keeping a
+            # parent reader open would defeat EOF-based secret-channel custody.
+            with contextlib.suppress(OSError):
+                os.close(secret_fd)
         try:
-            if invocation_id is not None and process_leases is not None:
-                process_leases.publish(
-                    invocation_id,
-                    pid=process.pid,
-                    process_group_id=process.pid,
-                )
-                lease = process_leases.require(invocation_id)
-            else:
-                lease = None
-        except PlaybillExecutionError:
+            process_leases.publish(
+                invocation_id,
+                pid=process.pid,
+                process_group_id=process.pid,
+            )
+            lease = process_leases.require(invocation_id)
+        except ProviderLocalRuntimeRefused:
             # A child that cannot prove its own lease must not outlive the
             # failed invocation boundary.
-            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-                os.killpg(process.pid, signal.SIGKILL)
-            with contextlib.suppress(subprocess.TimeoutExpired):
-                process.wait(timeout=5)
+            _terminate_process_group(process, process_leases.recovery_timeout_seconds)
+            record_path, control_path = process_leases.paths(invocation_id)
+            for path in (record_path, control_path):
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
             raise
 
-        def write_stdin() -> None:
-            try:
-                assert process.stdin is not None
-                process.stdin.write(context)
-                process.stdin.close()
-            except (BrokenPipeError, OSError, ValueError):
-                pass
+        try:
+            return _collect_child_output(
+                process,
+                context=context,
+                budgets=budgets,
+                started=started,
+            )
+        finally:
+            _terminate_process_group(process, process_leases.recovery_timeout_seconds)
+            process_leases.release(lease)
 
-        writer = threading.Thread(target=write_stdin, daemon=True)
-        writer.start()
-        assert process.stdout is not None and process.stderr is not None
-        streams = (process.stdout, process.stderr)
-        buffers = {stream.fileno(): bytearray() for stream in streams}
-        selector = selectors.DefaultSelector()
+
+def _collect_child_output(
+    process: subprocess.Popen[bytes],
+    *,
+    context: bytes,
+    budgets: ProviderRuntimeBudgetsV1,
+    started: float,
+) -> _ProcessOutcome:
+    def write_stdin() -> None:
+        try:
+            assert process.stdin is not None
+            process.stdin.write(context)
+            process.stdin.close()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+
+    writer = threading.Thread(target=write_stdin, daemon=True)
+    writer.start()
+    assert process.stdout is not None and process.stderr is not None
+    streams = (process.stdout, process.stderr)
+    buffers = {stream.fileno(): bytearray() for stream in streams}
+    selector = selectors.DefaultSelector()
+    try:
         for stream in streams:
             selector.register(stream, selectors.EVENT_READ)
         deadline = started + budgets.wall_clock_seconds
@@ -699,32 +759,55 @@ def _run_child(
                 refusal = ("budget_wall_clock", "provider exceeded wall-clock budget")
                 break
             for key, _ in selector.select(timeout=min(remaining, 0.1)):
-                chunk = os.read(key.fd, _READ_CHUNK)
+                total = sum(len(value) for value in buffers.values())
+                chunk = os.read(key.fd, min(_READ_CHUNK, budgets.output_bytes - total + 1))
                 if not chunk:
                     selector.unregister(key.fileobj)
                     open_streams -= 1
                     continue
-                buffers[key.fd].extend(chunk)
-                if sum(len(value) for value in buffers.values()) > budgets.output_bytes:
+                if total + len(chunk) > budgets.output_bytes:
                     refusal = ("budget_output_size", "provider exceeded aggregate output budget")
                     break
-        selector.close()
+                buffers[key.fd].extend(chunk)
+        if refusal is not None:
+            raise ProviderLocalRuntimeRefused(*refusal)
         try:
-            if refusal is not None:
-                with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                process.wait(timeout=5)
-                raise ProviderLocalRuntimeRefused(*refusal)
             process.wait(timeout=max(deadline - time.monotonic(), 0.001))
-            writer.join(timeout=1)
-            return _ProcessOutcome(
-                stdout=bytes(buffers[process.stdout.fileno()]),
-                stderr=bytes(buffers[process.stderr.fileno()]),
-                duration_seconds=time.monotonic() - started,
-            )
-        finally:
-            if lease is not None and process_leases is not None:
-                process_leases.release(lease)
+        except subprocess.TimeoutExpired as exc:
+            raise ProviderLocalRuntimeRefused(
+                "budget_wall_clock", "provider exceeded wall-clock budget"
+            ) from exc
+        writer.join(timeout=1)
+        return _ProcessOutcome(
+            stdout=bytes(buffers[process.stdout.fileno()]),
+            stderr=bytes(buffers[process.stderr.fileno()]),
+            duration_seconds=time.monotonic() - started,
+        )
+    finally:
+        selector.close()
+
+
+def _terminate_process_group(process: subprocess.Popen[bytes], timeout_seconds: float) -> None:
+    """SIGKILL and verify one child-owned group before releasing its fence."""
+
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(process.pid, signal.SIGKILL)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        try:
+            process.wait(timeout=min(0.05, max(deadline - time.monotonic(), 0.001)))
+        except subprocess.TimeoutExpired:
+            continue
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            continue
+    raise ProviderLocalRuntimeRefused(
+        "provider_process_group_survived_recovery",
+        "provider process group survived its configured termination deadline",
+    )
 
 
 _CHILD_FENCE_WRAPPER = """\
@@ -734,7 +817,7 @@ import socket
 import sys
 import threading
 
-invocation_id, record_path, control_path, entrypoint = sys.argv[1:5]
+invocation_id, control_path, entrypoint = sys.argv[1:4]
 server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 server.bind(control_path)
 os.chmod(control_path, 0o600)

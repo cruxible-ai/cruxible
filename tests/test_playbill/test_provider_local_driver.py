@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import signal
+import socket
 import stat
 import subprocess
+import time
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDurationV1
-from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
 from cruxible_client.contracts.provider_execution import (
@@ -35,6 +38,7 @@ from cruxible_core.playbill.provider_local_runtime import (
     FileProviderSecretStore,
     LocalProviderDeploymentV1,
     LocalProviderExecutionDriver,
+    ProviderLocalRuntimeInvoker,
     ProviderLocalRuntimeRefused,
     ProviderSecretResolverRegistry,
     _run_child,
@@ -160,7 +164,7 @@ def _fake_interpreter(path: Path) -> Path:
         """#!/usr/bin/python3
 import json, os, socket, sys, threading
 if len(sys.argv) > 1 and sys.argv[1].endswith("provider_child_fence.py"):
-    invocation_id, record_path, control_path = sys.argv[2:5]
+    invocation_id, control_path = sys.argv[2:4]
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     server.bind(control_path)
     os.chmod(control_path, 0o600)
@@ -176,14 +180,6 @@ if len(sys.argv) > 1 and sys.argv[1].endswith("provider_child_fence.py"):
                 answer = invocation_id.encode("utf-8") if received == invocation_id else b""
                 connection.sendall(answer)
     threading.Thread(target=echo, daemon=True).start()
-    document = {
-        "invocation_id": invocation_id,
-        "pid": os.getpid(),
-        "process_group_id": os.getpgrp(),
-    }
-    if not os.path.exists(record_path):
-        with open(record_path, "wb") as handle:
-            handle.write(json.dumps(document, sort_keys=True, separators=(",", ":")).encode())
 document = json.loads(sys.stdin.buffer.read())
 json.dump({
     "protocol_version": "1.0",
@@ -264,6 +260,7 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
         environment_manifest_path=environment_manifest,
         environment_pin_key="linux-cp311+engine",
         interpreter_path=interpreter,
+        provider_runtime_version="1.0.0",
     )
 
     bound = LocalProviderExecutionDriver().bind(
@@ -353,7 +350,7 @@ def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_
     assert outcome.egress.observer_grade == "attribution"
     assert outcome.egress.observed_endpoints == ("https://example.test",)
     assert "credential-value" not in repr(outcome)
-    assert tuple(leases.root.iterdir()) == ()
+    assert tuple(leases.root.glob("*.json")) == ()
 
 
 def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> None:
@@ -394,7 +391,12 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> 
 
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
         LocalProviderExecutionDriver().invoke(
-            bound, context, secret_plan=_secret_plan(), secret_resolvers=registry
+            bound,
+            context,
+            secret_plan=_secret_plan(),
+            secret_resolvers=registry,
+            invocation_id=_digest("leak-invocation"),
+            process_leases=ProviderProcessLeaseStore(tmp_path / "leak-leases"),
         )
     assert caught.value.code == "secret_leak"
 
@@ -411,7 +413,6 @@ def test_process_recovery_kills_only_an_echo_verified_invocation_group(tmp_path:
             str(interpreter),
             str(wrapper),
             invocation_id,
-            str(record_path),
             str(control_path),
             "demo.runtime:Provider",
         ],
@@ -420,12 +421,13 @@ def test_process_recovery_kills_only_an_echo_verified_invocation_group(tmp_path:
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    leases.publish(invocation_id, pid=process.pid, process_group_id=process.pid)
     lease = leases.require(invocation_id)
     assert lease.pid == process.pid
 
     assert leases.recover_all() == (invocation_id,)
     process.wait(timeout=1)
-    assert tuple(leases.root.iterdir()) == ()
+    assert tuple(leases.root.glob("*.json")) == ()
 
 
 def test_process_recovery_waits_through_a_transient_permission_probe(
@@ -469,19 +471,27 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
         pid = 707
 
         @staticmethod
-        def wait(*, timeout: int):
-            assert timeout == 5
+        def wait(*, timeout: float):
+            assert timeout > 0
             return -signal.SIGKILL
 
     monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: _Process())
     monkeypatch.setattr(
         leases,
         "require",
-        lambda value: (_ for _ in ()).throw(PlaybillExecutionError("lease invalid")),
+        lambda value: (_ for _ in ()).throw(
+            ProviderLocalRuntimeRefused("provider_process_lease_invalid", "lease invalid")
+        ),
     )
-    monkeypatch.setattr("os.killpg", lambda pid, sent_signal: killed.append((pid, sent_signal)))
 
-    with pytest.raises(PlaybillExecutionError, match="lease invalid"):
+    def killpg(pid: int, sent_signal: int) -> None:
+        if sent_signal == 0:
+            raise ProcessLookupError
+        killed.append((pid, sent_signal))
+
+    monkeypatch.setattr("os.killpg", killpg)
+
+    with pytest.raises(ProviderLocalRuntimeRefused, match="lease invalid"):
         _run_child(
             tmp_path / "python",
             entrypoint="demo.runtime:Provider",
@@ -492,3 +502,202 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
             process_leases=leases,
         )
     assert killed == [(_Process.pid, signal.SIGKILL)]
+
+
+def test_wall_clock_escape_is_typed_killed_and_unfenced_only_after_death(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "alive.txt"
+    interpreter = tmp_path / "escaping-python"
+    interpreter.write_text(
+        f"""#!/usr/bin/env python3
+import os, socket, sys, threading, time
+invocation_id, control_path = sys.argv[2:4]
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(control_path)
+server.listen(2)
+def echo():
+    while True:
+        try:
+            connection, _ = server.accept()
+        except OSError:
+            return
+        with connection:
+            data = connection.recv(4096).decode()
+            connection.sendall(invocation_id.encode() if data == invocation_id else b"")
+threading.Thread(target=echo, daemon=True).start()
+sys.stdout.write('{{"protocol_version":"1.0","run_id":"RUN-x","status":"ok",'
+                 '"output":{{"a":1}},"trace":{{"endpoints_contacted":[],"events":[],"metrics":{{}}}}}}')
+sys.stdout.flush()
+os.close(1)
+os.close(2)
+with open({str(marker)!r}, "a") as handle:
+    for _ in range(400):
+        time.sleep(0.05)
+        handle.write("alive\\n")
+        handle.flush()
+""",
+        encoding="utf-8",
+    )
+    interpreter.chmod(0o755)
+    leases = ProviderProcessLeaseStore(tmp_path / "escape-leases")
+    invocation_id = _digest("escape")
+
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        _run_child(
+            interpreter,
+            entrypoint="demo.runtime:Provider",
+            context=b'{"run_id":"RUN-x"}',
+            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=0.25, output_bytes=65_536),
+            secret_fd=None,
+            invocation_id=invocation_id,
+            process_leases=leases,
+        )
+    assert caught.value.code == "budget_wall_clock"
+    assert tuple(leases.root.glob("*.json")) == ()
+    first = marker.read_text().count("alive") if marker.exists() else 0
+    time.sleep(0.2)
+    second = marker.read_text().count("alive") if marker.exists() else 0
+    assert second == first
+
+
+def test_recovery_removes_dead_records_without_starving_later_records(tmp_path: Path) -> None:
+    leases = ProviderProcessLeaseStore(tmp_path / "recovery-leases")
+    invocation_ids = tuple(_digest(f"dead-{index}") for index in range(4))
+    for invocation_id in invocation_ids:
+        record_path, control_path = leases.paths(invocation_id)
+        record_path.write_bytes(
+            canonical_bytes(
+                {
+                    "invocation_id": invocation_id,
+                    "pid": 999_999,
+                    "process_group_id": 999_999,
+                }
+            )
+        )
+        assert not control_path.exists()
+
+    assert set(leases.recover_all()) == set(invocation_ids)
+    assert tuple(leases.root.glob("*.json")) == ()
+
+
+def test_control_namespace_is_private_and_stale_socket_is_retryable(tmp_path: Path) -> None:
+    leases = ProviderProcessLeaseStore(tmp_path / "private-leases")
+    assert leases.control_root.resolve().is_relative_to(leases.root.resolve())
+    invocation_id = _digest("stale-socket")
+    _record_path, control_path = leases.paths(invocation_id)
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.bind(str(control_path))
+    stale.close()
+    assert control_path.exists()
+
+    outcome = _run_child(
+        _fake_interpreter(tmp_path / "retry-python"),
+        entrypoint="demo.runtime:Provider",
+        context=b'{"run_id":"RUN-retry","input":{"value":"ok"}}',
+        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
+        secret_fd=None,
+        invocation_id=invocation_id,
+        process_leases=leases,
+    )
+    assert json.loads(outcome.stdout)["output"] == {"echo": "ok"}
+
+
+@pytest.mark.parametrize("planted_kind", ["file", "symlink"])
+def test_process_lease_root_refuses_non_directory_or_symlink(
+    tmp_path: Path, planted_kind: str
+) -> None:
+    root = tmp_path / "planted"
+    if planted_kind == "file":
+        root.write_text("not a directory", encoding="utf-8")
+    else:
+        target = tmp_path / "target"
+        target.mkdir()
+        root.symlink_to(target, target_is_directory=True)
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        ProviderProcessLeaseStore(root)
+    assert caught.value.code == "provider_process_lease_invalid"
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "unaccepted_provider",
+        "acceptance_divergence",
+        "ambiguous_implementation",
+        "no_compatible_artifact",
+        "artifact_hash_mismatch",
+        "unsupported_backend",
+        "lock_bytes_mismatch",
+        "cache_integrity",
+        "environment_divergence",
+        "provider_runtime_not_in_materialization",
+        "undeclared_interface",
+    ],
+)
+def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
+    tmp_path: Path, code: str
+) -> None:
+    binding = VerifiedProviderBindingV1(
+        provider_artifact_digest=_digest("provider"),
+        interface_artifact_digest=_digest("interface-artifact"),
+        interface_id="demo.interface",
+        interface_digest=_digest("interface"),
+        implementation_digest=_digest("implementation"),
+        deployment_digest=_digest("deployment"),
+        materialization_digest=_digest("materialization"),
+        environment_manifest_digest=_digest("environment"),
+        entrypoint="demo.runtime:Provider",
+    )
+    deployment = LocalProviderDeploymentV1(
+        deployment_digest=binding.deployment_digest,
+        distribution_path=tmp_path / "distribution",
+        lock_path=tmp_path / "lock",
+        environment_path=tmp_path / "environment",
+        environment_manifest_path=tmp_path / "environment" / "seal.json",
+        environment_pin_key="pin",
+        interpreter_path=tmp_path / "environment" / "python",
+        provider_runtime_version="1.0.0",
+    )
+
+    class _RefusingDriver(LocalProviderExecutionDriver):
+        def bind(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            raise ProviderLocalRuntimeRefused(code, "probe")
+
+        def invoke(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            raise AssertionError("spawn reached after bind refusal")
+
+    invoker = ProviderLocalRuntimeInvoker(
+        deployments_by_digest={binding.deployment_digest: deployment},
+        accepted_providers_by_digest={binding.provider_artifact_digest: object()},  # type: ignore[dict-item]
+        accepted_interfaces_by_digest={binding.interface_artifact_digest: object()},  # type: ignore[dict-item]
+        secret_resolvers=ProviderSecretResolverRegistry(()),
+        process_leases=ProviderProcessLeaseStore(tmp_path / "bind-leases"),
+        driver=_RefusingDriver(),
+    )
+    occurrence = SimpleNamespace(
+        local_execution=binding,
+        provider_artifact_digest=binding.provider_artifact_digest,
+        interface_artifact_digest=binding.interface_artifact_digest,
+        implementation_digest=binding.implementation_digest,
+        secret_plan=ProviderSecretResolutionPlanV1(),
+    )
+    context = ProviderRuntimeRunContextV1(
+        protocol_version="1.0",
+        run_id="RUN-bind",
+        interface_id=binding.interface_id,
+        interface_digest=binding.interface_digest,
+        implementation_digest=binding.implementation_digest,
+        entrypoint=binding.entrypoint,
+        input={},
+        input_bucket="bucket",
+        budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=1024),
+    )
+
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        invoker.invoke_provider(
+            occurrence=occurrence,  # type: ignore[arg-type]
+            context=context,
+            invocation_id=_digest("bind-invocation"),
+        )
+    assert caught.value.code == code

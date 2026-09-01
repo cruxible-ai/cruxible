@@ -87,6 +87,7 @@ class _Invoker:
                 observer_backend="test-attribution",
                 observer_grade="attribution",
             ),
+            verified_binding=occurrence.local_execution,
         )
 
 

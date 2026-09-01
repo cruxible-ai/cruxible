@@ -78,6 +78,9 @@ _LOCAL_MAPPING: dict[str, tuple[str, str]] = {
     "secret_reference_invalid": ("node_refusal", "binding_input"),
     "provider_process_lease_invalid": ("internal", "executor"),
     "provider_process_lease_missing": ("internal", "executor"),
+    "provider_process_lease_echo_failed": ("internal", "executor"),
+    "provider_process_lease_echo_mismatch": ("internal", "executor"),
+    "provider_process_group_survived_recovery": ("internal", "executor"),
     "provider_runtime_not_in_materialization": ("internal", "materialization_integrity"),
     "budget_max_provider_calls_exceeded": ("node_refusal", "input_budget"),
 }

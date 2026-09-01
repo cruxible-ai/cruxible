@@ -1835,6 +1835,7 @@ class _RunState:
     invocation_receipt_digests: list[str] = dataclass_field(default_factory=list)
     provider_invocations_started: int = 0
     provider_invocations_completed: int = 0
+    run_started_monotonic_ns: int = 0
 
     def observe_items(self, observed: int, boundary: str, field_path: str) -> None:
         candidate = (boundary.encode("utf-8"), field_path.encode("utf-8"))
@@ -2058,6 +2059,7 @@ class ProcedureExecutor:
         halt: CanonicalValue | None = None
         try:
             state = self._seed_state(prepared)
+            state.run_started_monotonic_ns = started_ns
             input_contract = self._pin(
                 accepted.procedure.definition.contract_in,
                 label="Procedure contract_in",
@@ -3350,6 +3352,24 @@ class ProcedureExecutor:
         )
         state.provider_invocations_started += 1
         budget = occurrence.budget_translation
+        elapsed_microseconds = max(
+            0,
+            (self.clock.monotonic_ns() - state.run_started_monotonic_ns) // 1000,
+        )
+        remaining_run_microseconds = max(
+            0,
+            admission.budget.wall_clock.microseconds - elapsed_microseconds,
+        )
+        effective_wall_clock_seconds = min(
+            float(budget.runtime_wall_clock_seconds),
+            remaining_run_microseconds / 1_000_000,
+        )
+        if effective_wall_clock_seconds <= 0:
+            raise _RunRefusal(
+                "budget_wall_clock",
+                "No Procedure wall-clock budget remains before Provider spawn.",
+                node_id=node_id,
+            )
         context = ProviderRuntimeRunContextV1(
             protocol_version=occurrence.local_execution.protocol_version,
             run_id=admission.run_id,
@@ -3366,7 +3386,7 @@ class ProcedureExecutor:
             input_bucket=measured_bucket,
             capture_contract=occurrence.capture_contract_digest,
             budgets=ProviderRuntimeBudgetsV1(
-                wall_clock_seconds=float(budget.runtime_wall_clock_seconds),
+                wall_clock_seconds=effective_wall_clock_seconds,
                 output_bytes=budget.runtime_output_bytes_cap,
                 cost_units=None,
             ),
@@ -3399,7 +3419,7 @@ class ProcedureExecutor:
                         if item == "dynamic:target-from-run-input"
                     ),
                 ),
-                observer_backend="local-instrumented-client",
+                observer_backend="child-self-report",
                 observer_grade="attribution",
             )
             output = None
@@ -3416,18 +3436,23 @@ class ProcedureExecutor:
             trace = provider_canonical_value(driver_result.envelope.trace.model_dump(mode="python"))
             stderr = driver_result.stderr
             duration_microseconds = max(0, round(driver_result.duration_seconds * 1_000_000))
+        verified_binding = (
+            driver_result.verified_binding
+            if driver_result is not None
+            else occurrence.local_execution
+        )
         receipt = ProviderInvocationReceiptV1(
             invocation_id=invocation_id,
             occurrence_path=occurrence.occurrence_path,
             run_id=admission.run_id,
             admission_binding_digest=admission.admission_binding_digest,
-            provider_artifact_digest=occurrence.provider_artifact_digest,
-            implementation_digest=occurrence.implementation_digest,
-            materialization_digest=occurrence.local_execution.materialization_digest,
-            deployment_digest=occurrence.local_execution.deployment_digest,
-            interface_id=occurrence.interface_id,
-            interface_digest=occurrence.interface_digest,
-            protocol_version=occurrence.local_execution.protocol_version,
+            provider_artifact_digest=verified_binding.provider_artifact_digest,
+            implementation_digest=verified_binding.implementation_digest,
+            materialization_digest=verified_binding.materialization_digest,
+            deployment_digest=verified_binding.deployment_digest,
+            interface_id=verified_binding.interface_id,
+            interface_digest=verified_binding.interface_digest,
+            protocol_version=verified_binding.protocol_version,
             input_bucket=measured_bucket,
             capture_contract_digest=occurrence.capture_contract_digest,
             input_digest=input_digest,
