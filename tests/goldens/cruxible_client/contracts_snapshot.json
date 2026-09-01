@@ -16090,6 +16090,9 @@
                 "$ref": "#/$defs/ProcedureRunReceiptV4"
               },
               {
+                "$ref": "#/$defs/ProcedureRunReceiptV5"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -16607,7 +16610,9 @@
                   "input_material_mismatch",
                   "state_tap_refused",
                   "replay_material_mismatch",
-                  "procedure_runtime_policy_absent"
+                  "procedure_runtime_policy_absent",
+                  "provider_explicit_implementation_required",
+                  "provider_replay_receipt_required"
                 ],
                 "title": "Code",
                 "type": "string"
@@ -17122,6 +17127,8 @@
                   "terminal_not_available",
                   "terminal_egress_unverified",
                   "provider_unavailable",
+                  "unclassified_input",
+                  "unclaimed_bucket",
                   "playbill.acquisition.unavailable",
                   "playbill.acquisition.stale",
                   "playbill.acquisition.oversized",
@@ -17324,6 +17331,59 @@
               "secret_binding_identity_digests"
             ],
             "title": "ProcedureProviderBindingV1",
+            "type": "object"
+          },
+          "ProcedureProviderBindingV2": {
+            "additionalProperties": false,
+            "description": "Successor binding carrying the full classification and RAT-9 authority.",
+            "properties": {
+              "classification_plan": {
+                "$ref": "#/$defs/ProviderBucketClassificationPlanV1"
+              },
+              "effect_class": {
+                "enum": [
+                  "none",
+                  "external_read",
+                  "external_mutation"
+                ],
+                "title": "Effect Class",
+                "type": "string"
+              },
+              "implementation_digest": {
+                "title": "Implementation Digest",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "provider_artifact_digest": {
+                "title": "Provider Artifact Digest",
+                "type": "string"
+              },
+              "secret_binding_identity_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Secret Binding Identity Digests",
+                "type": "array"
+              },
+              "tag": {
+                "const": "playbill-procedure-provider-binding-v2",
+                "default": "playbill-procedure-provider-binding-v2",
+                "title": "Tag",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "provider_artifact_digest",
+              "classification_plan",
+              "implementation_digest",
+              "effect_class",
+              "secret_binding_identity_digests"
+            ],
+            "title": "ProcedureProviderBindingV2",
             "type": "object"
           },
           "ProcedureReplayInputProjectionV1": {
@@ -18240,6 +18300,319 @@
             "title": "ProcedureRunReceiptV4",
             "type": "object"
           },
+          "ProcedureRunReceiptV5": {
+            "additionalProperties": false,
+            "description": "Receipt successor embedding Provider binding v2 without rewriting v4.",
+            "properties": {
+              "acquisition_policy_digest": {
+                "title": "Acquisition Policy Digest",
+                "type": "string"
+              },
+              "admission_binding_digest": {
+                "title": "Admission Binding Digest",
+                "type": "string"
+              },
+              "admission_material_manifest": {
+                "$ref": "#/$defs/ProcedureAdmissionMaterialManifestV1"
+              },
+              "admission_material_manifest_digest": {
+                "title": "Admission Material Manifest Digest",
+                "type": "string"
+              },
+              "admitted_inputs": {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "title": "Admitted Inputs",
+                "type": "array"
+              },
+              "attribution": {
+                "$ref": "#/$defs/ProcedureRunAttributionV1"
+              },
+              "bound_coordinate": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "budget": {
+                "$ref": "#/$defs/ProcedureRunBudgetV2"
+              },
+              "calibration_coordinate_digest": {
+                "title": "Calibration Coordinate Digest",
+                "type": "string"
+              },
+              "chain_head_digest": {
+                "title": "Chain Head Digest",
+                "type": "string"
+              },
+              "deployment_snapshot_digest": {
+                "title": "Deployment Snapshot Digest",
+                "type": "string"
+              },
+              "epsilon_member": {
+                "title": "Epsilon Member",
+                "type": "boolean"
+              },
+              "evaluation_time": {
+                "format": "date-time",
+                "title": "Evaluation Time",
+                "type": "string"
+              },
+              "first_sequence": {
+                "minimum": 1,
+                "title": "First Sequence",
+                "type": "integer"
+              },
+              "head_at_admission": {
+                "$ref": "#/$defs/AcceptedCoordinate"
+              },
+              "invocation_origin": {
+                "const": "line",
+                "default": "line",
+                "title": "Invocation Origin",
+                "type": "string"
+              },
+              "journal_family": {
+                "title": "Journal Family",
+                "type": "string"
+              },
+              "lane": {
+                "enum": [
+                  "current",
+                  "replay"
+                ],
+                "title": "Lane",
+                "type": "string"
+              },
+              "last_sequence": {
+                "minimum": 1,
+                "title": "Last Sequence",
+                "type": "integer"
+              },
+              "line_identity": {
+                "$ref": "#/$defs/ArtifactIdentity"
+              },
+              "line_spec_digest": {
+                "title": "Line Spec Digest",
+                "type": "string"
+              },
+              "mandate_coordinate_digest": {
+                "title": "Mandate Coordinate Digest",
+                "type": "string"
+              },
+              "node_pin_sets": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureRunNodePinSetV1"
+                },
+                "title": "Node Pin Sets",
+                "type": "array"
+              },
+              "occurrence_evaluation_time": {
+                "format": "date-time",
+                "title": "Occurrence Evaluation Time",
+                "type": "string"
+              },
+              "occurrence_id": {
+                "title": "Occurrence Id",
+                "type": "string"
+              },
+              "partition_id": {
+                "title": "Partition Id",
+                "type": "string"
+              },
+              "pin_set_digest": {
+                "title": "Pin Set Digest",
+                "type": "string"
+              },
+              "record_digests": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Record Digests",
+                "type": "array"
+              },
+              "replay_input_vector": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureReplayInputProjectionV1"
+                },
+                "title": "Replay Input Vector",
+                "type": "array"
+              },
+              "resolved_provider_bindings": {
+                "items": {
+                  "$ref": "#/$defs/ProcedureProviderBindingV2"
+                },
+                "title": "Resolved Provider Bindings",
+                "type": "array"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "selection_decision": {
+                "$ref": "#/$defs/ProcedureSelectionDecisionV1"
+              },
+              "selection_decision_digest": {
+                "title": "Selection Decision Digest",
+                "type": "string"
+              },
+              "selection_receipt_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Selection Receipt Digest"
+              },
+              "semantic_replay_key_digest": {
+                "title": "Semantic Replay Key Digest",
+                "type": "string"
+              },
+              "semantic_result_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Semantic Result Digest"
+              },
+              "sensitivity_policy_digest": {
+                "title": "Sensitivity Policy Digest",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "succeeded",
+                  "node_refused",
+                  "operational_failed",
+                  "internal_failed",
+                  "halted"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "stream_id": {
+                "title": "Stream Id",
+                "type": "string"
+              },
+              "stream_instance_id": {
+                "title": "Stream Instance Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-procedure-run-receipt-v5",
+                "default": "playbill-procedure-run-receipt-v5",
+                "title": "Tag",
+                "type": "string"
+              },
+              "taint_labels": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Taint Labels",
+                "type": "array"
+              },
+              "terminal": {
+                "anyOf": [
+                  {
+                    "discriminator": {
+                      "mapping": {
+                        "playbill-procedure-admission-refusal-v1": "#/$defs/ProcedureAdmissionRefusalV1",
+                        "playbill-procedure-budget-exhausted-v1": "#/$defs/ProcedureBudgetExhaustedV1",
+                        "playbill-procedure-halt-terminal-v1": "#/$defs/ProcedureHaltTerminalV1",
+                        "playbill-procedure-internal-failure-v1": "#/$defs/ProcedureInternalFailureV1",
+                        "playbill-procedure-node-refusal-v1": "#/$defs/ProcedureNodeRefusalV1",
+                        "playbill-procedure-operational-failure-v1": "#/$defs/ProcedureOperationalFailureV1"
+                      },
+                      "propertyName": "tag"
+                    },
+                    "oneOf": [
+                      {
+                        "$ref": "#/$defs/ProcedureAdmissionRefusalV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureNodeRefusalV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureOperationalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureInternalFailureV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureBudgetExhaustedV1"
+                      },
+                      {
+                        "$ref": "#/$defs/ProcedureHaltTerminalV1"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Terminal"
+              },
+              "validated_pins": {
+                "items": {
+                  "$ref": "#/$defs/ArtifactPin"
+                },
+                "title": "Validated Pins",
+                "type": "array"
+              }
+            },
+            "required": [
+              "run_id",
+              "admission_binding_digest",
+              "semantic_replay_key_digest",
+              "semantic_result_digest",
+              "bound_coordinate",
+              "head_at_admission",
+              "lane",
+              "evaluation_time",
+              "validated_pins",
+              "admitted_inputs",
+              "attribution",
+              "stream_instance_id",
+              "journal_family",
+              "stream_id",
+              "partition_id",
+              "first_sequence",
+              "last_sequence",
+              "record_digests",
+              "chain_head_digest",
+              "status",
+              "terminal",
+              "budget",
+              "line_identity",
+              "line_spec_digest",
+              "occurrence_id",
+              "occurrence_evaluation_time",
+              "node_pin_sets",
+              "pin_set_digest",
+              "replay_input_vector",
+              "deployment_snapshot_digest",
+              "acquisition_policy_digest",
+              "selection_receipt_digest",
+              "selection_decision",
+              "selection_decision_digest",
+              "resolved_provider_bindings",
+              "sensitivity_policy_digest",
+              "mandate_coordinate_digest",
+              "calibration_coordinate_digest",
+              "taint_labels",
+              "epsilon_member",
+              "admission_material_manifest",
+              "admission_material_manifest_digest"
+            ],
+            "title": "ProcedureRunReceiptV5",
+            "type": "object"
+          },
           "ProcedureSelectionDecisionV1": {
             "additionalProperties": false,
             "properties": {
@@ -18287,6 +18660,55 @@
               "decisions"
             ],
             "title": "ProcedureSelectionDecisionV1",
+            "type": "object"
+          },
+          "ProviderBucketClassificationPlanV1": {
+            "additionalProperties": false,
+            "description": "Accepted, measured-bucket-free classifier plan for one occurrence.",
+            "properties": {
+              "accepted_bucket_selectors": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Accepted Bucket Selectors",
+                "type": "array"
+              },
+              "classifier_digest": {
+                "title": "Classifier Digest",
+                "type": "string"
+              },
+              "interface_artifact_digest": {
+                "title": "Interface Artifact Digest",
+                "type": "string"
+              },
+              "interface_digest": {
+                "title": "Interface Digest",
+                "type": "string"
+              },
+              "node_id": {
+                "title": "Node Id",
+                "type": "string"
+              },
+              "tag": {
+                "const": "playbill-provider-bucket-classification-plan-v1",
+                "default": "playbill-provider-bucket-classification-plan-v1",
+                "title": "Tag",
+                "type": "string"
+              },
+              "vocabulary_digest": {
+                "title": "Vocabulary Digest",
+                "type": "string"
+              }
+            },
+            "required": [
+              "node_id",
+              "interface_artifact_digest",
+              "interface_digest",
+              "vocabulary_digest",
+              "classifier_digest",
+              "accepted_bucket_selectors"
+            ],
+            "title": "ProviderBucketClassificationPlanV1",
             "type": "object"
           }
         },
@@ -18360,6 +18782,9 @@
               },
               {
                 "$ref": "#/$defs/ProcedureRunReceiptV4"
+              },
+              {
+                "$ref": "#/$defs/ProcedureRunReceiptV5"
               },
               {
                 "type": "null"
