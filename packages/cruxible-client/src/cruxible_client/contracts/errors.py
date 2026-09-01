@@ -184,6 +184,19 @@ class ProposalAdmissionError(PlaybillError):
     """An unauthenticated, mis-scoped, oversized, or malformed proposal was refused."""
 
 
+class ProposalReadmitRequiresResubmission(ProposalAdmissionError):
+    """A generated closure must be rebuilt rather than byte-rebased."""
+
+    error_code = "playbill.proposal.readmit_requires_resubmission"
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"{self.error_code}: this stale proposal is a generated dependency-closure "
+            "migration; rerun claim-type migration preflight/submit at current head so "
+            "the dependent inventory and pins are rebuilt"
+        )
+
+
 class ProposalActivationRequestInvalid(PlaybillFormatError):
     """A proposal activation route received a malformed proposal digest."""
 
@@ -255,6 +268,7 @@ __all__ = [
     "PrincipalIntegrityError",
     "ProposalActivationRequestInvalid",
     "ProposalAdmissionError",
+    "ProposalReadmitRequiresResubmission",
     "ProposalIntegrityError",
     "ProjectionCoordinateError",
     "ProjectionError",

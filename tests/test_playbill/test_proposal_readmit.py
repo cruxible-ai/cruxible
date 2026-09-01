@@ -6,13 +6,23 @@ from pathlib import Path
 
 import pytest
 
+from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
     DocumentShell,
 )
-from cruxible_client.contracts.errors import ProposalAdmissionError
+from cruxible_client.contracts.errors import (
+    ProposalAdmissionError,
+    ProposalReadmitRequiresResubmission,
+)
+from cruxible_core.playbill.claim_type_migrations import (
+    ClaimTypeDependentDispositionV2,
+    ClaimTypeMigrationRequestV2,
+    service_migrate_claim_type,
+)
+from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_propose_playbill_document,
@@ -22,6 +32,7 @@ from cruxible_core.playbill.service.documents import (
 from cruxible_core.service.playbill_proposals import service_readmit_playbill_proposal
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
+from tests.test_playbill.test_claim_type_migrations import _accepted_claim_world, _successor
 
 TIMESTAMP = "2026-08-22T12:00:00.000000Z"
 
@@ -172,3 +183,56 @@ def test_readmit_returns_a_typed_refused_proposal_when_content_no_longer_preflig
     assert result.proposal.proposal.evaluation.verdict == "refused"
     assert result.proposal.proposal.candidate is None
     assert result.proposal.proposal.evaluation.diagnostics
+
+
+def test_readmit_refuses_stale_generated_claim_type_closure_before_admission(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    request = ClaimTypeMigrationRequestV2(
+        mode="submit",
+        successor=_successor(instance),
+        dependents=(
+            ClaimTypeDependentDispositionV2(
+                identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                disposition="successor",
+            ),
+        ),
+    )
+    migration = service_migrate_claim_type(
+        instance,
+        request=request,
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    source_id = migration.proposal.proposal.admission.proposal_id  # type: ignore[union-attr]
+    admissions_before_advance = len(instance.proposal_evidence().list_admissions())
+
+    body = service_store_playbill_body(instance, content=b"unrelated").digest
+    unrelated = service_propose_playbill_document(
+        instance,
+        shell=_shell("unrelated", body, title="Unrelated"),
+        actor_id="owner",
+        proposal_name="unrelated",
+        timestamp=TIMESTAMP,
+    )
+    _accept(instance, _owner, unrelated)
+    admissions_before_readmit = len(instance.proposal_evidence().list_admissions())
+    assert admissions_before_readmit == admissions_before_advance + 1
+
+    with pytest.raises(
+        ProposalReadmitRequiresResubmission,
+        match="rerun claim-type migration preflight/submit at current head",
+    ):
+        service_readmit_playbill_proposal(
+            instance,
+            proposal_id=source_id,
+            actor_id="owner",
+        )
+    assert len(instance.proposal_evidence().list_admissions()) == admissions_before_readmit
+
+    rerun = service_migrate_claim_type(
+        instance,
+        request=request.model_copy(update={"successor": _successor(instance)}),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert rerun.proposal.proposal.candidate is not None  # type: ignore[union-attr]

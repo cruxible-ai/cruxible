@@ -533,7 +533,9 @@ permission mode, accepted principal-registration status, and current coordinate.
 refused, and stale terminal evidence so retries do not depend on remembered IDs.
 `proposal readmit` replays a stale proposal's authored content through the current
 governed rebase and returns a fresh, idempotent proposal without changing the old
-proposal evidence.
+proposal evidence. A stale generated ClaimType dependency-closure migration is not
+byte-rebased because its dependent inventory may have changed; rerun ClaimType
+migration preflight and submit at the current head instead.
 
 approve signs locally. The private-key path is not sent to the daemon.
 When `.playbill/coverage.json` at `--workspace-root` declares `floor_output`,

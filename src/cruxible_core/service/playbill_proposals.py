@@ -7,7 +7,11 @@ from typing import Literal, cast
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_client.contracts.errors import ProposalAdmissionError, ProposalIntegrityError
+from cruxible_client.contracts.errors import (
+    ProposalAdmissionError,
+    ProposalIntegrityError,
+    ProposalReadmitRequiresResubmission,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.proposals import (
     AuthenticatedActor,
@@ -171,6 +175,12 @@ def service_readmit_playbill_proposal(
     )
     if source_status is None or source_status.terminal_reason != "stale":
         raise ProposalAdmissionError("only a settled stale proposal may be readmitted")
+    if (
+        source.candidate is not None
+        and len(source.candidate.members) > 1
+        and any(member.artifact_kind == "claim-type" for member in source.candidate.members)
+    ):
+        raise ProposalReadmitRequiresResubmission()
     coordinate = PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate())
     operation_digest = typed_digest(
         Sha256Value,
