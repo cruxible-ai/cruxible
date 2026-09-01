@@ -26,8 +26,11 @@ from cruxible_client.contracts.provider_execution import (
     ProviderBudgetTranslationV1,
     ProviderEgressObservationV1,
     ProviderExternalOccurrencePlanV1,
+    ProviderInvocationCompletedV1,
+    ProviderInvocationReceiptV1,
     ProviderSecretResolutionPlanV1,
     VerifiedProviderBindingV1,
+    provider_invocation_receipt_digest,
 )
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.exhaust import parse_journal_payload
@@ -40,6 +43,7 @@ from cruxible_core.playbill.procedures.execution import (
     procedure_line_run_id,
     procedure_semantic_replay_key_digest,
 )
+from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.provider_classifiers import ProviderBucketClassifierRegistry
 from cruxible_core.playbill.provider_local_runtime import ProviderDriverOutcomeV1
 from cruxible_core.playbill.provider_runtime_contract import ProviderRuntimeResultEnvelopeV1
@@ -343,6 +347,39 @@ def test_graph_v4_provider_journals_completed_receipt_before_progress(
     assert state.receipt.invocation_receipt_digests == (
         payload["receipt_digest"],  # type: ignore[index]
     )
+
+    mismatch_index = ProcedureRunIndex(tmp_path / "mismatched-invocations.sqlite")
+    try:
+        for stored in records:
+            actual_payload = parse_journal_payload(
+                fixture.bodies.read(
+                    stored.record.payload_digest,
+                    access=BodyAccessContext(principal_id="test", can_read_body=True),
+                )
+            )
+            if stored.record.event_kind != "provider_invocation_completed":
+                mismatch_index.apply_record(stored, payload=actual_payload)
+                continue
+            original = ProviderInvocationCompletedV1.model_validate(actual_payload)
+            forged_receipt = ProviderInvocationReceiptV1.model_validate(
+                {
+                    **original.receipt.model_dump(mode="python"),
+                    "invocation_id": _digest("another-invocation"),
+                }
+            )
+            forged_completion = ProviderInvocationCompletedV1(
+                invocation_id=forged_receipt.invocation_id,
+                receipt=forged_receipt,
+                receipt_digest=provider_invocation_receipt_digest(forged_receipt),
+            )
+            with pytest.raises(PlaybillExecutionError, match="exact unmatched durable start"):
+                mismatch_index.apply_record(
+                    stored,
+                    payload=forged_completion.model_dump(mode="json"),
+                )
+            break
+    finally:
+        mismatch_index.close()
 
 
 def test_line_external_mutation_prepares_intent_and_invokes_zero_times(tmp_path: Path) -> None:

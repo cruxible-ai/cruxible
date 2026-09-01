@@ -10,6 +10,10 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 from cruxible_client.contracts.canonical import CanonicalValue, Sha256Value
 from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.provider_execution import (
+    ProviderInvocationCompletedV1,
+    ProviderInvocationStartedV1,
+)
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
 from cruxible_core.playbill.exhaust import (
     StoredProcedureJournalRecordV1,
@@ -63,6 +67,15 @@ CREATE TABLE IF NOT EXISTS procedure_run_index (
 )
 """
 
+_PROVIDER_INVOCATION_SCHEMA = """
+CREATE TABLE IF NOT EXISTS procedure_provider_invocation_index (
+    run_id TEXT NOT NULL,
+    invocation_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('started', 'completed')),
+    PRIMARY KEY (run_id, invocation_id)
+)
+"""
+
 
 class ProcedureRunIndex:
     """A cache only: deleting the database and rebuilding must change no answer."""
@@ -76,6 +89,7 @@ class ProcedureRunIndex:
         self._conn = sqlite3.connect(path)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_INDEX_SCHEMA)
+        self._conn.execute(_PROVIDER_INVOCATION_SCHEMA)
         columns = {
             str(row[1]) for row in self._conn.execute("PRAGMA table_info(procedure_run_index)")
         }
@@ -163,25 +177,50 @@ class ProcedureRunIndex:
                 (record.run_id,),
             )
         elif record.event_kind == "provider_invocation_started":
-            if not isinstance(payload, dict) or not isinstance(payload.get("invocation_id"), str):
-                raise PlaybillExecutionError("Provider invocation start payload is invalid")
+            try:
+                started = ProviderInvocationStartedV1.model_validate(payload)
+            except ValueError as exc:
+                raise PlaybillExecutionError(
+                    "Provider invocation start payload is invalid"
+                ) from exc
+            prior = self._conn.execute(
+                "SELECT status FROM procedure_provider_invocation_index "
+                "WHERE run_id = ? AND invocation_id = ?",
+                (record.run_id, started.invocation_id),
+            ).fetchone()
+            if prior is not None:
+                raise PlaybillExecutionError("Provider invocation start is duplicated")
+            self._conn.execute(
+                "INSERT INTO procedure_provider_invocation_index "
+                "(run_id, invocation_id, status) VALUES (?, ?, 'started')",
+                (record.run_id, started.invocation_id),
+            )
             self._conn.execute(
                 "UPDATE procedure_run_index SET provider_invocation_started_count = "
                 "provider_invocation_started_count + 1 WHERE run_id = ?",
                 (record.run_id,),
             )
         elif record.event_kind == "provider_invocation_completed":
-            current = self.get(record.run_id)
-            if (
-                current is None
-                or current.provider_invocation_completed_count
-                >= current.provider_invocation_started_count
-            ):
+            try:
+                completed = ProviderInvocationCompletedV1.model_validate(payload)
+            except ValueError as exc:
                 raise PlaybillExecutionError(
-                    "Provider invocation completion has no unmatched durable start"
+                    "Provider invocation completion payload is invalid"
+                ) from exc
+            prior = self._conn.execute(
+                "SELECT status FROM procedure_provider_invocation_index "
+                "WHERE run_id = ? AND invocation_id = ?",
+                (record.run_id, completed.invocation_id),
+            ).fetchone()
+            if prior is None or prior["status"] != "started":
+                raise PlaybillExecutionError(
+                    "Provider invocation completion has no exact unmatched durable start"
                 )
-            if not isinstance(payload, dict) or not isinstance(payload.get("receipt_digest"), str):
-                raise PlaybillExecutionError("Provider invocation completion payload is invalid")
+            self._conn.execute(
+                "UPDATE procedure_provider_invocation_index SET status = 'completed' "
+                "WHERE run_id = ? AND invocation_id = ?",
+                (record.run_id, completed.invocation_id),
+            )
             self._conn.execute(
                 "UPDATE procedure_run_index SET provider_invocation_completed_count = "
                 "provider_invocation_completed_count + 1 WHERE run_id = ?",
@@ -222,6 +261,7 @@ class ProcedureRunIndex:
 
         access = BodyAccessContext(principal_id="procedure-run-index", can_read_body=True)
         self._conn.execute("DELETE FROM procedure_run_index")
+        self._conn.execute("DELETE FROM procedure_provider_invocation_index")
         self._conn.commit()
         for stored in records:
             content = bodies.read(stored.record.payload_digest, access=access)
