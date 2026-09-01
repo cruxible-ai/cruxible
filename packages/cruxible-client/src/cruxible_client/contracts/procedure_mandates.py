@@ -273,6 +273,16 @@ class ProcedureMandateEvaluationV1(_StrictProcedureMandateModel):
     refusal_codes: tuple[str, ...] = ()
 
 
+def procedure_mandate_evaluation_digest(evaluation: ProcedureMandateEvaluationV1) -> str:
+    payload = evaluation.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        "playbill-procedure-mandate-evaluation-v1",
+        payload,
+    ).tagged
+
+
 def _path_is_in_namespace(path: str, namespace: tuple[str, ...]) -> bool:
     return any(path == prefix or path.startswith(prefix + "/") for prefix in namespace)
 
@@ -316,6 +326,7 @@ __all__ = [
     "evaluate_procedure_mandate_law",
     "parse_procedure_mandate",
     "procedure_mandate_digest",
+    "procedure_mandate_evaluation_digest",
     "procedure_mandate_path",
     "render_procedure_mandate",
 ]

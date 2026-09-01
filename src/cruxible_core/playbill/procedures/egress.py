@@ -47,7 +47,12 @@ from cruxible_client.contracts.captures import (
     capture_contract_digest,
 )
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS
+from cruxible_client.contracts.procedure_mandates import (
+    ProcedureMandateInvocationV1,
+    ProcedureMandateV1,
+    evaluate_procedure_mandate,
+)
+from cruxible_client.contracts.procedures.models import TERMINAL_REQUIRED_RUNGS, ProcedureHardCapsV3
 from cruxible_client.contracts.standing_mandates import MandateGrantV1, MandateRuntimeCapV1
 from cruxible_client.contracts.temporal import ensure_utc
 from cruxible_core.playbill.actor_context import GovernedActorContext
@@ -91,10 +96,9 @@ EFFECTIVE_RUNG_TERMS: tuple[EffectiveRungTermV1, ...] = (
 #: only by refusing to interpret something, never by grading it.
 NO_TERMINAL_EGRESS = -1
 
-#: The highest rung reachable without any live mandate.  Inert evidence, human
-#: attention, and an untrusted proposal need no granted authority; settlement
-#: does, so absence and expiry leave this ceiling exactly where it is.
-MANDATE_FREE_RUNG_CEILING = 2
+#: The highest rung reachable without an exact live Procedure mandate. Capture
+#: and human attention remain free; proposals and settlement consume authority.
+MANDATE_FREE_RUNG_CEILING = 1
 
 #: The mandate operation each rung consumes.  Rung 1 posts human attention and
 #: consumes none, which is why a cap is folded as a monotone prefix.
@@ -273,21 +277,14 @@ def _mandate_term(
     mandate_grants: Mapping[str, MandateGrantV1],
     mandate_coordinate_digest: str,
 ) -> EffectiveRungTermReadingV1:
-    for basis_digest in sorted(mandate_grants, key=lambda item: item.encode("ascii")):
-        grant = mandate_grants[basis_digest]
-        if grant.settlement == "settle_named_deltas" and (
-            "activate_change_set" in grant.permitted_operations
-        ):
-            return EffectiveRungTermReadingV1(
-                term="mandate_grant",
-                rung=3,
-                reason="A live mandate grant permits settling named deltas.",
-                basis_digest=basis_digest,
-            )
+    # StandingMandate is a Provider/CaptureContract/ClaimType grant and cannot
+    # be reinterpreted as Procedure authority. P2-C binds the exact
+    # ProcedureMandate in the dark v2 request; the executable fold follows B2.
+    del mandate_grants
     return EffectiveRungTermReadingV1(
         term="mandate_grant",
         rung=MANDATE_FREE_RUNG_CEILING,
-        reason="No live mandate grant permits activation; absence and expiry contribute nothing.",
+        reason="No exact Procedure mandate is bound; rung 2 and rung 3 are unavailable.",
         basis_digest=mandate_coordinate_digest,
     )
 
@@ -524,6 +521,287 @@ class TerminalEgressReceiptV1(_StrictEgressModel):
         return self
 
 
+class ProcedureProducerReceiptV1(_StrictEgressModel):
+    """Pre-egress producer commitment that keeps the Capture graph acyclic."""
+
+    tag: Literal["playbill-procedure-producer-receipt-v1"] = (
+        "playbill-procedure-producer-receipt-v1"
+    )
+    admission_binding_digest: str
+    run_id: str
+    accepted_coordinate: AcceptedCoordinate
+    procedure_identity: ArtifactIdentity
+    procedure_artifact_digest: str
+    terminal_node_id: str
+    item_manifest_digests: tuple[str, ...]
+    capture_contract_digest: str
+
+    @field_validator(
+        "admission_binding_digest",
+        "procedure_artifact_digest",
+        "capture_contract_digest",
+    )
+    @classmethod
+    def _receipt_digests(cls, value: str) -> str:
+        return _tagged(value)
+
+    @field_validator("item_manifest_digests")
+    @classmethod
+    def _item_manifests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("producer receipt requires at least one item manifest")
+        for digest in value:
+            _tagged(digest)
+        return value
+
+    @model_validator(mode="after")
+    def _shape(self) -> "ProcedureProducerReceiptV1":
+        if self.procedure_identity.kind != "Procedure":
+            raise ValueError("producer receipt must name a Procedure")
+        return self
+
+
+def procedure_producer_receipt_digest(receipt: ProcedureProducerReceiptV1) -> str:
+    payload = receipt.model_dump(mode="json")
+    payload.pop("tag")
+    return typed_digest(
+        Sha256Value,
+        "playbill-procedure-producer-receipt-v1",
+        payload,
+    ).tagged
+
+
+def terminal_operation_key(request: TerminalEgressRequestV1) -> str:
+    """Derive one retry key from semantic run inputs, never delivery time."""
+
+    return typed_digest(
+        Sha256Value,
+        "playbill-terminal-operation-key-v1",
+        {
+            "admission_binding_digest": request.admission_binding_digest,
+            "node_id": request.node_id,
+            "item_manifest_digests": [item.manifest_digest for item in request.items],
+        },
+    ).tagged
+
+
+class TerminalEgressRequestV2(TerminalEgressRequestV1):
+    """Dark P2-C request; B2 will parent it from the final admission carrier."""
+
+    tag: Literal["playbill-terminal-egress-request-v2"] = (
+        "playbill-terminal-egress-request-v2"  # type: ignore[assignment]
+    )
+    procedure_mandate_digest: str | None = None
+    calibration_reading_digests: tuple[str, ...] = ()
+    requested_authority: ProcedureHardCapsV3
+    target_paths: tuple[str, ...] = ()
+    evaluation_time: datetime
+    operation_key: str | None = None
+    producer_receipt: ProcedureProducerReceiptV1 | None = None
+
+    @field_validator("procedure_mandate_digest", "operation_key")
+    @classmethod
+    def _optional_digests(cls, value: str | None) -> str | None:
+        return None if value is None else _tagged(value)
+
+    @field_validator("calibration_reading_digests")
+    @classmethod
+    def _readings(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("calibration reading digests must be sorted and unique")
+        for digest in value:
+            _tagged(digest)
+        return value
+
+    @field_validator("target_paths")
+    @classmethod
+    def _targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("terminal target paths must be sorted and unique")
+        return value
+
+    @field_validator("evaluation_time")
+    @classmethod
+    def _evaluation_time(cls, value: datetime) -> datetime:
+        return ensure_utc(value)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressRequestV2":
+        if self.required_rung != TERMINAL_REQUIRED_RUNGS[self.kind]:
+            raise ValueError("terminal egress required rung disagrees with its kind")
+        if self.required_rung > self.effective_rung:
+            raise ValueError("terminal egress above the effective rung is never requested")
+        if self.granted_operation != RUNG_REQUIRED_OPERATIONS[self.required_rung]:
+            raise ValueError("terminal egress operation disagrees with its rung")
+        if (self.bound_artifact_pin is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
+            raise ValueError(f"{self.kind} egress binds exactly the artifact its law traverses")
+        effectful = self.kind in {"propose_change_set", "mandate_settlement"}
+        if bool(self.target_paths) != effectful or (self.operation_key is not None) != effectful:
+            raise ValueError("effectful terminal egress requires exact targets and operation key")
+        if (self.producer_receipt is not None) != (self.kind == "emit_capture"):
+            raise ValueError("only Capture egress carries a producer receipt")
+        if self.producer_receipt is not None:
+            producer = self.producer_receipt
+            pin = self.bound_artifact_pin
+            if (
+                producer.admission_binding_digest != self.admission_binding_digest
+                or producer.run_id != self.run_id
+                or producer.accepted_coordinate != self.accepted_coordinate
+                or producer.procedure_identity != self.procedure_identity
+                or producer.procedure_artifact_digest != self.procedure_artifact_digest
+                or producer.terminal_node_id != self.node_id
+                or producer.item_manifest_digests
+                != tuple(item.manifest_digest for item in self.items)
+                or pin is None
+                or producer.capture_contract_digest != pin.artifact_digest
+            ):
+                raise ValueError("Capture producer receipt does not reproduce its egress request")
+        if (self.procedure_mandate_digest is not None) != effectful:
+            raise ValueError("effectful terminal egress requires an exact Procedure mandate")
+        expected_key = terminal_operation_key(self) if effectful else None
+        if self.operation_key != expected_key:
+            raise ValueError("terminal operation key does not reproduce from the request")
+        if not self.items:
+            raise ValueError("terminal egress requires at least one child item")
+        if tuple(item.child_index for item in self.items) != tuple(range(len(self.items))):
+            raise ValueError("terminal egress children must be declared fanout order")
+        return self
+
+
+def build_terminal_egress_request_v2(
+    request: TerminalEgressRequestV1,
+    *,
+    procedure_mandate_digest: str | None,
+    calibration_reading_digests: tuple[str, ...],
+    requested_authority: ProcedureHardCapsV3,
+    target_paths: tuple[str, ...],
+    evaluation_time: datetime,
+) -> TerminalEgressRequestV2:
+    """Successor a prepared v1 request without reinterpreting its fields."""
+
+    payload = request.model_dump(mode="python")
+    payload.pop("tag")
+    return TerminalEgressRequestV2(
+        **payload,
+        procedure_mandate_digest=procedure_mandate_digest,
+        calibration_reading_digests=calibration_reading_digests,
+        requested_authority=requested_authority,
+        target_paths=target_paths,
+        evaluation_time=evaluation_time,
+        operation_key=(
+            terminal_operation_key(request)
+            if request.kind in {"propose_change_set", "mandate_settlement"}
+            else None
+        ),
+        producer_receipt=(
+            producer_receipt_for_request(request) if request.kind == "emit_capture" else None
+        ),
+    )
+
+
+class TerminalEgressReceiptV2(TerminalEgressReceiptV1):
+    tag: Literal["playbill-terminal-egress-receipt-v2"] = (
+        "playbill-terminal-egress-receipt-v2"  # type: ignore[assignment]
+    )
+    producer_receipt_digest: str | None = None
+    operation_key: str | None = None
+
+    @field_validator("producer_receipt_digest", "operation_key")
+    @classmethod
+    def _v2_digests(cls, value: str | None) -> str | None:
+        return None if value is None else _tagged(value)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "TerminalEgressReceiptV2":
+        expected = TERMINAL_EGRESS_DISPOSITIONS[self.kind]
+        if self.disposition != expected:
+            raise ValueError(f"a {self.kind} egress reports {expected!r}, nothing else")
+        if (self.bound_artifact_digest is not None) != (self.kind in TERMINAL_EGRESS_BOUND_KINDS):
+            raise ValueError(f"{self.kind} egress reports exactly the artifact it traversed")
+        if (self.producer_receipt_digest is not None) != (self.kind == "emit_capture"):
+            raise ValueError("only Capture egress reports a producer receipt")
+        if (self.operation_key is not None) != (
+            self.kind in {"propose_change_set", "mandate_settlement"}
+        ):
+            raise ValueError("only effectful egress reports an operation key")
+        if not self.children:
+            raise ValueError("terminal egress reports at least one delivered child")
+        if tuple(item.child_index for item in self.children) != tuple(range(len(self.children))):
+            raise ValueError("terminal egress children must be reported in fanout order")
+        return self
+
+
+class TerminalAuthorityRefusal(TerminalEgressError):
+    def __init__(self, code: str, message: str, *, repair_command: str) -> None:
+        self.code = code
+        self.repair_command = repair_command
+        super().__init__(f"{code}: {message} Repair: {repair_command}")
+
+
+PROCEDURE_MANDATE_REPAIR_COMMAND = "cruxible playbill authoring create --example procedure-mandate"
+
+
+def require_procedure_mandate(
+    request: TerminalEgressRequestV2,
+    *,
+    accepted_mandates: Mapping[str, ProcedureMandateV1],
+) -> ProcedureMandateV1:
+    """Resolve and evaluate authority before any effectful adapter is invoked."""
+
+    if request.kind not in {"propose_change_set", "mandate_settlement"}:
+        raise TerminalAuthorityRefusal(
+            "procedure_mandate_not_applicable",
+            "Only rung-2 and rung-3 terminals consume Procedure mandates.",
+            repair_command="Use the terminal's declared rung.",
+        )
+    digest = request.procedure_mandate_digest
+    mandate = None if digest is None else accepted_mandates.get(digest)
+    if mandate is None:
+        raise TerminalAuthorityRefusal(
+            "procedure_mandate_required",
+            "An exact accepted Procedure mandate is required before effect.",
+            repair_command=PROCEDURE_MANDATE_REPAIR_COMMAND,
+        )
+    assert digest is not None
+    evaluation = evaluate_procedure_mandate(
+        mandate,
+        ProcedureMandateInvocationV1(
+            procedure_identity=request.procedure_identity,
+            procedure_artifact_digest=request.procedure_artifact_digest,
+            requested_rung=request.required_rung,  # type: ignore[arg-type]
+            requested_authority=request.requested_authority,
+            target_paths=request.target_paths,
+            evaluation_time=request.evaluation_time,
+            accepted_mandate_digest=digest,
+        ),
+    )
+    if evaluation.verdict == "refused":
+        code = evaluation.refusal_codes[0]
+        raise TerminalAuthorityRefusal(
+            code,
+            "The accepted Procedure mandate does not cover this terminal request.",
+            repair_command=PROCEDURE_MANDATE_REPAIR_COMMAND,
+        )
+    return mandate
+
+
+def producer_receipt_for_request(
+    request: TerminalEgressRequestV1,
+) -> ProcedureProducerReceiptV1:
+    if request.kind != "emit_capture" or request.bound_artifact_pin is None:
+        raise TerminalEgressError("producer receipts are defined only for Capture egress")
+    return ProcedureProducerReceiptV1(
+        admission_binding_digest=request.admission_binding_digest,
+        run_id=request.run_id,
+        accepted_coordinate=request.accepted_coordinate,
+        procedure_identity=request.procedure_identity,
+        procedure_artifact_digest=request.procedure_artifact_digest,
+        terminal_node_id=request.node_id,
+        item_manifest_digests=tuple(item.manifest_digest for item in request.items),
+        capture_contract_digest=request.bound_artifact_pin.artifact_digest,
+    )
+
+
 @runtime_checkable
 class TerminalEgressSinkProtocol(Protocol):
     def deliver_terminal_egress(
@@ -553,6 +831,18 @@ def verify_terminal_egress_receipt(
     for item, child in zip(request.items, receipt.children, strict=True):
         if child.item_key != item.item_key:
             raise TerminalEgressError("terminal egress receipt renames a child item")
+    if isinstance(request, TerminalEgressRequestV2):
+        if not isinstance(receipt, TerminalEgressReceiptV2):
+            raise TerminalEgressError("v2 terminal egress requires a v2 receipt")
+        expected_producer = (
+            None
+            if request.producer_receipt is None
+            else procedure_producer_receipt_digest(request.producer_receipt)
+        )
+        if receipt.producer_receipt_digest != expected_producer:
+            raise TerminalEgressError("Capture egress did not bind its exact producer receipt")
+        if receipt.operation_key != request.operation_key:
+            raise TerminalEgressError("effectful egress did not reproduce its operation key")
 
 
 class CaptureTerminalEgressSink:
@@ -690,10 +980,20 @@ __all__ = [
     "TerminalEgressItemV1",
     "TerminalEgressKindV1",
     "TerminalEgressReceiptV1",
+    "TerminalEgressReceiptV2",
     "TerminalEgressRequestV1",
+    "TerminalEgressRequestV2",
     "TerminalEgressSinkProtocol",
+    "build_terminal_egress_request_v2",
     "compute_effective_rung",
     "effect_dispatch_refusal",
     "effective_rung_digest",
     "verify_terminal_egress_receipt",
+    "ProcedureProducerReceiptV1",
+    "TerminalAuthorityRefusal",
+    "PROCEDURE_MANDATE_REPAIR_COMMAND",
+    "procedure_producer_receipt_digest",
+    "producer_receipt_for_request",
+    "require_procedure_mandate",
+    "terminal_operation_key",
 ]
