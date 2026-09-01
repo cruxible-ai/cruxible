@@ -21,6 +21,8 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
     ArtifactDigest,
     artifact_bytes_for_path,
     artifact_path_matches,
@@ -301,14 +303,19 @@ def render_procedure(procedure: ProcedureArtifactAny) -> bytes:
     return pretty_canonical_bytes(procedure.model_dump(mode="json", by_alias=True))
 
 
-def parse_procedure(content: bytes, *, path: str) -> ProcedureArtifactAny:
+def parse_procedure(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ProcedureArtifactAny:
     try:
         procedure = _PROCEDURE_ADAPTER.validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProcedureFormatError("Procedure failed strict versioned validation") from exc
-    if not artifact_path_matches(procedure_path(procedure.identity.name), path):
+    if not artifact_path_matches(procedure_path(procedure.identity.name), path, codec=codec):
         raise ProcedureFormatError("Procedure identity/path disagreement")
-    if artifact_bytes_for_path(render_procedure(procedure), path) != content:
+    if artifact_bytes_for_path(render_procedure(procedure), path, codec=codec) != content:
         raise ProcedureFormatError("Procedure is not in canonical wire form")
     return procedure
 

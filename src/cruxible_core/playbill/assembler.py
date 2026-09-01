@@ -21,6 +21,7 @@ from cruxible_client.contracts.projection_extensions import (
 from cruxible_core.playbill.cas import BodyProjectionProtocol
 from cruxible_core.playbill.citation_relations import build_citation_relation_facts
 from cruxible_core.playbill.compiler import (
+    artifact_codec_for_compiler,
     artifact_kinds_for_compiler,
     projection_registry_for_compiler,
 )
@@ -171,6 +172,7 @@ class ProjectionAssembler:
         self.publication_directory = publication_directory.resolve(strict=True)
         self.registry = registry or projection_registry_for_compiler(accepted.compiler)
         self.artifact_kinds = artifact_kinds_for_compiler(accepted.compiler)
+        self.artifact_codec = artifact_codec_for_compiler(accepted.compiler)
         self.bodies = bodies
         self.accepted_coordinates_by_sequence = dict(accepted_coordinates_by_sequence or {})
 
@@ -286,6 +288,7 @@ class ProjectionAssembler:
                 blob_map,
                 registry=self.registry,
                 artifact_kinds=self.artifact_kinds,
+                artifact_codec=self.artifact_codec,
                 bodies=self.bodies,
                 coordinate=request,
                 accepted_coordinates_by_sequence=self.accepted_coordinates_by_sequence,

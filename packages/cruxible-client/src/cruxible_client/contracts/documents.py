@@ -17,9 +17,12 @@ from cruxible_client.contracts.artifacts import (
     parse_artifact_identity,
 )
 from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
     ArtifactDigest,
     CasDigest,
     artifact_bytes_for_path,
+    artifact_path_for_codec,
     artifact_path_matches,
     normalize_ledger_path,
     pretty_canonical_bytes,
@@ -245,15 +248,21 @@ def document_path(document_id: str) -> str:
     return f"documents/{_identifier(document_id, label='document_id')}.json"
 
 
-def validate_document_path(shell: DocumentShell, path: str) -> str:
+def validate_document_path(
+    shell: DocumentShell,
+    path: str,
+    *,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> str:
     try:
         normalized = normalize_ledger_path(path)
     except CanonicalEncodingError as exc:
         raise DocumentFormatError("Document path is not a canonical ledger path") from exc
     expected = document_path(shell.document_id)
-    if normalized != path or not artifact_path_matches(expected, path):
+    if normalized != path or not artifact_path_matches(expected, path, codec=codec):
         raise DocumentFormatError(
-            f"Document identity/path disagreement: {shell.identity!r} requires {expected!r}"
+            "Document identity/path disagreement: "
+            f"{shell.identity!r} requires {artifact_path_for_codec(expected, codec)!r}"
         )
     return path
 
@@ -262,7 +271,12 @@ def render_document(shell: DocumentShell) -> bytes:
     return pretty_canonical_bytes(shell.model_dump(mode="json"))
 
 
-def parse_document(content: bytes, *, path: str) -> DocumentShell:
+def parse_document(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> DocumentShell:
     """Dispatch by explicit format and refuse unknown or noncanonical wire forms."""
 
     try:
@@ -276,9 +290,9 @@ def parse_document(content: bytes, *, path: str) -> DocumentShell:
         shell = DocumentShell.model_validate(payload)
     except ValidationError as exc:
         raise DocumentFormatError("Document shell failed strict v1 validation") from exc
-    if artifact_bytes_for_path(render_document(shell), path) != content:
+    validate_document_path(shell, path, codec=codec)
+    if artifact_bytes_for_path(render_document(shell), path, codec=codec) != content:
         raise DocumentFormatError("Document shell is not in canonical wire form")
-    validate_document_path(shell, path)
     return shell
 
 

@@ -8,6 +8,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
     ArtifactDigest,
     artifact_bytes_for_path,
     artifact_path_matches,
@@ -39,15 +41,20 @@ def render_approval_policy(policy: ApprovalPolicyV1) -> bytes:
     return pretty_canonical_bytes(policy.model_dump(mode="json"))
 
 
-def parse_approval_policy(content: bytes, *, path: str) -> ApprovalPolicyV1:
-    if not artifact_path_matches(APPROVAL_POLICY_PATH, path):
+def parse_approval_policy(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ApprovalPolicyV1:
+    if not artifact_path_matches(APPROVAL_POLICY_PATH, path, codec=codec):
         raise ApprovalPolicyFormatError("approval policy must use its singleton path")
     try:
         payload = json.loads(content)
         policy = ApprovalPolicyV1.model_validate(payload)
     except (UnicodeDecodeError, ValueError) as exc:
         raise ApprovalPolicyFormatError("approval policy failed strict validation") from exc
-    if artifact_bytes_for_path(render_approval_policy(policy), path) != content:
+    if artifact_bytes_for_path(render_approval_policy(policy), path, codec=codec) != content:
         raise ApprovalPolicyFormatError("approval policy is not canonical")
     return policy
 

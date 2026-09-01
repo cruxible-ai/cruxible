@@ -18,6 +18,7 @@ from cruxible_client.contracts.approval_policy import (
     render_approval_policy,
 )
 from cruxible_client.contracts.canonical import (
+    P2_B0_ARTIFACT_CODEC,
     BootstrapRoot,
     ChangeSetDigest,
     GenerationRoot,
@@ -148,6 +149,7 @@ def seeded_procedure_runtime_policy() -> ProcedureRuntimePolicyV1:
         .joinpath("procedure-runtime-policy.yaml")
         .read_bytes(),
         path="governance/procedure-runtime-policy.yaml",
+        codec=P2_B0_ARTIFACT_CODEC,
     )
 
 

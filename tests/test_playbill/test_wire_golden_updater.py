@@ -29,10 +29,16 @@ def test_playbill_wire_updater_executes_byte_idempotently(tmp_path: Path) -> Non
     )
     for name in (
         "claim-type-v1.json",
+        "candidate-v1.json",
+        "candidate-v2.json",
+        "depgraph-v3.json",
+        "merkle-manifest-v1.json",
+        "p2-b0-artifact-codec-v1.json",
         "query-definition-v1.json",
         "changeset-v3.json",
         "subject-v1.json",
         "semantic-genesis-v1.json",
+        "source-reference-v1.json",
     ):
         shutil.copy2(
             ROOT / "tests/goldens/playbill" / name,

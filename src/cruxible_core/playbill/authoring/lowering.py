@@ -126,6 +126,7 @@ from cruxible_core.playbill.citation_relations import (
     capture_contract_relation_subject,
 )
 from cruxible_core.playbill.compiler import (
+    artifact_codec_for_compiler,
     artifact_kinds_for_compiler,
     projection_registry_for_compiler,
 )
@@ -1122,6 +1123,7 @@ def _lower_procedure(
         base_tree if accepted_reference_tree is None else accepted_reference_tree,
         registry=projection_registry_for_compiler(base.compiler),
         artifact_kinds=artifact_kinds_for_compiler(base.compiler),
+        artifact_codec=artifact_codec_for_compiler(base.compiler),
     )
     accepted: dict[str, tuple[str, str]] = {}
     duplicates: set[str] = set()
@@ -1137,6 +1139,7 @@ def _lower_procedure(
             base_tree,
             registry=projection_registry_for_compiler(base.compiler),
             artifact_kinds=artifact_kinds_for_compiler(base.compiler),
+            artifact_codec=artifact_codec_for_compiler(base.compiler),
         )
         for envelope in candidate_parsed.envelopes:
             if envelope.identity in candidate_identities:

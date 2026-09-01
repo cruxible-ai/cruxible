@@ -23,6 +23,8 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPathKind,
 )
 from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
     ArtifactDigest,
     artifact_bytes_for_path,
     canonical_bytes,
@@ -490,11 +492,6 @@ def _load_object(content: bytes, *, path: str) -> dict[str, object]:
     return payload
 
 
-def _canonical_model_bytes(model: BaseModel, *, pretty: bool) -> bytes:
-    payload = model.model_dump(mode="json")
-    return pretty_canonical_bytes(payload) if pretty else canonical_bytes(payload) + b"\n"
-
-
 def _whole_semantic_mapping(
     address: SemanticAddress,
     *,
@@ -542,6 +539,7 @@ def parse_projection_tree(
     *,
     registry: ProjectionExtensionRegistry,
     artifact_kinds: ArtifactKindRegistry = PLAYBILL_ARTIFACT_KINDS,
+    artifact_codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
     accepted_coordinates_by_sequence: Mapping[int, AcceptedCoordinate] | None = None,
@@ -611,7 +609,7 @@ def parse_projection_tree(
         payload = _load_object(content, path=path)
         try:
             if kind == "approval-policy":
-                policy = parse_approval_policy(content, path=path)
+                policy = parse_approval_policy(content, path=path, codec=artifact_codec)
                 digest = approval_policy_digest(policy).tagged
                 identities[APPROVAL_POLICY_IDENTITY] = path
                 envelopes.append(
@@ -636,7 +634,9 @@ def parse_projection_tree(
                     raise ProjectionFormatError(
                         "compiler coordinate does not recognize ProcedureRuntimePolicy"
                     )
-                runtime_policy = parse_procedure_runtime_policy(content, path=path)
+                runtime_policy = parse_procedure_runtime_policy(
+                    content, path=path, codec=artifact_codec
+                )
                 digest = procedure_runtime_policy_digest(runtime_policy).tagged
                 identities[PROCEDURE_RUNTIME_POLICY_IDENTITY] = path
                 envelopes.append(
@@ -658,7 +658,10 @@ def parse_projection_tree(
                 continue
             if kind == "principal":
                 principal = PrincipalRecord.model_validate(payload)
-                if artifact_bytes_for_path(render_principal(principal), path) != content:
+                if (
+                    artifact_bytes_for_path(render_principal(principal), path, codec=artifact_codec)
+                    != content
+                ):
                     raise ProjectionFormatError(f"principal artifact is not canonical: {path}")
                 continue
             if kind == "changeset":
@@ -669,7 +672,7 @@ def parse_projection_tree(
                         "Document projection requires the managed body-metadata resolver"
                     )
                 try:
-                    document = parse_document(content, path=path)
+                    document = parse_document(content, path=path, codec=artifact_codec)
                 except DocumentFormatError as exc:
                     raise ProjectionFormatError(
                         f"registered Document failed strict validation: {path}"
@@ -786,7 +789,7 @@ def parse_projection_tree(
                 continue
             if kind == "subject":
                 try:
-                    subject_shell = parse_subject(content, path=path)
+                    subject_shell = parse_subject(content, path=path, codec=artifact_codec)
                 except SubjectFormatError as exc:
                     raise ProjectionFormatError(
                         f"registered Subject failed strict validation: {path}"
@@ -884,7 +887,7 @@ def parse_projection_tree(
                 continue
             if kind == "claim-type":
                 try:
-                    claim_type = parse_claim_type(content, path=path)
+                    claim_type = parse_claim_type(content, path=path, codec=artifact_codec)
                 except ClaimTypeFormatError as exc:
                     raise ProjectionFormatError(
                         f"registered ClaimType failed strict validation: {path}"
@@ -987,7 +990,7 @@ def parse_projection_tree(
             if kind == "provider":
                 from cruxible_client.contracts.providers import parse_provider, provider_digest
 
-                provider = parse_provider(content, path=path)
+                provider = parse_provider(content, path=path, codec=artifact_codec)
                 identity = provider.identity.qualified
                 previous = identities.get(identity)
                 if previous is not None:
@@ -1070,7 +1073,9 @@ def parse_projection_tree(
                     parse_acquisition_policy,
                 )
 
-                acquisition_policy = parse_acquisition_policy(content, path=path)
+                acquisition_policy = parse_acquisition_policy(
+                    content, path=path, codec=artifact_codec
+                )
                 identity = acquisition_policy.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1117,7 +1122,7 @@ def parse_projection_tree(
                     standing_mandate_digest,
                 )
 
-                mandate = parse_standing_mandate(content, path=path)
+                mandate = parse_standing_mandate(content, path=path, codec=artifact_codec)
                 identity = mandate.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1168,7 +1173,7 @@ def parse_projection_tree(
                     compute_procedure_node_digests_v3,
                 )
 
-                procedure = parse_procedure(content, path=path)
+                procedure = parse_procedure(content, path=path, codec=artifact_codec)
                 identity = procedure.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1379,7 +1384,7 @@ def parse_projection_tree(
                     parse_line_spec,
                 )
 
-                line = parse_line_spec(content, path=path)
+                line = parse_line_spec(content, path=path, codec=artifact_codec)
                 identity = line.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1463,7 +1468,7 @@ def parse_projection_tree(
                     query_definition_digest,
                 )
 
-                query = parse_query_definition(content, path=path)
+                query = parse_query_definition(content, path=path, codec=artifact_codec)
                 identity = query.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1568,7 +1573,7 @@ def parse_projection_tree(
                     procedure_track_record_facts,
                 )
 
-                promotion = parse_exhaust_promotion(content, path=path)
+                promotion = parse_exhaust_promotion(content, path=path, codec=artifact_codec)
                 identity = promotion.identity.qualified
                 if identity in identities:
                     raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
@@ -1679,7 +1684,9 @@ def parse_projection_tree(
                 continue
             if kind == "capture-contract":
                 try:
-                    capture_contract = parse_capture_contract(content, path=path)
+                    capture_contract = parse_capture_contract(
+                        content, path=path, codec=artifact_codec
+                    )
                 except CaptureFormatError as exc:
                     raise ProjectionFormatError(
                         f"registered CaptureContract failed strict validation: {path}"
@@ -1751,7 +1758,7 @@ def parse_projection_tree(
                 continue
             if kind == "claim":
                 try:
-                    claim = parse_claim(content, path=path)
+                    claim = parse_claim(content, path=path, codec=artifact_codec)
                 except ClaimFormatError as exc:
                     raise ProjectionFormatError(
                         f"registered Claim failed strict validation: {path}"
@@ -1939,8 +1946,10 @@ def parse_projection_tree(
             if kind == "fixture":
                 artifact = FixtureArtifact.model_validate(payload)
                 if (
-                    _canonical_model_bytes(
-                        artifact, pretty=artifact_kinds is PLAYBILL_ARTIFACT_KINDS
+                    artifact_bytes_for_path(
+                        pretty_canonical_bytes(artifact.model_dump(mode="json")),
+                        path,
+                        codec=artifact_codec,
                     )
                     != content
                 ):
@@ -1977,8 +1986,10 @@ def parse_projection_tree(
 
             presentation = FixturePresentation.model_validate(payload)
             if (
-                _canonical_model_bytes(
-                    presentation, pretty=artifact_kinds is PLAYBILL_ARTIFACT_KINDS
+                artifact_bytes_for_path(
+                    pretty_canonical_bytes(presentation.model_dump(mode="json")),
+                    path,
+                    codec=artifact_codec,
                 )
                 != content
             ):

@@ -56,6 +56,7 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.compiler import (
+    artifact_codec_for_compiler,
     artifact_kinds_for_compiler,
     projection_registry_for_compiler,
 )
@@ -404,6 +405,7 @@ def _procedure_track_records(
         tree,
         registry=projection_registry_for_compiler(instance.descriptor.compiler),
         artifact_kinds=artifact_kinds_for_compiler(instance.descriptor.compiler),
+        artifact_codec=artifact_codec_for_compiler(instance.descriptor.compiler),
         bodies=instance.body_store(),
         coordinate=_FloorProjectionCoordinate(
             instance_id=coordinate.instance_id,

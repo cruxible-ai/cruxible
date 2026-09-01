@@ -13,6 +13,7 @@ from cruxible_client.contracts.projection_extensions import (
     ProjectionFact,
 )
 from cruxible_core.playbill.compiler import (
+    artifact_codec_for_compiler,
     artifact_kinds_for_compiler,
     projection_registry_for_compiler,
 )
@@ -141,6 +142,7 @@ def compile_provisional_subject_projection(
         dict(tree),
         registry=registry or projection_registry_for_compiler(coordinate.canonical.compiler),
         artifact_kinds=artifact_kinds_for_compiler(coordinate.canonical.compiler),
+        artifact_codec=artifact_codec_for_compiler(coordinate.canonical.compiler),
     )
     return ProvisionalSubjectProjection(coordinate=coordinate, parsed=parsed)
 

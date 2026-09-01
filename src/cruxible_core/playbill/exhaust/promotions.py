@@ -15,6 +15,8 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
     ArtifactDigest,
     CanonicalValue,
     CasDigest,
@@ -271,14 +273,21 @@ def render_exhaust_promotion(promotion: ExhaustPromotionV1) -> bytes:
     return pretty_canonical_bytes(promotion.model_dump(mode="json"))
 
 
-def parse_exhaust_promotion(content: bytes, *, path: str) -> ExhaustPromotionV1:
+def parse_exhaust_promotion(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ExhaustPromotionV1:
     try:
         promotion = ExhaustPromotionV1.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ExhaustPromotionError("ExhaustPromotion failed strict v1 validation") from exc
-    if not artifact_path_matches(exhaust_promotion_path(promotion.identity.name), path):
+    if not artifact_path_matches(
+        exhaust_promotion_path(promotion.identity.name), path, codec=codec
+    ):
         raise ExhaustPromotionError("ExhaustPromotion identity/path disagreement")
-    if artifact_bytes_for_path(render_exhaust_promotion(promotion), path) != content:
+    if artifact_bytes_for_path(render_exhaust_promotion(promotion), path, codec=codec) != content:
         raise ExhaustPromotionError("ExhaustPromotion is not in canonical wire form")
     return promotion
 

@@ -1,0 +1,945 @@
+{
+  "artifacts": [
+    {
+      "compact_wire": "{\"mode\":\"self_approval_allowed\",\"tag\":\"playbill-approval-policy-v1\"}\n",
+      "current_path": "governance/approval-policy.json",
+      "exact_member_digest": "sha256:2dcfb4dc7e62b61296bc36fcc05ccaf623f938378ebebf17ff14820701b1ff58",
+      "kind": "approval-policy",
+      "model": {
+        "mode": "self_approval_allowed",
+        "tag": "playbill-approval-policy-v1"
+      },
+      "p2_b0_path": "governance/approval-policy.yaml"
+    },
+    {
+      "compact_wire": "{\"allowed_materialization_modes\":[\"cas\",\"external\",\"ledger\",\"none\"],\"allowed_source_kinds\":[\"cas\",\"external\",\"ledger\"],\"artifact_format\":\"playbill-capture-contract-v1\",\"commitment_canonicalizer\":{\"artifact_digest\":\"sha256:9b01f3d9811cb4359865e76218b5ddbedbb353a3eb784a9d6e875d04e394f16a\",\"role\":\"commitment-canonicalizer\",\"target\":{\"kind\":\"Contract\",\"name\":\"canonical-json-v1\"}},\"coordinate_schema_pins\":[{\"artifact_digest\":\"sha256:ad637f6b17795497ba998b942d6dea7c6f74e726df25d25a102dd901787c3dd7\",\"role\":\"coordinate-schema\",\"target\":{\"kind\":\"Contract\",\"name\":\"postgres-lsn-v1\"}}],\"epistemic_grade\":\"observed\",\"evidence_kinds\":[\"database_record\"],\"identity\":{\"kind\":\"CaptureContract\",\"name\":\"test.orders-v1\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"logical_source_identities\":[\"commerce.production.orders\"],\"pins\":[{\"artifact_digest\":\"sha256:3209d7813a9932cc7bdfb02d19e1ccecf5e7c4b401aa0a33b1bec17b4dc5ca63\",\"role\":\"provenance-rule\",\"target\":{\"kind\":\"Contract\",\"name\":\"playbill.external.daemon-fetched-v1\"}},{\"artifact_digest\":\"sha256:f64960ed08091396f34bac6511f8e1daffc5d45339e4f57b34b5b5c950efb6ea\",\"role\":\"replay-policy\",\"target\":{\"kind\":\"Contract\",\"name\":\"playbill.external.exact-replay-v1\"}},{\"artifact_digest\":\"sha256:d4811b19cac6947dfc72fbc6346b8eaeeb69b1dd78b663342be2e6bcc851e5d9\",\"role\":\"source-subject-mapping\",\"target\":{\"kind\":\"Contract\",\"name\":\"playbill.external.record-subject-v1\"}}],\"provenance_rule_digest\":\"sha256:3209d7813a9932cc7bdfb02d19e1ccecf5e7c4b401aa0a33b1bec17b4dc5ca63\",\"replay_policy_digest\":\"sha256:f64960ed08091396f34bac6511f8e1daffc5d45339e4f57b34b5b5c950efb6ea\",\"retention_erasure_policy\":{\"body_retention\":\"optional\",\"erasure\":\"prohibited\",\"erasure_rule_digest\":null,\"minimum_retention\":null,\"selector_privacy\":\"direct_allowed\",\"tag\":\"playbill-capture-retention-erasure-policy-v1\"},\"selection_budget\":{\"max_bytes\":4096,\"max_items\":4,\"max_rows\":4,\"tag\":\"playbill-capture-selection-budget-v1\"},\"selector_schema_pins\":[{\"artifact_digest\":\"sha256:2c39c0a74378b2d0db4109d88b7c2774e7e446f7914830cff7bacd4f9b53af7a\",\"role\":\"selector-schema\",\"target\":{\"kind\":\"Contract\",\"name\":\"relation-primary-key-v1\"}}],\"source_subject_mapping_digest\":\"sha256:d4811b19cac6947dfc72fbc6346b8eaeeb69b1dd78b663342be2e6bcc851e5d9\"}\n",
+      "current_path": "capture-contracts/test.orders-v1.json",
+      "exact_member_digest": "sha256:382ea84a03a4c11b8127cf95be3e1d492ae1d885cc7a9df30140f517515b8336",
+      "kind": "capture-contract",
+      "model": {
+        "allowed_materialization_modes": [
+          "cas",
+          "external",
+          "ledger",
+          "none"
+        ],
+        "allowed_source_kinds": [
+          "cas",
+          "external",
+          "ledger"
+        ],
+        "artifact_format": "playbill-capture-contract-v1",
+        "commitment_canonicalizer": {
+          "artifact_digest": "sha256:9b01f3d9811cb4359865e76218b5ddbedbb353a3eb784a9d6e875d04e394f16a",
+          "role": "commitment-canonicalizer",
+          "target": {
+            "kind": "Contract",
+            "name": "canonical-json-v1"
+          }
+        },
+        "coordinate_schema_pins": [
+          {
+            "artifact_digest": "sha256:ad637f6b17795497ba998b942d6dea7c6f74e726df25d25a102dd901787c3dd7",
+            "role": "coordinate-schema",
+            "target": {
+              "kind": "Contract",
+              "name": "postgres-lsn-v1"
+            }
+          }
+        ],
+        "epistemic_grade": "observed",
+        "evidence_kinds": [
+          "database_record"
+        ],
+        "identity": {
+          "kind": "CaptureContract",
+          "name": "test.orders-v1"
+        },
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "logical_source_identities": [
+          "commerce.production.orders"
+        ],
+        "pins": [
+          {
+            "artifact_digest": "sha256:3209d7813a9932cc7bdfb02d19e1ccecf5e7c4b401aa0a33b1bec17b4dc5ca63",
+            "role": "provenance-rule",
+            "target": {
+              "kind": "Contract",
+              "name": "playbill.external.daemon-fetched-v1"
+            }
+          },
+          {
+            "artifact_digest": "sha256:f64960ed08091396f34bac6511f8e1daffc5d45339e4f57b34b5b5c950efb6ea",
+            "role": "replay-policy",
+            "target": {
+              "kind": "Contract",
+              "name": "playbill.external.exact-replay-v1"
+            }
+          },
+          {
+            "artifact_digest": "sha256:d4811b19cac6947dfc72fbc6346b8eaeeb69b1dd78b663342be2e6bcc851e5d9",
+            "role": "source-subject-mapping",
+            "target": {
+              "kind": "Contract",
+              "name": "playbill.external.record-subject-v1"
+            }
+          }
+        ],
+        "provenance_rule_digest": "sha256:3209d7813a9932cc7bdfb02d19e1ccecf5e7c4b401aa0a33b1bec17b4dc5ca63",
+        "replay_policy_digest": "sha256:f64960ed08091396f34bac6511f8e1daffc5d45339e4f57b34b5b5c950efb6ea",
+        "retention_erasure_policy": {
+          "body_retention": "optional",
+          "erasure": "prohibited",
+          "erasure_rule_digest": null,
+          "minimum_retention": null,
+          "selector_privacy": "direct_allowed",
+          "tag": "playbill-capture-retention-erasure-policy-v1"
+        },
+        "selection_budget": {
+          "max_bytes": 4096,
+          "max_items": 4,
+          "max_rows": 4,
+          "tag": "playbill-capture-selection-budget-v1"
+        },
+        "selector_schema_pins": [
+          {
+            "artifact_digest": "sha256:2c39c0a74378b2d0db4109d88b7c2774e7e446f7914830cff7bacd4f9b53af7a",
+            "role": "selector-schema",
+            "target": {
+              "kind": "Contract",
+              "name": "relation-primary-key-v1"
+            }
+          }
+        ],
+        "source_subject_mapping_digest": "sha256:d4811b19cac6947dfc72fbc6346b8eaeeb69b1dd78b663342be2e6bcc851e5d9"
+      },
+      "p2_b0_path": "capture-contracts/test.orders-v1.yaml"
+    },
+    {
+      "compact_wire": "{\"artifact_format\":\"playbill-claim-v2\",\"backing\":{\"attestation_digests\":[],\"capture_digests\":[\"sha256:3131313131313131313131313131313131313131313131313131313131313131\"],\"citations\":[{\"capture_digest\":\"sha256:3131313131313131313131313131313131313131313131313131313131313131\",\"citation_id\":\"sha256:d345061d40978f1cc0e257924189e33f457578dcba96699c1beeaca77f6c14ec\",\"origin\":\"self_source\",\"role\":\"evidence\",\"tag\":\"playbill-claim-citation-v1\"}],\"input_claim_digests\":[],\"reducer_digest\":null,\"referent_context\":{\"object_content_digest\":null,\"observed_at\":\"2026-08-16T18:30:00Z\",\"subject_content_digest\":\"sha256:5f4af8b42f0b8bef3da6d228623c3d87ce5423fb9937153a87667a5206de56fa\",\"tag\":\"playbill-claim-referent-context-v1\"},\"source_mappings\":[{\"spans\":[{\"content_digest\":\"sha256:3232323232323232323232323232323232323232323232323232323232323232\",\"end_byte\":8,\"start_byte\":0,\"tag\":\"playbill-content-span-v1\"}],\"subject\":{\"artifact_path\":\"claims/12/CLM-12121212121212121212121212121212.json\",\"selector\":{\"scheme\":\"claim-statement-v1\",\"value\":\"\"},\"tag\":\"playbill-semantic-address-v1\"},\"tag\":\"playbill-source-mapping-v1\"}],\"tag\":\"playbill-claim-backing-v2\"},\"identity\":{\"kind\":\"Claim\",\"name\":\"CLM-12121212121212121212121212121212\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"pins\":[{\"artifact_digest\":\"sha256:a69e7edb9d8f4fe5e732119bab48722bfee865bd6d0cdc438021015d1af1e00f\",\"role\":\"capture-contract\",\"target\":{\"kind\":\"CaptureContract\",\"name\":\"playbill.direct-self-asserted-v1\"}},{\"artifact_digest\":\"sha256:5646d64dbd932b90af1cd6335f0954ff6a03bbd64c9fe56889f193dcb15d4b6f\",\"role\":\"claim-type\",\"target\":{\"kind\":\"ClaimType\",\"name\":\"project.work_item.status\"}},{\"artifact_digest\":\"sha256:5f4af8b42f0b8bef3da6d228623c3d87ce5423fb9937153a87667a5206de56fa\",\"role\":\"subject\",\"target\":{\"kind\":\"Subject\",\"name\":\"project.work_item/wi-42\"}}],\"statement\":{\"claim_type\":{\"kind\":\"ClaimType\",\"name\":\"project.work_item.status\"},\"claim_type_digest\":\"sha256:5646d64dbd932b90af1cd6335f0954ff6a03bbd64c9fe56889f193dcb15d4b6f\",\"effective_from\":null,\"effective_until\":null,\"object\":{\"kind\":\"literal\",\"value\":\"ready\"},\"predicate\":\"project.work_item.status\",\"qualifier\":null,\"role\":\"observation\",\"shell_context_digest\":null,\"subject\":{\"artifact_path\":\"subjects/project.work_item/wi-42.json\",\"selector\":{\"scheme\":\"artifact-v1\",\"value\":\"\"},\"tag\":\"playbill-semantic-address-v1\"},\"tag\":\"playbill-claim-statement-v1\"}}\n",
+      "current_path": "claims/12/CLM-12121212121212121212121212121212.json",
+      "exact_member_digest": "sha256:ad0ee1bc0f14944e112e86fc863a84019094c7a4e7690aae23379d7c2dfe23cf",
+      "kind": "claim",
+      "model": {
+        "artifact_format": "playbill-claim-v2",
+        "backing": {
+          "attestation_digests": [],
+          "capture_digests": [
+            "sha256:3131313131313131313131313131313131313131313131313131313131313131"
+          ],
+          "citations": [
+            {
+              "capture_digest": "sha256:3131313131313131313131313131313131313131313131313131313131313131",
+              "citation_id": "sha256:d345061d40978f1cc0e257924189e33f457578dcba96699c1beeaca77f6c14ec",
+              "origin": "self_source",
+              "role": "evidence",
+              "tag": "playbill-claim-citation-v1"
+            }
+          ],
+          "input_claim_digests": [],
+          "reducer_digest": null,
+          "referent_context": {
+            "object_content_digest": null,
+            "observed_at": "2026-08-16T18:30:00Z",
+            "subject_content_digest": "sha256:5f4af8b42f0b8bef3da6d228623c3d87ce5423fb9937153a87667a5206de56fa",
+            "tag": "playbill-claim-referent-context-v1"
+          },
+          "source_mappings": [
+            {
+              "spans": [
+                {
+                  "content_digest": "sha256:3232323232323232323232323232323232323232323232323232323232323232",
+                  "end_byte": 8,
+                  "start_byte": 0,
+                  "tag": "playbill-content-span-v1"
+                }
+              ],
+              "subject": {
+                "artifact_path": "claims/12/CLM-12121212121212121212121212121212.json",
+                "selector": {
+                  "scheme": "claim-statement-v1",
+                  "value": ""
+                },
+                "tag": "playbill-semantic-address-v1"
+              },
+              "tag": "playbill-source-mapping-v1"
+            }
+          ],
+          "tag": "playbill-claim-backing-v2"
+        },
+        "identity": {
+          "kind": "Claim",
+          "name": "CLM-12121212121212121212121212121212"
+        },
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "pins": [
+          {
+            "artifact_digest": "sha256:a69e7edb9d8f4fe5e732119bab48722bfee865bd6d0cdc438021015d1af1e00f",
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "playbill.direct-self-asserted-v1"
+            }
+          },
+          {
+            "artifact_digest": "sha256:5646d64dbd932b90af1cd6335f0954ff6a03bbd64c9fe56889f193dcb15d4b6f",
+            "role": "claim-type",
+            "target": {
+              "kind": "ClaimType",
+              "name": "project.work_item.status"
+            }
+          },
+          {
+            "artifact_digest": "sha256:5f4af8b42f0b8bef3da6d228623c3d87ce5423fb9937153a87667a5206de56fa",
+            "role": "subject",
+            "target": {
+              "kind": "Subject",
+              "name": "project.work_item/wi-42"
+            }
+          }
+        ],
+        "statement": {
+          "claim_type": {
+            "kind": "ClaimType",
+            "name": "project.work_item.status"
+          },
+          "claim_type_digest": "sha256:5646d64dbd932b90af1cd6335f0954ff6a03bbd64c9fe56889f193dcb15d4b6f",
+          "effective_from": null,
+          "effective_until": null,
+          "object": {
+            "kind": "literal",
+            "value": "ready"
+          },
+          "predicate": "project.work_item.status",
+          "qualifier": null,
+          "role": "observation",
+          "shell_context_digest": null,
+          "subject": {
+            "artifact_path": "subjects/project.work_item/wi-42.json",
+            "selector": {
+              "scheme": "artifact-v1",
+              "value": ""
+            },
+            "tag": "playbill-semantic-address-v1"
+          },
+          "tag": "playbill-claim-statement-v1"
+        }
+      },
+      "p2_b0_path": "claims/12/CLM-12121212121212121212121212121212.yaml"
+    },
+    {
+      "compact_wire": "{\"admission_policy\":{\"corroboration_requirements\":[],\"freeze_requirements\":[],\"tag\":\"playbill-claim-admission-policy-v1\"},\"allowed_object_subject_kinds\":[],\"allowed_subject_kinds\":[\"project.work_item\"],\"artifact_format\":\"playbill-claim-type-v1\",\"cardinality\":\"one\",\"evidence_admission_policy\":{\"rules\":[{\"admission\":\"direct\",\"allowed_reducer_digests\":[],\"attestation_requirement\":\"none\",\"capture_contract_digests\":[\"sha256:a69e7edb9d8f4fe5e732119bab48722bfee865bd6d0cdc438021015d1af1e00f\"],\"claim_roles\":[\"normative\",\"observation\"],\"evidence_kinds\":[\"self_asserted\"],\"rule_id\":\"direct-self-asserted\",\"subject_binding\":\"exact_claim_subject\",\"tag\":\"playbill-claim-evidence-admission-rule-v1\"}],\"tag\":\"playbill-claim-evidence-admission-policy-v1\"},\"identity\":{\"kind\":\"ClaimType\",\"name\":\"project.work_item.attribute_0000\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"literal_schema\":{\"enum\":[\"blocked\",\"done\",\"ready\"],\"type\":\"string\"},\"object_kind\":\"literal\",\"permitted_roles\":[\"normative\",\"observation\"],\"pins\":[],\"predicate\":\"project.work_item.attribute_0000\",\"referent_sensitivity\":\"identity\",\"resolution_policy\":{\"cardinality\":\"one\",\"conflict_result\":\"unresolved\",\"eligible_verdicts\":[\"supported\"],\"require_current\":true,\"required_basis_kinds\":[],\"selector\":\"only_contender\",\"tag\":\"playbill-claim-resolution-policy-v1\"}}\n",
+      "current_path": "claim-types/project.work_item/attribute_0000.json",
+      "exact_member_digest": "sha256:3df85f8a52b84235d469f72715a1c4542ca69e6141c92dfcf28d4121d25448be",
+      "kind": "claim-type",
+      "model": {
+        "admission_policy": {
+          "corroboration_requirements": [],
+          "freeze_requirements": [],
+          "tag": "playbill-claim-admission-policy-v1"
+        },
+        "allowed_object_subject_kinds": [],
+        "allowed_subject_kinds": [
+          "project.work_item"
+        ],
+        "artifact_format": "playbill-claim-type-v1",
+        "cardinality": "one",
+        "evidence_admission_policy": {
+          "rules": [
+            {
+              "admission": "direct",
+              "allowed_reducer_digests": [],
+              "attestation_requirement": "none",
+              "capture_contract_digests": [
+                "sha256:a69e7edb9d8f4fe5e732119bab48722bfee865bd6d0cdc438021015d1af1e00f"
+              ],
+              "claim_roles": [
+                "normative",
+                "observation"
+              ],
+              "evidence_kinds": [
+                "self_asserted"
+              ],
+              "rule_id": "direct-self-asserted",
+              "subject_binding": "exact_claim_subject",
+              "tag": "playbill-claim-evidence-admission-rule-v1"
+            }
+          ],
+          "tag": "playbill-claim-evidence-admission-policy-v1"
+        },
+        "identity": {
+          "kind": "ClaimType",
+          "name": "project.work_item.attribute_0000"
+        },
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "literal_schema": {
+          "enum": [
+            "blocked",
+            "done",
+            "ready"
+          ],
+          "type": "string"
+        },
+        "object_kind": "literal",
+        "permitted_roles": [
+          "normative",
+          "observation"
+        ],
+        "pins": [],
+        "predicate": "project.work_item.attribute_0000",
+        "referent_sensitivity": "identity",
+        "resolution_policy": {
+          "cardinality": "one",
+          "conflict_result": "unresolved",
+          "eligible_verdicts": [
+            "supported"
+          ],
+          "require_current": true,
+          "required_basis_kinds": [],
+          "selector": "only_contender",
+          "tag": "playbill-claim-resolution-policy-v1"
+        }
+      },
+      "p2_b0_path": "claim-types/project.work_item/attribute_0000.yaml"
+    },
+    {
+      "compact_wire": "{\"authority\":{\"required_tier\":\"graph_write\"},\"body_digest\":\"sha256:4141414141414141414141414141414141414141414141414141414141414141\",\"document_kind\":\"design\",\"format_version\":1,\"governance_scope\":[\"project:playbill\"],\"identity\":\"document:note00000\",\"kind\":\"document\",\"lifecycle\":{\"activation_policy\":\"snapshot\",\"revision\":1,\"status\":\"active\"},\"links\":[],\"media_type\":\"text/markdown\",\"pins\":[],\"predecessor_digest\":null,\"tag\":\"playbill-document-v1\",\"title\":\"Adoption note 00000\"}\n",
+      "current_path": "documents/note00000.json",
+      "exact_member_digest": "sha256:a01d54899ddf7be9901b895d9233009c1a63ecf82f3ada2612cf805e0c20c11b",
+      "kind": "document",
+      "model": {
+        "authority": {
+          "required_tier": "graph_write"
+        },
+        "body_digest": "sha256:4141414141414141414141414141414141414141414141414141414141414141",
+        "document_kind": "design",
+        "format_version": 1,
+        "governance_scope": [
+          "project:playbill"
+        ],
+        "identity": "document:note00000",
+        "kind": "document",
+        "lifecycle": {
+          "activation_policy": "snapshot",
+          "revision": 1,
+          "status": "active"
+        },
+        "links": [],
+        "media_type": "text/markdown",
+        "pins": [],
+        "predecessor_digest": null,
+        "tag": "playbill-document-v1",
+        "title": "Adoption note 00000"
+      },
+      "p2_b0_path": "documents/note00000.yaml"
+    },
+    {
+      "compact_wire": "{\"artifact_format\":\"playbill-exhaust-promotion-v1\",\"bound_generation_digests\":[\"sha256:a37c5aad5bbae47ca64ec2df14b567b6303b8743584c1202dbb7e06c992cce11\"],\"chain_head_digest\":\"sha256:2b57d23651ec443dc49ba31bd998120f2391442c78bbfcdb8d7a67b4728f1ed9\",\"first_sequence\":1,\"identity\":{\"kind\":\"ExhaustPromotion\",\"name\":\"run-a\"},\"last_sequence\":2,\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"output_digest\":\"sha256:ecec76e237501bd7f19cbfb0505a3909e612fe865c4d09606bdfb21ce3247e2a\",\"partition_id\":\"runs\",\"pins\":[{\"artifact_digest\":\"sha256:53bd639f8f77958b2e0b5301cc6f0106726dcc225171f7364b311d3fbc3ee79f\",\"role\":\"procedure\",\"target\":{\"kind\":\"Procedure\",\"name\":\"measured-procedure\"}},{\"artifact_digest\":\"sha256:9687add2ad214382992ad47462e3140ee7b615ba590d24afb54b9f5eec0044cc\",\"role\":\"receipt-set-manifest\",\"target\":{\"kind\":\"ReceiptSetManifest\",\"name\":\"run-a\"}},{\"artifact_digest\":\"sha256:4315684505407efc5f83af7c5150c0327869645fe69b0be1c4ba7b9bc261b22e\",\"role\":\"reducer\",\"target\":{\"kind\":\"ExhaustReducer\",\"name\":\"count-events\"}}],\"receipt_set_manifest_digest\":\"sha256:9687add2ad214382992ad47462e3140ee7b615ba590d24afb54b9f5eec0044cc\",\"reducer_digest\":\"sha256:4315684505407efc5f83af7c5150c0327869645fe69b0be1c4ba7b9bc261b22e\",\"stream_id\":\"procedures\"}\n",
+      "current_path": "exhaust-promotions/run-a.json",
+      "exact_member_digest": "sha256:b98f4a34873cbd53d1c5a28622d9587ba8dab52e232ffe34254df20f1240e867",
+      "kind": "exhaust-promotion",
+      "model": {
+        "artifact_format": "playbill-exhaust-promotion-v1",
+        "bound_generation_digests": [
+          "sha256:a37c5aad5bbae47ca64ec2df14b567b6303b8743584c1202dbb7e06c992cce11"
+        ],
+        "chain_head_digest": "sha256:2b57d23651ec443dc49ba31bd998120f2391442c78bbfcdb8d7a67b4728f1ed9",
+        "first_sequence": 1,
+        "identity": {
+          "kind": "ExhaustPromotion",
+          "name": "run-a"
+        },
+        "last_sequence": 2,
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "output_digest": "sha256:ecec76e237501bd7f19cbfb0505a3909e612fe865c4d09606bdfb21ce3247e2a",
+        "partition_id": "runs",
+        "pins": [
+          {
+            "artifact_digest": "sha256:53bd639f8f77958b2e0b5301cc6f0106726dcc225171f7364b311d3fbc3ee79f",
+            "role": "procedure",
+            "target": {
+              "kind": "Procedure",
+              "name": "measured-procedure"
+            }
+          },
+          {
+            "artifact_digest": "sha256:9687add2ad214382992ad47462e3140ee7b615ba590d24afb54b9f5eec0044cc",
+            "role": "receipt-set-manifest",
+            "target": {
+              "kind": "ReceiptSetManifest",
+              "name": "run-a"
+            }
+          },
+          {
+            "artifact_digest": "sha256:4315684505407efc5f83af7c5150c0327869645fe69b0be1c4ba7b9bc261b22e",
+            "role": "reducer",
+            "target": {
+              "kind": "ExhaustReducer",
+              "name": "count-events"
+            }
+          }
+        ],
+        "receipt_set_manifest_digest": "sha256:9687add2ad214382992ad47462e3140ee7b615ba590d24afb54b9f5eec0044cc",
+        "reducer_digest": "sha256:4315684505407efc5f83af7c5150c0327869645fe69b0be1c4ba7b9bc261b22e",
+        "stream_id": "procedures"
+      },
+      "p2_b0_path": "exhaust-promotions/run-a.yaml"
+    },
+    {
+      "compact_wire": "{\"artifact_id\":\"example\",\"extension_facts\":[],\"kind\":\"fixture\",\"pins\":[],\"predecessor_digest\":null,\"revision\":1,\"tag\":\"playbill-fixture-v1\"}\n",
+      "current_path": "artifacts/fixtures/example.json",
+      "exact_member_digest": "sha256:ea91557594b93faf30195d8b407db04c8c6bb03e053582f3581776226ff72315",
+      "kind": "fixture",
+      "model": {
+        "artifact_id": "example",
+        "extension_facts": [],
+        "kind": "fixture",
+        "pins": [],
+        "predecessor_digest": null,
+        "revision": 1,
+        "tag": "playbill-fixture-v1"
+      },
+      "p2_b0_path": "artifacts/fixtures/example.yaml"
+    },
+    {
+      "compact_wire": "{\"acquisition_policy\":null,\"artifact_format\":\"playbill-line-v1\",\"budgets\":{\"max_capture_bytes\":0,\"max_items\":100,\"max_provider_calls\":0,\"max_wall_clock_microseconds\":1000000},\"epsilon\":{\"$decimal\":\"0.1\"},\"identity\":{\"kind\":\"Line\",\"name\":\"triage-hourly\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"occurrence_epoch\":1,\"parameters\":{\"status\":\"open\"},\"pins\":[{\"artifact_digest\":\"sha256:4d7f6e912d3d84ff23196bd8c29f99654f59a896b61e55db0ed7b14118090627\",\"role\":\"procedure\",\"target\":{\"kind\":\"Procedure\",\"name\":\"triage\"}},{\"artifact_digest\":\"sha256:3c9d71cf8fd8c28641da6ffe5b38b4017d31d0a8fd95e0d184514d2e274c36a7\",\"role\":\"query\",\"target\":{\"kind\":\"QueryDefinition\",\"name\":\"claims-by-status\"}}],\"procedure\":{\"artifact_digest\":\"sha256:4d7f6e912d3d84ff23196bd8c29f99654f59a896b61e55db0ed7b14118090627\",\"role\":\"procedure\",\"target\":{\"kind\":\"Procedure\",\"name\":\"triage\"}},\"requested_terminal_rung\":2,\"slot_bindings\":[{\"artifact_pin\":{\"artifact_digest\":\"sha256:3c9d71cf8fd8c28641da6ffe5b38b4017d31d0a8fd95e0d184514d2e274c36a7\",\"role\":\"query\",\"target\":{\"kind\":\"QueryDefinition\",\"name\":\"claims-by-status\"}},\"slot_name\":\"query\",\"tag\":\"playbill-line-slot-binding-v1\"}],\"trigger_policy\":{\"kind\":\"manual\",\"tag\":\"playbill-manual-trigger-v1\"}}\n",
+      "current_path": "lines/triage-hourly.json",
+      "exact_member_digest": "sha256:03b7b7d75832feb78f49d1a42e112039504816cb41504deb6e666bc7639a21c2",
+      "kind": "line",
+      "model": {
+        "acquisition_policy": null,
+        "artifact_format": "playbill-line-v1",
+        "budgets": {
+          "max_capture_bytes": 0,
+          "max_items": 100,
+          "max_provider_calls": 0,
+          "max_wall_clock_microseconds": 1000000
+        },
+        "epsilon": {
+          "$decimal": "0.1"
+        },
+        "identity": {
+          "kind": "Line",
+          "name": "triage-hourly"
+        },
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "occurrence_epoch": 1,
+        "parameters": {
+          "status": "open"
+        },
+        "pins": [
+          {
+            "artifact_digest": "sha256:4d7f6e912d3d84ff23196bd8c29f99654f59a896b61e55db0ed7b14118090627",
+            "role": "procedure",
+            "target": {
+              "kind": "Procedure",
+              "name": "triage"
+            }
+          },
+          {
+            "artifact_digest": "sha256:3c9d71cf8fd8c28641da6ffe5b38b4017d31d0a8fd95e0d184514d2e274c36a7",
+            "role": "query",
+            "target": {
+              "kind": "QueryDefinition",
+              "name": "claims-by-status"
+            }
+          }
+        ],
+        "procedure": {
+          "artifact_digest": "sha256:4d7f6e912d3d84ff23196bd8c29f99654f59a896b61e55db0ed7b14118090627",
+          "role": "procedure",
+          "target": {
+            "kind": "Procedure",
+            "name": "triage"
+          }
+        },
+        "requested_terminal_rung": 2,
+        "slot_bindings": [
+          {
+            "artifact_pin": {
+              "artifact_digest": "sha256:3c9d71cf8fd8c28641da6ffe5b38b4017d31d0a8fd95e0d184514d2e274c36a7",
+              "role": "query",
+              "target": {
+                "kind": "QueryDefinition",
+                "name": "claims-by-status"
+              }
+            },
+            "slot_name": "query",
+            "tag": "playbill-line-slot-binding-v1"
+          }
+        ],
+        "trigger_policy": {
+          "kind": "manual",
+          "tag": "playbill-manual-trigger-v1"
+        }
+      },
+      "p2_b0_path": "lines/triage-hourly.yaml"
+    },
+    {
+      "compact_wire": "{\"label\":\"Example\",\"subject_identity\":\"example\",\"tag\":\"playbill-fixture-presentation-v1\"}\n",
+      "current_path": "presentation/fixtures/example.json",
+      "exact_member_digest": "sha256:12777ce87cdc319c2c5e45701b60b85671764bbf71fa4d586382a1f996c8f26e",
+      "kind": "presentation",
+      "model": {
+        "label": "Example",
+        "subject_identity": "example",
+        "tag": "playbill-fixture-presentation-v1"
+      },
+      "p2_b0_path": "presentation/fixtures/example.json"
+    },
+    {
+      "compact_wire": "{\"algorithm\":\"ed25519-v1\",\"kind\":\"ordinary\",\"principal_id\":\"owner\",\"public_key\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n",
+      "current_path": "principals/owner.json",
+      "exact_member_digest": "sha256:bfa4815add2931840ed0eac04b4d81ba521d917e10e0142cd58cc919486d0ac7",
+      "kind": "principal",
+      "model": {
+        "algorithm": "ed25519-v1",
+        "kind": "ordinary",
+        "principal_id": "owner",
+        "public_key": "0202020202020202020202020202020202020202020202020202020202020202",
+        "status": "active",
+        "tag": "playbill-principal-v1"
+      },
+      "p2_b0_path": "principals/owner.yaml"
+    },
+    {
+      "compact_wire": "{\"activation_policy\":\"drain\",\"artifact_format\":\"playbill-procedure-v1\",\"definition\":{\"annotations\":{},\"budget\":{\"max_capture_bytes\":0,\"max_items\":100,\"max_provider_calls\":0,\"tag\":\"playbill-procedure-budget-v1\",\"wall_clock\":{\"microseconds\":1000000,\"tag\":\"playbill-duration-v1\"}},\"contract_in\":{\"artifact_digest\":\"sha256:4517475d51ba2234d5f4692e9bf92ed7634af057dc72ddacef8c855097cfff26\",\"role\":\"contract-in\",\"target\":{\"kind\":\"Contract\",\"name\":\"empty-input\"}},\"contract_out\":{\"artifact_digest\":\"sha256:be6a16010da7802210e2d4e60194237dcad37b2f2b86dba500bfaac4be3bcd4e\",\"role\":\"contract-out\",\"target\":{\"kind\":\"Contract\",\"name\":\"claim-rows\"}},\"description\":null,\"graph_format\":3,\"hard_caps\":{\"max_capture_bytes\":0,\"max_items\":200,\"max_provider_calls\":0,\"max_repeat_attempts\":1,\"max_wall_clock\":{\"microseconds\":2000000,\"tag\":\"playbill-duration-v1\"},\"tag\":\"playbill-procedure-hard-caps-v1\"},\"measurements\":[],\"name\":\"triage\",\"nodes\":[{\"as\":\"rows\",\"kind\":\"state_tap\",\"next\":null,\"node_id\":\"read\",\"parameters\":{},\"query\":{\"slot_name\":\"query\",\"tag\":\"playbill-procedure-pin-slot-ref-v1\"}},{\"as\":\"result\",\"contract_out\":{\"artifact_digest\":\"sha256:be6a16010da7802210e2d4e60194237dcad37b2f2b86dba500bfaac4be3bcd4e\",\"role\":\"contract-out\",\"target\":{\"kind\":\"Contract\",\"name\":\"claim-rows\"}},\"fields\":{\"rows\":\"$steps.rows\"},\"kind\":\"project\",\"next\":null,\"node_id\":\"shape\"}],\"parameter_contract\":null,\"pin_slots\":[{\"artifact_kind\":\"QueryDefinition\",\"interface_digest\":\"sha256:b146e70821d03ae9bb3675f48bb6295d5edb5c7122ea39f26c39700c086fe136\",\"pin_role\":\"query\",\"slot_name\":\"query\",\"tag\":\"playbill-procedure-pin-slot-v1\"}],\"returns\":\"result\",\"terminal_capability\":2},\"definition_digest\":\"sha256:f1150e7bb852a8f69a513cc711e1902875e379bb755f6c4948a2d3319bc0a33c\",\"identity\":{\"kind\":\"Procedure\",\"name\":\"triage\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"pins\":[{\"artifact_digest\":\"sha256:4517475d51ba2234d5f4692e9bf92ed7634af057dc72ddacef8c855097cfff26\",\"role\":\"contract-in\",\"target\":{\"kind\":\"Contract\",\"name\":\"empty-input\"}},{\"artifact_digest\":\"sha256:be6a16010da7802210e2d4e60194237dcad37b2f2b86dba500bfaac4be3bcd4e\",\"role\":\"contract-out\",\"target\":{\"kind\":\"Contract\",\"name\":\"claim-rows\"}}]}\n",
+      "current_path": "procedures/triage.json",
+      "exact_member_digest": "sha256:aacd3d5c1bdb075fc105f4973c98430fda61fc235075385a4f1f7a9e8d23eeb8",
+      "kind": "procedure",
+      "model": {
+        "activation_policy": "drain",
+        "artifact_format": "playbill-procedure-v1",
+        "definition": {
+          "annotations": {},
+          "budget": {
+            "max_capture_bytes": 0,
+            "max_items": 100,
+            "max_provider_calls": 0,
+            "tag": "playbill-procedure-budget-v1",
+            "wall_clock": {
+              "microseconds": 1000000,
+              "tag": "playbill-duration-v1"
+            }
+          },
+          "contract_in": {
+            "artifact_digest": "sha256:4517475d51ba2234d5f4692e9bf92ed7634af057dc72ddacef8c855097cfff26",
+            "role": "contract-in",
+            "target": {
+              "kind": "Contract",
+              "name": "empty-input"
+            }
+          },
+          "contract_out": {
+            "artifact_digest": "sha256:be6a16010da7802210e2d4e60194237dcad37b2f2b86dba500bfaac4be3bcd4e",
+            "role": "contract-out",
+            "target": {
+              "kind": "Contract",
+              "name": "claim-rows"
+            }
+          },
+          "description": null,
+          "graph_format": 3,
+          "hard_caps": {
+            "max_capture_bytes": 0,
+            "max_items": 200,
+            "max_provider_calls": 0,
+            "max_repeat_attempts": 1,
+            "max_wall_clock": {
+              "microseconds": 2000000,
+              "tag": "playbill-duration-v1"
+            },
+            "tag": "playbill-procedure-hard-caps-v1"
+          },
+          "measurements": [],
+          "name": "triage",
+          "nodes": [
+            {
+              "as": "rows",
+              "kind": "state_tap",
+              "next": null,
+              "node_id": "read",
+              "parameters": {},
+              "query": {
+                "slot_name": "query",
+                "tag": "playbill-procedure-pin-slot-ref-v1"
+              }
+            },
+            {
+              "as": "result",
+              "contract_out": {
+                "artifact_digest": "sha256:be6a16010da7802210e2d4e60194237dcad37b2f2b86dba500bfaac4be3bcd4e",
+                "role": "contract-out",
+                "target": {
+                  "kind": "Contract",
+                  "name": "claim-rows"
+                }
+              },
+              "fields": {
+                "rows": "$steps.rows"
+              },
+              "kind": "project",
+              "next": null,
+              "node_id": "shape"
+            }
+          ],
+          "parameter_contract": null,
+          "pin_slots": [
+            {
+              "artifact_kind": "QueryDefinition",
+              "interface_digest": "sha256:b146e70821d03ae9bb3675f48bb6295d5edb5c7122ea39f26c39700c086fe136",
+              "pin_role": "query",
+              "slot_name": "query",
+              "tag": "playbill-procedure-pin-slot-v1"
+            }
+          ],
+          "returns": "result",
+          "terminal_capability": 2
+        },
+        "definition_digest": "sha256:f1150e7bb852a8f69a513cc711e1902875e379bb755f6c4948a2d3319bc0a33c",
+        "identity": {
+          "kind": "Procedure",
+          "name": "triage"
+        },
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "pins": [
+          {
+            "artifact_digest": "sha256:4517475d51ba2234d5f4692e9bf92ed7634af057dc72ddacef8c855097cfff26",
+            "role": "contract-in",
+            "target": {
+              "kind": "Contract",
+              "name": "empty-input"
+            }
+          },
+          {
+            "artifact_digest": "sha256:be6a16010da7802210e2d4e60194237dcad37b2f2b86dba500bfaac4be3bcd4e",
+            "role": "contract-out",
+            "target": {
+              "kind": "Contract",
+              "name": "claim-rows"
+            }
+          }
+        ]
+      },
+      "p2_b0_path": "procedures/triage.yaml"
+    },
+    {
+      "compact_wire": "{\"provider_output_bytes_cap\":1048576,\"tag\":\"playbill-procedure-runtime-policy-v1\"}\n",
+      "current_path": "governance/procedure-runtime-policy.json",
+      "exact_member_digest": "sha256:12d82a013b34c34af6cea2c49b9b26357fce32f53918ed879bec2ba7a43c48d9",
+      "kind": "procedure-runtime-policy",
+      "model": {
+        "provider_output_bytes_cap": 1048576,
+        "tag": "playbill-procedure-runtime-policy-v1"
+      },
+      "p2_b0_path": "governance/procedure-runtime-policy.yaml"
+    },
+    {
+      "compact_wire": "{\"artifact_format\":\"playbill-provider-v1\",\"capture_contract_digests\":[\"sha256:cdf1d3ce82226ab844129b8600d1ccbf6407643ad79cecf82140d57b3d657c7b\"],\"control_domain\":\"acme\",\"identity\":{\"kind\":\"Provider\",\"name\":\"acme.orders\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"pins\":[{\"artifact_digest\":\"sha256:cdf1d3ce82226ab844129b8600d1ccbf6407643ad79cecf82140d57b3d657c7b\",\"role\":\"capture-contract\",\"target\":{\"kind\":\"CaptureContract\",\"name\":\"test.orders-v1\"}}],\"signing_keys\":[{\"algorithm\":\"ed25519\",\"key_id\":\"primary-2026\",\"public_key\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"status\":\"active\",\"tag\":\"playbill-provider-signing-key-v1\",\"valid_from\":\"2026-08-16T12:00:00Z\",\"valid_until\":null}],\"upstream_provenance\":[]}\n",
+      "current_path": "providers/acme.orders.json",
+      "exact_member_digest": "sha256:f3937ecca2763a77766d29cdb7db6eff7a36e968b5ea832130c3285210e7f79b",
+      "kind": "provider",
+      "model": {
+        "artifact_format": "playbill-provider-v1",
+        "capture_contract_digests": [
+          "sha256:cdf1d3ce82226ab844129b8600d1ccbf6407643ad79cecf82140d57b3d657c7b"
+        ],
+        "control_domain": "acme",
+        "identity": {
+          "kind": "Provider",
+          "name": "acme.orders"
+        },
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "pins": [
+          {
+            "artifact_digest": "sha256:cdf1d3ce82226ab844129b8600d1ccbf6407643ad79cecf82140d57b3d657c7b",
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "test.orders-v1"
+            }
+          }
+        ],
+        "signing_keys": [
+          {
+            "algorithm": "ed25519",
+            "key_id": "primary-2026",
+            "public_key": "1111111111111111111111111111111111111111111111111111111111111111",
+            "status": "active",
+            "tag": "playbill-provider-signing-key-v1",
+            "valid_from": "2026-08-16T12:00:00Z",
+            "valid_until": null
+          }
+        ],
+        "upstream_provenance": []
+      },
+      "p2_b0_path": "providers/acme.orders.yaml"
+    },
+    {
+      "compact_wire": "{\"artifact_format\":\"playbill-query-definition-v1\",\"dedupe\":\"subject\",\"default_budgets\":{\"max_paths\":null,\"max_paths_per_result\":null,\"max_results\":1,\"max_traversal_depth\":0,\"tag\":\"playbill-query-budgets-v1\"},\"description\":null,\"entry\":{\"binding\":\"item\",\"subject_id\":{\"kind\":\"parameter\",\"parameter\":\"item_id\",\"tag\":\"playbill-query-parameter-ref-v1\"},\"subject_kinds\":[\"project.work_item\"],\"tag\":\"playbill-query-entry-v1\"},\"evaluation_policy\":{\"conflict_behavior\":\"refuse_on_conflict\",\"requires_accepted_coordinate\":true,\"requires_explicit_evaluation_time\":true,\"result_expiry\":null,\"tag\":\"playbill-query-evaluation-policy-v1\",\"visible_currency\":[\"current\"],\"visible_verdicts\":[\"supported\"]},\"identity\":{\"kind\":\"QueryDefinition\",\"name\":\"project.reading_0000\"},\"includes\":[],\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"maximum_budgets\":{\"max_paths\":null,\"max_paths_per_result\":null,\"max_results\":1,\"max_traversal_depth\":0,\"tag\":\"playbill-query-budgets-v1\"},\"orderings\":[],\"parameters\":[{\"default\":null,\"name\":\"item_id\",\"required\":true,\"tag\":\"playbill-query-parameter-v1\",\"value_type\":\"string\"}],\"pins\":[{\"artifact_digest\":\"sha256:d5838e393a9a96562d729140770da645837387e83b3fe554b1d8d464ae5ad7f8\",\"role\":\"claim-type\",\"target\":{\"kind\":\"ClaimType\",\"name\":\"project.work_item.attribute_0000\"}}],\"projection\":{\"fields\":[{\"name\":\"value\",\"tag\":\"playbill-query-projection-field-v1\",\"value\":{\"binding\":\"item\",\"kind\":\"claim_value\",\"predicate\":\"project.work_item.attribute_0000\",\"tag\":\"playbill-query-claim-value-ref-v1\"}}],\"tag\":\"playbill-query-projection-v1\"},\"result_binding\":\"item\",\"result_cardinality\":\"one\",\"result_shape\":\"subject\",\"traversal\":[],\"where\":null}\n",
+      "current_path": "query-definitions/project.reading_0000.json",
+      "exact_member_digest": "sha256:a7a69b0c9911a533c07bb538cba0522ca63b469d77e418b28ecf6c827b8ee5d4",
+      "kind": "query-definition",
+      "model": {
+        "artifact_format": "playbill-query-definition-v1",
+        "dedupe": "subject",
+        "default_budgets": {
+          "max_paths": null,
+          "max_paths_per_result": null,
+          "max_results": 1,
+          "max_traversal_depth": 0,
+          "tag": "playbill-query-budgets-v1"
+        },
+        "description": null,
+        "entry": {
+          "binding": "item",
+          "subject_id": {
+            "kind": "parameter",
+            "parameter": "item_id",
+            "tag": "playbill-query-parameter-ref-v1"
+          },
+          "subject_kinds": [
+            "project.work_item"
+          ],
+          "tag": "playbill-query-entry-v1"
+        },
+        "evaluation_policy": {
+          "conflict_behavior": "refuse_on_conflict",
+          "requires_accepted_coordinate": true,
+          "requires_explicit_evaluation_time": true,
+          "result_expiry": null,
+          "tag": "playbill-query-evaluation-policy-v1",
+          "visible_currency": [
+            "current"
+          ],
+          "visible_verdicts": [
+            "supported"
+          ]
+        },
+        "identity": {
+          "kind": "QueryDefinition",
+          "name": "project.reading_0000"
+        },
+        "includes": [],
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "maximum_budgets": {
+          "max_paths": null,
+          "max_paths_per_result": null,
+          "max_results": 1,
+          "max_traversal_depth": 0,
+          "tag": "playbill-query-budgets-v1"
+        },
+        "orderings": [],
+        "parameters": [
+          {
+            "default": null,
+            "name": "item_id",
+            "required": true,
+            "tag": "playbill-query-parameter-v1",
+            "value_type": "string"
+          }
+        ],
+        "pins": [
+          {
+            "artifact_digest": "sha256:d5838e393a9a96562d729140770da645837387e83b3fe554b1d8d464ae5ad7f8",
+            "role": "claim-type",
+            "target": {
+              "kind": "ClaimType",
+              "name": "project.work_item.attribute_0000"
+            }
+          }
+        ],
+        "projection": {
+          "fields": [
+            {
+              "name": "value",
+              "tag": "playbill-query-projection-field-v1",
+              "value": {
+                "binding": "item",
+                "kind": "claim_value",
+                "predicate": "project.work_item.attribute_0000",
+                "tag": "playbill-query-claim-value-ref-v1"
+              }
+            }
+          ],
+          "tag": "playbill-query-projection-v1"
+        },
+        "result_binding": "item",
+        "result_cardinality": "one",
+        "result_shape": "subject",
+        "traversal": [],
+        "where": null
+      },
+      "p2_b0_path": "query-definitions/project.reading_0000.yaml"
+    },
+    {
+      "compact_wire": "{\"artifact_format\":\"playbill-source-acquisition-policy-v1\",\"coherence\":{\"kind\":\"independent\",\"tag\":\"playbill-independent-coherence-v1\"},\"identity\":{\"kind\":\"SourceAcquisitionPolicy\",\"name\":\"order-release\"},\"inputs\":[{\"conservative_default\":null,\"correlation_keys\":[],\"input_name\":\"orders\",\"join_semantics_digest\":null,\"max_age\":{\"microseconds\":60000000,\"tag\":\"playbill-duration-v1\"},\"on_conflict\":\"preserve\",\"on_oversized\":\"refuse\",\"on_stale\":\"refuse\",\"on_unavailable\":\"refuse\",\"permitted_replayability\":[\"attested_only\",\"exact\"],\"requirement\":\"required\",\"tag\":\"playbill-input-acquisition-rule-v1\"}],\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"pins\":[]}\n",
+      "current_path": "source-acquisition-policies/order-release.json",
+      "exact_member_digest": "sha256:c4166702c89782b6f6fadbfb2550ea952823271b9571d9c5d602d805cbb1c9fe",
+      "kind": "source-acquisition-policy",
+      "model": {
+        "artifact_format": "playbill-source-acquisition-policy-v1",
+        "coherence": {
+          "kind": "independent",
+          "tag": "playbill-independent-coherence-v1"
+        },
+        "identity": {
+          "kind": "SourceAcquisitionPolicy",
+          "name": "order-release"
+        },
+        "inputs": [
+          {
+            "conservative_default": null,
+            "correlation_keys": [],
+            "input_name": "orders",
+            "join_semantics_digest": null,
+            "max_age": {
+              "microseconds": 60000000,
+              "tag": "playbill-duration-v1"
+            },
+            "on_conflict": "preserve",
+            "on_oversized": "refuse",
+            "on_stale": "refuse",
+            "on_unavailable": "refuse",
+            "permitted_replayability": [
+              "attested_only",
+              "exact"
+            ],
+            "requirement": "required",
+            "tag": "playbill-input-acquisition-rule-v1"
+          }
+        ],
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "pins": []
+      },
+      "p2_b0_path": "source-acquisition-policies/order-release.yaml"
+    },
+    {
+      "compact_wire": "{\"artifact_format\":\"playbill-standing-mandate-v1\",\"authority_ceiling\":{\"permitted_operations\":[\"activate_change_set\",\"compile_capture\",\"propose_change_set\"],\"settlement\":\"settle_named_deltas\",\"tag\":\"playbill-mandate-grant-v1\"},\"capture_contract_digest\":\"sha256:cdf1d3ce82226ab844129b8600d1ccbf6407643ad79cecf82140d57b3d657c7b\",\"claim_type_scope\":[{\"kind\":\"ClaimType\",\"name\":\"project.work_item.status\"}],\"identity\":{\"kind\":\"StandingMandate\",\"name\":\"refresh-work-item\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"permitted_delta_classes\":[\"claim.backing_refresh\"],\"pins\":[{\"artifact_digest\":\"sha256:cdf1d3ce82226ab844129b8600d1ccbf6407643ad79cecf82140d57b3d657c7b\",\"role\":\"capture-contract\",\"target\":{\"kind\":\"CaptureContract\",\"name\":\"test.orders-v1\"}},{\"artifact_digest\":\"sha256:5646d64dbd932b90af1cd6335f0954ff6a03bbd64c9fe56889f193dcb15d4b6f\",\"role\":\"claim-type\",\"target\":{\"kind\":\"ClaimType\",\"name\":\"project.work_item.status\"}},{\"artifact_digest\":\"sha256:5b99cfbe85166c0740b985efaf5b8d755786a1e6f0144327a3df92b03d5815e5\",\"role\":\"provider\",\"target\":{\"kind\":\"Provider\",\"name\":\"acme.orders\"}}],\"provider\":{\"kind\":\"Provider\",\"name\":\"acme.orders\"},\"subject_scope\":[{\"artifact_path\":\"subjects/project.work_item/wi-42.json\",\"selector\":{\"scheme\":\"artifact-v1\",\"value\":\"\"},\"tag\":\"playbill-semantic-address-v1\"}],\"valid_from\":\"2026-08-16T12:00:00Z\",\"valid_until\":\"2026-09-15T12:00:00Z\"}\n",
+      "current_path": "standing-mandates/refresh-work-item.json",
+      "exact_member_digest": "sha256:4f7845efdb62c68367a75e3105369c24f80dcfe59bc3e852c381fe549a8467c4",
+      "kind": "standing-mandate",
+      "model": {
+        "artifact_format": "playbill-standing-mandate-v1",
+        "authority_ceiling": {
+          "permitted_operations": [
+            "activate_change_set",
+            "compile_capture",
+            "propose_change_set"
+          ],
+          "settlement": "settle_named_deltas",
+          "tag": "playbill-mandate-grant-v1"
+        },
+        "capture_contract_digest": "sha256:cdf1d3ce82226ab844129b8600d1ccbf6407643ad79cecf82140d57b3d657c7b",
+        "claim_type_scope": [
+          {
+            "kind": "ClaimType",
+            "name": "project.work_item.status"
+          }
+        ],
+        "identity": {
+          "kind": "StandingMandate",
+          "name": "refresh-work-item"
+        },
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "permitted_delta_classes": [
+          "claim.backing_refresh"
+        ],
+        "pins": [
+          {
+            "artifact_digest": "sha256:cdf1d3ce82226ab844129b8600d1ccbf6407643ad79cecf82140d57b3d657c7b",
+            "role": "capture-contract",
+            "target": {
+              "kind": "CaptureContract",
+              "name": "test.orders-v1"
+            }
+          },
+          {
+            "artifact_digest": "sha256:5646d64dbd932b90af1cd6335f0954ff6a03bbd64c9fe56889f193dcb15d4b6f",
+            "role": "claim-type",
+            "target": {
+              "kind": "ClaimType",
+              "name": "project.work_item.status"
+            }
+          },
+          {
+            "artifact_digest": "sha256:5b99cfbe85166c0740b985efaf5b8d755786a1e6f0144327a3df92b03d5815e5",
+            "role": "provider",
+            "target": {
+              "kind": "Provider",
+              "name": "acme.orders"
+            }
+          }
+        ],
+        "provider": {
+          "kind": "Provider",
+          "name": "acme.orders"
+        },
+        "subject_scope": [
+          {
+            "artifact_path": "subjects/project.work_item/wi-42.json",
+            "selector": {
+              "scheme": "artifact-v1",
+              "value": ""
+            },
+            "tag": "playbill-semantic-address-v1"
+          }
+        ],
+        "valid_from": "2026-08-16T12:00:00Z",
+        "valid_until": "2026-09-15T12:00:00Z"
+      },
+      "p2_b0_path": "standing-mandates/refresh-work-item.yaml"
+    },
+    {
+      "compact_wire": "{\"artifact_format\":\"playbill-subject-v1\",\"identity\":{\"kind\":\"Subject\",\"name\":\"project.work_item/wi-00000\"},\"lifecycle\":{\"predecessor_digest\":null,\"state\":\"live\"},\"pins\":[],\"subject_id\":\"wi-00000\",\"subject_kind\":\"project.work_item\"}\n",
+      "current_path": "subjects/project.work_item/wi-00000.json",
+      "exact_member_digest": "sha256:c28df45d8c25a8de9e2fff9aeef4a8c9b5e391cb0f70357921a675f357503a91",
+      "kind": "subject",
+      "model": {
+        "artifact_format": "playbill-subject-v1",
+        "identity": {
+          "kind": "Subject",
+          "name": "project.work_item/wi-00000"
+        },
+        "lifecycle": {
+          "predecessor_digest": null,
+          "state": "live"
+        },
+        "pins": [],
+        "subject_id": "wi-00000",
+        "subject_kind": "project.work_item"
+      },
+      "p2_b0_path": "subjects/project.work_item/wi-00000.yaml"
+    }
+  ]
+}

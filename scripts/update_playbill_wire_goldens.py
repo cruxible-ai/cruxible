@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -55,6 +56,7 @@ from cruxible_client.contracts.query.definitions import (
     query_definition_digest,
     render_query_definition,
 )
+from cruxible_client.contracts.source_references import SourceHandleV1, source_handle_digest
 from cruxible_client.contracts.subjects import SubjectShell, render_subject, subject_digest
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_core.playbill.bootstrap import bootstrap_root, genesis_semantic_root, genesis_tree
@@ -268,10 +270,57 @@ def _update_changeset_golden() -> None:
     _write(path, fixture)
 
 
+def _update_candidate_v1_golden() -> None:
+    path = GOLDENS / "candidate-v1.json"
+    fixture = _read(path)
+    candidate = SemanticCandidate.model_validate(fixture["candidate"])
+    payload = candidate.model_dump(mode="json")
+    payload.pop("tag")
+    fixture["canonical_preimage"] = canonical_bytes(
+        {"tag": "playbill-candidate-v1", **payload}
+    ).decode()
+    fixture["candidate_digest"] = candidate_digest(candidate).tagged
+    _write(path, fixture)
+
+
+def _update_source_reference_golden() -> None:
+    path = GOLDENS / "source-reference-v1.json"
+    fixture = _read(path)
+    handle = SourceHandleV1.model_validate(fixture["source_handle"])
+    fixture["source_handle"] = handle.model_dump(mode="json")
+    fixture["source_handle_digest"] = source_handle_digest(handle)
+    _write(path, fixture)
+
+
+def _update_p2_b0_artifact_codec_golden() -> None:
+    path = GOLDENS / "p2-b0-artifact-codec-v1.json"
+    fixture = _read(path)
+    artifacts = fixture.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise TypeError("P2-B0 codec golden has no artifact inventory")
+    for raw in artifacts:
+        if not isinstance(raw, dict):
+            raise TypeError("P2-B0 codec artifact row is not an object")
+        kind = raw.get("kind")
+        current_path = raw.get("current_path")
+        model = raw.get("model")
+        if not isinstance(kind, str) or not isinstance(current_path, str):
+            raise TypeError("P2-B0 codec artifact identity is malformed")
+        if not isinstance(model, dict):
+            raise TypeError("P2-B0 codec artifact model is malformed")
+        p2_b0_path = (
+            current_path if kind == "presentation" else current_path.removesuffix(".json") + ".yaml"
+        )
+        compact = canonical_bytes(model) + b"\n"
+        raw["p2_b0_path"] = p2_b0_path
+        raw["compact_wire"] = compact.decode("utf-8")
+        raw["exact_member_digest"] = "sha256:" + hashlib.sha256(compact).hexdigest()
+    artifacts.sort(key=lambda item: str(item["kind"]).encode("utf-8"))
+    _write(path, fixture)
+
+
 def _update_candidate_v2_golden() -> None:
     path = GOLDENS / "candidate-v2.json"
-    if not path.exists():
-        return
     fixture = _read(path)
     candidate = SemanticCandidateV2.model_validate(fixture["candidate"])
     payload = candidate.model_dump(mode="json")
@@ -290,8 +339,6 @@ def _update_candidate_v2_golden() -> None:
 
 def _update_merkle_manifest_golden() -> None:
     path = GOLDENS / "merkle-manifest-v1.json"
-    if not path.exists():
-        return
     fixture = _read(path)
     inputs = fixture["input"]
     members = inputs["members"]
@@ -316,8 +363,6 @@ def _update_merkle_manifest_golden() -> None:
 
 def _update_dependency_edge_golden() -> None:
     path = GOLDENS / "depgraph-v3.json"
-    if not path.exists():
-        return
     fixture = _read(path)
     inputs = fixture["input"]
     parent_edges = tuple(
@@ -423,10 +468,13 @@ def main() -> None:
     _update_query_golden()
     _update_subject_golden()
     _update_semantic_genesis_golden()
+    _update_candidate_v1_golden()
     _update_candidate_v2_golden()
     _update_merkle_manifest_golden()
     _update_dependency_edge_golden()
     _update_changeset_golden()
+    _update_source_reference_golden()
+    _update_p2_b0_artifact_codec_golden()
     _update_seed_bundle()
 
 

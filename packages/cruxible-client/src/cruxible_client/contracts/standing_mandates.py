@@ -15,6 +15,8 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
     ArtifactDigest,
     Sha256Value,
     artifact_bytes_for_path,
@@ -170,14 +172,19 @@ def render_standing_mandate(mandate: StandingMandate) -> bytes:
     return pretty_canonical_bytes(mandate.model_dump(mode="json"))
 
 
-def parse_standing_mandate(content: bytes, *, path: str) -> StandingMandate:
+def parse_standing_mandate(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> StandingMandate:
     try:
         mandate = StandingMandate.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise StandingMandateError("StandingMandate failed strict v1 validation") from exc
-    if not artifact_path_matches(standing_mandate_path(mandate.identity.name), path):
+    if not artifact_path_matches(standing_mandate_path(mandate.identity.name), path, codec=codec):
         raise StandingMandateError("StandingMandate identity/path disagreement")
-    if artifact_bytes_for_path(render_standing_mandate(mandate), path) != content:
+    if artifact_bytes_for_path(render_standing_mandate(mandate), path, codec=codec) != content:
         raise StandingMandateError("StandingMandate is not in canonical wire form")
     return mandate
 

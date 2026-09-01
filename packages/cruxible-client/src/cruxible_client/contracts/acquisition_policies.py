@@ -15,6 +15,8 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
     ArtifactDigest,
     Sha256Value,
     artifact_bytes_for_path,
@@ -210,16 +212,21 @@ def render_acquisition_policy(policy: SourceAcquisitionPolicyV1) -> bytes:
     return pretty_canonical_bytes(policy.model_dump(mode="json"))
 
 
-def parse_acquisition_policy(content: bytes, *, path: str) -> SourceAcquisitionPolicyV1:
+def parse_acquisition_policy(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> SourceAcquisitionPolicyV1:
     try:
         policy = SourceAcquisitionPolicyV1.model_validate(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise SourceAcquisitionPolicyError(
             "SourceAcquisitionPolicy failed strict v1 validation"
         ) from exc
-    if not artifact_path_matches(acquisition_policy_path(policy.identity.name), path):
+    if not artifact_path_matches(acquisition_policy_path(policy.identity.name), path, codec=codec):
         raise SourceAcquisitionPolicyError("SourceAcquisitionPolicy identity/path disagreement")
-    if artifact_bytes_for_path(render_acquisition_policy(policy), path) != content:
+    if artifact_bytes_for_path(render_acquisition_policy(policy), path, codec=codec) != content:
         raise SourceAcquisitionPolicyError("SourceAcquisitionPolicy is not canonical")
     return policy
 

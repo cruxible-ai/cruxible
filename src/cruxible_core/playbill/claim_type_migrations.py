@@ -17,7 +17,6 @@ from cruxible_client.contracts.artifacts import (
 )
 from cruxible_client.contracts.canonical import (
     Sha256Value,
-    canonical_bytes,
     pretty_canonical_bytes,
     typed_digest,
 )
@@ -626,11 +625,7 @@ def _canonical_successor_bytes(
     else:
         payload = supplied
     try:
-        candidate = (
-            pretty_canonical_bytes(payload)
-            if current.path.endswith(".json")
-            else canonical_bytes(payload) + b"\n"
-        )
+        candidate = pretty_canonical_bytes(payload)
         parsed = parse_dependency_artifact(current.path, candidate)
     except (PlaybillError, TypeError, ValueError) as exc:
         raise ClaimTypeMigrationDependentInvalid(

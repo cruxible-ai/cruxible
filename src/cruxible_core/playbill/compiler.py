@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from cruxible_client.contracts.artifacts import ArtifactKindRegistry
-from cruxible_client.contracts.canonical import canonical_digest
+from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    P2_B0_ARTIFACT_CODEC,
+    ArtifactCodec,
+    canonical_digest,
+)
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
@@ -92,6 +97,16 @@ def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindReg
     raise PlaybillFormatError("compiler coordinate has no installed artifact codec")
 
 
+def artifact_codec_for_compiler(compiler: CompilerCoordinate) -> ArtifactCodec:
+    """Return the frozen byte codec selected by one compiler coordinate."""
+
+    if compiler == PC_HR_COMPILER:
+        return CURRENT_ARTIFACT_CODEC
+    if compiler in SUPPORTED_COMPILERS:
+        return P2_B0_ARTIFACT_CODEC
+    raise PlaybillFormatError("compiler coordinate has no installed artifact codec")
+
+
 def projection_registry_for_compiler(
     compiler: CompilerCoordinate,
 ) -> ProjectionExtensionRegistry:
@@ -134,6 +149,7 @@ __all__ = [
     "PC_HR_COMPILER",
     "SUPPORTED_COMPILERS",
     "current_compiler_coordinate",
+    "artifact_codec_for_compiler",
     "artifact_kinds_for_compiler",
     "projection_registry_for_compiler",
 ]

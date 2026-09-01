@@ -14,6 +14,7 @@ from cruxible_client.contracts.projection_extensions import (
 )
 from cruxible_core.playbill.cas import BodyAccessContext, BodyProjectionProtocol
 from cruxible_core.playbill.compiler import (
+    artifact_codec_for_compiler,
     artifact_kinds_for_compiler,
     projection_registry_for_compiler,
 )
@@ -170,6 +171,7 @@ def compile_provisional_document_projection(
         dict(tree),
         registry=registry or projection_registry_for_compiler(coordinate.canonical.compiler),
         artifact_kinds=artifact_kinds_for_compiler(coordinate.canonical.compiler),
+        artifact_codec=artifact_codec_for_compiler(coordinate.canonical.compiler),
         bodies=bodies,
     )
     return ProvisionalDocumentProjection(coordinate=coordinate, parsed=parsed)
