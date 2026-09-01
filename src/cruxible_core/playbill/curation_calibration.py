@@ -42,6 +42,9 @@ BLOCK_CHURN_ACCEPTED_GENERATION_WINDOW = 10
 # Change only from observed vocabulary adoption latency after the consumption epoch.
 DEAD_VOCABULARY_MINIMUM_ZERO_TOUCH_GENERATIONS = 10
 
+# Disable only if exact live-Subject ID equality proves noisy in reviewed episodes.
+LITERAL_SUBJECT_REFERENCE_DETECTOR_ENABLED = True
+
 # Change budget defaults only from patrol payload-size and reviewer-throughput evidence.
 AUDIT_BUDGET_DEFAULT_MAX_ROWS = 100
 AUDIT_BUDGET_MIN_MAX_ROWS = 1

@@ -33,6 +33,7 @@ from cruxible_client.contracts.claim_verdicts import (
 )
 from cruxible_client.contracts.claims import (
     ClaimArtifactAny,
+    LiteralClaimObject,
     claim_statement_digest,
     parse_claim,
 )
@@ -41,7 +42,7 @@ from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.providers import ProviderV1
 from cruxible_client.contracts.query.definitions import QueryEvaluationPolicyV1
 from cruxible_client.contracts.source_references import ExternalSourceReferenceV1
-from cruxible_client.contracts.subjects import AcceptedSubject
+from cruxible_client.contracts.subjects import AcceptedSubject, SubjectShell, parse_subject
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.claim_slots import classify_claim_slot
 from cruxible_core.playbill.closure import dependency_artifacts, parse_dependency_artifact
@@ -65,6 +66,7 @@ from cruxible_core.playbill.curation_calibration import (
     FRESHNESS_MINIMUM_CHANGED_COMMITMENT_INTERVALS,
     FRESHNESS_RATIO_LOWER,
     FRESHNESS_RATIO_UPPER,
+    LITERAL_SUBJECT_REFERENCE_DETECTOR_ENABLED,
     PROVENANCE_CONCENTRATED_CONTROL_COMPONENT_COUNT,
     PROVENANCE_MINIMUM_ACTIVE_WRITING_PRINCIPALS,
     PROVENANCE_MINIMUM_LIVE_SUPPORTED_CLAIMS,
@@ -401,6 +403,97 @@ def _duplicate_statements(
             )
         )
     return tuple(detections), frozen_coverage
+
+
+def _literal_subject_references(
+    *,
+    tree: Mapping[str, bytes],
+    generation: int,
+) -> tuple[tuple[CurationDetectionV1, ...], CurationDetectorCoverageV1]:
+    """Flag live literal Claims that exactly equal at least one live Subject ID."""
+
+    kind: CurationPatternKind = "playbill.curation.literal_subject_reference.v1"
+    coverage = _Coverage(kind)
+    if not LITERAL_SUBJECT_REFERENCE_DETECTOR_ENABLED:
+        return (), coverage.freeze()
+
+    subjects_by_id: dict[str, list[tuple[SubjectShell, str, str]]] = defaultdict(list)
+    states = tuple(dependency_artifacts(tree))
+    for state in states:
+        if state.artifact_kind != "subject" or state.lifecycle.state != "live":
+            continue
+        subject = parse_subject(tree[state.path], path=state.path)
+        subjects_by_id[subject.subject_id].append((subject, state.path, state.artifact_digest))
+
+    pending: list[
+        tuple[
+            ArtifactIdentity,
+            str,
+            list[str],
+            tuple[CurationEvidenceRefV1, ...],
+        ]
+    ] = []
+    for state in states:
+        if state.artifact_kind != "claim" or state.lifecycle.state != "live":
+            continue
+        claim = parse_claim(tree[state.path], path=state.path)
+        obj = claim.statement.object
+        if not isinstance(obj, LiteralClaimObject) or not isinstance(obj.value, str):
+            continue
+        coverage.evaluated += 1
+        matches = subjects_by_id.get(obj.value, ())
+        if not matches:
+            continue
+        subject_kinds = sorted(
+            {item.subject_kind for item, _path, _digest in matches},
+            key=lambda item: item.encode("utf-8"),
+        )
+        refs = [
+            _artifact_ref(
+                identity=claim.identity,
+                path=state.path,
+                generation=generation,
+                artifact_digest=state.artifact_digest,
+                statement_digest=claim_statement_digest(claim.statement).tagged,
+            )
+        ]
+        refs.extend(
+            _artifact_ref(
+                identity=item.identity,
+                path=path,
+                generation=generation,
+                artifact_digest=artifact_digest,
+                facts={"subject_id": item.subject_id, "subject_kind": item.subject_kind},
+            )
+            for item, path, artifact_digest in matches
+        )
+        pending.append(
+            (
+                claim.identity,
+                obj.value,
+                subject_kinds,
+                tuple(refs),
+            )
+        )
+    frozen_coverage = coverage.freeze()
+    detections = tuple(
+        build_curation_detection(
+            pattern_kind=kind,
+            subject=identity,
+            detail={
+                "literal_value": value,
+                "matching_subject_kinds": subject_kinds,
+                "message": (
+                    "literal looks like a subject reference; "
+                    "consider a subject-valued object"
+                ),
+            },
+            coverage=frozen_coverage,
+            evidence_refs=refs,
+        )
+        for identity, value, subject_kinds, refs in pending
+    )
+    return detections, frozen_coverage
 
 
 def _block_churn(
@@ -1109,6 +1202,7 @@ def run_curation_detectors(
             operational_head_digest=operational_head_digest,
             history=history,
         ),
+        _literal_subject_references(tree=tree, generation=generation),
     )
     detections = tuple(
         sorted(

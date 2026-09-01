@@ -38,6 +38,7 @@ from cruxible_client.contracts.source_references import (
     EvidenceCommitmentV1,
     ExternalSourceReferenceV1,
 )
+from cruxible_client.contracts.subjects import render_subject
 from cruxible_core.playbill.consumption import ConsumptionAggregateV1
 from cruxible_core.playbill.curation import (
     CURATION_PATTERN_KINDS,
@@ -53,6 +54,7 @@ from cruxible_core.playbill.curation_detectors import (
     _dead_vocabulary,
     _duplicate_statements,
     _freshness_calibration,
+    _literal_subject_references,
     _provenance_concentration,
     _qualifier_crystallization,
     _recurring_conflicts,
@@ -244,6 +246,98 @@ def test_duplicate_statement_fold_exempts_retired_predecessor_and_live_successor
 
     assert coverage.evaluated_fact_count == 1
     assert detected == ()
+
+
+def test_literal_subject_reference_matches_exact_live_ids_and_lists_every_kind() -> None:
+    claim_subject = subject("project.work_item", "wi-42")
+    package = subject("package", "demo-package")
+    component = subject("component", "demo-package")
+    row = claim_fact(
+        1,
+        subject_row=claim_subject,
+        predicate="sec.vuln.affects_package",
+        value="demo-package",
+    )
+    tree = {
+        row.accepted.path: render_claim(row.accepted.claim),
+        package.path: render_subject(package.shell),
+        component.path: render_subject(component.shell),
+    }
+
+    detected, coverage = _literal_subject_references(tree=tree, generation=7)
+
+    assert coverage.evaluated_fact_count == 1
+    assert len(detected) == 1
+    assert detected[0].subject == row.accepted.claim.identity
+    assert detected[0].detail == {
+        "literal_value": "demo-package",
+        "matching_subject_kinds": ["component", "package"],
+        "message": "literal looks like a subject reference; consider a subject-valued object",
+    }
+    assert {ref.identity for ref in detected[0].evidence_refs} == {
+        row.accepted.claim.identity.qualified,
+        package.shell.identity.qualified,
+        component.shell.identity.qualified,
+    }
+
+
+def test_literal_subject_reference_ignores_plain_literals_and_retired_subjects() -> None:
+    claim_subject = subject("project.work_item", "wi-42")
+    retired = subject("package", "retired-package")
+    retired_shell = retired.shell.model_copy(
+        update={"lifecycle": retired.shell.lifecycle.model_copy(update={"state": "retired"})}
+    )
+    retired_row = claim_fact(
+        1,
+        subject_row=claim_subject,
+        predicate="sec.vuln.affects_package",
+        value="retired-package",
+    )
+    plain_row = claim_fact(
+        2,
+        subject_row=claim_subject,
+        predicate="project.work_item.status",
+        value="ordinary prose",
+    )
+    tree = {
+        retired_row.accepted.path: render_claim(retired_row.accepted.claim),
+        plain_row.accepted.path: render_claim(plain_row.accepted.claim),
+        retired.path: render_subject(retired_shell),
+    }
+
+    detected, coverage = _literal_subject_references(tree=tree, generation=7)
+
+    assert coverage.evaluated_fact_count == 2
+    assert detected == ()
+
+
+def test_literal_subject_reference_calibration_knob_disables_the_fold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    claim_subject = subject("project.work_item", "wi-42")
+    package = subject("package", "demo-package")
+    row = claim_fact(
+        1,
+        subject_row=claim_subject,
+        predicate="sec.vuln.affects_package",
+        value="demo-package",
+    )
+    monkeypatch.setattr(
+        "cruxible_core.playbill.curation_detectors."
+        "LITERAL_SUBJECT_REFERENCE_DETECTOR_ENABLED",
+        False,
+    )
+
+    detected, coverage = _literal_subject_references(
+        tree={
+            row.accepted.path: render_claim(row.accepted.claim),
+            package.path: render_subject(package.shell),
+        },
+        generation=7,
+    )
+
+    assert detected == ()
+    assert coverage.evaluated_fact_count == 0
 
 
 def test_provenance_concentration_uses_effective_supporting_control_components() -> None:
@@ -592,6 +686,7 @@ def test_run_curation_detectors_builds_shared_history_once_for_all_history_consu
         ("_qualifier_crystallization", CURATION_PATTERN_KINDS[5]),
         ("_block_churn", CURATION_PATTERN_KINDS[6]),
         ("_dead_vocabulary", CURATION_PATTERN_KINDS[7]),
+        ("_literal_subject_references", CURATION_PATTERN_KINDS[8]),
     )
     for name, kind in names:
         monkeypatch.setattr(

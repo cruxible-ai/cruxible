@@ -29,6 +29,7 @@ from cruxible_core.playbill.curation_calibration import (
     FRESHNESS_MINIMUM_CHANGED_COMMITMENT_INTERVALS,
     FRESHNESS_RATIO_LOWER,
     FRESHNESS_RATIO_UPPER,
+    LITERAL_SUBJECT_REFERENCE_DETECTOR_ENABLED,
     PROVENANCE_CONCENTRATED_CONTROL_COMPONENT_COUNT,
     PROVENANCE_MINIMUM_ACTIVE_WRITING_PRINCIPALS,
     PROVENANCE_MINIMUM_LIVE_SUPPORTED_CLAIMS,
@@ -52,6 +53,7 @@ CurationPatternKind: TypeAlias = Literal[
     "playbill.curation.qualifier_crystallization.v1",
     "playbill.curation.block_churn.v1",
     "playbill.curation.dead_vocabulary.v1",
+    "playbill.curation.literal_subject_reference.v1",
 ]
 
 CurationEvidenceKind: TypeAlias = Literal[
@@ -86,6 +88,7 @@ CURATION_PATTERN_KINDS: tuple[CurationPatternKind, ...] = (
     "playbill.curation.qualifier_crystallization.v1",
     "playbill.curation.block_churn.v1",
     "playbill.curation.dead_vocabulary.v1",
+    "playbill.curation.literal_subject_reference.v1",
 )
 
 _DETECTOR_LAWS: dict[CurationPatternKind, dict[str, object]] = {
@@ -128,6 +131,12 @@ _DETECTOR_LAWS: dict[CurationPatternKind, dict[str, object]] = {
     "playbill.curation.dead_vocabulary.v1": {
         "minimum_zero_touch_generations": DEAD_VOCABULARY_MINIMUM_ZERO_TOUCH_GENERATIONS,
         "artifact_families": ["ClaimType", "Procedure", "QueryDefinition", "Subject"],
+    },
+    "playbill.curation.literal_subject_reference.v1": {
+        "enabled": LITERAL_SUBJECT_REFERENCE_DETECTOR_ENABLED,
+        "matching": "exact_live_subject_id_equality",
+        "object_kind": "literal",
+        "retired_subjects": "excluded",
     },
 }
 
@@ -238,7 +247,7 @@ def _validate_pattern_detail(pattern_kind: CurationPatternKind, detail: dict[str
             isinstance(detail[key], str) for key in keys
         ):
             raise ValueError("block-churn pattern detail has the wrong shape")
-    else:
+    elif pattern_kind == "playbill.curation.dead_vocabulary.v1":
         if keys != {"artifact_family"} or detail["artifact_family"] not in {
             "Subject",
             "ClaimType",
@@ -246,6 +255,20 @@ def _validate_pattern_detail(pattern_kind: CurationPatternKind, detail: dict[str
             "Procedure",
         }:
             raise ValueError("dead-vocabulary pattern detail has the wrong artifact family")
+    else:
+        expected = {"literal_value", "matching_subject_kinds", "message"}
+        kinds = detail.get("matching_subject_kinds")
+        if (
+            keys != expected
+            or not isinstance(detail["literal_value"], str)
+            or not isinstance(kinds, list)
+            or not kinds
+            or not all(isinstance(item, str) and item for item in kinds)
+            or kinds != sorted(set(kinds), key=lambda item: item.encode("utf-8"))
+            or detail["message"]
+            != "literal looks like a subject reference; consider a subject-valued object"
+        ):
+            raise ValueError("literal-subject-reference pattern detail has the wrong shape")
 
 
 def detector_law_digest(pattern_kind: CurationPatternKind) -> str:
