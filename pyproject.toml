@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cruxible"
-version = "0.5.0"
+version = "0.5.1"
 description = "Governed state for AI agents: deterministic proposals, signed approvals, provenance, and reproducible accepted generations."
 readme = "README.md"
 license = "Apache-2.0"
@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "cruxible-client==0.5.0",
+    "cruxible-client==0.5.1",
     "pydantic>=2.12",
     "packaging>=23.0",
     "pyyaml>=6.0",
