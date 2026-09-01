@@ -1215,7 +1215,12 @@ class Playbill:
             raise ValueError("publish_to is legal only for self_source claims")
         subject_name = _address(subject, RefKind.SUBJECT)
         if isinstance(subject, str):
-            subject_name = subject_name.removesuffix(".json")
+            # PC-HR moved accepted artifacts to .json without retiring the
+            # pre-PC-HR .yaml authoring shorthand.
+            if subject_name.endswith(".json"):
+                subject_name = subject_name.removesuffix(".json")
+            elif subject_name.endswith(".yaml"):
+                subject_name = subject_name.removesuffix(".yaml")
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
         source: Any
         if supported_by is not None:

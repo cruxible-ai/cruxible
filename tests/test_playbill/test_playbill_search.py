@@ -53,7 +53,7 @@ def test_search_and_list_are_deterministic_cursor_bound_pages(tmp_path: Path) ->
     first_id = next(
         claim.identity.name
         for claim in seeded
-        if claim.statement.subject.artifact_path.endswith("/wi-42.yaml")
+        if claim.statement.subject.artifact_path.endswith("/wi-42.json")
     )
     second_id = next(claim.identity.name for claim in seeded if claim.identity.name != first_id)
 
@@ -143,7 +143,7 @@ def test_orient_list_and_next_share_the_same_structural_claim_slot_classifier(
         for claim in (
             _claim_from_view(view) for view in service_list_playbill_claims(instance).claims
         )
-        if claim.statement.subject.artifact_path.endswith("/wi-42.yaml")
+        if claim.statement.subject.artifact_path.endswith("/wi-42.json")
     )
     authoring = work_item_authoring("wi-42", second_value, with_claim_type=False)
     second = service_propose_playbill_claim(
