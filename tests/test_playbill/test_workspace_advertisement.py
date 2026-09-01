@@ -258,7 +258,7 @@ def test_git_environment_drops_ambient_execution_configuration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    workspace, _ledger = _repositories(tmp_path, "sha1")
+    workspace, ledger = _repositories(tmp_path, "sha1")
     ambient_global = tmp_path / "hostile-global-config"
     ambient = {
         "GIT_CONFIG_GLOBAL": str(ambient_global),
@@ -273,16 +273,27 @@ def test_git_environment_drops_ambient_execution_configuration(
     for name, value in ambient.items():
         monkeypatch.setenv(name, value)
     observed: list[dict[str, str]] = []
+    commands: list[tuple[str, ...]] = []
     real_run = subprocess.run
 
     def observe(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         observed.append(dict(kwargs["env"]))
+        commands.append(tuple(args[0]))  # type: ignore[arg-type]
         return real_run(*args, **kwargs)  # type: ignore[arg-type,return-value]
 
     monkeypatch.setattr(advertisement_module.subprocess, "run", observe)
 
-    assert workspace_git_object_format(workspace) == "sha1"
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "updated"
     assert observed
+    fetch_commands = tuple(command for command in commands if "fetch" in command)
+    assert len(fetch_commands) == 1
+    assert "--no-recurse-submodules" in fetch_commands[0]
     for environment in observed:
         assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
         assert environment["GIT_CONFIG_NOSYSTEM"] == "1"

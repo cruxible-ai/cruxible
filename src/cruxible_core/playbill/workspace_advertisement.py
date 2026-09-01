@@ -235,6 +235,7 @@ def _advertise_workspace_refs(
             "fetch",
             "--atomic",
             "--no-tags",
+            "--no-recurse-submodules",
             "--upload-pack=git-upload-pack",
             "--prune",
             _REMOTE_NAME,
