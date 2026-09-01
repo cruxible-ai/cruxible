@@ -684,7 +684,12 @@ class TerminalAuthorityRefusal(TerminalEgressError):
         message: str,
         *,
         request: TerminalEgressRequestV1,
-        repair_kind: Literal["create_mandate", "author_successor", "rebind_admission"],
+        repair_kind: Literal[
+            "create_mandate",
+            "author_successor",
+            "rebind_admission",
+            "use_declared_rung",
+        ],
         repair_command: str,
     ) -> None:
         normalized = (codes,) if isinstance(codes, str) else tuple(codes)
@@ -743,12 +748,12 @@ def _validated_run_admission(
     )
     v2_matches = not isinstance(request, TerminalEgressRequestV2) or (
         request.requested_authority == validated.hard_caps
-        and request.evaluation_time == validated.admitted_at
+        and request.evaluation_time == request.prepared_at
     )
     if not common_matches or not v2_matches:
         raise TerminalAuthorityRefusal(
             "procedure_authority_admission_mismatch",
-            "The terminal request does not reproduce its admission-committed authority and time.",
+            "The terminal request does not reproduce its admitted authority and monotone time.",
             request=request,
             repair_kind="rebind_admission",
             repair_command=PROCEDURE_ADMISSION_REPAIR,
@@ -780,7 +785,7 @@ def build_terminal_egress_request_v2(
         calibration_reading_digests=calibration_reading_digests,
         requested_authority=validated_admission.hard_caps,
         target_paths=target_paths,
-        evaluation_time=validated_admission.admitted_at,
+        evaluation_time=request.prepared_at,
         operation_key=None,
         producer_receipt=(
             producer_receipt_for_request(request) if request.kind == "emit_capture" else None
@@ -840,7 +845,7 @@ def require_procedure_mandate(
             "procedure_mandate_not_applicable",
             "Only rung-2 and rung-3 terminals consume Procedure mandates.",
             request=request,
-            repair_kind="rebind_admission",
+            repair_kind="use_declared_rung",
             repair_command="Use the terminal's declared rung.",
         )
     digest = request.procedure_mandate_digest
@@ -862,7 +867,7 @@ def require_procedure_mandate(
             requested_rung=request.required_rung,  # type: ignore[arg-type]
             requested_authority=request.requested_authority,
             target_paths=request.target_paths,
-            evaluation_time=request.evaluation_time,
+            evaluation_time=request.prepared_at,
             accepted_mandate_digest=digest,
         ),
     )

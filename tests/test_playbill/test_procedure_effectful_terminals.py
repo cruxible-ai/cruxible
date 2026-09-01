@@ -21,6 +21,7 @@ from cruxible_core.playbill.procedures.egress import (
     build_terminal_egress_request_v2,
     compute_effective_rung,
     procedure_producer_receipt_digest,
+    require_procedure_mandate,
     terminal_operation_key,
     verify_terminal_egress_receipt,
 )
@@ -44,6 +45,7 @@ from tests.test_playbill.test_procedure_execution import (
     _coordinate,
     _digest,
     _fixture,
+    _line_admission,
     _pin,
     _StateReader,
 )
@@ -154,8 +156,11 @@ def _effectful_request(
     target_paths: tuple[str, ...],
     mandate_digest: str,
     bound: ArtifactPin | None = None,
+    prepared_at: datetime | None = None,
 ):
     base = _base_request(kind, admission=admission, item=item, bound=bound)
+    if prepared_at is not None:
+        base = base.model_copy(update={"prepared_at": prepared_at})
     return build_terminal_egress_request_v2(
         base,
         admission=admission,
@@ -220,18 +225,20 @@ def test_terminal_operation_key_excludes_clocks_and_commits_authority_scope(tmp_
     )
 
 
-def test_v2_builder_derives_authority_and_evaluation_time_from_admission(tmp_path) -> None:
+def test_v2_builder_derives_authority_and_uses_monotone_prepared_time(tmp_path) -> None:
     admission = _admission(tmp_path)
     path = "subjects/project.work_item/wi-1.json"
+    prepared_at = admission.admitted_at + timedelta(hours=1)
     request = _effectful_request(
         "propose_change_set",
         admission=admission,
         item=_item(path),
         target_paths=(path,),
         mandate_digest=_digest("procedure-mandate"),
+        prepared_at=prepared_at,
     )
     assert request.requested_authority == admission.hard_caps
-    assert request.evaluation_time == admission.admitted_at
+    assert request.evaluation_time == prepared_at
     assert request.mandate_pin is None and request.mandate_basis_digests == ()
 
     forged = request.model_copy(
@@ -240,8 +247,6 @@ def test_v2_builder_derives_authority_and_evaluation_time_from_admission(tmp_pat
         }
     )
     with pytest.raises(TerminalAuthorityRefusal) as caught:
-        from cruxible_core.playbill.procedures.egress import require_procedure_mandate
-
         require_procedure_mandate(forged, admission=admission, accepted_mandates={})
     assert caught.value.codes == ("procedure_authority_admission_mismatch",)
     assert caught.value.repair_kind == "rebind_admission"
@@ -266,6 +271,29 @@ def test_v2_refuses_inherited_standing_mandate_authority(tmp_path) -> None:
                 "mandate_basis_digests": (_digest("standing-mandate"),),
             }
         )
+
+
+def test_non_effectful_mandate_check_names_the_declared_rung_repair(tmp_path) -> None:
+    admission = _admission(tmp_path)
+    contract = _pin("capture-contract", "CaptureContract", "capture")
+    base = _base_request(
+        "emit_capture",
+        admission=admission,
+        item=_item("capture"),
+        bound=contract,
+    )
+    request = build_terminal_egress_request_v2(
+        base,
+        admission=admission,
+        procedure_mandate_digest=None,
+        calibration_reading_digests=(),
+        target_paths=(),
+    )
+    with pytest.raises(TerminalAuthorityRefusal) as caught:
+        require_procedure_mandate(request, admission=admission, accepted_mandates={})
+    assert caught.value.codes == ("procedure_mandate_not_applicable",)
+    assert caught.value.repair_kind == "use_declared_rung"
+    assert caught.value.repair_command == "Use the terminal's declared rung."
 
 
 def test_mandate_free_fold_stops_below_proposal_even_with_a_standing_grant() -> None:
@@ -464,6 +492,76 @@ def test_settlement_adapter_delegates_only_after_exact_authority(tmp_path) -> No
     verify_terminal_egress_receipt(request, receipt)
     assert receipt.disposition == "settled"
     assert door.calls == 1
+
+
+def test_settlement_refuses_mandate_expired_between_admission_and_egress(tmp_path) -> None:
+    admission = _admission(tmp_path, admitted_at=NOW - timedelta(days=10))
+    target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
+    target = _settlement_target(admission)
+    mandate = _runtime_mandate(admission, namespace=("claims",)).model_copy(
+        update={"expires_at": NOW - timedelta(days=9)}
+    )
+    mandate_digest = procedure_mandate_digest(mandate).tagged
+    request = _effectful_request(
+        "mandate_settlement",
+        admission=admission,
+        item=_item("candidate", value=target.model_dump(mode="json")),
+        target_paths=(target_path,),
+        mandate_digest=mandate_digest,
+        bound=_pin("target-law", "ClaimType", "prediction"),
+        prepared_at=NOW,
+    )
+    door = _settlement_door(target, target_paths=(target_path,))
+
+    with pytest.raises(TerminalAuthorityRefusal) as caught:
+        SettlementTerminalAdapter(door=door).deliver(
+            request=request,
+            admission=admission,
+            accepted_mandates={mandate_digest: mandate},
+        )
+
+    assert caught.value.codes == ("procedure_mandate_expired",)
+    assert request.evaluation_time == request.prepared_at == NOW
+    assert door.calls == 0
+
+
+def test_settlement_refuses_expired_mandate_with_rewound_v3_admission(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    honest_admission = _line_admission(_procedure(), fixture, admitted_at=NOW)
+    rewound_admission = type(honest_admission).model_validate(
+        {
+            **honest_admission.model_dump(mode="python"),
+            "admitted_at": NOW - timedelta(days=30),
+        }
+    )
+    assert rewound_admission.admission_binding_digest == (honest_admission.admission_binding_digest)
+
+    target_path = "claims/aa/CLM-" + "a" * 32 + ".json"
+    target = _settlement_target(rewound_admission)
+    mandate = _runtime_mandate(rewound_admission, namespace=("claims",)).model_copy(
+        update={"expires_at": NOW - timedelta(days=9)}
+    )
+    mandate_digest = procedure_mandate_digest(mandate).tagged
+    request = _effectful_request(
+        "mandate_settlement",
+        admission=rewound_admission,
+        item=_item("candidate", value=target.model_dump(mode="json")),
+        target_paths=(target_path,),
+        mandate_digest=mandate_digest,
+        bound=_pin("target-law", "ClaimType", "prediction"),
+        prepared_at=NOW,
+    )
+    door = _settlement_door(target, target_paths=(target_path,))
+
+    with pytest.raises(TerminalAuthorityRefusal) as caught:
+        SettlementTerminalAdapter(door=door).deliver(
+            request=request,
+            admission=rewound_admission,
+            accepted_mandates={mandate_digest: mandate},
+        )
+
+    assert caught.value.codes == ("procedure_mandate_expired",)
+    assert door.calls == 0
 
 
 @pytest.mark.parametrize("mismatch", ["base", "paths", "proposal", "candidate"])
