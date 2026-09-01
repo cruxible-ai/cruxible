@@ -398,7 +398,7 @@ def handle_playbill_submit_approval(
 def handle_playbill_activate(
     instance_id: str, proposal_id: str
 ) -> contracts.PlaybillWorkspaceActivationResult:
-    workspace = mcp_workspace_root()
+    workspace = mcp_git_workspace_root()
     return _dispatch_remote_or_local(
         lambda client: activate_with_workspace_refresh(
             client, instance_id, proposal_id, workspace=workspace

@@ -12,7 +12,7 @@ import pytest
 
 from cruxible_client import contracts
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.workspace import resolve_workspace_path
 
@@ -133,6 +133,25 @@ def test_activate_refreshes_the_operator_configured_workspace(
     assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
 
 
+def test_activate_from_nested_cwd_refreshes_the_containing_git_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    nested = workspace / "a/b/sub"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+    monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+
+    result = handlers.handle_playbill_activate("inst_test", "proposal-1")
+
+    assert result.status == "accepted"
+    assert result.floor_refresh.status == "refreshed"
+    assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
+    assert not (nested / ".playbill/floor").exists()
+
+
 def test_workspace_status_compares_the_installed_floor(
     monkeypatch,  # type: ignore[no-untyped-def]
     tmp_path: Path,
@@ -164,6 +183,23 @@ def test_floor_export_from_nested_cwd_uses_the_containing_git_worktree(
     assert written.destination == str(workspace / ".playbill/floor")
     assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
     assert not (nested / ".playbill/floor").exists()
+
+
+def test_explicit_nested_mcp_root_refuses_to_write_outside_its_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    scoped_root = workspace / "scoped/subdir"
+    scoped_root.mkdir(parents=True)
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(scoped_root))
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+
+    with pytest.raises(ConfigError, match="must name the Git worktree root"):
+        handlers.handle_playbill_workspace_floor_export("inst_test", force=False)
+
+    assert not (workspace / ".playbill/floor").exists()
+    assert not (scoped_root / ".playbill/floor").exists()
 
 
 @pytest.mark.parametrize(

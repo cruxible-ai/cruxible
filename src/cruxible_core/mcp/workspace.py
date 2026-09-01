@@ -15,7 +15,7 @@ MCP_WORKSPACE_ROOT_ENV = "CRUXIBLE_MCP_WORKSPACE_ROOT"
 def mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
     """Resolve the adapter workspace; absence deliberately means process cwd."""
 
-    env = environ or os.environ
+    env = os.environ if environ is None else environ
     raw = env.get(MCP_WORKSPACE_ROOT_ENV)
     candidate = Path.cwd() if raw is None else Path(raw).expanduser()
     try:
@@ -28,12 +28,18 @@ def mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
 
 
 def mcp_git_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
-    """Resolve the containing Git worktree for repository-local MCP state."""
+    """Resolve the canonical worktree without escaping an explicit MCP root."""
 
-    root = containing_git_workspace_root(mcp_workspace_root(environ))
-    if root is None:
+    env = os.environ if environ is None else environ
+    configured_root = mcp_workspace_root(env)
+    git_root = containing_git_workspace_root(configured_root)
+    if git_root is None:
         raise ConfigError("MCP workspace floor export must run inside one Git worktree")
-    return root
+    if MCP_WORKSPACE_ROOT_ENV in env and git_root != configured_root:
+        raise ConfigError(
+            "CRUXIBLE_MCP_WORKSPACE_ROOT must name the Git worktree root for floor operations"
+        )
+    return git_root
 
 
 def resolve_workspace_path(
