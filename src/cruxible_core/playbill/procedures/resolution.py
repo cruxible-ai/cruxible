@@ -553,6 +553,19 @@ def resolution_contract_partition_id(activation: ResolutionContractActivationV1)
     return f"resolutions:{activation.contract_id}"
 
 
+def resolution_event_accepted_coordinate(
+    activation: ResolutionContractActivationV1 | ResolutionContractActivationV2,
+    resolution: ProcedureResolutionV1 | ProcedureResolutionV2,
+) -> AcceptedCoordinate:
+    """Bind v1 history as frozen and v2 events to their exact settlement coordinate."""
+
+    if isinstance(activation, ResolutionContractActivationV2) and isinstance(
+        resolution, ProcedureResolutionV2
+    ):
+        return resolution.settlement.accepted_coordinate
+    return activation.subject.accepted_coordinate
+
+
 def build_procedure_resolution(
     activation: ResolutionContractActivationV1,
     *,
@@ -953,7 +966,7 @@ class ProcedureResolutionBook:
                         resolution.subject != activation.subject
                         or resolution.measurement_name != activation.measurement_name
                         or stored.record.accepted_coordinate
-                        != activation.subject.accepted_coordinate
+                        != resolution_event_accepted_coordinate(activation, resolution)
                         or stored.record.procedure_artifact_digest
                         != activation.procedure_artifact_digest
                         or stored.record.partition_id
@@ -988,7 +1001,9 @@ class ProcedureResolutionBook:
                         stored.record.partition_id
                         != resolution_contract_partition_id(disposition_activation)
                         or stored.record.accepted_coordinate
-                        != disposition_activation.subject.accepted_coordinate
+                        != resolution_event_accepted_coordinate(
+                            disposition_activation, disposition_target
+                        )
                         or stored.record.procedure_artifact_digest
                         != disposition_activation.procedure_artifact_digest
                     ):
@@ -1055,7 +1070,7 @@ def append_procedure_resolution(
         stream=stream,
         partition_id=partition_id,
         event_kind="resolution",
-        accepted_coordinate=activation.subject.accepted_coordinate,
+        accepted_coordinate=resolution_event_accepted_coordinate(activation, resolution),
         procedure_artifact_digest=activation.procedure_artifact_digest,
         definition_digest=activation.definition_digest,
         actor_context=resolution.actor_context,
@@ -1093,7 +1108,7 @@ def append_resolution_disposition(
         stream=stream,
         partition_id=partition_id,
         event_kind="resolution_disposition",
-        accepted_coordinate=activation.subject.accepted_coordinate,
+        accepted_coordinate=resolution_event_accepted_coordinate(activation, resolution),
         procedure_artifact_digest=activation.procedure_artifact_digest,
         definition_digest=activation.definition_digest,
         actor_context=disposition.reviewer_actor_context,
@@ -1210,6 +1225,7 @@ __all__ = [
     "resolution_contract_id",
     "resolution_contract_partition_id",
     "resolution_disposition_id",
+    "resolution_event_accepted_coordinate",
     "resolve_authority_basis",
     "settled_outcome_relation_digest",
 ]

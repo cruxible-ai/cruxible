@@ -67,7 +67,7 @@ def _query(tmp_path, *, with_settlements: bool = True):
     }
     proof_digests = tuple(sorted(resolution.evidence_refs[0].digest for resolution in resolutions))
     request = SettledOutcomesQueryRequestV1(
-        accepted_coordinate=_coordinate(),
+        accepted_coordinate=_coordinate("calibration-query"),
         evaluation_time=NOW + timedelta(seconds=4),
         access_profile=SettledOutcomesAccessProfileV1(
             profile_id="calibration-production",

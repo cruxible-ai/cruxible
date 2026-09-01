@@ -158,6 +158,7 @@ from cruxible_core.playbill.procedures.resolution import (
     procedure_resolution_digest,
     resolution_activation_digest,
     resolution_contract_partition_id,
+    resolution_event_accepted_coordinate,
     resolve_authority_basis,
     settled_outcome_relation_digest,
 )
@@ -310,6 +311,7 @@ __all__ = [
     "procedure_run_receipt_digest",
     "derive_resolution_activations",
     "resolution_contract_partition_id",
+    "resolution_event_accepted_coordinate",
     "resolve_authority_basis",
     "resolution_activation_digest",
     "select_settled_outcomes_for_calibration",

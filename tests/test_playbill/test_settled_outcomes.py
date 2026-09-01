@@ -162,6 +162,8 @@ def test_v2_uses_existing_resolution_event_and_partition_replay(tmp_path) -> Non
 
     assert stored.record.event_kind == "resolution"
     assert stored.record.partition_id == partition_id
+    assert stored.record.accepted_coordinate == resolution.settlement.accepted_coordinate
+    assert activation.prediction.accepted_coordinate != resolution.settlement.accepted_coordinate
     assert book.latest_non_overturned(activation.contract_id) == resolution
 
 
@@ -228,7 +230,7 @@ def test_query_keeps_true_and_false_and_applies_visibility_before_rows(tmp_path)
     }
     all_proofs = tuple(sorted(resolution.evidence_refs[0].digest for resolution in resolutions))
     request = SettledOutcomesQueryRequestV1(
-        accepted_coordinate=_coordinate(),
+        accepted_coordinate=_coordinate("query-after-settlement"),
         evaluation_time=NOW + timedelta(seconds=4),
         access_profile=SettledOutcomesAccessProfileV1(
             profile_id="calibration",
@@ -251,6 +253,8 @@ def test_query_keeps_true_and_false_and_applies_visibility_before_rows(tmp_path)
     )
 
     assert replayed == (result, receipt)
+    assert request.accepted_coordinate != activations[0].prediction.accepted_coordinate
+    assert request.accepted_coordinate != resolutions[0].settlement.accepted_coordinate
     assert {row.relation.resolution.settlement_outcome for row in result.rows} == {False, True}
     assert receipt.visible_row_count == 2
 

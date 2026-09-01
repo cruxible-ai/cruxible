@@ -338,10 +338,6 @@ def query_settled_outcomes(
     if access.can_read_resolution_bodies:
         visible_proofs = frozenset(access.visible_proof_digests)
         for activation in activations:
-            if activation.prediction.accepted_coordinate != request.accepted_coordinate:
-                raise PlaybillExecutionError(
-                    "settled-outcomes activation differs from the exact query coordinate"
-                )
             if request.contract_ids and activation.contract_id not in request.contract_ids:
                 continue
             if request.outcome_classes and activation.outcome_class not in request.outcome_classes:
