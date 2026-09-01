@@ -12,6 +12,7 @@ from cruxible_client.contracts.canonical import AcceptanceLawDigest, canonical_d
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
     CAPTURE_CONTRACT_ACCEPTANCE_LAW,
+    CLAIM_LAW_V3_REVISION_8,
     CLAIM_TYPE_ACCEPTANCE_LAW,
     CLAIM_TYPE_V3_ACCEPTANCE_LAW,
     CLAIM_TYPE_V4_ACCEPTANCE_LAW,
@@ -244,6 +245,10 @@ HISTORICAL_LAW_COORDINATES: tuple[
 
 
 def test_playbill_acceptance_law_coordinates_are_exact() -> None:
+    assert CLAIM_LAW_V3_REVISION_8.digest == (
+        "sha256:8aae4d764d32c52792d7ef2a81715c92d7c198b69cc74ec2f8882bcda0a16aa9"
+    )
+    assert CLAIM_LAW_V3_REVISION_8 == CLAIM_V3_ACCEPTANCE_LAW.coordinate
     seen_coordinates: set[tuple[str, str]] = set()
     seen_tags: set[str] = set()
     for law, identifier, artifact_tag, revision, expected_digest in (

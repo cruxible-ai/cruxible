@@ -180,11 +180,14 @@ CLAIM_LAW_V3_REVISION_7 = _artifact_law_coordinate(
     "playbill-claim-v3",
     semantic_revision=7,
 )
-CLAIM_LAW_V3 = _artifact_law_coordinate(
+CLAIM_LAW_V3_REVISION_8 = _artifact_law_coordinate(
     CLAIM_LAW_V3_IDENTIFIER,
     "playbill-claim-v3",
     semantic_revision=8,
 )
+# Current is an operational alias only. Historical replay and shape-law
+# selection must name CLAIM_LAW_V3_REVISION_8 directly.
+CLAIM_LAW_V3 = CLAIM_LAW_V3_REVISION_8
 CLAIM_TYPE_LAW_V3 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,
     "playbill-claim-type-v3",
@@ -371,7 +374,7 @@ CLAIM_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_tag="playbill-claim-v2",
 )
 CLAIM_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
-    coordinate=CLAIM_LAW_V3,
+    coordinate=CLAIM_LAW_V3_REVISION_8,
     artifact_kind="claim",
     artifact_tag="playbill-claim-v3",
 )
@@ -509,6 +512,7 @@ __all__ = [
     "CLAIM_LAW_V2_IDENTIFIER",
     "CLAIM_LAW_V3",
     "CLAIM_LAW_V3_REVISION_7",
+    "CLAIM_LAW_V3_REVISION_8",
     "CLAIM_LAW_V3_IDENTIFIER",
     "CLAIM_V2_ACCEPTANCE_LAW",
     "CLAIM_V3_ACCEPTANCE_LAW",
