@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -96,6 +97,11 @@ class _StubClient:
 
 def _workspace(tmp_path: Path) -> Path:
     root = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(root)],
+        check=True,
+        capture_output=True,
+    )
     (root / ".playbill").mkdir(parents=True)
     (root / ".playbill/coverage.json").write_text(
         json.dumps(
@@ -140,6 +146,24 @@ def test_workspace_status_compares_the_installed_floor(
 
     assert status.status == "current"
     assert status.installed_coordinate == _coordinate()
+
+
+def test_floor_export_from_nested_cwd_uses_the_containing_git_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    nested = workspace / "a/b/sub"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+    monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+
+    written = handlers.handle_playbill_workspace_floor_export("inst_test", force=False)
+
+    assert written.destination == str(workspace / ".playbill/floor")
+    assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
+    assert not (nested / ".playbill/floor").exists()
 
 
 @pytest.mark.parametrize(

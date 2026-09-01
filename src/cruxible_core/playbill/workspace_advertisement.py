@@ -80,6 +80,25 @@ def _effective_remote_urls(workspace: Path) -> subprocess.CompletedProcess[bytes
     return _git(workspace, ["remote", "get-url", "--all", _REMOTE_NAME])
 
 
+def containing_git_workspace_root(workspace_path: Path) -> Path | None:
+    """Return the containing worktree root through the hardened Git boundary."""
+
+    try:
+        candidate = workspace_path.expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    top = _git(candidate, ["rev-parse", "--show-toplevel"])
+    if top.returncode != 0:
+        return None
+    try:
+        root = Path(_text(top.stdout)).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    if not candidate.is_relative_to(root):
+        return None
+    return root
+
+
 def workspace_git_object_format(workspace_root: Path) -> GitObjectFormat:
     """Return the attached repository's object format or reject the attachment."""
 
@@ -266,4 +285,8 @@ def advertise_workspace_refs(
         )
 
 
-__all__ = ["advertise_workspace_refs", "workspace_git_object_format"]
+__all__ = [
+    "advertise_workspace_refs",
+    "containing_git_workspace_root",
+    "workspace_git_object_format",
+]
