@@ -374,6 +374,23 @@ class LocalProviderExecutionDriver:
             raise ProviderLocalRuntimeRefused(
                 "environment_divergence", "verified environment interpreter is absent"
             )
+        try:
+            environment_root = deployment.environment_path.resolve(strict=True)
+            interpreter_path = deployment.interpreter_path.resolve(strict=True)
+            manifest_path = deployment.environment_manifest_path.resolve(strict=True)
+        except OSError as exc:
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence", "verified environment paths are unavailable"
+            ) from exc
+        if (
+            not environment_root.is_dir()
+            or not interpreter_path.is_relative_to(environment_root)
+            or not manifest_path.is_relative_to(environment_root)
+        ):
+            raise ProviderLocalRuntimeRefused(
+                "environment_divergence",
+                "interpreter and environment seal must remain inside the verified environment",
+            )
         provider_artifact_digest = accepted_provider.artifact_digest
         interface_pin = next(
             (
@@ -632,11 +649,20 @@ def _run_child(
             start_new_session=True,
             close_fds=True,
         )
-        lease = (
-            process_leases.require(invocation_id)
-            if invocation_id is not None and process_leases is not None
-            else None
-        )
+        try:
+            lease = (
+                process_leases.require(invocation_id)
+                if invocation_id is not None and process_leases is not None
+                else None
+            )
+        except PlaybillExecutionError:
+            # A child that cannot prove its own lease must not outlive the
+            # failed invocation boundary.
+            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+                os.killpg(process.pid, signal.SIGKILL)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=5)
+            raise
 
         def write_stdin() -> None:
             try:

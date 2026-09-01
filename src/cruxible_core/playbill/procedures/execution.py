@@ -722,14 +722,26 @@ class PreparedProcedureRunV5(PreparedProcedureRunV4):
             for item in self.acquisition_plan.external_occurrences
         ):
             raise ValueError("acquisition plan budget does not use policy-in-force")
-        admitted_bindings = {
-            item.node_id: (item.provider_artifact_digest, item.implementation_digest)
-            for item in self.admission.resolved_provider_bindings
-        }
-        planned_bindings = {
-            item.node_id: (item.provider_artifact_digest, item.implementation_digest)
-            for item in self.acquisition_plan.external_occurrences
-        }
+        admitted_bindings = tuple(
+            sorted(
+                (
+                    item.node_id,
+                    item.provider_artifact_digest,
+                    item.implementation_digest,
+                )
+                for item in self.admission.resolved_provider_bindings
+            )
+        )
+        planned_bindings = tuple(
+            sorted(
+                (
+                    item.node_id,
+                    item.provider_artifact_digest,
+                    item.implementation_digest,
+                )
+                for item in self.acquisition_plan.external_occurrences
+            )
+        )
         if planned_bindings != admitted_bindings:
             raise ValueError("acquisition plan does not cover admitted Provider bindings")
         return self

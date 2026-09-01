@@ -6,12 +6,14 @@ import hashlib
 import signal
 import stat
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDurationV1
+from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.models import ProcedureBudgetV3, ProcedureHardCapsV3
 from cruxible_client.contracts.provider_execution import (
@@ -35,6 +37,7 @@ from cruxible_core.playbill.provider_local_runtime import (
     LocalProviderExecutionDriver,
     ProviderLocalRuntimeRefused,
     ProviderSecretResolverRegistry,
+    _run_child,
     translate_provider_budget,
 )
 from cruxible_core.playbill.provider_process_leases import (
@@ -268,6 +271,17 @@ def test_local_bind_reproduces_distribution_lock_materialization_and_runtime_mem
     assert bound.binding.materialization_digest == materialization_digest
     assert bound.binding.environment_manifest_digest == _sha256_file(environment_manifest)
 
+    verified_environment = tmp_path / "verified-environment"
+    verified_environment.mkdir()
+    with pytest.raises(ProviderLocalRuntimeRefused) as escaped_environment:
+        LocalProviderExecutionDriver().bind(
+            accepted,
+            accepted_interface(),
+            implementation.implementation_digest,
+            replace(deployment, environment_path=verified_environment),
+        )
+    assert escaped_environment.value.code == "environment_divergence"
+
     environment_manifest.write_bytes(
         canonical_bytes(
             {
@@ -441,3 +455,39 @@ def test_process_recovery_waits_through_a_transient_permission_probe(
 
     assert leases.recover_all() == (invocation_id,)
     assert not record_path.exists()
+
+
+def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
+    tmp_path: Path, monkeypatch
+) -> None:
+    leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
+    invocation_id = _digest("unverified-child")
+    killed: list[tuple[int, int]] = []
+
+    class _Process:
+        pid = 707
+
+        @staticmethod
+        def wait(*, timeout: int):
+            assert timeout == 5
+            return -signal.SIGKILL
+
+    monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: _Process())
+    monkeypatch.setattr(
+        leases,
+        "require",
+        lambda value: (_ for _ in ()).throw(PlaybillExecutionError("lease invalid")),
+    )
+    monkeypatch.setattr("os.killpg", lambda pid, sent_signal: killed.append((pid, sent_signal)))
+
+    with pytest.raises(PlaybillExecutionError, match="lease invalid"):
+        _run_child(
+            tmp_path / "python",
+            entrypoint="demo.runtime:Provider",
+            context=b"{}",
+            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=1, output_bytes=1024),
+            secret_fd=None,
+            invocation_id=invocation_id,
+            process_leases=leases,
+        )
+    assert killed == [(_Process.pid, signal.SIGKILL)]

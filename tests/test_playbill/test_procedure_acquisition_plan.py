@@ -231,6 +231,49 @@ def test_prepared_v5_requires_exact_plan_and_complete_provider_coverage(tmp_path
             }
         )
 
+    occurrence = plan.external_occurrences[0]
+    duplicate_plan = plan.model_copy(
+        update={
+            "external_occurrences": (
+                occurrence,
+                occurrence.model_copy(update={"occurrence_path": "repeat/provider"}),
+            )
+        }
+    )
+    duplicate_plan_digest = procedure_acquisition_plan_digest(duplicate_plan)
+    provisional = admission.model_copy(
+        update={
+            "acquisition_plan_digest": duplicate_plan_digest,
+            "semantic_replay_key_digest": "sha256:" + "0" * 64,
+            "admission_binding_digest": "sha256:" + "0" * 64,
+            "run_id": "RUN-" + "0" * 64,
+        }
+    )
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
+    admission_digest = procedure_admission_digest(provisional)
+    duplicate_admission = ProcedureRunAdmissionV5.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "admission_binding_digest": admission_digest,
+            "run_id": procedure_line_run_id(
+                occurrence_id=provisional.occurrence_id or "",
+                attempt=provisional.attempt,
+                admission_binding_digest=admission_digest,
+                occurrence_evaluation_time=provisional.occurrence_evaluation_time,
+            ),
+        }
+    )
+    with pytest.raises(ValidationError, match="does not cover admitted Provider bindings"):
+        PreparedProcedureRunV5.model_validate(
+            {
+                **prepared.model_dump(mode="python"),
+                "admission": duplicate_admission,
+                "acquisition_plan": duplicate_plan,
+                "acquisition_plan_digest": duplicate_plan_digest,
+            }
+        )
+
 
 def test_runtime_reservation_v2_commits_actual_invocation_identity(tmp_path: Path) -> None:
     from cruxible_core.playbill.material_reservations import (
