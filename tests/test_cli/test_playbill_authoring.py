@@ -580,6 +580,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
     assert help_result.exit_code == 0
     assert "Input kind family: claim | procedure | subject | query_definition" in help_result.output
     assert "procedure_runtime_policy" in help_result.output
+    assert "procedure_mandate" in help_result.output
 
     for name in (
         "claim-existing-capture",
@@ -589,6 +590,7 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
         "subject",
         "approval-policy",
         "procedure-runtime-policy",
+        "procedure-mandate",
         "query-claims-by-type",
     ):
         result = runner.invoke(cli, ["playbill", "authoring", "create", "--example", name])
@@ -600,9 +602,13 @@ def test_cli_create_examples_are_model_generated_and_need_no_daemon() -> None:
             "subject",
             "approval_policy",
             "procedure_runtime_policy",
+            "procedure_mandate",
             "query_definition",
         }
-        assert "tag" not in payload
+        if name == "procedure-mandate":
+            assert payload["tag"] == "playbill-procedure-mandate-input-v1"
+        else:
+            assert "tag" not in payload
         if name == "procedure":
             assert [node["spec"]["tag"] for node in payload["definition"]["nodes"]] == [
                 "playbill-transform-adapter-spec-v1",

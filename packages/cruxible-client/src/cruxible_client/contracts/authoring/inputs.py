@@ -27,6 +27,7 @@ from cruxible_client.contracts.authoring.models import (
     ExistingCaptureCitationSourceV1,
     ProcedureAuthoringPayloadV1,
     ProcedureAuthoringPayloadV2,
+    ProcedureMandateAuthoringPayloadV1,
     ProcedureRuntimePolicyAuthoringPayloadV1,
     QueryDefinitionAuthoringPayloadV1,
     SelfSourceBodyV1,
@@ -43,6 +44,7 @@ from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
+from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell, subject_path
@@ -179,11 +181,25 @@ class ProcedureRuntimePolicyInput(_StrictInputModel):
     procedure_runtime_policy: ProcedureRuntimePolicyV1
 
 
+class ProcedureMandateInputV1(_StrictInputModel):
+    tag: Literal["playbill-procedure-mandate-input-v1"] = "playbill-procedure-mandate-input-v1"
+    kind: Literal["procedure_mandate"]
+    name: str
+    procedure_name: str
+    rung: Literal[2, 3]
+    authority_ceiling: ProcedureHardCapsV3
+    namespace: tuple[str, ...]
+    valid_from: datetime
+    expires_at: datetime
+    retire: bool = False
+
+
 AuthoringChangeSetMemberInputV1: TypeAlias = Annotated[
     SubjectInput
     | QueryDefinitionInput
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
+    | ProcedureMandateInputV1
     | ProcedureInput,
     Field(discriminator="kind"),
 ]
@@ -201,6 +217,7 @@ AuthoringInputV1: TypeAlias = Annotated[
     | QueryDefinitionInput
     | ApprovalPolicyInput
     | ProcedureRuntimePolicyInput
+    | ProcedureMandateInputV1
     | ChangeSetInput,
     Field(discriminator="kind"),
 ]
@@ -522,6 +539,17 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
         return ProcedureRuntimePolicyAuthoringPayloadV1(
             procedure_runtime_policy=value.procedure_runtime_policy
         )
+    if isinstance(value, ProcedureMandateInputV1):
+        return ProcedureMandateAuthoringPayloadV1(
+            name=value.name,
+            procedure_name=value.procedure_name,
+            rung=value.rung,
+            authority_ceiling=value.authority_ceiling,
+            namespace=value.namespace,
+            valid_from=value.valid_from,
+            expires_at=value.expires_at,
+            retire=value.retire,
+        )
     members = tuple(
         _procedure_payload(member)
         if isinstance(member, ProcedureInput)
@@ -534,8 +562,21 @@ def lower_authoring_input(value: AuthoringInputV1, *, tree: dict[str, bytes]) ->
                 else (
                     ApprovalPolicyAuthoringPayloadV1(approval_policy=member.approval_policy)
                     if isinstance(member, ApprovalPolicyInput)
-                    else ProcedureRuntimePolicyAuthoringPayloadV1(
-                        procedure_runtime_policy=member.procedure_runtime_policy
+                    else (
+                        ProcedureRuntimePolicyAuthoringPayloadV1(
+                            procedure_runtime_policy=member.procedure_runtime_policy
+                        )
+                        if isinstance(member, ProcedureRuntimePolicyInput)
+                        else ProcedureMandateAuthoringPayloadV1(
+                            name=member.name,
+                            procedure_name=member.procedure_name,
+                            rung=member.rung,
+                            authority_ceiling=member.authority_ceiling,
+                            namespace=member.namespace,
+                            valid_from=member.valid_from,
+                            expires_at=member.expires_at,
+                            retire=member.retire,
+                        )
                     )
                 )
             )
@@ -578,6 +619,7 @@ __all__ = [
     "ExactContentObjectInput",
     "LiteralObjectInput",
     "ProcedureInput",
+    "ProcedureMandateInputV1",
     "QueryDefinitionInput",
     "SelfSourceInput",
     "SlotReferenceInput",

@@ -27,7 +27,7 @@ from cruxible_client.contracts.approval_policy import (
     approval_policy_digest,
     parse_approval_policy,
 )
-from cruxible_client.contracts.artifacts import ArtifactIdentity
+from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.authoring_profiles import (
     AuthoringProfileError,
     ClaimTypeExpansionEvidenceV1,
@@ -165,6 +165,13 @@ from cruxible_client.contracts.principals import (
     PrincipalRegistrySnapshot,
     principal_registry_from_tree,
 )
+from cruxible_client.contracts.procedure_mandates import (
+    AcceptedProcedureMandateV1,
+    ProcedureMandateError,
+    evaluate_procedure_mandate_law,
+    parse_procedure_mandate,
+    procedure_mandate_digest,
+)
 from cruxible_client.contracts.procedure_runtime_policy import (
     PROCEDURE_RUNTIME_POLICY_PATH,
     ProcedureRuntimePolicyFormatError,
@@ -294,6 +301,7 @@ _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
     r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.json$"
 )
 _STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
+_PROCEDURE_MANDATE_PATH_RE = re.compile(r"^procedure-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
 _CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.json$")
 _PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
 _LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
@@ -307,6 +315,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _PROVIDER_INTERFACE_PATH_RE,
     _SOURCE_ACQUISITION_POLICY_PATH_RE,
     _STANDING_MANDATE_PATH_RE,
+    _PROCEDURE_MANDATE_PATH_RE,
     _CLAIM_PATH_RE,
     _PROCEDURE_PATH_RE,
     _LINE_PATH_RE,
@@ -1869,6 +1878,50 @@ def _standing_mandate_member(context: _MemberContext) -> _MemberVerdict:
     )
 
 
+def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
+    mandate = parse_procedure_mandate(context.content, path=context.path)
+    accepted_procedure = context.resolved.procedures.get(mandate.procedure.target.qualified)
+    if accepted_procedure is None:
+        return _MemberVerdict(
+            diagnostics=(
+                _diagnostic(
+                    "playbill.procedure_mandate.procedure_mismatch",
+                    "ProcedureMandate must pin an exact candidate Procedure artifact.",
+                    context.path,
+                ),
+            )
+        )
+    predecessor: AcceptedProcedureMandateV1 | None = None
+    if context.parent_content is not None:
+        previous = parse_procedure_mandate(context.parent_content, path=context.path)
+        predecessor = AcceptedProcedureMandateV1(
+            path=context.path,
+            mandate=previous,
+            artifact_digest=procedure_mandate_digest(previous).tagged,
+        )
+    law = evaluate_procedure_mandate_law(
+        mandate,
+        path=context.path,
+        predecessor=predecessor,
+        procedure=accepted_procedure,
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted ProcedureMandate law result is incomplete")
+    return _accepted(
+        context,
+        _installed(mandate.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=mandate.lifecycle.state == "retired",
+    )
+
+
 def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
     contract = parse_capture_contract(context.content, path=context.path)
     predecessor: AcceptedCaptureContract | None = None
@@ -2407,6 +2460,13 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_standing_mandate_member,
     ),
     _MemberKind(
+        name="procedure-mandate",
+        pattern=_PROCEDURE_MANDATE_PATH_RE,
+        removal_code="playbill.change_set.delete_unsupported",
+        removal_message="ProcedureMandates are retired by successor, never removed.",
+        evaluate=_procedure_mandate_member,
+    ),
+    _MemberKind(
         name="capture-contract",
         pattern=_CAPTURE_CONTRACT_PATH_RE,
         removal_code="playbill.change_set.delete_unsupported",
@@ -2463,6 +2523,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "provider-interface",
     "source-acquisition-policy",
     "standing-mandate",
+    "procedure-mandate",
     "capture-contract",
     "claim",
     "claim-type",
@@ -2583,6 +2644,103 @@ def _resolved_artifacts(
     return resolved
 
 
+def _procedure_pin(state: ArtifactDependencyStateV1) -> ArtifactPin | None:
+    return next((pin for pin in state.pins if pin.role == "procedure"), None)
+
+
+def _procedure_mandate_pair_diagnostics(
+    *,
+    parent: DependencyIndexV1,
+    candidate: DependencyIndexV1,
+    scope: tuple[str, ...],
+) -> tuple[CompilerDiagnostic, ...]:
+    """Enforce exact Procedure/mandate succession in both directions.
+
+    Ordinary closure proves every pin resolves in the candidate tree. This extra
+    relation proves that changing the target of an already-accepted mandate and
+    changing a Procedure that an accepted live mandate grants happen in the same
+    complete ChangeSet rather than as two independently acceptable generations.
+    """
+
+    scoped = frozenset(scope)
+    diagnostics: dict[tuple[str, str], CompilerDiagnostic] = {}
+
+    for path in scope:
+        before = parent.states.get(path)
+        after = candidate.states.get(path)
+        if (
+            before is None
+            or after is None
+            or before.artifact_kind != "procedure-mandate"
+            or after.artifact_kind != "procedure-mandate"
+        ):
+            continue
+        before_pin = _procedure_pin(before)
+        after_pin = _procedure_pin(after)
+        if before_pin is None or after_pin is None or before_pin == after_pin:
+            continue
+        before_target_path = parent.paths_by_identity.get(before_pin.target.qualified)
+        after_target_path = candidate.paths_by_identity.get(after_pin.target.qualified)
+        if before_target_path not in scoped or after_target_path not in scoped:
+            diagnostics[("playbill.procedure_mandate.successor_pair_required", path)] = _diagnostic(
+                "playbill.procedure_mandate.successor_pair_required",
+                "A ProcedureMandate may retarget authority only with the exact Procedure "
+                "successor in the same ChangeSet.",
+                path,
+            )
+
+    for path in scope:
+        before = parent.states.get(path)
+        after = candidate.states.get(path)
+        if (
+            before is None
+            or after is None
+            or before.artifact_kind != "procedure"
+            or after.artifact_kind != "procedure"
+            or before.artifact_digest == after.artifact_digest
+        ):
+            continue
+        for mandate_path, prior_mandate in parent.states.items():
+            if (
+                prior_mandate.artifact_kind != "procedure-mandate"
+                or prior_mandate.lifecycle.state != "live"
+            ):
+                continue
+            prior_pin = _procedure_pin(prior_mandate)
+            if (
+                prior_pin is None
+                or prior_pin.target != before.identity
+                or prior_pin.artifact_digest != before.artifact_digest
+            ):
+                continue
+            successor = candidate.states.get(mandate_path)
+            successor_pin = None if successor is None else _procedure_pin(successor)
+            if (
+                mandate_path not in scoped
+                or successor is None
+                or successor.artifact_kind != "procedure-mandate"
+                or successor.lifecycle.predecessor_digest != prior_mandate.artifact_digest
+                or successor_pin is None
+                or successor_pin.target != after.identity
+                or successor_pin.artifact_digest != after.artifact_digest
+            ):
+                diagnostics[
+                    (
+                        "playbill.procedure_mandate.successor_pair_required",
+                        path,
+                    )
+                ] = _diagnostic(
+                    "playbill.procedure_mandate.successor_pair_required",
+                    "A Procedure with accepted mandate authority must carry an exact mandate "
+                    "successor in the same ChangeSet.",
+                    path,
+                )
+    return tuple(
+        diagnostics[key]
+        for key in sorted(diagnostics, key=lambda item: (item[0].encode(), item[1].encode()))
+    )
+
+
 def _evaluate_scoped_members(
     *,
     current_tree: Mapping[str, bytes],
@@ -2642,6 +2800,7 @@ def _evaluate_scoped_members(
             ProviderInterfaceFormatError,
             SourceAcquisitionPolicyError,
             StandingMandateError,
+            ProcedureMandateError,
             SubjectFormatError,
             ClaimTypeFormatError,
             ProcedureFormatError,
@@ -2660,6 +2819,18 @@ def _evaluate_scoped_members(
     # dependency index advanced: a malformed member must be refused as one.
     candidate_state = advance_tree_state(parent, tree=candidate_tree, advanced=advanced)
     candidate_dependencies = candidate_state.dependencies
+    pair_diagnostics = _procedure_mandate_pair_diagnostics(
+        parent=parent.dependencies,
+        candidate=candidate_dependencies,
+        scope=scope,
+    )
+    if pair_diagnostics:
+        return CandidateEvaluation(
+            candidate_tree,
+            None,
+            pair_diagnostics,
+            rebased,
+        )
     # The v1 candidate predates dependency closure entirely, and re-verifying an
     # accepted v1 generation may not apply a law its own acceptance never faced:
     # a Subject that had live dependents outside its change set was acceptable

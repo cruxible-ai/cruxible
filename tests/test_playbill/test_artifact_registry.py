@@ -26,6 +26,7 @@ from cruxible_core.playbill.compiler import (
 )
 from cruxible_core.playbill.projection_artifacts import (
     P2_B0_ARTIFACT_KINDS,
+    P2_C_ARTIFACT_KINDS,
     PLAYBILL_ARTIFACT_KINDS,
     PLAYBILL_FORMAT_RESERVATIONS,
     FixtureArtifact,
@@ -60,6 +61,18 @@ def test_p2_b1_activates_provider_interface_only_at_the_successor_compiler() -> 
             "provider-interfaces/demo.interface.json"
         )
         == "provider-interface"
+    )
+
+
+def test_p2_c_activates_procedure_mandates_only_at_the_successor_compiler() -> None:
+    assert registered_path_kind("procedure-mandates/demo.json") == "procedure-mandate"
+    with pytest.raises(ProjectionFormatError):
+        PLAYBILL_ARTIFACT_KINDS.resolve_path("procedure-mandates/demo.json")
+    assert (
+        artifact_kinds_for_compiler(current_compiler_coordinate()).resolve_path(
+            "procedure-mandates/demo.json"
+        )
+        == "procedure-mandate"
     )
 
 
@@ -195,7 +208,7 @@ def test_historical_claim_type_path_error_names_the_historical_spelling() -> Non
         )
 
 
-def test_p2_b1_reserves_every_provider_graph_successor_tag() -> None:
+def test_p2_c_reserves_every_current_artifact_tag() -> None:
     assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == (
         "playbill-accepted-state-run-input-v1",
         "playbill-approval-policy-v1",
@@ -211,9 +224,19 @@ def test_p2_b1_reserves_every_provider_graph_successor_tag() -> None:
         "playbill-line-v2",
         "playbill-prepared-procedure-run-v4",
         "playbill-procedure-admission-bound-payload-v4",
+        "playbill-procedure-calibration-cohort-membership-witness-v1",
+        "playbill-procedure-calibration-cohort-v1",
+        "playbill-procedure-calibration-reading-artifact-v1",
+        "playbill-procedure-calibration-reading-identity-v1",
+        "playbill-procedure-calibration-reading-v1",
+        "playbill-procedure-calibration-relation-cohort-witness-v1",
+        "playbill-procedure-calibration-score-v1",
+        "playbill-procedure-mandate-v1",
         "playbill-procedure-pin-slot-ref-v1",
         "playbill-procedure-pin-slot-v1",
+        "playbill-procedure-producer-receipt-v1",
         "playbill-procedure-provider-binding-v2",
+        "playbill-procedure-resolution-v2",
         "playbill-procedure-run-admission-v4",
         "playbill-procedure-run-receipt-v5",
         "playbill-procedure-runtime-policy-v1",
@@ -232,10 +255,22 @@ def test_p2_b1_reserves_every_provider_graph_successor_tag() -> None:
         "playbill-provider-v1",
         "playbill-provider-v2",
         "playbill-query-definition-v1",
+        "playbill-resolution-claim-endpoint-v1",
+        "playbill-resolution-contract-activation-v2",
+        "playbill-settled-outcome-history-v1",
+        "playbill-settled-outcome-relation-v1",
+        "playbill-settled-outcome-row-v1",
+        "playbill-settled-outcomes-access-profile-v1",
+        "playbill-settled-outcomes-query-receipt-v1",
+        "playbill-settled-outcomes-query-request-v1",
+        "playbill-settled-outcomes-query-result-v1",
         "playbill-source-acquisition-policy-v1",
         "playbill-standing-mandate-v1",
     )
     assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == ()
+    # Calibration readings are compute-produced, CAS-pinned artifacts. Registering a
+    # governed tree path would collapse the ratified policy/readings/mandates split.
+    assert "calibration-reading" not in P2_C_ARTIFACT_KINDS.implemented_kinds()
 
 
 def test_descriptor_claim_type_identity_seed_list_is_exact() -> None:

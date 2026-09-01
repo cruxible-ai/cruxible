@@ -42,6 +42,7 @@ from cruxible_client.contracts.procedure_runtime_policy import (
     ProcedureRuntimePolicyV1,
 )
 from cruxible_client.contracts.procedures.artifacts import ProcedureOwnedContractV1
+from cruxible_client.contracts.procedures.models import ProcedureHardCapsV3
 from cruxible_client.contracts.projection import AcceptedCoordinate
 from cruxible_client.contracts.proposal_models import AuthenticatedActor, ProposalReceiveLimits
 from cruxible_client.contracts.query.definitions import QueryDefinitionV1
@@ -75,7 +76,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:e0825729716b77b9473bfb45f98fd5589adf5e804793b930410d249044b367db"
+    "sha256:3354e95ac96b9dc549a31a66baa5a2884159a9f0f5e01686cbe5ffe792020286"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -800,6 +801,22 @@ class ProcedureRuntimePolicyAuthoringPayloadV1(_StrictAuthoringModel):
     procedure_runtime_policy: ProcedureRuntimePolicyV1
 
 
+class ProcedureMandateAuthoringPayloadV1(_StrictAuthoringModel):
+    """Decision-only grant input; lowering owns exact Procedure/predecessor digests."""
+
+    tag: Literal["playbill-procedure-mandate-authoring-payload-v1"] = (
+        "playbill-procedure-mandate-authoring-payload-v1"
+    )
+    name: str
+    procedure_name: str
+    rung: Literal[2, 3]
+    authority_ceiling: ProcedureHardCapsV3
+    namespace: tuple[str, ...]
+    valid_from: datetime
+    expires_at: datetime
+    retire: bool = False
+
+
 class ProcedureAuthoringPayloadV1(_StrictAuthoringModel):
     tag: Literal["playbill-procedure-authoring-payload-v1"] = (
         "playbill-procedure-authoring-payload-v1"
@@ -844,6 +861,7 @@ AuthoringChangeSetMemberV1: TypeAlias = Annotated[
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1
+    | ProcedureMandateAuthoringPayloadV1
     | ProcedureAuthoringPayloadV1
     | ProcedureAuthoringPayloadV2,
     Field(discriminator="tag"),
@@ -859,6 +877,8 @@ def authoring_member_identity(payload: AuthoringChangeSetMemberV1) -> str:
         return APPROVAL_POLICY_IDENTITY
     if isinstance(payload, ProcedureRuntimePolicyAuthoringPayloadV1):
         return PROCEDURE_RUNTIME_POLICY_IDENTITY
+    if isinstance(payload, ProcedureMandateAuthoringPayloadV1):
+        return f"ProcedureMandate:{payload.name}"
     return f"Procedure:{payload.definition['name']}"
 
 
@@ -899,6 +919,7 @@ AuthoringPayloadV1 = Annotated[
     | QueryDefinitionAuthoringPayloadV1
     | ApprovalPolicyAuthoringPayloadV1
     | ProcedureRuntimePolicyAuthoringPayloadV1
+    | ProcedureMandateAuthoringPayloadV1
     | ChangeSetAuthoringPayloadV1,
     Field(discriminator="tag"),
 ]
@@ -1980,6 +2001,7 @@ __all__ = [
     "ProcedureAuthoringPayloadV2",
     "ApprovalPolicyAuthoringPayloadV1",
     "ProcedureRuntimePolicyAuthoringPayloadV1",
+    "ProcedureMandateAuthoringPayloadV1",
     "QueryDefinitionAuthoringPayloadV1",
     "SubjectAuthoringPayloadV1",
     "RepairAlternativeV1",

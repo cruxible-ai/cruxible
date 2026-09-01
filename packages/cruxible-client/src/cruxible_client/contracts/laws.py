@@ -22,6 +22,7 @@ PROVIDER_LAW_V2_IDENTIFIER = "playbill.provider.v2"
 PROVIDER_INTERFACE_LAW_IDENTIFIER = "playbill.provider-interface.v1"
 SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v1"
 STANDING_MANDATE_LAW_IDENTIFIER = "playbill.standing-mandate.v1"
+PROCEDURE_MANDATE_LAW_IDENTIFIER = "playbill.procedure-mandate.v1"
 PROCEDURE_LAW_IDENTIFIER = "playbill.procedure.v1"
 PROCEDURE_LAW_V2_IDENTIFIER = "playbill.procedure.v2"
 LINE_LAW_IDENTIFIER = "playbill.line.v1"
@@ -214,6 +215,11 @@ STANDING_MANDATE_LAW = _artifact_law_coordinate(
     "playbill-standing-mandate-v1",
     semantic_revision=3,
 )
+PROCEDURE_MANDATE_LAW = _artifact_law_coordinate(
+    PROCEDURE_MANDATE_LAW_IDENTIFIER,
+    "playbill-procedure-mandate-v1",
+    semantic_revision=1,
+)
 PROCEDURE_LAW_REVISION_5 = _artifact_law_coordinate(
     PROCEDURE_LAW_IDENTIFIER,
     "playbill-procedure-v1",
@@ -389,6 +395,11 @@ STANDING_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="standing-mandate",
     artifact_tag="playbill-standing-mandate-v1",
 )
+PROCEDURE_MANDATE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=PROCEDURE_MANDATE_LAW,
+    artifact_kind="procedure-mandate",
+    artifact_tag="playbill-procedure-mandate-v1",
+)
 PROCEDURE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROCEDURE_LAW,
     artifact_kind="procedure",
@@ -456,6 +467,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         QUERY_DEFINITION_ACCEPTANCE_LAW,
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         STANDING_MANDATE_ACCEPTANCE_LAW,
+        PROCEDURE_MANDATE_ACCEPTANCE_LAW,
         SUBJECT_ACCEPTANCE_LAW,
     )
 )
@@ -532,6 +544,9 @@ __all__ = [
     "STANDING_MANDATE_ACCEPTANCE_LAW",
     "STANDING_MANDATE_LAW",
     "STANDING_MANDATE_LAW_IDENTIFIER",
+    "PROCEDURE_MANDATE_ACCEPTANCE_LAW",
+    "PROCEDURE_MANDATE_LAW",
+    "PROCEDURE_MANDATE_LAW_IDENTIFIER",
     "SUBJECT_ACCEPTANCE_LAW",
     "SUBJECT_LAW",
     "SUBJECT_LAW_IDENTIFIER",
