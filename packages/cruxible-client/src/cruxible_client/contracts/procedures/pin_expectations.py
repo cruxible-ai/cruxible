@@ -203,6 +203,7 @@ def validate_procedure_pin_expectations(definition: ProcedureDefinitionAny) -> N
                                 f"{body_prefix} interface_digest disagrees with Provider slot "
                                 f"{body.provider.slot_name!r}"
                             )
+                    check(body.effect_policy, EFFECT_POLICY, f"{body_prefix} effect_policy")
         elif isinstance(node, CaptureEgressNodeV3):
             check(node.capture_contract, CAPTURE_CONTRACT, f"{prefix} capture_contract")
         elif isinstance(node, MandateSettlementNodeV3):

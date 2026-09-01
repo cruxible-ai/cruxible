@@ -12,7 +12,13 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_artifact_digest,
 )
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v4
-from cruxible_client.contracts.procedures.models import ProviderNodeV4
+from cruxible_client.contracts.procedures.models import (
+    GuardPredicateV1,
+    PredicateOperandV1,
+    ProviderNodeV4,
+    RepeatBodyNodeV4,
+    RepeatNodeV4,
+)
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
     ProcedureAdmissionMaterialManifestV1,
@@ -89,7 +95,11 @@ class _CrashingInvoker:
         raise RuntimeError("daemon lost the provider result")
 
 
-def _accepted_one_provider(*, mutation: bool = False) -> AcceptedProcedureV1:
+def _accepted_one_provider(
+    *,
+    mutation: bool = False,
+    repeat: bool = False,
+) -> AcceptedProcedureV1:
     accepted = _provider_v4_procedure()
     definition = accepted.procedure.definition
     node = definition.nodes[0]
@@ -104,8 +114,37 @@ def _accepted_one_provider(*, mutation: bool = False) -> AcceptedProcedureV1:
         else None
     )
     node = node.model_copy(update={"input": {"size": 3}, "effect_policy": effect_policy})
+    graph_node: ProviderNodeV4 | RepeatNodeV4 = node
+    returns = node.as_
+    if repeat:
+        graph_node = RepeatNodeV4(
+            node_id="repeat",
+            max_attempts=1,
+            body=(
+                RepeatBodyNodeV4(
+                    node_id=node.node_id,
+                    operation="provider",
+                    provider=node.provider,
+                    interface=node.interface,
+                    interface_digest=node.interface_digest,
+                    implementation_digest=node.implementation_digest,
+                    contract_in=node.contract_in,
+                    contract_out=node.contract_out,
+                    effect_policy=effect_policy,
+                    spec={"size": 3},
+                    as_=node.as_,
+                ),
+            ),
+            until=GuardPredicateV1(
+                left=PredicateOperandV1(kind="exists", alias=node.as_),
+                operator="eq",
+                right=PredicateOperandV1(kind="literal", value=True),
+            ),
+            as_="repeat_result",
+        )
+        returns = graph_node.as_
     definition = definition.model_copy(
-        update={"nodes": (node,), "returns": node.as_, "pin_slots": ()}
+        update={"nodes": (graph_node,), "returns": returns, "pin_slots": ()}
     )
     pins = tuple(
         sorted(
@@ -141,8 +180,15 @@ def _prepared_v5(
     v3 = _line_admission(accepted, fixture)
     provider = accepted_provider()
     interface = accepted_interface()
-    node = accepted.procedure.definition.nodes[0]
-    assert isinstance(node, ProviderNodeV4)
+    graph_node = accepted.procedure.definition.nodes[0]
+    repeat_node_id: str | None = None
+    if isinstance(graph_node, RepeatNodeV4):
+        repeat_node_id = graph_node.node_id
+        node = graph_node.body[0]
+        assert isinstance(node, RepeatBodyNodeV4)
+    else:
+        node = graph_node
+        assert isinstance(node, ProviderNodeV4)
     registration = interface.registration
     implementation_digest = provider.provider.implementations[0].implementation_digest
     selectors = tuple(item.selector for item in registration.conformance_proofs)
@@ -213,9 +259,14 @@ def _prepared_v5(
         result_bytes_cap=1024,
     )
     occurrence = ProviderExternalOccurrencePlanV1(
-        occurrence_path="provider/direct",
+        occurrence_path=(
+            f"repeat/{repeat_node_id}/{node.node_id}"
+            if repeat_node_id is not None
+            else "provider/direct"
+        ),
         occurrence_kind="provider",
         node_id=node.node_id,
+        repeat_node_id=repeat_node_id,
         provider_artifact_digest=provider.artifact_digest,
         interface_artifact_digest=interface.artifact_digest,
         interface_id=registration.interface_id,
@@ -292,11 +343,16 @@ def _prepared_v5(
     return prepared, fixture
 
 
+@pytest.mark.parametrize("effect_class", ["none", "external_read"])
+@pytest.mark.parametrize("repeat", [False, True])
 def test_graph_v4_provider_journals_completed_receipt_before_progress(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    effect_class: str,
+    repeat: bool,
 ) -> None:
-    accepted = _accepted_one_provider()
-    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    accepted = _accepted_one_provider(repeat=repeat)
+    prepared, fixture = _prepared_v5(accepted, tmp_path, effect_class=effect_class)
     registry = ProviderBucketClassifierRegistry()
     registry.require_accepted(accepted_interface())
     invoker = _Invoker()
@@ -382,8 +438,12 @@ def test_graph_v4_provider_journals_completed_receipt_before_progress(
         mismatch_index.close()
 
 
-def test_line_external_mutation_prepares_intent_and_invokes_zero_times(tmp_path: Path) -> None:
-    accepted = _accepted_one_provider(mutation=True)
+@pytest.mark.parametrize("repeat", [False, True])
+def test_line_external_mutation_prepares_intent_and_invokes_zero_times(
+    tmp_path: Path,
+    repeat: bool,
+) -> None:
+    accepted = _accepted_one_provider(mutation=True, repeat=repeat)
     prepared, fixture = _prepared_v5(accepted, tmp_path, effect_class="external_mutation")
     registry = ProviderBucketClassifierRegistry()
     registry.require_accepted(accepted_interface())

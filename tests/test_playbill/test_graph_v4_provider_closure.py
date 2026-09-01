@@ -318,6 +318,7 @@ def test_repeat_body_provider_has_the_same_explicit_pin_block() -> None:
         ),
         as_="result",
     )
+    assert "effect_policy" not in repeat.body[0].model_dump(mode="json", by_alias=True)
     definition = ProcedureDefinitionV4(
         name="repeat-provider-v4",
         contract_in=contract_in,

@@ -3794,7 +3794,7 @@ class ProcedureExecutor:
             local_outputs[body.as_] = self._invoke_provider_v4(
                 node_id=body.node_id,
                 repeat_node_id=repeat_node_id,
-                effect_policy=None,
+                effect_policy=body.effect_policy,
                 payload=validated_input,
                 contract_out=contract_out,
                 admission=admission,

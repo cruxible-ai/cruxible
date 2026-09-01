@@ -579,6 +579,10 @@ class RepeatBodyNodeV4(_StrictProcedureModel):
     implementation_digest: str | None = None
     contract_in: ProcedurePinBindingV1
     contract_out: ProcedurePinBindingV1
+    effect_policy: ProcedurePinBindingV1 | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     spec: ProcedureTransformSpecV1 | object
     as_: str = Field(alias="as")
 
@@ -609,9 +613,10 @@ class RepeatBodyNodeV4(_StrictProcedureModel):
                 self.interface,
                 self.interface_digest,
                 self.implementation_digest,
+                self.effect_policy,
             )
         ):
-            raise ValueError("repeat transform operations cannot declare Provider pins")
+            raise ValueError("repeat transform operations cannot declare Provider or effect pins")
         if self.transform_kind is None or not isinstance(self.spec, BaseModel):
             raise ValueError("repeat transform operations require a typed transform spec")
         if getattr(self.spec, "tag", None) != _TRANSFORM_SPEC_TAGS[self.transform_kind]:
