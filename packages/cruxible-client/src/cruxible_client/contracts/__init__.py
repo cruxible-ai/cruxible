@@ -326,6 +326,34 @@ class PlaybillProjectionAdvisory(BaseModel):
         return self
 
 
+class PlaybillProjectionEvidence(BaseModel):
+    """Whether one bounded workspace projection observation informed review."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-projection-evidence-v1"] = "playbill-projection-evidence-v1"
+    status: Literal["used", "rejected"]
+    coordinate: PlaybillAcceptedCoordinate | None = None
+    reason: (
+        Literal[
+            "observation_invalid",
+            "presentation_policy_invalid",
+            "coverage_missing",
+            "coordinate_not_accepted",
+            "coordinate_before_settlement_base",
+        ]
+        | None
+    ) = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "PlaybillProjectionEvidence":
+        if self.status == "used" and (self.coordinate is None or self.reason is not None):
+            raise ValueError("used projection evidence requires a coordinate and no reason")
+        if self.status == "rejected" and self.reason is None:
+            raise ValueError("rejected projection evidence requires a reason")
+        return self
+
+
 class PlaybillProposalReview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -345,6 +373,7 @@ class PlaybillProposalReview(BaseModel):
     documents: list[dict[str, Any]]
     redactions: list[str]
     projection_advisory: PlaybillProjectionAdvisory | None = None
+    projection_evidence: PlaybillProjectionEvidence | None = None
 
 
 class PlaybillApprovalChallenge(BaseModel):

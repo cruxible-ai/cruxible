@@ -101,6 +101,32 @@ class PlaybillProjectionAdvisory(_StrictReviewModel):
         return self
 
 
+class PlaybillProjectionEvidence(_StrictReviewModel):
+    """Whether one bounded workspace projection observation informed review."""
+
+    tag: Literal["playbill-projection-evidence-v1"] = "playbill-projection-evidence-v1"
+    status: Literal["used", "rejected"]
+    coordinate: AcceptedCoordinate | None = None
+    reason: (
+        Literal[
+            "observation_invalid",
+            "presentation_policy_invalid",
+            "coverage_missing",
+            "coordinate_not_accepted",
+            "coordinate_before_settlement_base",
+        ]
+        | None
+    ) = None
+
+    @model_validator(mode="after")
+    def _shape(self) -> "PlaybillProjectionEvidence":
+        if self.status == "used" and (self.coordinate is None or self.reason is not None):
+            raise ValueError("used projection evidence requires a coordinate and no reason")
+        if self.status == "rejected" and self.reason is None:
+            raise ValueError("rejected projection evidence requires a reason")
+        return self
+
+
 class PlaybillProposalReview(_StrictReviewModel):
     tag: Literal["playbill-proposal-review-v1"] = "playbill-proposal-review-v1"
     coordinate_kind: Literal["provisional"] = "provisional"
@@ -118,6 +144,7 @@ class PlaybillProposalReview(_StrictReviewModel):
     documents: tuple[PlaybillReviewedDocument, ...]
     redactions: tuple[str, ...]
     projection_advisory: PlaybillProjectionAdvisory | None = None
+    projection_evidence: PlaybillProjectionEvidence | None = None
 
 
 class PlaybillApprovalChallenge(_StrictReviewModel):
@@ -306,6 +333,7 @@ def _projection_advisory(
     candidate_tree: dict[str, bytes],
     settlement_base: AcceptedCoordinate,
     workspace_observation: PlaybillReviewWorkspaceObservationV1 | Mapping[str, object] | None,
+    eligible_coordinates: tuple[AcceptedCoordinate, ...] | None = None,
 ) -> PlaybillProjectionAdvisory | None:
     if workspace_observation is None:
         return None
@@ -319,9 +347,8 @@ def _projection_advisory(
     if workspace_observation.presentation_policy_notes:
         return None
     coverage = workspace_observation.projection_coverage
-    if coverage is None or coverage.coordinate.model_dump(
-        mode="json"
-    ) != settlement_base.model_dump(mode="json"):
+    coordinates = (settlement_base,) if eligible_coordinates is None else eligible_coordinates
+    if coverage is None or coverage.coordinate not in coordinates:
         return None
     policy = upgrade_playbill_presentation_policy(
         workspace_observation.presentation_policy or PlaybillPresentationPolicyV1()
@@ -357,6 +384,87 @@ def _projection_advisory(
         message=(
             f"{count} changed {noun} have no projection coverage; reviewers will see raw JSON only"
         ),
+    )
+
+
+def _assess_projection_evidence(
+    instance: PlaybillInstance,
+    *,
+    settlement_base: AcceptedCoordinate,
+    workspace_observation: PlaybillReviewWorkspaceObservationV1 | Mapping[str, object] | None,
+) -> tuple[
+    PlaybillReviewWorkspaceObservationV1 | None,
+    PlaybillProjectionEvidence | None,
+    tuple[AcceptedCoordinate, ...],
+]:
+    history = tuple(
+        AcceptedCoordinate.from_internal(instance.coordinate_for_oid(generation.oid))
+        for generation in instance.accepted_history()
+    )
+    try:
+        base_index = history.index(settlement_base)
+    except ValueError as exc:  # pragma: no cover - settlement base is replay-verified
+        raise ProposalIntegrityError(
+            "proposal settlement base is outside accepted history"
+        ) from exc
+    eligible = history[base_index:]
+    if workspace_observation is None:
+        return None, None, eligible
+    if not isinstance(workspace_observation, PlaybillReviewWorkspaceObservationV1):
+        try:
+            workspace_observation = PlaybillReviewWorkspaceObservationV1.model_validate(
+                workspace_observation
+            )
+        except ValidationError:
+            return (
+                None,
+                PlaybillProjectionEvidence(
+                    status="rejected",
+                    reason="observation_invalid",
+                ),
+                eligible,
+            )
+    if workspace_observation.presentation_policy_notes:
+        return (
+            None,
+            PlaybillProjectionEvidence(
+                status="rejected",
+                reason="presentation_policy_invalid",
+            ),
+            eligible,
+        )
+    coverage = workspace_observation.projection_coverage
+    if coverage is None:
+        return (
+            None,
+            PlaybillProjectionEvidence(status="rejected", reason="coverage_missing"),
+            eligible,
+        )
+    coordinate = coverage.coordinate
+    if coordinate not in history:
+        return (
+            None,
+            PlaybillProjectionEvidence(
+                status="rejected",
+                coordinate=coordinate,
+                reason="coordinate_not_accepted",
+            ),
+            eligible,
+        )
+    if coordinate not in eligible:
+        return (
+            None,
+            PlaybillProjectionEvidence(
+                status="rejected",
+                coordinate=coordinate,
+                reason="coordinate_before_settlement_base",
+            ),
+            eligible,
+        )
+    return (
+        workspace_observation,
+        PlaybillProjectionEvidence(status="used", coordinate=coordinate),
+        eligible,
     )
 
 
@@ -409,6 +517,13 @@ def service_review_playbill_proposal(
         base_tree=base_tree,
         candidate_tree=candidate_tree,
     )
+    usable_workspace_observation, projection_evidence, eligible_coordinates = (
+        _assess_projection_evidence(
+            instance,
+            settlement_base=base_public,
+            workspace_observation=workspace_observation,
+        )
+    )
     return PlaybillProposalReview(
         proposal_id=proposal_id,
         candidate=candidate,
@@ -444,8 +559,10 @@ def service_review_playbill_proposal(
             members=reviewed_members,
             candidate_tree=candidate_tree,
             settlement_base=base_public,
-            workspace_observation=workspace_observation,
+            workspace_observation=usable_workspace_observation,
+            eligible_coordinates=eligible_coordinates,
         ),
+        projection_evidence=projection_evidence,
     )
 
 
@@ -521,6 +638,14 @@ def render_playbill_proposal_review(review: PlaybillProposalReview) -> str:
             )
         ),
     ]
+    if review.projection_evidence is not None:
+        evidence = review.projection_evidence
+        evidence_note = (
+            f"used@{evidence.coordinate.git_oid}"
+            if evidence.status == "used" and evidence.coordinate is not None
+            else f"rejected:{evidence.reason}"
+        )
+        lines.extend(("", f"Projection evidence: {evidence_note}."))
     if review.projection_advisory is not None:
         lines.extend(("", f"Projection advisory: {review.projection_advisory.message}."))
     for document in review.documents:

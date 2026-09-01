@@ -9,6 +9,7 @@ import pytest
 
 from cruxible_client.contracts.declared_blocks import (
     PlaybillPresentationPolicyV2,
+    PlaybillProjectionAdvisoryPolicyV1,
     PlaybillProjectionCoverageBindingV1,
     PlaybillProjectionCoverageObservationV1,
     PlaybillReviewWorkspaceObservationV1,
@@ -33,9 +34,44 @@ from cruxible_core.playbill.service.review import (
     service_review_playbill_proposal,
 )
 from cruxible_core.playbill.signing import LocalEd25519ApprovalSigner
+from tests.test_playbill._claim_authoring_support import service_propose_playbill_claim
+from tests.test_playbill._knowledge_loop_support import activate, authoring
 from tests.test_playbill._support import generate_client
+from tests.test_playbill.test_authoring_preflight import _seed_claim_surface
 from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance, _shell
+
+CLAIM_PROJECTION_POLICY = PlaybillPresentationPolicyV2(
+    projection_advisories=PlaybillProjectionAdvisoryPolicyV1(claim=True, procedure=True)
+)
+
+
+def _claim_proposal(tmp_path: Path, *, work_item: str = "wi-99"):  # type: ignore[no-untyped-def]
+    instance, owner, _reviewer = _instance(tmp_path)
+    _seed_claim_surface(instance, owner)
+    proposed = service_propose_playbill_claim(
+        instance,
+        authoring=authoring(work_item, "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name=f"projection-{work_item}",
+        timestamp=TIMESTAMP,
+    )
+    return instance, owner, proposed
+
+
+def _review_observation(instance, *, coordinate=None):  # type: ignore[no-untyped-def]
+    selected = coordinate or instance.accepted_coordinate()
+    public = ClientAcceptedCoordinate.model_validate(
+        AcceptedCoordinate.from_internal(selected).model_dump(mode="json")
+    )
+    return PlaybillReviewWorkspaceObservationV1(
+        presentation_policy=CLAIM_PROJECTION_POLICY,
+        projection_coverage=PlaybillProjectionCoverageObservationV1(
+            coordinate=public,
+            complete_kinds=("Claim", "Procedure"),
+            bindings=(),
+        ),
+    )
 
 
 def test_review_and_signing_keep_private_key_outside_wire_contract(tmp_path: Path) -> None:
@@ -248,3 +284,98 @@ def test_candidate_projection_advisory_counts_generated_successors_and_excludes_
         )
         is None
     )
+
+
+def test_review_uses_projection_evidence_from_a_newer_accepted_head(tmp_path: Path) -> None:
+    instance, owner, proposed = _claim_proposal(tmp_path)
+    proposal_id = proposed.proposal.proposal.admission.proposal_id
+    access = BodyAccessContext(principal_id="owner", can_read_body=True)
+    base = instance.accepted_coordinate()
+
+    at_base = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        access=access,
+        workspace_observation=_review_observation(instance, coordinate=base),
+    )
+    assert at_base.projection_advisory is not None
+    assert at_base.projection_evidence is not None
+    assert at_base.projection_evidence.status == "used"
+
+    activate(instance, owner, proposed)
+    head = instance.accepted_coordinate()
+    assert head != base
+    at_head = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposal_id,
+        access=access,
+        workspace_observation=_review_observation(instance, coordinate=head),
+    )
+
+    assert at_head.projection_advisory is not None
+    assert at_head.projection_evidence is not None
+    assert at_head.projection_evidence.status == "used"
+    assert at_head.projection_evidence.coordinate is not None
+    assert at_head.projection_evidence.coordinate.git_oid == head.git_oid
+    assert f"Projection evidence: used@{head.git_oid}." in render_playbill_proposal_review(at_head)
+    assert instance.accepted_coordinate() == head
+
+
+def test_review_names_projection_evidence_older_than_the_settlement_base(
+    tmp_path: Path,
+) -> None:
+    instance, owner, first = _claim_proposal(tmp_path)
+    stale = instance.accepted_coordinate()
+    activate(instance, owner, first)
+    second = service_propose_playbill_claim(
+        instance,
+        authoring=authoring("wi-100", "ready", with_claim_type=False),
+        actor_id="owner",
+        proposal_name="projection-wi-100",
+        timestamp="2026-08-24T17:00:04.000000Z",
+    )
+
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=second.proposal.proposal.admission.proposal_id,
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        workspace_observation=_review_observation(instance, coordinate=stale),
+    )
+
+    assert review.projection_advisory is None
+    assert review.projection_evidence is not None
+    assert review.projection_evidence.status == "rejected"
+    assert review.projection_evidence.reason == "coordinate_before_settlement_base"
+    assert (
+        "Projection evidence: rejected:coordinate_before_settlement_base."
+        in render_playbill_proposal_review(review)
+    )
+
+
+@pytest.mark.parametrize(
+    ("observation", "reason"),
+    (
+        ({"tag": "not-a-review-observation"}, "observation_invalid"),
+        (
+            {"tag": "playbill-review-workspace-observation-v1"},
+            "coverage_missing",
+        ),
+    ),
+)
+def test_review_names_rejected_projection_evidence(
+    tmp_path: Path,
+    observation: dict[str, object],
+    reason: str,
+) -> None:
+    instance, _owner, proposed = _claim_proposal(tmp_path)
+    review = service_review_playbill_proposal(
+        instance,
+        proposal_id=proposed.proposal.proposal.admission.proposal_id,
+        access=BodyAccessContext(principal_id="owner", can_read_body=True),
+        workspace_observation=observation,
+    )
+
+    assert review.projection_advisory is None
+    assert review.projection_evidence is not None
+    assert review.projection_evidence.status == "rejected"
+    assert review.projection_evidence.reason == reason
