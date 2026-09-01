@@ -216,6 +216,7 @@ class SourceCompilationBundle(_StrictCatalogModel):
     tag: Literal["playbill-source-compilation-bundle-v1"] = "playbill-source-compilation-bundle-v1"
     manifest: SourceCompilationManifest
     documents: tuple[CompiledSourceDocument, ...]
+    notes: tuple[Literal["procedure_projection_only_no_document_compilation"], ...] = ()
 
     @model_validator(mode="after")
     def _binding(self) -> SourceCompilationBundle:
@@ -295,8 +296,17 @@ def merge_source_catalogs(
 
 
 def source_catalog_digest(catalog: SourceCatalog) -> str:
-    payload = catalog.model_dump(mode="json")
-    payload.pop("tag")
+    return _source_catalog_entries_digest(catalog.catalog_kind, catalog.entries)
+
+
+def _source_catalog_entries_digest(
+    catalog_kind: SourceCatalogKind,
+    entries: tuple[SourceCatalogEntryAny, ...],
+) -> str:
+    payload = {
+        "catalog_kind": catalog_kind,
+        "entries": [entry.model_dump(mode="json") for entry in entries],
+    }
     return typed_digest(Sha256Value, "playbill-source-catalog-v1", payload).tagged
 
 
@@ -320,8 +330,6 @@ def compile_source_catalog(
     document_entries = tuple(
         entry for entry in catalog.entries if isinstance(entry, SourceCatalogEntry)
     )
-    if not document_entries:
-        raise PlaybillFormatError("source compilation requires at least one Document source")
     for entry in document_entries:
         locator = Path(entry.locator)
         if locator.is_absolute():
@@ -388,11 +396,7 @@ def compile_source_catalog(
     document_tuple = tuple(documents)
     # Procedure projection entries are ungoverned presentation intent. They
     # must not perturb a Document compilation or its proposal provenance.
-    document_catalog = SourceCatalog(
-        catalog_kind=catalog.catalog_kind,
-        entries=document_entries,
-    )
-    catalog_value = source_catalog_digest(document_catalog)
+    catalog_value = _source_catalog_entries_digest(catalog.catalog_kind, document_entries)
     envelope_digests = tuple(item.envelope_digest for item in document_tuple)
     tree_digest = _proposed_tree_digest(document_tuple)
     digest_values: dict[str, object] = {
@@ -417,7 +421,13 @@ def compile_source_catalog(
         compiler_digest=accepted_base.compiler_digest,
         compilation_digest=compilation_digest,
     )
-    return SourceCompilationBundle(manifest=manifest, documents=document_tuple)
+    return SourceCompilationBundle(
+        manifest=manifest,
+        documents=document_tuple,
+        notes=(
+            ("procedure_projection_only_no_document_compilation",) if not document_entries else ()
+        ),
+    )
 
 
 def content_digest_bytes(content: bytes) -> str:

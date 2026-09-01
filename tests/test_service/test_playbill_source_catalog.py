@@ -261,3 +261,23 @@ def test_procedure_projection_entries_are_explicit_intent_not_document_inputs(
 
     assert [item.source.name for item in bundle.documents] == ["playbill-design"]
     assert bundle == document_only
+
+
+def test_procedure_only_catalog_compiles_as_a_typed_document_noop(tmp_path: Path) -> None:
+    projection = ProcedureProjectionCatalogEntry(
+        procedure_identity=ArtifactIdentity(kind="Procedure", name="release-guard"),
+        locator="runbooks/release-guard.md",
+    )
+    instance_root = tmp_path / "instance"
+    instance_root.mkdir()
+    instance = _instance(instance_root)[0]
+
+    bundle = service_compile_playbill_sources(
+        instance,
+        catalog=SourceCatalog(catalog_kind="portable", entries=(projection,)),
+        repository_root=tmp_path,
+    )
+
+    assert bundle.documents == ()
+    assert bundle.manifest.inputs == ()
+    assert bundle.notes == ("procedure_projection_only_no_document_compilation",)
