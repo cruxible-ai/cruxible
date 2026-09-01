@@ -251,7 +251,8 @@ class ProcedureMandateInvocationV1(_StrictProcedureMandateModel):
         if not value or value != tuple(sorted(set(value), key=_namespace_key)):
             raise ValueError("ProcedureMandate target paths must be nonempty, sorted, and unique")
         for path in value:
-            normalize_ledger_path(path)
+            if normalize_ledger_path(path) != path:
+                raise ValueError("ProcedureMandate target paths must be canonical ledger paths")
         return value
 
     @field_validator("evaluation_time")

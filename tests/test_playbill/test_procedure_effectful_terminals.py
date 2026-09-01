@@ -26,11 +26,18 @@ from cruxible_core.playbill.procedures.terminal_services import (
     SettlementTargetV1,
     SettlementTerminalAdapter,
 )
+from cruxible_core.service.playbill_procedure_runs import SERVED_NODE_KINDS
 from tests.test_playbill._support import initialize_local
 from tests.test_playbill.test_procedure_execution import _actor, _coordinate, _digest, _pin
 from tests.test_playbill.test_procedure_mandates import _caps, _mandate
 
 NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+
+
+def test_effectful_terminals_and_post_inbox_remain_dark_until_p2_b_runtime() -> None:
+    assert SERVED_NODE_KINDS.isdisjoint(
+        {"emit_capture", "post_inbox", "propose_change_set", "mandate_settlement"}
+    )
 
 
 def _item(path: str, *, value: object = "value") -> TerminalEgressItemV1:

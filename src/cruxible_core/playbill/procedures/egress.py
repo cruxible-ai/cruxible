@@ -4,15 +4,15 @@ Terminal authority is never read from one place.  §8.5.1 computes effective
 capability as the minimum of five independent terms — the Procedure hard cap,
 the LineSpec's requested rung, the propagated sensitivity cap, the live mandate
 grant, and the calibration cap — and every one of them may only narrow.  A
-missing or expired mandate contributes nothing: it leaves the mandate-free
-ceiling in place rather than lifting it, so no trigger, landing event, or
+missing or expired Procedure mandate contributes nothing: it leaves the
+mandate-free ceiling at rung 1 rather than lifting it, so no trigger, landing event, or
 calibration reading can ever manufacture settlement authority.  Because the cap
 is a minimum, the refusal it produces names the exact limiting term; honest
 scarcity is a property of the refusal, not a later reconstruction.
 
 Egress above the cap does not exist, and egress below it is typed by kind:
 ``emit_capture`` emits inert evidence, ``post_inbox`` posts human attention,
-``propose_change_set`` reaches proposal *receive* only, and
+``propose_change_set`` reaches proposal *receive* only under a rung-2 grant, and
 ``mandate_settlement`` traverses the exact pinned target Claim law under the
 resolved mandate.  A receipt cannot relabel one as another: its disposition is
 keyed to its kind, so a proposal can never report itself settled.
@@ -588,9 +588,7 @@ def terminal_operation_key(request: TerminalEgressRequestV1) -> str:
 class TerminalEgressRequestV2(TerminalEgressRequestV1):
     """Dark P2-C request; B2 will parent it from the final admission carrier."""
 
-    tag: Literal["playbill-terminal-egress-request-v2"] = (
-        "playbill-terminal-egress-request-v2"  # type: ignore[assignment]
-    )
+    tag: Literal["playbill-terminal-egress-request-v2"] = "playbill-terminal-egress-request-v2"  # type: ignore[assignment]
     procedure_mandate_digest: str | None = None
     calibration_reading_digests: tuple[str, ...] = ()
     requested_authority: ProcedureHardCapsV3
@@ -700,9 +698,7 @@ def build_terminal_egress_request_v2(
 
 
 class TerminalEgressReceiptV2(TerminalEgressReceiptV1):
-    tag: Literal["playbill-terminal-egress-receipt-v2"] = (
-        "playbill-terminal-egress-receipt-v2"  # type: ignore[assignment]
-    )
+    tag: Literal["playbill-terminal-egress-receipt-v2"] = "playbill-terminal-egress-receipt-v2"  # type: ignore[assignment]
     producer_receipt_digest: str | None = None
     operation_key: str | None = None
 
