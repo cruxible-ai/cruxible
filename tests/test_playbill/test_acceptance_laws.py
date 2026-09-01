@@ -9,6 +9,7 @@ from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_LAW,
     CLAIM_LAW_V2,
     CLAIM_LAW_V3,
+    CLAIM_LAW_V3_REVISION_7,
     CLAIM_TYPE_LAW,
     CLAIM_TYPE_LAW_V3,
     CLAIM_TYPE_LAW_V4,
@@ -118,6 +119,13 @@ def test_claim_v2_and_v3_laws_remain_independently_replayable() -> None:
     )
     assert CLAIM_LAW_V2.identifier == "playbill.claim.v2"
     assert CLAIM_LAW_V3.identifier == "playbill.claim.v3"
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.require_historical(
+            identifier=CLAIM_LAW_V3_REVISION_7.identifier,
+            digest=CLAIM_LAW_V3_REVISION_7.digest,
+        ).coordinate
+        == CLAIM_LAW_V3_REVISION_7
+    )
     assert (
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-line-v1").coordinate
         == LINE_LAW

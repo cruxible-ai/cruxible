@@ -143,9 +143,11 @@ from cruxible_client.contracts.governance import (
 )
 from cruxible_client.contracts.laws import (
     APPROVAL_POLICY_ACCEPTANCE_LAW,
+    CLAIM_LAW_V3,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
+    AcceptanceLawRegistry,
     InstalledAcceptanceLaw,
 )
 from cruxible_client.contracts.merkle import (
@@ -1431,6 +1433,8 @@ class _MemberContext:
     claim_admission_query_digests_by_path: Mapping[str, tuple[str, ...]]
     claim_type_expansions: tuple[ClaimTypeExpansionEvidenceV1, ...]
     used_expansions: set[str]
+    acceptance_laws: AcceptanceLawRegistry
+    historical_law_coordinate: tuple[str, str] | None
 
     def accepted_coordinate(self) -> AcceptedCoordinate:
         return AcceptedCoordinate.from_internal(self.current)
@@ -1457,8 +1461,19 @@ class _MemberKind:
     format_code: str = "playbill.proposal.member_format_invalid"
 
 
-def _installed(artifact_tag: str) -> InstalledAcceptanceLaw:
-    return PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag=artifact_tag)
+def _installed(context: _MemberContext, artifact_tag: str) -> InstalledAcceptanceLaw:
+    if context.historical_law_coordinate is None:
+        return context.acceptance_laws.resolve_member(artifact_tag=artifact_tag)
+    identifier, digest = context.historical_law_coordinate
+    installed = context.acceptance_laws.require_historical(
+        identifier=identifier,
+        digest=digest,
+    )
+    if installed.artifact_tag != artifact_tag:
+        raise ProposalIntegrityError(
+            "recorded acceptance law does not govern the candidate member artifact tag"
+        )
+    return installed
 
 
 def _accepted(
@@ -1523,7 +1538,7 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
     annotations = procedure.definition.annotations
     return _accepted(
         context,
-        _installed(procedure.artifact_format),
+        _installed(context, procedure.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1585,7 +1600,7 @@ def _exhaust_promotion_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted ExhaustPromotion law result is incomplete")
     return _accepted(
         context,
-        _installed(promotion.artifact_format),
+        _installed(context, promotion.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1653,7 +1668,7 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted LineSpec law result is incomplete")
     return _accepted(
         context,
-        _installed(line.artifact_format),
+        _installed(context, line.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1733,7 +1748,7 @@ def _query_definition_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted QueryDefinition law result is incomplete")
     return _accepted(
         context,
-        _installed(query.artifact_format),
+        _installed(context, query.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1770,7 +1785,7 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted Provider law result is incomplete")
     return _accepted(
         context,
-        _installed(provider.artifact_format),
+        _installed(context, provider.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1803,7 +1818,7 @@ def _provider_interface_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted ProviderInterface law result is incomplete")
     return _accepted(
         context,
-        _installed(registration.artifact_format),
+        _installed(context, registration.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1835,7 +1850,7 @@ def _acquisition_policy_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted SourceAcquisitionPolicy law result is incomplete")
     return _accepted(
         context,
-        _installed(policy.artifact_format),
+        _installed(context, policy.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1867,7 +1882,7 @@ def _standing_mandate_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted StandingMandate law result is incomplete")
     return _accepted(
         context,
-        _installed(mandate.artifact_format),
+        _installed(context, mandate.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1911,7 +1926,7 @@ def _procedure_mandate_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted ProcedureMandate law result is incomplete")
     return _accepted(
         context,
-        _installed(mandate.artifact_format),
+        _installed(context, mandate.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1943,7 +1958,7 @@ def _capture_contract_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted CaptureContract law result is incomplete")
     return _accepted(
         context,
-        _installed(contract.artifact_format),
+        _installed(context, contract.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -1965,7 +1980,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
             statement_digest=claim_statement_digest(previous.statement).tagged,
             artifact_digest=claim_artifact_digest(previous).tagged,
         )
-    installed = _installed(claim.artifact_format)
+    installed = _installed(context, claim.artifact_format)
     if not isinstance(context.bodies, CaptureObjectStoreProtocol):
         return _MemberVerdict(
             diagnostics=(
@@ -1993,6 +2008,7 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         accepted_coordinate=context.accepted_coordinate(),
         accepted_referent_coordinates=context.accepted_referent_coordinates,
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
+        allow_claim_type_retirement_shape_exemption=(installed.coordinate == CLAIM_LAW_V3),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -2106,7 +2122,7 @@ def _claim_type_member(context: _MemberContext) -> _MemberVerdict:
         context.used_expansions.add(expansion.expanded_artifact_digest)
     return _accepted(
         context,
-        _installed(claim_type.artifact_format),
+        _installed(context, claim_type.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -2167,7 +2183,7 @@ def _subject_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted Subject law result is incomplete")
     return _accepted(
         context,
-        _installed(shell.artifact_format),
+        _installed(context, shell.artifact_format),
         predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
         candidate_artifact_digest=law.artifact_digest,
         required_tier=law.required_tier,
@@ -2205,7 +2221,7 @@ def _document_member(context: _MemberContext) -> _MemberVerdict:
         raise ProposalIntegrityError("accepted Document law result is incomplete")
     return _accepted(
         context,
-        _installed(shell.tag),
+        _installed(context, shell.tag),
         predecessor_artifact_digest=None if predecessor is None else predecessor.envelope_digest,
         candidate_artifact_digest=law.envelope_digest,
         required_tier=law.required_tier,
@@ -2757,6 +2773,8 @@ def _evaluate_scoped_members(
     promotion_verifier: ExhaustPromotionVerifierProtocol | None,
     query_facts_provider: ClaimQueryFactsProvider | None,
     replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None,
+    acceptance_laws: AcceptanceLawRegistry,
+    historical_law_coordinates: Mapping[str, tuple[str, str]],
 ) -> CandidateEvaluation:
     """Judge every scoped member under its own law and close the change set.
 
@@ -2770,6 +2788,10 @@ def _evaluate_scoped_members(
 
     scope = advanced.scope
     diff_digest = advanced.diff_digest
+    if historical_law_coordinates and set(historical_law_coordinates) != set(scope):
+        raise ProposalIntegrityError(
+            "historical acceptance-law coordinates do not cover the candidate scope"
+        )
     for path in scope:
         proposed = candidate_tree.get(path)
         kind = _member_kind(path)
@@ -2993,6 +3015,8 @@ def _evaluate_scoped_members(
                 claim_admission_query_digests_by_path=(claim_admission_query_digests_by_path),
                 claim_type_expansions=claim_type_expansions,
                 used_expansions=used_expansions,
+                acceptance_laws=acceptance_laws,
+                historical_law_coordinate=historical_law_coordinates.get(path),
             )
         )
         diagnostics.extend(verdict.diagnostics)
@@ -3324,6 +3348,8 @@ def evaluate_proposal_tree(
     wire_version: CandidateWireVersion = PRODUCED_CANDIDATE_VERSION,
     query_facts_provider: ClaimQueryFactsProvider | None = None,
     replay_claim_admission_accounts: tuple[ClaimAdmissionEvaluationAccountV1, ...] | None = None,
+    acceptance_laws: AcceptanceLawRegistry = PLAYBILL_ACCEPTANCE_LAWS,
+    historical_law_coordinates: Mapping[str, tuple[str, str]] | None = None,
 ) -> CandidateEvaluation:
     """Rebase, scope, judge every member, and close: the whole evaluation.
 
@@ -3419,6 +3445,8 @@ def evaluate_proposal_tree(
         promotion_verifier=promotion_verifier,
         query_facts_provider=query_facts_provider,
         replay_claim_admission_accounts=replay_claim_admission_accounts,
+        acceptance_laws=acceptance_laws,
+        historical_law_coordinates=historical_law_coordinates or {},
     )
 
 

@@ -22,6 +22,7 @@ from cruxible_core.playbill.compiler import (
     P2_C_COMPILER,
     PC_C_COMPILER,
     PC_D_COMPILER,
+    PC_DF2_COMPILER,
     PC_E1_COMPILER,
     PC_HR_COMPILER,
     current_compiler_coordinate,
@@ -82,7 +83,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     after = SemanticAddress.procedure_node(accepted.path, "read")
 
     assert before == after
-    assert current_compiler_coordinate() == P2_C_COMPILER
+    assert current_compiler_coordinate() == PC_DF2_COMPILER
     assert (
         projection_registry_for_compiler(PC_HR_COMPILER).supports(
             "playbill.provider.runtime",

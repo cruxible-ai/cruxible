@@ -80,6 +80,10 @@ P2_C_COMPILER = _coordinate(
     projection_content="claims-procedures-runtime-v1",
     semantic_revision=14,
 )
+PC_DF2_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=15,
+)
 SUPPORTED_COMPILERS = (
     PB_B_COMPILER,
     PB_C_COMPILER,
@@ -94,24 +98,26 @@ SUPPORTED_COMPILERS = (
     PC_HR_COMPILER,
     P2_B1_COMPILER,
     P2_C_COMPILER,
+    PC_DF2_COMPILER,
 )
 PC_HR_ARTIFACT_CODEC_COMPILERS = frozenset(
     {
         PC_HR_COMPILER,
         P2_B1_COMPILER,
         P2_C_COMPILER,
+        PC_DF2_COMPILER,
     }
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return P2_C_COMPILER
+    return PC_DF2_COMPILER
 
 
 def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
     """Return the frozen ledger path grammar selected by one compiler."""
 
-    if compiler == P2_C_COMPILER:
+    if compiler in {P2_C_COMPILER, PC_DF2_COMPILER}:
         return P2_C_ARTIFACT_KINDS
     if compiler == P2_B1_COMPILER:
         return P2_B1_ARTIFACT_KINDS
@@ -159,7 +165,7 @@ def projection_registry_for_compiler(
         return playbill_replay_extension_registry()
     if compiler == P2_B1_COMPILER:
         return playbill_provider_runtime_extension_registry()
-    if compiler == P2_C_COMPILER:
+    if compiler in {P2_C_COMPILER, PC_DF2_COMPILER}:
         return playbill_p2c_extension_registry()
     raise PlaybillFormatError("compiler coordinate has no installed deterministic registry")
 
@@ -177,6 +183,7 @@ __all__ = [
     "P2_B0_COMPILER",
     "P2_B1_COMPILER",
     "P2_C_COMPILER",
+    "PC_DF2_COMPILER",
     "PC_HR_COMPILER",
     "PC_HR_ARTIFACT_CODEC_COMPILERS",
     "SUPPORTED_COMPILERS",

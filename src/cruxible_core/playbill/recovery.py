@@ -447,6 +447,14 @@ def _verify_successor(
         promotion_verifier=promotion_verifier,
         parent_state=window.state,
         wire_version=candidate.tag,
+        acceptance_laws=laws,
+        historical_law_coordinates={
+            member.path: (
+                member.law_identifier,
+                candidate.law_digests[member.law_identifier],
+            )
+            for member in candidate.members
+        },
     )
     reproduced = reevaluated.candidate
     if reproduced is None or reevaluated.diagnostics or reevaluated.state is None:

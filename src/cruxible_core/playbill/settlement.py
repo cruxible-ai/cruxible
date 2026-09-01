@@ -727,6 +727,14 @@ def prepare_generation(
         query_facts_provider=query_facts_provider,
         replay_claim_admission_accounts=claim_admission_accounts_from_candidate(candidate),
         wire_version=candidate.tag,
+        acceptance_laws=laws,
+        historical_law_coordinates={
+            member.path: (
+                member.law_identifier,
+                candidate.law_digests[member.law_identifier],
+            )
+            for member in candidate.members
+        },
     )
     if reevaluated.candidate is None or reevaluated.diagnostics or reevaluated.state is None:
         raise SettlementIntegrityError("candidate no longer passes its accepted laws")

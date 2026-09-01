@@ -1335,6 +1335,7 @@ def evaluate_claim_law(
     providers: Mapping[str, ProviderV1] | None = None,
     ledger_resolver: LedgerMaterialResolverProtocol | None = None,
     evaluation_time: datetime | None = None,
+    allow_claim_type_retirement_shape_exemption: bool = False,
 ) -> ClaimLawResult:
     """Evaluate one Claim against exact resolved dependencies and immutable Captures."""
 
@@ -1369,6 +1370,20 @@ def evaluate_claim_law(
             "The Claim does not pin its exact ClaimType artifact.",
             path=path,
         )
+    claim_type_attributed_retirement = bool(
+        predecessor is not None
+        and predecessor.path == path
+        and claim.lifecycle.predecessor_digest == predecessor.artifact_digest
+        and _is_claim_type_attributed_retirement(
+            claim,
+            predecessor=predecessor.claim,
+            claim_type_digest=claim_type.artifact_digest,
+            claim_type_identity=contract.identity,
+        )
+    )
+    claim_type_retirement_shape_exempt = (
+        allow_claim_type_retirement_shape_exemption and claim_type_attributed_retirement
+    )
     subject = _resolved_referent(
         statement.subject,
         subjects,
@@ -1381,7 +1396,9 @@ def evaluate_claim_law(
             "The Claim subject does not resolve to an exact Subject shell.",
             path=path,
         )
-    if not claim_type_accepts_subject(contract, subject.semantic_kind):
+    if not claim_type_retirement_shape_exempt and not claim_type_accepts_subject(
+        contract, subject.semantic_kind
+    ):
         return _diagnostic(
             "playbill.claim.subject_kind_forbidden",
             "The Claim subject kind is not admitted by its ClaimType.",
@@ -1406,15 +1423,17 @@ def evaluate_claim_law(
         )
 
     object_subject: _ResolvedReferent | None = None
-    if statement.object.kind != contract.object_kind:
+    if not claim_type_retirement_shape_exempt and statement.object.kind != contract.object_kind:
         return _diagnostic(
             "playbill.claim.object_kind_mismatch",
             "The Claim object kind differs from its ClaimType.",
             path=path,
         )
     if isinstance(statement.object, LiteralClaimObject):
-        assert contract.literal_schema is not None
-        if not _validate_literal_schema(statement.object.value, contract.literal_schema):
+        if not claim_type_retirement_shape_exempt and (
+            contract.literal_schema is None
+            or not _validate_literal_schema(statement.object.value, contract.literal_schema)
+        ):
             return _diagnostic(
                 "playbill.claim.literal_schema_invalid",
                 "The Claim literal fails its exact ClaimType schema.",
@@ -1439,7 +1458,10 @@ def evaluate_claim_law(
                 "The Claim object Subject does not resolve.",
                 path=path,
             )
-        if object_subject.semantic_kind not in contract.allowed_object_subject_kinds:
+        if (
+            not claim_type_retirement_shape_exempt
+            and object_subject.semantic_kind not in contract.allowed_object_subject_kinds
+        ):
             return _diagnostic(
                 "playbill.claim.object_subject_kind_forbidden",
                 "The object Subject kind is not admitted by its ClaimType.",
@@ -1469,14 +1491,18 @@ def evaluate_claim_law(
             path=path,
         )
 
-    if statement.predicate != contract.predicate or statement.role not in contract.permitted_roles:
+    if statement.predicate != contract.predicate or (
+        not claim_type_retirement_shape_exempt and statement.role not in contract.permitted_roles
+    ):
         return _diagnostic(
             "playbill.claim.statement_contract_mismatch",
             "The Claim predicate or role differs from its ClaimType contract.",
             path=path,
         )
     expected_shell_digest = claim_referent_context_digest(claim.backing.referent_context).tagged
-    if contract.referent_sensitivity == "shell":
+    if claim_type_retirement_shape_exempt:
+        pass
+    elif contract.referent_sensitivity == "shell":
         if statement.shell_context_digest != expected_shell_digest:
             return _diagnostic(
                 "playbill.claim.shell_context_mismatch",
@@ -1590,12 +1616,6 @@ def evaluate_claim_law(
         attributed_retirement = _is_attributed_retirement(
             claim,
             predecessor=predecessor.claim,
-        )
-        claim_type_attributed_retirement = _is_claim_type_attributed_retirement(
-            claim,
-            predecessor=predecessor.claim,
-            claim_type_digest=claim_type.artifact_digest,
-            claim_type_identity=contract.identity,
         )
         if isinstance(claim, ClaimArtifactV3) and not (
             attributed_retirement or claim_type_rederivation or claim_type_attributed_retirement

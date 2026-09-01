@@ -175,10 +175,15 @@ CLAIM_LAW_V2 = _artifact_law_coordinate(
     "playbill-claim-v2",
     semantic_revision=6,
 )
-CLAIM_LAW_V3 = _artifact_law_coordinate(
+CLAIM_LAW_V3_REVISION_7 = _artifact_law_coordinate(
     CLAIM_LAW_V3_IDENTIFIER,
     "playbill-claim-v3",
     semantic_revision=7,
+)
+CLAIM_LAW_V3 = _artifact_law_coordinate(
+    CLAIM_LAW_V3_IDENTIFIER,
+    "playbill-claim-v3",
+    semantic_revision=8,
 )
 CLAIM_TYPE_LAW_V3 = _artifact_law_coordinate(
     CLAIM_TYPE_LAW_V3_IDENTIFIER,
@@ -370,6 +375,12 @@ CLAIM_V3_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="claim",
     artifact_tag="playbill-claim-v3",
 )
+CLAIM_V3_REVISION_7_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=CLAIM_LAW_V3_REVISION_7,
+    artifact_kind="claim",
+    artifact_tag="playbill-claim-v3",
+    current=False,
+)
 PROVIDER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=PROVIDER_LAW,
     artifact_kind="provider",
@@ -449,6 +460,7 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         CAPTURE_CONTRACT_ACCEPTANCE_LAW,
         CLAIM_V2_ACCEPTANCE_LAW,
         CLAIM_V3_ACCEPTANCE_LAW,
+        CLAIM_V3_REVISION_7_ACCEPTANCE_LAW,
         CLAIM_TYPE_ACCEPTANCE_LAW,
         CLAIM_TYPE_V3_ACCEPTANCE_LAW,
         CLAIM_TYPE_V4_ACCEPTANCE_LAW,
@@ -496,9 +508,11 @@ __all__ = [
     "CLAIM_LAW_V2",
     "CLAIM_LAW_V2_IDENTIFIER",
     "CLAIM_LAW_V3",
+    "CLAIM_LAW_V3_REVISION_7",
     "CLAIM_LAW_V3_IDENTIFIER",
     "CLAIM_V2_ACCEPTANCE_LAW",
     "CLAIM_V3_ACCEPTANCE_LAW",
+    "CLAIM_V3_REVISION_7_ACCEPTANCE_LAW",
     "DOCUMENT_ACCEPTANCE_LAW",
     "DOCUMENT_LAW",
     "DOCUMENT_LAW_IDENTIFIER",

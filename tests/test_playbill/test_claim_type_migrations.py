@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,12 +41,18 @@ from cruxible_client.contracts.claims import (
     render_claim,
 )
 from cruxible_client.contracts.errors import ProposalIntegrityError
+from cruxible_client.contracts.laws import (
+    CLAIM_LAW_V3_REVISION_7,
+    PLAYBILL_ACCEPTANCE_LAWS,
+    AcceptanceLawRegistry,
+)
 from cruxible_client.contracts.procedures.artifacts import render_procedure
 from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_path,
     render_query_definition,
 )
+from cruxible_client.contracts.subjects import render_subject, subject_path
 from cruxible_core.playbill.authoring.coordinator import AuthoringIntentCoordinator
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1, lower_claim_type_input
 from cruxible_core.playbill.claim_type_migrations import (
@@ -67,18 +74,24 @@ from cruxible_core.playbill.claim_type_migrations import (
 )
 from cruxible_core.playbill.closure import parse_dependency_artifact
 from cruxible_core.playbill.coverage.contracts import CoverageAccessProfileV1
-from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.proposals import (
+    AuthenticatedActor,
+    claim_type_expansions_from_candidate,
+    evaluate_proposal_tree,
+)
 from cruxible_core.playbill.service.documents import (
     service_activate_playbill_proposal,
     service_submit_playbill_approval,
 )
+from cruxible_core.playbill.settlement import ChangeActorBinding
 from cruxible_core.service.playbill_claims import _claim_law_evidence
 from cruxible_core.service.playbill_next import PlaybillNextRequestV1, service_playbill_next
 from tests.test_playbill._adoption_fixture import _query_definition
 from tests.test_playbill._support import client_material, initialize_local
 from tests.test_playbill.test_activation import _sign
 from tests.test_playbill.test_authoring_preflight import TIMESTAMP, _seed_claim_surface
-from tests.test_playbill.test_claims import _claim_type
+from tests.test_playbill.test_claims import _claim_type, _subject
 from tests.test_playbill.test_graph_v4_provider_closure import _accepted_procedure
 from tests.test_playbill.test_resolution_contracts import _accept_tree
 
@@ -102,8 +115,8 @@ def _accepted_claim_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         canonical_timestamp=TIMESTAMP,
     ).intent
     submitted = coordinator.submit(intent.intent_id, actor=actor)
-    assert submitted.status.proposal_id is not None
-    assert submitted.status.candidate_digest is not None
+    assert submitted.status.proposal_id is not None, submitted.status.model_dump(mode="json")
+    assert submitted.status.candidate_digest is not None, submitted.status.model_dump(mode="json")
     approval = _sign(
         client_material(instance.root.parent, instance),
         submitted.status.candidate_digest,
@@ -124,6 +137,97 @@ def _accepted_claim_world(tmp_path: Path):  # type: ignore[no-untyped-def]
         == "accepted"
     )
     return instance, intent.semantic_identity, owner
+
+
+def _accepted_affects_package_world(tmp_path: Path):  # type: ignore[no-untyped-def]
+    instance, owner = initialize_local(tmp_path)
+    _seed_claim_surface(instance, owner)
+    predicate = "sec.vuln.affects_package"
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    template_path = claim_type_path(_claim_type().predicate)
+    template = parse_claim_type(tree[template_path], path=template_path)
+    claim_type = template.model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="ClaimType", name=predicate),
+            "predicate": predicate,
+            "literal_schema": {"type": "string"},
+        }
+    )
+    package = _subject().model_copy(
+        update={
+            "identity": ArtifactIdentity(kind="Subject", name="package/demo-package"),
+            "subject_kind": "package",
+            "subject_id": "demo-package",
+        }
+    )
+    tree[claim_type_path(predicate)] = render_claim_type(claim_type)
+    tree[subject_path(package.subject_kind, package.subject_id)] = render_subject(package)
+    _accept_tree(
+        instance,
+        owner,
+        tree,
+        timestamp=TIMESTAMP,
+        proposal_name="seed-affects-package",
+    )
+
+    coordinator = AuthoringIntentCoordinator.for_instance(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    intent = coordinator.create_input(
+        actor=actor,
+        input=ClaimInput(
+            kind="claim",
+            subject="project.work_item/wi-42",
+            predicate=predicate,
+            object=LiteralObjectInput(kind="literal", value="demo-package"),
+            role="observation",
+            rationale="The vulnerability affects this package.",
+            source=SelfSourceInput(kind="self_source", body="package: demo-package\n"),
+        ),
+        canonical_timestamp=TIMESTAMP,
+    ).intent
+    submitted = coordinator.submit(intent.intent_id, actor=actor)
+    assert submitted.status.proposal_id is not None, submitted.status.model_dump(mode="json")
+    assert submitted.status.candidate_digest is not None, submitted.status.model_dump(mode="json")
+    approval = _sign(
+        client_material(instance.root.parent, instance),
+        submitted.status.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=submitted.status.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=submitted.status.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    return instance, intent.semantic_identity, owner
+
+
+def _subject_valued_affects_package_successor(instance):  # type: ignore[no-untyped-def]
+    predicate = "sec.vuln.affects_package"
+    path = claim_type_path(predicate)
+    current = parse_claim_type(
+        instance.tree_at(instance.accepted_coordinate().git_oid)[path],
+        path=path,
+    )
+    values = current.model_dump(mode="json")
+    for mechanical in ("artifact_format", "identity", "lifecycle", "subject_scope", "slot_policy"):
+        values.pop(mechanical, None)
+    values.update(
+        {
+            "object_kind": "subject",
+            "literal_schema": None,
+            "allowed_object_subject_kinds": ("package",),
+        }
+    )
+    return ClaimTypeInputV1.model_validate(values)
 
 
 def _successor(instance):  # type: ignore[no-untyped-def]
@@ -313,6 +417,181 @@ def test_v3_invalidation_normalizes_to_attributed_retirement_with_warning(
     assert claim.lifecycle.state == "retired"
     assert isinstance(claim, ClaimArtifactV3)
     assert claim.retirement.reason == "was-wrong"
+
+
+@pytest.mark.parametrize("disposition", ["retire", "invalidation"])
+def test_shape_changing_affects_package_migration_accepts_exact_retirement_tombstone(
+    tmp_path: Path,
+    disposition: str,
+) -> None:
+    instance, claim_id, owner = _accepted_affects_package_world(tmp_path)
+    successor = _subject_valued_affects_package_successor(instance)
+    actor = AuthenticatedActor(actor_id="owner")
+    dependent = ClaimTypeDependentDispositionV3(
+        identity=ArtifactIdentity(kind="Claim", name=claim_id),
+        disposition=disposition,  # type: ignore[arg-type]
+        claim_retirement_reason="was-rescinded",
+    )
+    preflight = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV3(
+            mode="preflight",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=actor,
+    )
+    assert isinstance(preflight, ClaimTypeMigrationPreflightV1)
+    assert [item.identity for item in preflight.dependents] == [
+        ArtifactIdentity(kind="Claim", name=claim_id)
+    ]
+
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV3(
+            mode="submit",
+            successor=successor,
+            dependents=(dependent,),
+        ),
+        actor=actor,
+    )
+    assert isinstance(result, ClaimTypeMigrationResultV3)
+    assert result.dependents[0].disposition == "retire"
+    assert [warning.code for warning in result.warnings] == (
+        [] if disposition == "retire" else ["playbill.claim_type.invalidation_deprecated"]
+    )
+    proposal = result.proposal.proposal
+    assert proposal.candidate is not None
+    tree_oid = proposal.evaluation.evaluated_tree_oid
+    assert tree_oid is not None
+    candidate_tree = instance.proposal_tree(tree_oid)
+    type_path = claim_type_path("sec.vuln.affects_package")
+    migrated_type = parse_claim_type(candidate_tree[type_path], path=type_path)
+    migrated_claim = parse_claim(
+        candidate_tree[claim_path(claim_id)],
+        path=claim_path(claim_id),
+    )
+    assert isinstance(migrated_claim, ClaimArtifactV3)
+    assert migrated_claim.lifecycle.state == "retired"
+    assert migrated_claim.statement.object.kind == "literal"
+    assert migrated_claim.statement.claim_type_digest == claim_type_digest(migrated_type).tagged
+    assert any(
+        pin.role == "claim-type" and pin.artifact_digest == claim_type_digest(migrated_type).tagged
+        for pin in migrated_claim.pins
+    )
+
+    approval = _sign(
+        client_material(instance.root.parent, instance),
+        proposal.candidate.candidate_digest,
+        instance.accepted_coordinate().semantic_root,
+    )
+    service_submit_playbill_approval(
+        instance,
+        proposal_id=proposal.admission.proposal_id,
+        attestation=approval.attestation,
+        authenticated_submitter="owner",
+    )
+    assert (
+        service_activate_playbill_proposal(
+            instance,
+            proposal_id=proposal.admission.proposal_id,
+            activated_by="owner",
+        ).status
+        == "accepted"
+    )
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    reopened_claim = parse_claim(
+        reopened.tree_at(reopened.accepted_coordinate().git_oid)[claim_path(claim_id)],
+        path=claim_path(claim_id),
+    )
+    assert reopened_claim == migrated_claim
+
+
+def test_shape_changing_migration_does_not_exempt_a_live_successor(tmp_path: Path) -> None:
+    instance, _claim_id, _owner = _accepted_affects_package_world(tmp_path)
+    with pytest.raises(
+        ClaimTypeMigrationIncomplete,
+        match="playbill.claim.object_kind_mismatch",
+    ):
+        service_migrate_claim_type(
+            instance,
+            request=ClaimTypeMigrationRequestV3(
+                mode="preflight",
+                successor=_subject_valued_affects_package_successor(instance),
+            ),
+            actor=AuthenticatedActor(actor_id="owner"),
+        )
+
+
+def test_revision_7_claim_candidate_settles_and_reopens_under_its_recorded_law(
+    tmp_path: Path,
+) -> None:
+    instance, claim_id, _owner = _accepted_claim_world(tmp_path)
+    result = service_migrate_claim_type(
+        instance,
+        request=ClaimTypeMigrationRequestV3(
+            mode="submit",
+            successor=_successor(instance),
+            dependents=(
+                ClaimTypeDependentDispositionV3(
+                    identity=ArtifactIdentity(kind="Claim", name=claim_id),
+                    disposition="retire",
+                    claim_retirement_reason="was-rescinded",
+                ),
+            ),
+        ),
+        actor=AuthenticatedActor(actor_id="owner"),
+    )
+    assert isinstance(result, ClaimTypeMigrationResultV3)
+    current_candidate = result.proposal.proposal.candidate
+    tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
+    assert current_candidate is not None
+    assert tree_oid is not None
+    candidate_tree = instance.proposal_tree(tree_oid)
+    base = instance.accepted_coordinate()
+    installed = tuple(PLAYBILL_ACCEPTANCE_LAWS._by_coordinate.values())
+    revision_7_registry = AcceptanceLawRegistry(
+        tuple(
+            replace(law, current=True) if law.coordinate == CLAIM_LAW_V3_REVISION_7 else law
+            for law in installed
+            if law.artifact_tag != "playbill-claim-v3" or law.coordinate == CLAIM_LAW_V3_REVISION_7
+        )
+    )
+    reevaluated = evaluate_proposal_tree(
+        base_tree=instance.tree_at(base.git_oid),
+        current_tree=instance.tree_at(base.git_oid),
+        proposed_tree=candidate_tree,
+        current=base,
+        bodies=instance.body_store(),
+        timestamp=current_candidate.candidate.timestamp,
+        rebased=False,
+        actor_id="owner",
+        claim_type_expansions=claim_type_expansions_from_candidate(current_candidate),
+        acceptance_laws=revision_7_registry,
+    )
+    candidate = reevaluated.candidate
+    assert candidate is not None, reevaluated.diagnostics
+    claim_member = next(member for member in candidate.members if member.artifact_kind == "claim")
+    assert claim_member.law_digest == CLAIM_LAW_V3_REVISION_7.digest
+
+    bundle = instance.prepare_generation(
+        base=base,
+        candidate_tree=candidate_tree,
+        candidate=candidate,
+        approvals=(),
+        actor_binding=ChangeActorBinding(actor_id="owner"),
+        proposal_actor_id="owner",
+        sequence=instance.accepted_history()[-1].sequence + 1,
+    )
+    publisher = instance.activation_publisher()
+    projection = publisher.prebuild(bundle, base=base)
+    assert publisher.activate(bundle, projection, base=base).status == "accepted"
+    reopened = PlaybillInstance.open(instance.root, trust_root=instance.trust_root)
+    assert reopened.accepted_coordinate().git_oid == bundle.oid
+    assert (
+        reopened.accepted_history()[-1].record.law_digests[CLAIM_LAW_V3_REVISION_7.identifier]
+        == CLAIM_LAW_V3_REVISION_7.digest
+    )
 
 
 @pytest.mark.parametrize("request_version", ["v1", "v2"])
