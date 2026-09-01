@@ -110,12 +110,14 @@ class ProviderRuntimeOperator:
             self.config = ProviderRuntimeOperationalConfigV1()
             self.mark_unavailable(exc.code, str(exc))
         try:
-            self.process_leases: ProviderProcessLeaseStore | None = ProviderProcessLeaseStore(
+            process_leases = ProviderProcessLeaseStore(
                 self.state_root / "daemon" / "provider-process-leases",
                 control_root=self.state_root / "c",
                 acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
                 recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
             )
+            process_leases.paths("sha256:" + "0" * 64)
+            self.process_leases: ProviderProcessLeaseStore | None = process_leases
         except ProviderLocalRuntimeRefused as exc:
             self.process_leases = None
             self.mark_unavailable(exc.code, str(exc))

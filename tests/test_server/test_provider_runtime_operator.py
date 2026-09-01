@@ -456,6 +456,15 @@ def test_malformed_runtime_config_degrades_only_the_provider_lane(tmp_path: Path
     assert caught.value.details == {"reason": operator.unavailable_reason}
 
 
+def test_overlong_state_root_degrades_provider_at_operator_construction(
+    tmp_path: Path,
+) -> None:
+    operator = ProviderRuntimeOperator(tmp_path / ("overlong-" + "x" * 110))
+    assert operator.process_leases is None
+    assert operator.unavailable_reason is not None
+    assert "shorter CRUXIBLE_STATE_ROOT" in operator.unavailable_reason
+
+
 def test_unmatched_recovered_start_degrades_provider_and_continues_instances(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
