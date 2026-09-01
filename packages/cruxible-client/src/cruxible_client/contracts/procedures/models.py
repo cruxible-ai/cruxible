@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -264,6 +264,44 @@ class SourceNodeV3(_StrictProcedureModel):
         return normalize_canonical(value)
 
 
+def _validate_explicit_provider_binding(
+    provider: ProcedurePinBindingV1,
+    implementation_digest: str | None,
+) -> None:
+    if isinstance(provider, ArtifactPin):
+        if implementation_digest is None:
+            raise ValueError("direct Provider bindings require implementation_digest")
+    elif implementation_digest is not None:
+        raise ValueError("slot Provider bindings prohibit implementation_digest")
+
+
+class SourceNodeV4(_StrictProcedureModel):
+    kind: Literal["source"] = "source"
+    node_id: str
+    capture_contract: ProcedurePinBindingV1
+    provider: ProcedurePinBindingV1
+    interface: ArtifactPin
+    interface_digest: str
+    implementation_digest: str | None = None
+    request: object
+    as_: str = Field(alias="as")
+    next: str | None = None
+
+    _digests = field_validator("interface_digest", "implementation_digest")(
+        lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
+    )
+
+    @field_validator("request", mode="before")
+    @classmethod
+    def _request(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _provider_binding(self) -> "SourceNodeV4":
+        _validate_explicit_provider_binding(self.provider, self.implementation_digest)
+        return self
+
+
 class ExhaustTapNodeV3(_StrictProcedureModel):
     kind: Literal["exhaust_tap"] = "exhaust_tap"
     node_id: str
@@ -294,6 +332,35 @@ class ProviderNodeV3(_StrictProcedureModel):
     @classmethod
     def _input(cls, value: object) -> object:
         return normalize_canonical(value)
+
+
+class ProviderNodeV4(_StrictProcedureModel):
+    kind: Literal["provider"] = "provider"
+    node_id: str
+    provider: ProcedurePinBindingV1
+    interface: ArtifactPin
+    interface_digest: str
+    implementation_digest: str | None = None
+    contract_in: ProcedurePinBindingV1
+    contract_out: ProcedurePinBindingV1
+    effect_policy: ProcedurePinBindingV1 | None = None
+    input: object
+    as_: str = Field(alias="as")
+    next: str | None = None
+
+    _digests = field_validator("interface_digest", "implementation_digest")(
+        lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
+    )
+
+    @field_validator("input", mode="before")
+    @classmethod
+    def _input(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _provider_binding(self) -> "ProviderNodeV4":
+        _validate_explicit_provider_binding(self.provider, self.implementation_digest)
+        return self
 
 
 TransformKindV1 = Literal[
@@ -500,6 +567,77 @@ class RepeatNodeV3(_StrictProcedureModel):
         return value
 
 
+class RepeatBodyNodeV4(_StrictProcedureModel):
+    """Graph-v4 repeat operation with occurrence-local explicit Provider pins."""
+
+    node_id: str
+    operation: Literal["provider", "transform"]
+    transform_kind: TransformKindV1 | None = None
+    provider: ProcedurePinBindingV1 | None = None
+    interface: ArtifactPin | None = None
+    interface_digest: str | None = None
+    implementation_digest: str | None = None
+    contract_in: ProcedurePinBindingV1
+    contract_out: ProcedurePinBindingV1
+    spec: ProcedureTransformSpecV1 | object
+    as_: str = Field(alias="as")
+
+    _digests = field_validator("interface_digest", "implementation_digest")(
+        lambda value: value if value is None else ArtifactDigest.from_tagged(value).tagged
+    )
+
+    @field_validator("spec", mode="before")
+    @classmethod
+    def _spec(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _operation_shape(self) -> "RepeatBodyNodeV4":
+        if self.operation == "provider":
+            if self.provider is None or self.interface is None or self.interface_digest is None:
+                raise ValueError(
+                    "repeat provider operations require provider and interface pin/digest"
+                )
+            if self.transform_kind is not None:
+                raise ValueError("repeat provider operations cannot declare transform_kind")
+            _validate_explicit_provider_binding(self.provider, self.implementation_digest)
+            return self
+        if any(
+            value is not None
+            for value in (
+                self.provider,
+                self.interface,
+                self.interface_digest,
+                self.implementation_digest,
+            )
+        ):
+            raise ValueError("repeat transform operations cannot declare Provider pins")
+        if self.transform_kind is None or not isinstance(self.spec, BaseModel):
+            raise ValueError("repeat transform operations require a typed transform spec")
+        if getattr(self.spec, "tag", None) != _TRANSFORM_SPEC_TAGS[self.transform_kind]:
+            raise ValueError("repeat transform spec tag does not match transform_kind")
+        return self
+
+
+class RepeatNodeV4(_StrictProcedureModel):
+    kind: Literal["repeat"] = "repeat"
+    node_id: str
+    max_attempts: int = Field(ge=1, le=25)
+    body: tuple[RepeatBodyNodeV4, ...]
+    until: GuardPredicateV1
+    as_: str = Field(alias="as")
+    next: str | None = None
+
+    @field_validator("body")
+    @classmethod
+    def _body(cls, value: tuple[RepeatBodyNodeV4, ...]) -> tuple[RepeatBodyNodeV4, ...]:
+        ids = tuple(item.node_id for item in value)
+        aliases = tuple(item.as_ for item in value)
+        if not value or len(set(ids)) != len(ids) or len(set(aliases)) != len(aliases):
+            raise ValueError("repeat body requires nonempty, unique node ids and aliases")
+        return value
+
+
 class CaptureEgressNodeV3(_StrictProcedureModel):
     kind: Literal["emit_capture"] = "emit_capture"
     node_id: str
@@ -568,6 +706,23 @@ ProcedureNodeV3 = Annotated[
     | GuardNodeV3
     | ProjectNodeV3
     | RepeatNodeV3
+    | CaptureEgressNodeV3
+    | InboxEgressNodeV3
+    | ProposeChangeSetNodeV3
+    | MandateSettlementNodeV3
+    | HaltNodeV3,
+    Field(discriminator="kind"),
+]
+
+ProcedureNodeV4 = Annotated[
+    StateTapNodeV3
+    | SourceNodeV4
+    | ExhaustTapNodeV3
+    | ProviderNodeV4
+    | TransformNodeV3
+    | GuardNodeV3
+    | ProjectNodeV3
+    | RepeatNodeV4
     | CaptureEgressNodeV3
     | InboxEgressNodeV3
     | ProposeChangeSetNodeV3
@@ -704,6 +859,129 @@ class ProcedureDefinitionV3(_StrictProcedureModel):
         return self
 
 
+class ProcedureDefinitionV4(_StrictProcedureModel):
+    """Graph-format-v4 definition with explicit Provider implementation closure."""
+
+    graph_format: Literal[4] = 4
+    name: str
+    description: str | None = None
+    contract_in: ProcedurePinBindingV1
+    contract_out: ProcedurePinBindingV1
+    parameter_contract: ProcedurePinBindingV1 | None = None
+    nodes: tuple[ProcedureNodeV4, ...]
+    returns: str
+    pin_slots: tuple[ProcedurePinSlotV1, ...] = ()
+    measurements: tuple[ProcedureMeasurementDeclarationV1, ...] = ()
+    budget: ProcedureBudgetV3
+    hard_caps: ProcedureHardCapsV3
+    terminal_capability: Literal[1, 2, 3]
+    annotations: object = Field(default_factory=dict)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        return _canonical_identifier(value, _NAME_RE, label="Procedure name")
+
+    @field_validator("returns")
+    @classmethod
+    def _returns(cls, value: str) -> str:
+        return _canonical_identifier(value, _ALIAS_RE, label="Procedure returns")
+
+    @field_validator("pin_slots")
+    @classmethod
+    def _slots(cls, value: tuple[ProcedurePinSlotV1, ...]) -> tuple[ProcedurePinSlotV1, ...]:
+        names = tuple(item.slot_name for item in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("Procedure pin slots must be sorted and unique by slot_name")
+        return value
+
+    @field_validator("measurements")
+    @classmethod
+    def _measurements(
+        cls,
+        value: tuple[ProcedureMeasurementDeclarationV1, ...],
+    ) -> tuple[ProcedureMeasurementDeclarationV1, ...]:
+        names = tuple(item.name for item in value)
+        if names != tuple(sorted(set(names), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("M3: Procedure measurements must be sorted and unique by name")
+        return value
+
+    @field_validator("annotations", mode="before")
+    @classmethod
+    def _annotations(cls, value: object) -> object:
+        return normalize_canonical(value)
+
+    @model_validator(mode="after")
+    def _basic_shape(self) -> "ProcedureDefinitionV4":
+        if not self.nodes:
+            raise ValueError("Procedure definition requires at least one node")
+        node_ids = tuple(node.node_id for node in self.nodes)
+        aliases = tuple(
+            node.as_ for node in self.nodes if hasattr(node, "as_") and node.as_ is not None
+        )
+        for node_id in node_ids:
+            _canonical_identifier(node_id, _NODE_ID_RE, label="Procedure node_id")
+        for alias in aliases:
+            _canonical_identifier(alias, _ALIAS_RE, label="Procedure output alias")
+        if len(set(node_ids)) != len(node_ids):
+            raise ValueError("Procedure node ids must be unique")
+        if len(set(aliases)) != len(aliases):
+            raise ValueError("Procedure output aliases must be unique")
+        if self.returns not in aliases:
+            raise ValueError("Procedure returns must name one declared output alias")
+        if self.budget.wall_clock.microseconds > self.hard_caps.max_wall_clock.microseconds:
+            raise ValueError("Procedure budget exceeds its wall-clock hard cap")
+        if self.budget.max_provider_calls > self.hard_caps.max_provider_calls:
+            raise ValueError("Procedure budget exceeds its provider-call hard cap")
+        if self.budget.max_capture_bytes > self.hard_caps.max_capture_bytes:
+            raise ValueError("Procedure budget exceeds its capture-byte hard cap")
+        if self.budget.max_items is not None and self.budget.max_items > self.hard_caps.max_items:
+            raise ValueError("Procedure budget exceeds its item hard cap")
+        if any(
+            isinstance(node, RepeatNodeV4)
+            and node.max_attempts > self.hard_caps.max_repeat_attempts
+            for node in self.nodes
+        ):
+            raise ValueError("Procedure repeat exceeds its repeat-attempt hard cap")
+        from cruxible_client.contracts.procedures.graph import analyze_procedure_v4
+        from cruxible_client.contracts.procedures.pin_expectations import (
+            validate_procedure_pin_expectations,
+        )
+
+        validate_procedure_pin_expectations(self)
+        graph = analyze_procedure_v4(self)
+        for measurement in self.measurements:
+            if measurement.subject_grain == "procedure_unit":
+                continue
+            measurement_node_id = measurement.node_id
+            if measurement_node_id is None:  # pragma: no cover - declaration invariant
+                raise ValueError("M1: non-unit measurement requires node_id")
+            if measurement_node_id not in graph.kinds:
+                raise ValueError(
+                    f"M1: measurement node_id {measurement_node_id!r} does not name "
+                    "a node in this graph-v4 definition"
+                )
+            if measurement.subject_grain != "arm":
+                continue
+            from_node_id = measurement.from_node_id
+            arm_label = measurement.arm_label
+            if from_node_id is None or arm_label is None:  # pragma: no cover
+                raise ValueError("M2: arm measurement requires complete arm coordinates")
+            successor = graph.edges.get(from_node_id, {}).get(arm_label)
+            if successor != measurement_node_id:
+                raise ValueError(
+                    f"M2: measurement arm {from_node_id!r} "
+                    f"{arm_label!r} does not target {measurement_node_id!r}"
+                )
+        return self
+
+
+ProcedureDefinitionAny: TypeAlias = Annotated[
+    ProcedureDefinitionV3 | ProcedureDefinitionV4,
+    Field(discriminator="graph_format"),
+]
+
+
 def iter_pin_bindings(value: object) -> tuple[ProcedurePinBindingV1, ...]:
     """Return every exact pin or slot reference nested in a v3 model."""
 
@@ -740,18 +1018,25 @@ __all__ = [
     "PredicateOperandV1",
     "ProcedureBudgetV3",
     "ProcedureDefinitionV3",
+    "ProcedureDefinitionV4",
+    "ProcedureDefinitionAny",
     "ProcedureHardCapsV3",
     "ProcedureMeasurementDeclarationV1",
     "ProcedureNodeV3",
+    "ProcedureNodeV4",
     "ProcedurePinBindingV1",
     "ProcedurePinSlotRefV1",
     "ProcedurePinSlotV1",
     "ProjectNodeV3",
     "ProposeChangeSetNodeV3",
     "ProviderNodeV3",
+    "ProviderNodeV4",
     "RepeatBodyNodeV3",
+    "RepeatBodyNodeV4",
     "RepeatNodeV3",
+    "RepeatNodeV4",
     "SourceNodeV3",
+    "SourceNodeV4",
     "StateTapNodeV3",
     "TERMINAL_NODE_KINDS",
     "TERMINAL_REQUIRED_RUNGS",

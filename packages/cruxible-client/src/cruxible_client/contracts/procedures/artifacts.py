@@ -34,9 +34,9 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinitionV3,
+    ProcedureDefinitionAny,
     ProcedurePinSlotRefV1,
     iter_pin_bindings,
 )
@@ -64,7 +64,7 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
 class ProcedureArtifactV1(_StrictProcedureArtifactModel):
     artifact_format: Literal["playbill-procedure-v1"] = "playbill-procedure-v1"
     identity: ArtifactIdentity
-    definition: ProcedureDefinitionV3
+    definition: ProcedureDefinitionAny
     definition_digest: str
     pins: tuple[ArtifactPin, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
@@ -94,9 +94,9 @@ class ProcedureArtifactV1(_StrictProcedureArtifactModel):
             raise ValueError("Procedure identity must be path-addressable")
         if self.definition.name != self.identity.name:
             raise ValueError("Procedure definition name must match stable artifact identity")
-        expected = compute_procedure_definition_digest_v3(self.definition).tagged
+        expected = compute_procedure_definition_digest(self.definition).tagged
         if self.definition_digest != expected:
-            raise ValueError("Procedure definition_digest does not reproduce graph-format v3")
+            raise ValueError("Procedure definition_digest does not reproduce its graph format")
         declared_exact = {
             (pin.role, pin.target.qualified, pin.artifact_digest) for pin in self.pins
         }
@@ -181,7 +181,7 @@ class ProcedureArtifactV2(_StrictProcedureArtifactModel):
 
     artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
     identity: ArtifactIdentity
-    definition: ProcedureDefinitionV3
+    definition: ProcedureDefinitionAny
     definition_digest: str
     pins: tuple[ArtifactPin, ...]
     owned_contracts: tuple[ProcedureOwnedContractV1, ...]
@@ -228,9 +228,9 @@ class ProcedureArtifactV2(_StrictProcedureArtifactModel):
             raise ValueError("Procedure identity must be path-addressable")
         if self.definition.name != self.identity.name:
             raise ValueError("Procedure definition name must match stable artifact identity")
-        expected = compute_procedure_definition_digest_v3(self.definition).tagged
+        expected = compute_procedure_definition_digest(self.definition).tagged
         if self.definition_digest != expected:
-            raise ValueError("Procedure definition_digest does not reproduce graph-format v3")
+            raise ValueError("Procedure definition_digest does not reproduce its graph format")
         declared_exact = {
             (pin.role, pin.target.qualified, pin.artifact_digest) for pin in self.pins
         }

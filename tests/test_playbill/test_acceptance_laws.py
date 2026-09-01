@@ -14,10 +14,15 @@ from cruxible_client.contracts.laws import (
     CLAIM_TYPE_LAW_V4,
     DOCUMENT_LAW,
     LINE_LAW,
+    LINE_LAW_V2,
     PLAYBILL_ACCEPTANCE_LAWS,
     PROCEDURE_LAW,
+    PROCEDURE_LAW_REVISION_5,
     PROCEDURE_LAW_V2,
+    PROCEDURE_LAW_V2_REVISION_5,
     PROCEDURE_RUNTIME_POLICY_LAW,
+    PROVIDER_INTERFACE_LAW,
+    PROVIDER_LAW_V2,
 )
 from cruxible_core.playbill.proposals import ROLE_DEMOTED_MEMBER_FAMILIES
 
@@ -68,6 +73,37 @@ def test_pc_d_procedure_and_line_laws_are_exact_historical_coordinates() -> None
     assert (
         PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-procedure-v2").coordinate
         == PROCEDURE_LAW_V2
+    )
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.require_historical(
+            identifier=PROCEDURE_LAW_REVISION_5.identifier,
+            digest=PROCEDURE_LAW_REVISION_5.digest,
+        ).coordinate
+        == PROCEDURE_LAW_REVISION_5
+    )
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.require_historical(
+            identifier=PROCEDURE_LAW_V2_REVISION_5.identifier,
+            digest=PROCEDURE_LAW_V2_REVISION_5.digest,
+        ).coordinate
+        == PROCEDURE_LAW_V2_REVISION_5
+    )
+
+
+def test_p2_b1_provider_interface_and_line_successor_laws_are_current() -> None:
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-provider-v2").coordinate
+        == PROVIDER_LAW_V2
+    )
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(
+            artifact_tag="playbill-provider-interface-v1"
+        ).coordinate
+        == PROVIDER_INTERFACE_LAW
+    )
+    assert (
+        PLAYBILL_ACCEPTANCE_LAWS.resolve_member(artifact_tag="playbill-line-v2").coordinate
+        == LINE_LAW_V2
     )
 
 

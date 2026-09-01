@@ -444,6 +444,68 @@ class ProcedureProviderBindingV1(_StrictResultModel):
         return value
 
 
+class ProviderBucketClassificationPlanV1(_StrictResultModel):
+    """Accepted, measured-bucket-free classifier plan for one occurrence."""
+
+    tag: Literal["playbill-provider-bucket-classification-plan-v1"] = (
+        "playbill-provider-bucket-classification-plan-v1"
+    )
+    node_id: str
+    interface_artifact_digest: str
+    interface_digest: str
+    vocabulary_digest: str
+    classifier_digest: str
+    accepted_bucket_selectors: tuple[str, ...]
+
+    _plan_digests = field_validator(
+        "interface_artifact_digest",
+        "interface_digest",
+        "vocabulary_digest",
+        "classifier_digest",
+    )(_digest)
+
+    @field_validator("accepted_bucket_selectors")
+    @classmethod
+    def _selectors(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value or value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("classification selectors must be nonempty, sorted, and unique")
+        return value
+
+
+class ProcedureProviderBindingV2(_StrictResultModel):
+    """Successor binding carrying the full classification and RAT-9 authority."""
+
+    tag: Literal["playbill-procedure-provider-binding-v2"] = (
+        "playbill-procedure-provider-binding-v2"
+    )
+    node_id: str
+    provider_artifact_digest: str
+    classification_plan: ProviderBucketClassificationPlanV1
+    implementation_digest: str
+    effect_class: Literal["none", "external_read", "external_mutation"]
+    secret_binding_identity_digests: tuple[str, ...]
+
+    _binding_digests = field_validator(
+        "provider_artifact_digest",
+        "implementation_digest",
+    )(_digest)
+
+    @field_validator("secret_binding_identity_digests")
+    @classmethod
+    def _secret_digests(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("ascii"))):
+            raise ValueError("Provider secret binding identities must be sorted and unique")
+        for item in value:
+            _digest(item)
+        return value
+
+    @model_validator(mode="after")
+    def _node_correspondence(self) -> "ProcedureProviderBindingV2":
+        if self.classification_plan.node_id != self.node_id:
+            raise ValueError("Provider binding and classification plan node ids disagree")
+        return self
+
+
 class ProcedureSelectionDecisionV1(_StrictResultModel):
     tag: Literal["playbill-procedure-selection-decision-v1"] = (
         "playbill-procedure-selection-decision-v1"
@@ -692,6 +754,24 @@ class ProcedureRunReceiptV4(ProcedureRunReceiptV3):
         return self
 
 
+class ProcedureRunReceiptV5(ProcedureRunReceiptV4):
+    """Receipt successor embedding Provider binding v2 without rewriting v4."""
+
+    tag: Literal["playbill-procedure-run-receipt-v5"] = "playbill-procedure-run-receipt-v5"  # type: ignore[assignment]
+    resolved_provider_bindings: tuple[ProcedureProviderBindingV2, ...]  # type: ignore[assignment]
+
+    @field_validator("resolved_provider_bindings")
+    @classmethod
+    def _v2_bindings(
+        cls,
+        value: tuple[ProcedureProviderBindingV2, ...],
+    ) -> tuple[ProcedureProviderBindingV2, ...]:
+        node_ids = tuple(item.node_id for item in value)
+        if node_ids != tuple(sorted(set(node_ids), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("receipt Provider v2 bindings must be sorted and unique")
+        return value
+
+
 __all__ = [
     "PROCEDURE_ADMISSION_MATERIAL_DOMAIN",
     "PROCEDURE_SELECTION_DECISION_DOMAIN",
@@ -712,7 +792,9 @@ __all__ = [
     "ProcedureOperationalFailureCodeV1",
     "ProcedureOperationalFailureV1",
     "ProcedurePendingSuccessorV1",
+    "ProviderBucketClassificationPlanV1",
     "ProcedureProviderBindingV1",
+    "ProcedureProviderBindingV2",
     "ProcedureReplayInputProjectionV1",
     "ProcedureRunAttributionV1",
     "ProcedureRunBudgetDeclaredV1",
@@ -724,6 +806,7 @@ __all__ = [
     "ProcedureRunReceiptV2",
     "ProcedureRunReceiptV3",
     "ProcedureRunReceiptV4",
+    "ProcedureRunReceiptV5",
     "ProcedureSelectionDecisionV1",
     "ProcedureTerminalV1",
     "procedure_admission_material_digest",
