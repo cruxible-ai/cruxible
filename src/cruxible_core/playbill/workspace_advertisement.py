@@ -17,11 +17,16 @@ _REMOTE_NAME = "playbill"
 _MAIN_REFSPEC = "+refs/heads/main:refs/remotes/playbill/main"
 _PROPOSAL_REFSPEC = "+refs/proposals/*:refs/remotes/playbill/proposals/*"
 _PASSTHROUGH_ENVIRONMENT = ("PATH", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT")
+# Fetch can consult fsmonitor, hooks, alternate-reference enumeration, transport
+# commands/helpers, and upload-pack. Pin each process-bearing seam at command-line
+# precedence; the environment allowlist below removes the ambient equivalents.
 _GIT_OVERRIDES = (
     "-c",
     "core.fsmonitor=false",
     "-c",
     "core.hooksPath=/dev/null",
+    "-c",
+    "core.alternateRefsCommand=:",
     "-c",
     "protocol.allow=never",
     "-c",

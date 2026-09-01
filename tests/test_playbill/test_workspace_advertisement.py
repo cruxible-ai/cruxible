@@ -49,6 +49,35 @@ def _repositories(tmp_path: Path, object_format: str) -> tuple[Path, Path]:
     return workspace, ledger
 
 
+def _repositories_with_alternate(tmp_path: Path) -> tuple[Path, Path]:
+    seed = tmp_path / "alternate-seed"
+    ledger = tmp_path / "alternate-ledger.git"
+    workspace = tmp_path / "alternate-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(seed)],
+        check=True,
+        capture_output=True,
+    )
+    _git(seed, "config", "user.name", "test")
+    _git(seed, "config", "user.email", "test@example.invalid")
+    (seed / "README.md").write_text("seed\n")
+    _git(seed, "add", "README.md")
+    _git(seed, "commit", "-m", "seed")
+    subprocess.run(
+        ["git", "clone", "--bare", str(seed), str(ledger)],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "clone", "--reference", str(seed), str(ledger), str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    head = _git(workspace, "rev-parse", "HEAD")
+    _git(ledger, "update-ref", "refs/proposals/owner/example", head)
+    return workspace, ledger
+
+
 @pytest.mark.parametrize("object_format", ["sha1", "sha256"])
 def test_advertisement_fetches_only_remote_tracking_refs(
     tmp_path: Path,
@@ -199,6 +228,29 @@ def test_protocol_gate_blocks_execution_if_effective_url_check_is_bypassed(
 
     assert result.status == "failed"
     assert result.failure_code == "fetch_failed"
+    assert not daemon_uid_marker.exists()
+
+
+def test_advertisement_ignores_alternate_refs_command_with_real_alternates(
+    tmp_path: Path,
+) -> None:
+    workspace, ledger = _repositories_with_alternate(tmp_path)
+    daemon_uid_marker = tmp_path / "alternate-refs-daemon-uid"
+    _git(
+        workspace,
+        "config",
+        "core.alternateRefsCommand",
+        f"/bin/sh -c 'id > {daemon_uid_marker}'",
+    )
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert (workspace / ".git/objects/info/alternates").is_file()
+    assert result.status == "updated"
     assert not daemon_uid_marker.exists()
 
 
