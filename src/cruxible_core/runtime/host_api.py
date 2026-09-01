@@ -40,6 +40,18 @@ def create_playbill_host(
             "Workspace attachment requires a caller connected directly through the local "
             "Unix socket"
         )
+    if workspace_root is not None:
+        try:
+            workspace_git_object_format(Path(workspace_root))
+        except ValueError as exc:
+            raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+        attached = registry.get_governed_instance_by_workspace_root(workspace_root)
+        if attached is not None and attached.instance_id != selected:
+            raise ConfigError(
+                f"Workspace {str(Path(workspace_root).expanduser().resolve())!r} is already "
+                f"attached to Playbill host {attached.instance_id!r}; archive/rebuild that "
+                f"host or choose another Git worktree before creating {selected!r}"
+            )
 
     existing = registry.get(selected)
     if existing is not None:
@@ -50,25 +62,22 @@ def create_playbill_host(
                 raise ConfigError(
                     "Workspace attachment must be recorded before Playbill initialization"
                 )
-            try:
-                workspace_git_object_format(Path(workspace_root))
-            except ValueError as exc:
-                raise ConfigError("Workspace attachment requires one local Git worktree") from exc
             registry.attach_governed_workspace(selected, workspace_root)
         return contracts.PlaybillHostResult(instance_id=selected, status="already_exists")
 
-    if workspace_root is not None:
-        try:
-            workspace_git_object_format(Path(workspace_root))
-        except ValueError as exc:
-            raise ConfigError("Workspace attachment requires one local Git worktree") from exc
     registered = registry.create_governed_instance_with_id(
         selected,
         workspace_root=workspace_root,
     )
+    if registered.record.instance_id != selected:
+        raise ConfigError(
+            f"Workspace {registered.record.workspace_root!r} is already attached to Playbill "
+            f"host {registered.record.instance_id!r}; archive/rebuild that host or choose "
+            f"another Git worktree before creating {selected!r}"
+        )
     return contracts.PlaybillHostResult(
-        instance_id=registered.record.instance_id,
-        status="created",
+        instance_id=selected,
+        status="created" if registered.created else "already_exists",
     )
 
 

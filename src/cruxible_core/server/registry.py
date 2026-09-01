@@ -318,7 +318,7 @@ class InstanceRegistry:
         created_at = format_datetime(utc_now())
         instance_id = preferred_instance_id or new_id("inst", length=16, separator="_")
         with self._connect() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT OR IGNORE INTO instances(
                     instance_id,
@@ -338,12 +338,13 @@ class InstanceRegistry:
                 ),
             )
 
-        if workspace_root is not None:
+        record = self.get(instance_id)
+        if record is None and workspace_root is not None:
             record = self._get_by_backend_workspace_root(backend, workspace_root)
-        else:
+        if record is None:
             record = self._get_by_backend_location(backend, location)
         assert record is not None
-        return RegisteredInstance(record=record, created=record.instance_id == instance_id)
+        return RegisteredInstance(record=record, created=cursor.rowcount == 1)
 
     def _get_by_backend_location(self, backend: str, location: str) -> InstanceRecord | None:
         with self._connect() as conn:

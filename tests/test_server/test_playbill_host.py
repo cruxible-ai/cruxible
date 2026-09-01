@@ -16,6 +16,7 @@ from cruxible_client.contracts.documents import (
     DocumentShell,
 )
 from cruxible_client.contracts.errors import PlaybillReseedRequired
+from cruxible_core.errors import ConfigError
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime import host_api, playbill_api
 from cruxible_core.runtime.permissions import reset_permissions
@@ -94,6 +95,70 @@ def test_remote_http_host_cannot_attach_a_daemon_local_workspace(
     assert refused.status_code == 400
     assert "directly through the local Unix socket" in refused.text
     assert get_registry().get("inst_remote_path") is None
+
+
+def test_workspace_dedupe_never_replaces_an_explicit_host_id(
+    host_client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del host_client
+    workspace = tmp_path / "deduped-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    first = host_api.create_playbill_host(
+        instance_id="inst_workspace_owner",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    assert first.instance_id == "inst_workspace_owner"
+    assert first.status == "created"
+
+    repeated = host_api.create_playbill_host(
+        instance_id="inst_workspace_owner",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    assert repeated.instance_id == "inst_workspace_owner"
+    assert repeated.status == "already_exists"
+
+    with pytest.raises(
+        ConfigError,
+        match=(
+            "already attached to Playbill host 'inst_workspace_owner'.*"
+            "before creating 'inst_workspace_other'"
+        ),
+    ):
+        host_api.create_playbill_host(
+            instance_id="inst_workspace_other",
+            workspace_root=str(workspace),
+            workspace_attachment_authorized=True,
+        )
+    with pytest.raises(ConfigError, match="already attached to Playbill host"):
+        host_api.create_playbill_host(
+            workspace_root=str(workspace),
+            workspace_attachment_authorized=True,
+        )
+
+    registry = get_registry()
+    monkeypatch.setattr(registry, "get_governed_instance_by_workspace_root", lambda _path: None)
+    with pytest.raises(
+        ConfigError,
+        match="already attached to Playbill host 'inst_workspace_owner'",
+    ):
+        host_api.create_playbill_host(
+            instance_id="inst_workspace_race",
+            workspace_root=str(workspace),
+            workspace_attachment_authorized=True,
+        )
+    assert [item.instance_id for item in registry.list_governed_instances()] == [
+        "inst_workspace_owner"
+    ]
+    assert not registry.governed_instance_location("inst_workspace_other").exists()
+    assert not registry.governed_instance_location("inst_workspace_race").exists()
 
 
 def test_transport_credentials_do_not_initialize_playbill_or_a_legacy_graph(
