@@ -35,6 +35,8 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
     def advertise() -> PlaybillWorkspaceAdvertisement:
         nonlocal advertisements
         advertisements += 1
+        if advertisements == 3:
+            raise MemoryError("simulated activation advertisement failure")
         return PlaybillWorkspaceAdvertisement(
             status="failed",
             workspace_path=str(tmp_path),
@@ -90,6 +92,8 @@ def test_submit_retry_reuses_candidate_and_status_tracks_acceptance(tmp_path: Pa
         activated_by="owner",
     )
     assert activated.status == "accepted"
+    assert activated.workspace_advertisement.status == "failed"
+    assert activated.workspace_advertisement.failure_code == "unexpected_failure"
     accepted = coordinator.status(intent.intent_id, actor=actor)
     assert accepted.state == "accepted"
     assert accepted.accepted_generation == activated.accepted_coordinate
