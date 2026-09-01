@@ -10,6 +10,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from cruxible_client.authoring.bind import (
     AuthoringBindAmbiguityError,
+    AuthoringBindAnchorNotFoundError,
     AuthoringBindError,
     bind_working_selection_input,
 )
@@ -67,6 +68,17 @@ def test_ambiguous_anchor_names_all_overlapping_candidate_offsets() -> None:
     assert "--occurrence" in str(caught.value)
 
 
+def test_missing_anchor_is_not_reported_as_ambiguity() -> None:
+    with pytest.raises(AuthoringBindAnchorNotFoundError) as caught:
+        bind_working_selection_input(_input(), content=b"status: waiting", anchor="ready")
+
+    assert caught.value.observed_occurrence_count == 0
+    assert caught.value.candidate_byte_offsets == ()
+    assert "playbill.authoring.anchor_not_found" in str(caught.value)
+    assert "anchor not found in file" in str(caught.value)
+    assert "--occurrence" not in str(caught.value)
+
+
 def test_explicit_occurrence_selects_the_requested_overlapping_anchor() -> None:
     payload = bind_working_selection_input(
         _input(),
@@ -91,6 +103,20 @@ def test_explicit_occurrence_must_name_an_observed_anchor(occurrence: int) -> No
             anchor="aa",
             occurrence=occurrence,
         )
+
+
+def test_explicit_occurrence_against_zero_matches_reports_the_invalid_count() -> None:
+    with pytest.raises(AuthoringBindError) as caught:
+        bind_working_selection_input(
+            _input(),
+            content=b"status: waiting",
+            anchor="ready",
+            occurrence=1,
+        )
+
+    assert "invalid --occurrence" in str(caught.value)
+    assert "observed 0, requested 1" in str(caught.value)
+    assert "anchor_ambiguous" not in str(caught.value)
 
 
 def test_every_example_is_constructed_as_a_valid_authoring_union_member() -> None:

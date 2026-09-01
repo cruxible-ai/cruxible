@@ -945,6 +945,45 @@ def test_cli_bind_ambiguity_reports_candidate_offsets_without_calling_daemon(
     assert "--occurrence" in result.output
 
 
+def test_cli_bind_missing_anchor_has_no_occurrence_repair_hint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:  # type: ignore[no-untyped-def]
+    source = tmp_path / "missing.txt"
+    source.write_text("status: waiting")
+    stub = claim_self_source_example().model_dump(mode="json")
+    stub["source"] = {"kind": "working_selection", "source_id": "repo.work-items"}
+    stub["citation_role"] = "evidence"
+    payload_file = tmp_path / "stub.json"
+    payload_file.write_text(json.dumps(stub))
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: (_ for _ in ()).throw(AssertionError("daemon must not be called")),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "playbill",
+            "authoring",
+            "bind",
+            "--file",
+            str(source),
+            "--anchor",
+            "ready",
+            "--payload-file",
+            str(payload_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "playbill.authoring.anchor_not_found" in result.output
+    assert "anchor not found in file" in result.output
+    assert '"observed_occurrence_count":0' in result.output
+    assert '"candidate_byte_offsets":[]' in result.output
+    assert "--occurrence" not in result.output
+
+
 def test_cli_bind_occurrence_selects_one_ambiguous_anchor(
     monkeypatch,
     tmp_path: Path,

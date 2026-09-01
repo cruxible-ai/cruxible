@@ -21,8 +21,29 @@ class AuthoringBindError(PlaybillError):
     """A local Flow-A bind input could not produce one mechanical observation."""
 
 
+class AuthoringBindAnchorNotFoundError(AuthoringBindError):
+    """The requested anchor was absent from the selected file."""
+
+    code = "playbill.authoring.anchor_not_found"
+
+    def __init__(self) -> None:
+        self.observed_occurrence_count = 0
+        self.candidate_byte_offsets: tuple[int, ...] = ()
+        super().__init__(
+            self.code
+            + ": "
+            + canonical_bytes(
+                {
+                    "message": "anchor not found in file",
+                    "observed_occurrence_count": 0,
+                    "candidate_byte_offsets": [],
+                }
+            ).decode("utf-8")
+        )
+
+
 class AuthoringBindAmbiguityError(AuthoringBindError):
-    """The requested anchor did not identify exactly one byte occurrence."""
+    """The requested anchor identified multiple byte occurrences."""
 
     code = "playbill.authoring.anchor_ambiguous"
 
@@ -101,11 +122,13 @@ def bind_working_selection_input(
         raise AuthoringBindError("Flow-A bind input source must be working_selection")
     anchor_bytes = anchor.encode("utf-8")
     offsets = _anchor_offsets(content, anchor_bytes)
-    if occurrence is None and len(offsets) != 1:
+    if not offsets and occurrence is None:
+        raise AuthoringBindAnchorNotFoundError
+    if occurrence is None and len(offsets) > 1:
         raise AuthoringBindAmbiguityError(offsets)
     if occurrence is not None and not 1 <= occurrence <= len(offsets):
         raise AuthoringBindError(
-            "--occurrence must select a 1-based anchor occurrence; "
+            "invalid --occurrence: must select a 1-based anchor occurrence; "
             f"observed {len(offsets)}, requested {occurrence}"
         )
     start = offsets[0 if occurrence is None else occurrence - 1]
@@ -148,6 +171,7 @@ def bind_working_selection_input(
 
 
 __all__ = [
+    "AuthoringBindAnchorNotFoundError",
     "AuthoringBindAmbiguityError",
     "AuthoringBindError",
     "bind_working_selection_input",
