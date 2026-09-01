@@ -565,8 +565,7 @@ def test_concrete_settlement_door_resolves_at_admission_and_rechecks_activation(
     monkeypatch.setattr(
         "cruxible_core.playbill.procedures.terminal_services.service_activate_playbill_proposal",
         lambda passed_instance, *, proposal_id, activated_by: (
-            activated.append((proposal_id, activated_by))
-            or SimpleNamespace(status="accepted")
+            activated.append((proposal_id, activated_by)) or SimpleNamespace(status="accepted")
         ),
     )
     door = PlaybillSettlementDoor(
