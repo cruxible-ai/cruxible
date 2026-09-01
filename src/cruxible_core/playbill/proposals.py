@@ -196,10 +196,16 @@ from cruxible_client.contracts.proposal_models import (
     _StrictProposalModel,
     claim_admission_account_order_key,
 )
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistrationV1,
+    ProviderInterfaceFormatError,
+    evaluate_provider_interface_law,
+    parse_provider_interface,
+    provider_interface_digest,
+)
 from cruxible_client.contracts.providers import (
     AcceptedProviderV1,
     ProviderFormatError,
-    ProviderV1,
     evaluate_provider_law,
     parse_provider,
     provider_digest,
@@ -260,6 +266,9 @@ from cruxible_core.playbill.exhaust.promotions import (
 )
 from cruxible_core.playbill.principal_lifecycle import evaluate_principal_lifecycle
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
+from cruxible_core.playbill.provider_classifiers import (
+    core_provider_bucket_conformance_fixtures,
+)
 from cruxible_core.playbill.query.backends import ClaimQueryFactsV1
 from cruxible_core.playbill.query.engine import (
     evaluate_claim_query,
@@ -280,6 +289,7 @@ _CLAIM_TYPE_PATH_RE = re.compile(
 )
 _CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.json$")
 _PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}\.json$")
+_PROVIDER_INTERFACE_PATH_RE = re.compile(r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}\.json$")
 _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
     r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.json$"
 )
@@ -294,6 +304,7 @@ _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _CLAIM_TYPE_PATH_RE,
     _CAPTURE_CONTRACT_PATH_RE,
     _PROVIDER_PATH_RE,
+    _PROVIDER_INTERFACE_PATH_RE,
     _SOURCE_ACQUISITION_POLICY_PATH_RE,
     _STANDING_MANDATE_PATH_RE,
     _CLAIM_PATH_RE,
@@ -1382,7 +1393,8 @@ class _ResolvedArtifacts:
     subjects: dict[str, AcceptedSubject]
     claim_types: dict[str, AcceptedClaimType]
     capture_contracts: dict[str, AcceptedCaptureContract]
-    providers: dict[str, ProviderV1]
+    providers: dict[str, AcceptedProviderV1]
+    provider_interfaces: dict[str, AcceptedProviderInterfaceRegistrationV1]
     procedures: dict[str, AcceptedProcedureV1]
 
 
@@ -1487,6 +1499,13 @@ def _procedure_member(context: _MemberContext) -> _MemberVerdict:
         procedure,
         path=context.path,
         predecessor=predecessor,
+        providers={
+            accepted.artifact_digest: accepted for accepted in context.resolved.providers.values()
+        },
+        provider_interfaces={
+            accepted.artifact_digest: accepted
+            for accepted in context.resolved.provider_interfaces.values()
+        },
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -1592,15 +1611,32 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
     interface_digests: dict[str, str] = {}
     for state in context.candidate_states.values():
         interface_digests[state.artifact_digest] = state.artifact_digest
-        interface_pin = next((pin for pin in state.pins if pin.role == "interface"), None)
-        if interface_pin is not None:
-            interface_digests[state.artifact_digest] = interface_pin.artifact_digest
+    for provider in context.resolved.providers.values():
+        interface_pin = next(
+            (pin for pin in provider.provider.pins if pin.role == "provider-interface"),
+            None,
+        )
+        if interface_pin is None:
+            continue
+        registration = context.resolved.provider_interfaces.get(interface_pin.target.qualified)
+        if (
+            registration is not None
+            and registration.artifact_digest == interface_pin.artifact_digest
+        ):
+            interface_digests[provider.artifact_digest] = registration.registration.interface_digest
     law = evaluate_line_spec_law(
         line,
         path=context.path,
         procedure=accepted_procedure,
         interface_digests=interface_digests,
         predecessor=predecessor,
+        providers={
+            accepted.artifact_digest: accepted for accepted in context.resolved.providers.values()
+        },
+        provider_interfaces={
+            accepted.artifact_digest: accepted
+            for accepted in context.resolved.provider_interfaces.values()
+        },
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -1717,6 +1753,7 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
         provider,
         path=context.path,
         predecessor=predecessor,
+        interface_registrations=context.resolved.provider_interfaces,
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
@@ -1732,6 +1769,39 @@ def _provider_member(context: _MemberContext) -> _MemberVerdict:
         activation_policy="snapshot",
         result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
         retired=provider.lifecycle.state == "retired",
+    )
+
+
+def _provider_interface_member(context: _MemberContext) -> _MemberVerdict:
+    registration = parse_provider_interface(context.content, path=context.path)
+    predecessor: AcceptedProviderInterfaceRegistrationV1 | None = None
+    if context.parent_content is not None:
+        previous = parse_provider_interface(context.parent_content, path=context.path)
+        predecessor = AcceptedProviderInterfaceRegistrationV1(
+            path=context.path,
+            registration=previous,
+            artifact_digest=provider_interface_digest(previous).tagged,
+        )
+    law = evaluate_provider_interface_law(
+        registration,
+        path=context.path,
+        predecessor=predecessor,
+        conformance_fixtures=core_provider_bucket_conformance_fixtures(),
+    )
+    if law.verdict == "refused":
+        return _MemberVerdict(diagnostics=tuple(law.diagnostics))
+    if law.artifact_digest is None or law.required_tier is None:
+        raise ProposalIntegrityError("accepted ProviderInterface law result is incomplete")
+    return _accepted(
+        context,
+        _installed(registration.artifact_format),
+        predecessor_artifact_digest=None if predecessor is None else predecessor.artifact_digest,
+        candidate_artifact_digest=law.artifact_digest,
+        required_tier=law.required_tier,
+        approval_scope=law.approval_scope,
+        activation_policy="snapshot",
+        result={"artifact_digest": law.artifact_digest, "verdict": "accepted"},
+        retired=registration.lifecycle.state == "retired",
     )
 
 
@@ -1862,7 +1932,9 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         claim_types=context.resolved.claim_types,
         capture_contracts=context.resolved.capture_contracts,
         capture_store=context.bodies,
-        providers=context.resolved.providers,
+        providers={
+            identity: accepted.provider for identity, accepted in context.resolved.providers.items()
+        },
         law_digest=installed.coordinate.digest,
         instance_id=context.current.instance_id,
         accepted_coordinate=context.accepted_coordinate(),
@@ -2314,6 +2386,13 @@ _MEMBER_KINDS: Final[tuple[_MemberKind, ...]] = (
         evaluate=_provider_member,
     ),
     _MemberKind(
+        name="provider-interface",
+        pattern=_PROVIDER_INTERFACE_PATH_RE,
+        removal_code="playbill.change_set.delete_unsupported",
+        removal_message="PC-A2 does not activate artifact deletion semantics.",
+        evaluate=_provider_interface_member,
+    ),
+    _MemberKind(
         name="source-acquisition-policy",
         pattern=_SOURCE_ACQUISITION_POLICY_PATH_RE,
         removal_code="playbill.change_set.delete_unsupported",
@@ -2381,6 +2460,7 @@ ROLE_DEMOTED_MEMBER_FAMILIES: Final[tuple[str, ...]] = (
     "line",
     "query-definition",
     "provider",
+    "provider-interface",
     "source-acquisition-policy",
     "standing-mandate",
     "capture-contract",
@@ -2453,7 +2533,7 @@ def _resolved_artifacts(
     change, and retiring it needs a carried resolution index of its own.
     """
 
-    resolved = _ResolvedArtifacts({}, {}, {}, {}, {})
+    resolved = _ResolvedArtifacts({}, {}, {}, {}, {}, {})
     for state in states.values():
         content = candidate_tree[state.path]
         if state.artifact_kind == "subject":
@@ -2478,7 +2558,21 @@ def _resolved_artifacts(
             )
         elif state.artifact_kind == "provider":
             provider = parse_provider(content, path=state.path)
-            resolved.providers[provider.identity.qualified] = provider
+            accepted = AcceptedProviderV1(
+                path=state.path,
+                provider=provider,
+                artifact_digest=state.artifact_digest,
+            )
+            resolved.providers[provider.identity.qualified] = accepted
+        elif state.artifact_kind == "provider-interface":
+            registration = parse_provider_interface(content, path=state.path)
+            resolved.provider_interfaces[registration.identity.qualified] = (
+                AcceptedProviderInterfaceRegistrationV1(
+                    path=state.path,
+                    registration=registration,
+                    artifact_digest=state.artifact_digest,
+                )
+            )
         elif state.artifact_kind == "procedure":
             procedure = parse_procedure(content, path=state.path)
             resolved.procedures[procedure.identity.qualified] = AcceptedProcedureV1(
@@ -2545,6 +2639,7 @@ def _evaluate_scoped_members(
             ClaimFormatError,
             DocumentFormatError,
             ProviderFormatError,
+            ProviderInterfaceFormatError,
             SourceAcquisitionPolicyError,
             StandingMandateError,
             SubjectFormatError,

@@ -1159,6 +1159,17 @@ def _lower_procedure(
         candidate_identities=candidate_identities,
         owned_contracts=owned_contracts,
     )
+    if isinstance(resolved_definition, dict) and resolved_definition.get("graph_format") == 4:
+        _refuse(
+            "playbill.authoring.procedure_definition_invalid",
+            "definition.graph_format",
+            "Graph-v4 Procedure authoring is not supported by the graph-v3 lowering path.",
+            repair_kind="replace_definition",
+            repair_description=(
+                "Use a graph-v3 definition; graph-v4 authoring requires a future dedicated "
+                "lowering path."
+            ),
+        )
     try:
         definition = ProcedureDefinitionV3.model_validate(resolved_definition)
     except (ProcedureGraphFormatError, ValidationError) as exc:

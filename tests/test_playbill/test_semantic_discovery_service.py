@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import cruxible_core.runtime.playbill_api as runtime_api
 from cruxible_client.contracts.artifacts import ArtifactPin
 from cruxible_client.contracts.captures import (
     capture_contract_digest,
@@ -15,7 +16,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
+from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.query.semantic_discovery import DiscoveryError
 from cruxible_core.playbill.service.documents import (
@@ -142,6 +143,39 @@ def test_empty_interfaces_request_returns_an_honest_not_installed_inventory(
     assert result.interfaces == ()
 
 
+def test_runtime_discovery_reports_the_shared_classifier_registry(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    installed = frozenset({"sha256:" + "a" * 64})
+    observed: dict[str, object] = {}
+
+    class _Manager:
+        def get(self, _instance_id: str):  # type: ignore[no-untyped-def]
+            return instance
+
+    class _Registry:
+        installed_classifier_digests = installed
+
+    def discover(_instance, **kwargs):  # type: ignore[no-untyped-def]
+        observed.update(kwargs)
+        return PlaybillInterfaceInventoryV1(
+            coordinate=PlaybillAcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            provider_status="not_installed",
+            interfaces=(),
+        )
+
+    monkeypatch.setattr(runtime_api, "check_permission", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(runtime_api, "get_playbill_manager", lambda: _Manager())
+    monkeypatch.setattr(runtime_api, "PROVIDER_BUCKET_CLASSIFIER_REGISTRY", _Registry())
+    monkeypatch.setattr(runtime_api, "service_discover_playbill_semantic", discover)
+
+    runtime_api.playbill_discover(instance.descriptor.instance_id)
+
+    assert observed["installed_classifier_digests"] == installed
+
+
 def test_other_empty_discovery_profiles_remain_refused(tmp_path: Path) -> None:
     """Still refused, now as a typed refusal rather than a raw model error.
 
@@ -158,7 +192,9 @@ def test_other_empty_discovery_profiles_remain_refused(tmp_path: Path) -> None:
         )
 
 
-def test_interfaces_inventory_uses_the_linespec_interface_pin_projection(tmp_path: Path) -> None:
+def test_provider_pin_fallback_never_becomes_interface_discovery_authority(
+    tmp_path: Path,
+) -> None:
     instance, owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
     contract = capture_contract()
@@ -208,11 +244,8 @@ def test_interfaces_inventory_uses_the_linespec_interface_pin_projection(tmp_pat
     )
 
     assert isinstance(result, PlaybillInterfaceInventoryV1)
-    assert result.provider_status == "installed"
-    assert result.interfaces[0].identity == provider_artifact.identity.qualified
-    assert result.interfaces[0].artifact_digest == provider_digest(provider_artifact).tagged
-    assert result.interfaces[0].interface_digest == contract_digest
-    assert result.interfaces[0].interface_basis == "explicit_interface_pin"
+    assert result.provider_status == "not_installed"
+    assert result.interfaces == ()
 
 
 def test_blank_query_is_refused_rather_than_listing_everything(tmp_path: Path) -> None:

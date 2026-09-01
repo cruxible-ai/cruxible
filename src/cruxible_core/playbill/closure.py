@@ -81,6 +81,11 @@ from cruxible_client.contracts.procedures.line_specs import (
     line_spec_digest,
     parse_line_spec,
 )
+from cruxible_client.contracts.provider_interfaces import (
+    ProviderInterfaceFormatError,
+    parse_provider_interface,
+    provider_interface_digest,
+)
 from cruxible_client.contracts.providers import ProviderFormatError, parse_provider, provider_digest
 from cruxible_client.contracts.query.definitions import (
     QueryDefinitionFormatError,
@@ -121,6 +126,7 @@ class ArtifactDependencyStateV1(_StrictClosureModel):
         "claim-type",
         "capture-contract",
         "provider",
+        "provider-interface",
         "source-acquisition-policy",
         "standing-mandate",
         "claim",
@@ -229,6 +235,17 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
                 pins=provider.pins,
                 lifecycle=provider.lifecycle,
             )
+        if path.startswith("provider-interfaces/"):
+            registration = parse_provider_interface(content, path=path)
+            return ArtifactDependencyStateV1(
+                path=path,
+                artifact_kind="provider-interface",
+                artifact_tag=registration.artifact_format,
+                identity=registration.identity,
+                artifact_digest=provider_interface_digest(registration).tagged,
+                pins=registration.pins,
+                lifecycle=registration.lifecycle,
+            )
         if path.startswith("source-acquisition-policies/"):
             policy = parse_acquisition_policy(content, path=path)
             return ArtifactDependencyStateV1(
@@ -311,6 +328,7 @@ def parse_dependency_artifact(path: str, content: bytes) -> ArtifactDependencySt
         ClaimFormatError,
         DocumentFormatError,
         ProviderFormatError,
+        ProviderInterfaceFormatError,
         SourceAcquisitionPolicyError,
         StandingMandateError,
         SubjectFormatError,

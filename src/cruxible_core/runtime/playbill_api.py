@@ -78,6 +78,7 @@ from cruxible_core.playbill.coverage.contracts import CoverageCardBudgetV1
 from cruxible_core.playbill.coverage.indexes import CoverageScanBudgetV1
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
+from cruxible_core.playbill.provider_classifiers import PROVIDER_BUCKET_CLASSIFIER_REGISTRY
 from cruxible_core.playbill.search import (
     SEARCH_KINDS,
     PlaybillSearchBudgetsV1,
@@ -1506,6 +1507,9 @@ def playbill_discover(
         at=at,
         profile=profile,
         budget=budget or DiscoveryBudgetV1(),
+        installed_classifier_digests=(
+            PROVIDER_BUCKET_CLASSIFIER_REGISTRY.installed_classifier_digests
+        ),
     )
     if isinstance(result, PlaybillDiscoveryResultV1):
         _record_consumed_paths(

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
@@ -31,9 +32,20 @@ from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.closure import (
     LineSlotBindingV1,
     ProcedurePinClosureError,
+    ProviderExtrasEnvironmentPinMapV1,
+    ProviderImplementationClosureV1,
     close_procedure_pin_slots,
 )
-from cruxible_client.contracts.procedures.models import ExhaustTapNodeV3, SourceNodeV3
+from cruxible_client.contracts.procedures.models import (
+    ExhaustTapNodeV3,
+    ProcedureDefinitionV4,
+    ProcedurePinSlotRefV1,
+    ProviderNodeV4,
+    RepeatBodyNodeV4,
+    RepeatNodeV4,
+    SourceNodeV3,
+    SourceNodeV4,
+)
 from cruxible_client.contracts.procedures.pin_expectations import (
     TRIGGER_CADENCE_POLICY,
     TRIGGER_CAPTURE_CONTRACT,
@@ -41,6 +53,14 @@ from cruxible_client.contracts.procedures.pin_expectations import (
     TRIGGER_WINDOW_POLICY,
     PinExpectation,
     validate_exact_pin_expectation,
+)
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistrationV1,
+)
+from cruxible_client.contracts.providers import (
+    AcceptedProviderV1,
+    ProviderLocalMaterializationReferenceV1,
+    ProviderV2,
 )
 from cruxible_client.contracts.semantic import SemanticAddress
 
@@ -211,6 +231,38 @@ class LineSpecV1(_StrictLineModel):
         return self
 
 
+class LineSpecV2(LineSpecV1):
+    """Line successor freezing every graph-v4 Provider occurrence closure."""
+
+    artifact_format: Literal["playbill-line-v2"] = "playbill-line-v2"  # type: ignore[assignment]
+    provider_implementation_closures: tuple[ProviderImplementationClosureV1, ...]
+
+    @field_validator("provider_implementation_closures")
+    @classmethod
+    def _provider_closures(
+        cls,
+        value: tuple[ProviderImplementationClosureV1, ...],
+    ) -> tuple[ProviderImplementationClosureV1, ...]:
+        def closure_key(
+            item: ProviderImplementationClosureV1,
+        ) -> tuple[bytes, bytes]:
+            return item.node_id.encode("utf-8"), item.slot_name.encode("utf-8")
+
+        if value != tuple(sorted(value, key=closure_key)):
+            raise ValueError("Line Provider closures must be canonically node/slot sorted")
+        coordinates = tuple((item.node_id, item.slot_name) for item in value)
+        if len(coordinates) != len(set(coordinates)):
+            raise ValueError("Line Provider closures must be node/slot unique")
+        return value
+
+
+LineSpecAny: TypeAlias = Annotated[
+    LineSpecV1 | LineSpecV2,
+    Field(discriminator="artifact_format"),
+]
+_LINE_SPEC_ADAPTER: TypeAdapter[LineSpecAny] = TypeAdapter(LineSpecAny)
+
+
 def _trigger_pin_requirements(
     trigger: TriggerPolicyV1,
 ) -> tuple[tuple[str, str, PinExpectation], ...]:
@@ -252,7 +304,7 @@ def line_spec_path(name: str) -> str:
     return f"lines/{name}.json"
 
 
-def render_line_spec(line: LineSpecV1) -> bytes:
+def render_line_spec(line: LineSpecAny) -> bytes:
     return pretty_canonical_bytes(line.model_dump(mode="json"))
 
 
@@ -261,11 +313,11 @@ def parse_line_spec(
     *,
     path: str,
     codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
-) -> LineSpecV1:
+) -> LineSpecAny:
     try:
-        line = LineSpecV1.model_validate(json.loads(content))
+        line = _LINE_SPEC_ADAPTER.validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
-        raise LineSpecFormatError("LineSpec failed strict playbill-line-v1 validation") from exc
+        raise LineSpecFormatError("LineSpec failed strict versioned validation") from exc
     if not artifact_path_matches(line_spec_path(line.identity.name), path, codec=codec):
         raise LineSpecFormatError("LineSpec identity/path disagreement")
     if artifact_bytes_for_path(render_line_spec(line), path, codec=codec) != content:
@@ -273,7 +325,7 @@ def parse_line_spec(
     return line
 
 
-def line_spec_digest(line: LineSpecV1) -> ArtifactDigest:
+def line_spec_digest(line: LineSpecAny) -> ArtifactDigest:
     return typed_digest(
         ArtifactDigest,
         "playbill-envelope-v1",
@@ -283,7 +335,7 @@ def line_spec_digest(line: LineSpecV1) -> ArtifactDigest:
 
 class AcceptedLineSpecV1(_StrictLineModel):
     path: str
-    line: LineSpecV1
+    line: LineSpecAny
     artifact_digest: str
 
     @model_validator(mode="after")
@@ -325,12 +377,18 @@ def _budget_int(budgets: object, key: str) -> int | None:
 
 
 def evaluate_line_spec_law(
-    line: LineSpecV1,
+    line: LineSpecAny,
     *,
     path: str,
     procedure: AcceptedProcedureV1,
     interface_digests: dict[str, str],
     predecessor: AcceptedLineSpecV1 | None,
+    providers: Mapping[str, AcceptedProviderV1] | None = None,
+    provider_interfaces: Mapping[
+        str,
+        AcceptedProviderInterfaceRegistrationV1,
+    ]
+    | None = None,
 ) -> LineSpecLawResultV1:
     if path != line_spec_path(line.identity.name):
         return _refusal(
@@ -351,6 +409,28 @@ def evaluate_line_spec_law(
     except ProcedurePinClosureError as exc:
         return _refusal("playbill.line.slot_closure_failed", str(exc), path=path)
     definition = procedure.procedure.definition
+    if isinstance(definition, ProcedureDefinitionV4):
+        if not isinstance(line, LineSpecV2):
+            return _refusal(
+                "playbill.line.provider_closure_successor_required",
+                "A graph-v4 Procedure requires a playbill-line-v2 closure.",
+                path=path,
+            )
+        provider_result = _verify_provider_implementation_closures(
+            line,
+            definition=definition,
+            providers={} if providers is None else providers,
+            provider_interfaces={} if provider_interfaces is None else provider_interfaces,
+        )
+        if provider_result is not None:
+            code, message = provider_result
+            return _refusal(code, message, path=path)
+    elif isinstance(line, LineSpecV2):
+        return _refusal(
+            "playbill.line.graph_v4_required",
+            "A playbill-line-v2 closure must instantiate a graph-v4 Procedure.",
+            path=path,
+        )
     if line.requested_terminal_rung > definition.terminal_capability:
         return _refusal(
             "playbill.line.rung_exceeds_procedure_cap",
@@ -373,7 +453,8 @@ def evaluate_line_spec_law(
                 path=path,
             )
     needs_acquisition = any(
-        isinstance(node, SourceNodeV3 | ExhaustTapNodeV3) for node in definition.nodes
+        isinstance(node, SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3)
+        for node in definition.nodes
     )
     if needs_acquisition and line.acquisition_policy is None:
         return _refusal(
@@ -393,6 +474,12 @@ def evaluate_line_spec_law(
             return _refusal(
                 "playbill.line.stable_identity_changed",
                 "Line successor must retain stable identity.",
+                path=path,
+            )
+        if isinstance(predecessor.line, LineSpecV2) and not isinstance(line, LineSpecV2):
+            return _refusal(
+                "playbill.line.wire_downgrade",
+                "A Line v2 lineage cannot be succeeded by the historical v1 wire.",
                 path=path,
             )
         if line.lifecycle.predecessor_digest != predecessor.artifact_digest:
@@ -417,13 +504,173 @@ def evaluate_line_spec_law(
     )
 
 
+ProviderOccurrenceV4: TypeAlias = SourceNodeV4 | ProviderNodeV4 | RepeatBodyNodeV4
+
+
+def _provider_occurrences(
+    definition: ProcedureDefinitionV4,
+) -> tuple[tuple[str, ProviderOccurrenceV4], ...]:
+    occurrences: list[tuple[str, ProviderOccurrenceV4]] = []
+    for node in definition.nodes:
+        if isinstance(node, SourceNodeV4 | ProviderNodeV4):
+            occurrences.append((node.node_id, node))
+        elif isinstance(node, RepeatNodeV4):
+            occurrences.extend(
+                (f"{node.node_id}.{body.node_id}", body)
+                for body in node.body
+                if body.operation == "provider"
+            )
+    return tuple(sorted(occurrences, key=lambda item: item[0].encode("utf-8")))
+
+
+def _slot_provider_occurrences(
+    definition: ProcedureDefinitionV4,
+) -> tuple[tuple[str, ProviderOccurrenceV4], ...]:
+    result: list[tuple[str, ProviderOccurrenceV4]] = []
+    for node_id, node in _provider_occurrences(definition):
+        if isinstance(node.provider, ProcedurePinSlotRefV1):
+            result.append((node_id, node))
+    return tuple(result)
+
+
+def _verify_provider_implementation_closures(
+    line: LineSpecV2,
+    *,
+    definition: ProcedureDefinitionV4,
+    providers: Mapping[str, AcceptedProviderV1],
+    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
+) -> tuple[str, str] | None:
+    occurrences = _provider_occurrences(definition)
+    slot_occurrences = _slot_provider_occurrences(definition)
+    occurrence_coordinates: list[tuple[str, str]] = []
+    for node_id, node in slot_occurrences:
+        provider = node.provider
+        if not isinstance(provider, ProcedurePinSlotRefV1):  # pragma: no cover - filtered above
+            raise AssertionError("slot occurrence lost its slot binding")
+        occurrence_coordinates.append((node_id, provider.slot_name))
+    closure_coordinates = tuple(
+        (item.node_id, item.slot_name) for item in line.provider_implementation_closures
+    )
+    if tuple(occurrence_coordinates) != closure_coordinates:
+        return (
+            "playbill.line.provider_implementation_closure_incomplete",
+            "Line Provider closures must cover every slot-filled "
+            "Source/Provider occurrence exactly.",
+        )
+    bindings = {item.slot_name: item.artifact_pin for item in line.slot_bindings}
+    closures = {item.node_id: item for item in line.provider_implementation_closures}
+    for node_id, node in occurrences:
+        provider_binding = getattr(node, "provider")
+        interface_pin = getattr(node, "interface")
+        interface_digest = getattr(node, "interface_digest")
+        node_implementation_digest = getattr(node, "implementation_digest")
+        closure = closures.get(node_id)
+        provider_pin: ArtifactPin | None
+        if isinstance(provider_binding, ArtifactPin):
+            provider_pin = provider_binding
+            implementation_digest = node_implementation_digest
+        else:
+            if not isinstance(provider_binding, ProcedurePinSlotRefV1):
+                return (
+                    "playbill.line.provider_interface_pin_mismatch",
+                    f"Provider occurrence {node_id!r} has an unsupported binding.",
+                )
+            provider_pin = bindings.get(provider_binding.slot_name)
+            slot_name = provider_binding.slot_name
+            if closure is None or closure.slot_name != slot_name:
+                return (
+                    "playbill.line.provider_implementation_closure_incomplete",
+                    f"Provider occurrence {node_id!r} lacks its exact slot closure.",
+                )
+            implementation_digest = closure.implementation_digest
+        if provider_pin is None:
+            return (
+                "playbill.line.provider_implementation_unavailable",
+                f"Provider occurrence {node_id!r} has no exact Provider pin.",
+            )
+        accepted_provider = providers.get(provider_pin.artifact_digest)
+        if accepted_provider is None or not isinstance(accepted_provider.provider, ProviderV2):
+            return (
+                "playbill.line.provider_runtime_manifest_required",
+                f"Provider occurrence {node_id!r} does not bind an accepted Provider v2.",
+            )
+        accepted_interface = provider_interfaces.get(interface_pin.artifact_digest)
+        if accepted_interface is None:
+            return (
+                "playbill.line.provider_interface_pin_mismatch",
+                f"Provider occurrence {node_id!r} lacks its accepted interface registration.",
+            )
+        registration = accepted_interface.registration
+        if registration.interface_digest != interface_digest:
+            return (
+                "playbill.line.provider_interface_pin_mismatch",
+                f"Provider occurrence {node_id!r} interface digest does not reproduce.",
+            )
+        matches = tuple(
+            record
+            for record in accepted_provider.provider.implementations
+            if record.implementation_digest == implementation_digest
+            and record.interface_id == registration.interface_id
+            and record.interface_digest == interface_digest
+        )
+        if not matches:
+            return (
+                "playbill.line.provider_implementation_unavailable",
+                f"Provider occurrence {node_id!r} implementation is unavailable.",
+            )
+        if len(matches) != 1:
+            return (
+                "playbill.line.provider_implementation_ambiguous",
+                f"Provider occurrence {node_id!r} implementation is ambiguous.",
+            )
+        record = matches[0]
+        manifest_matches = tuple(
+            item
+            for item in accepted_provider.provider.runtime_artifact.manifest.implementations
+            if item.interface_id == record.interface_id and item.entrypoint == record.entrypoint
+        )
+        if len(manifest_matches) != 1:
+            return (
+                "playbill.line.provider_implementation_ambiguous",
+                f"Provider occurrence {node_id!r} manifest row is not singular.",
+            )
+        manifest = manifest_matches[0]
+        expected_environment_map = ProviderExtrasEnvironmentPinMapV1(
+            required_extras=tuple(
+                sorted(manifest.requires_extras, key=lambda item: item.encode("utf-8"))
+            ),
+            eligible_environment_pin_keys=tuple(
+                reference.environment_pin_key
+                for reference in record.materialization_references
+                if isinstance(reference, ProviderLocalMaterializationReferenceV1)
+            ),
+        )
+        if closure is not None:
+            expected = {
+                "slot_name": slot_name,
+                "provider_artifact_digest": provider_pin.artifact_digest,
+                "interface_artifact_digest": interface_pin.artifact_digest,
+                "interface_digest": interface_digest,
+                "implementation_digest": implementation_digest,
+                "environment_pin_map": expected_environment_map,
+            }
+            if any(getattr(closure, key) != value for key, value in expected.items()):
+                return (
+                    "playbill.line.provider_implementation_pin_mismatch",
+                    f"Provider occurrence {node_id!r} closure does not reproduce exact pins.",
+                )
+    return None
+
+
 __all__ = [
     "AcceptedLineSpecV1",
     "CadenceTriggerPolicyV1",
     "CaptureLandingTriggerPolicyV1",
     "LineSpecFormatError",
     "LineSpecLawResultV1",
+    "LineSpecAny",
     "LineSpecV1",
+    "LineSpecV2",
     "ManualTriggerPolicyV1",
     "TriggerPolicyV1",
     "WindowCloseTriggerPolicyV1",

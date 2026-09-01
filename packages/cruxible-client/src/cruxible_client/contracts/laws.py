@@ -18,11 +18,14 @@ CLAIM_LAW_V2_IDENTIFIER = "playbill.claim.v2"
 CLAIM_LAW_V3_IDENTIFIER = "playbill.claim.v3"
 CAPTURE_CONTRACT_LAW_IDENTIFIER = "playbill.capture-contract.v1"
 PROVIDER_LAW_IDENTIFIER = "playbill.provider.v1"
+PROVIDER_LAW_V2_IDENTIFIER = "playbill.provider.v2"
+PROVIDER_INTERFACE_LAW_IDENTIFIER = "playbill.provider-interface.v1"
 SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER = "playbill.source-acquisition-policy.v1"
 STANDING_MANDATE_LAW_IDENTIFIER = "playbill.standing-mandate.v1"
 PROCEDURE_LAW_IDENTIFIER = "playbill.procedure.v1"
 PROCEDURE_LAW_V2_IDENTIFIER = "playbill.procedure.v2"
 LINE_LAW_IDENTIFIER = "playbill.line.v1"
+LINE_LAW_V2_IDENTIFIER = "playbill.line.v2"
 QUERY_DEFINITION_LAW_IDENTIFIER = "playbill.query-definition.v1"
 EXHAUST_PROMOTION_LAW_IDENTIFIER = "playbill.exhaust-promotion.v1"
 PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER = "playbill.principal-lifecycle.v1"
@@ -191,6 +194,16 @@ PROVIDER_LAW = _artifact_law_coordinate(
     "playbill-provider-v1",
     semantic_revision=3,
 )
+PROVIDER_LAW_V2 = _artifact_law_coordinate(
+    PROVIDER_LAW_V2_IDENTIFIER,
+    "playbill-provider-v2",
+    semantic_revision=1,
+)
+PROVIDER_INTERFACE_LAW = _artifact_law_coordinate(
+    PROVIDER_INTERFACE_LAW_IDENTIFIER,
+    "playbill-provider-interface-v1",
+    semantic_revision=1,
+)
 SOURCE_ACQUISITION_POLICY_LAW = _artifact_law_coordinate(
     SOURCE_ACQUISITION_POLICY_LAW_IDENTIFIER,
     "playbill-source-acquisition-policy-v1",
@@ -201,20 +214,35 @@ STANDING_MANDATE_LAW = _artifact_law_coordinate(
     "playbill-standing-mandate-v1",
     semantic_revision=3,
 )
-PROCEDURE_LAW = _artifact_law_coordinate(
+PROCEDURE_LAW_REVISION_5 = _artifact_law_coordinate(
     PROCEDURE_LAW_IDENTIFIER,
     "playbill-procedure-v1",
     semantic_revision=5,
 )
-PROCEDURE_LAW_V2 = _artifact_law_coordinate(
+PROCEDURE_LAW_V2_REVISION_5 = _artifact_law_coordinate(
     PROCEDURE_LAW_V2_IDENTIFIER,
     "playbill-procedure-v2",
     semantic_revision=5,
+)
+PROCEDURE_LAW = _artifact_law_coordinate(
+    PROCEDURE_LAW_IDENTIFIER,
+    "playbill-procedure-v1",
+    semantic_revision=6,
+)
+PROCEDURE_LAW_V2 = _artifact_law_coordinate(
+    PROCEDURE_LAW_V2_IDENTIFIER,
+    "playbill-procedure-v2",
+    semantic_revision=6,
 )
 LINE_LAW = _artifact_law_coordinate(
     LINE_LAW_IDENTIFIER,
     "playbill-line-v1",
     semantic_revision=3,
+)
+LINE_LAW_V2 = _artifact_law_coordinate(
+    LINE_LAW_V2_IDENTIFIER,
+    "playbill-line-v2",
+    semantic_revision=1,
 )
 # Revision 4 retains the relation-traversal refusal and removes dormant role authority.
 QUERY_DEFINITION_LAW = _artifact_law_coordinate(
@@ -236,6 +264,7 @@ class InstalledAcceptanceLaw:
     coordinate: AcceptanceLawCoordinate
     artifact_kind: str
     artifact_tag: str
+    current: bool = True
 
 
 class AcceptanceLawRegistry:
@@ -248,10 +277,11 @@ class AcceptanceLawRegistry:
             key = (law.coordinate.identifier, law.coordinate.digest)
             if key in self._by_coordinate:
                 raise ValueError("duplicate installed acceptance-law coordinate")
-            if law.artifact_tag in self._current_by_tag:
-                raise ValueError("multiple current acceptance laws for one artifact tag")
             self._by_coordinate[key] = law
-            self._current_by_tag[law.artifact_tag] = law
+            if law.current:
+                if law.artifact_tag in self._current_by_tag:
+                    raise ValueError("multiple current acceptance laws for one artifact tag")
+                self._current_by_tag[law.artifact_tag] = law
 
     def resolve_member(self, *, artifact_tag: str) -> InstalledAcceptanceLaw:
         """Resolve from accepted/candidate artifact state, never caller selection."""
@@ -339,6 +369,16 @@ PROVIDER_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="provider",
     artifact_tag="playbill-provider-v1",
 )
+PROVIDER_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=PROVIDER_LAW_V2,
+    artifact_kind="provider",
+    artifact_tag="playbill-provider-v2",
+)
+PROVIDER_INTERFACE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=PROVIDER_INTERFACE_LAW,
+    artifact_kind="provider-interface",
+    artifact_tag="playbill-provider-interface-v1",
+)
 SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=SOURCE_ACQUISITION_POLICY_LAW,
     artifact_kind="source-acquisition-policy",
@@ -359,10 +399,27 @@ PROCEDURE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     artifact_kind="procedure",
     artifact_tag="playbill-procedure-v2",
 )
+PROCEDURE_REVISION_5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=PROCEDURE_LAW_REVISION_5,
+    artifact_kind="procedure",
+    artifact_tag="playbill-procedure-v1",
+    current=False,
+)
+PROCEDURE_V2_REVISION_5_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=PROCEDURE_LAW_V2_REVISION_5,
+    artifact_kind="procedure",
+    artifact_tag="playbill-procedure-v2",
+    current=False,
+)
 LINE_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=LINE_LAW,
     artifact_kind="line",
     artifact_tag="playbill-line-v1",
+)
+LINE_V2_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
+    coordinate=LINE_LAW_V2,
+    artifact_kind="line",
+    artifact_tag="playbill-line-v2",
 )
 QUERY_DEFINITION_ACCEPTANCE_LAW = InstalledAcceptanceLaw(
     coordinate=QUERY_DEFINITION_LAW,
@@ -388,9 +445,14 @@ PLAYBILL_ACCEPTANCE_LAWS = AcceptanceLawRegistry(
         EXHAUST_PROMOTION_ACCEPTANCE_LAW,
         PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
         PROCEDURE_ACCEPTANCE_LAW,
+        PROCEDURE_REVISION_5_ACCEPTANCE_LAW,
         PROCEDURE_V2_ACCEPTANCE_LAW,
+        PROCEDURE_V2_REVISION_5_ACCEPTANCE_LAW,
         LINE_ACCEPTANCE_LAW,
+        LINE_V2_ACCEPTANCE_LAW,
         PROVIDER_ACCEPTANCE_LAW,
+        PROVIDER_V2_ACCEPTANCE_LAW,
+        PROVIDER_INTERFACE_ACCEPTANCE_LAW,
         QUERY_DEFINITION_ACCEPTANCE_LAW,
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         STANDING_MANDATE_ACCEPTANCE_LAW,
@@ -433,21 +495,34 @@ __all__ = [
     "EXHAUST_PROMOTION_LAW_IDENTIFIER",
     "InstalledAcceptanceLaw",
     "LINE_ACCEPTANCE_LAW",
+    "LINE_V2_ACCEPTANCE_LAW",
     "LINE_LAW",
     "LINE_LAW_IDENTIFIER",
+    "LINE_LAW_V2",
+    "LINE_LAW_V2_IDENTIFIER",
     "PLAYBILL_ACCEPTANCE_LAWS",
     "PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW",
     "PRINCIPAL_LIFECYCLE_LAW",
     "PRINCIPAL_LIFECYCLE_LAW_IDENTIFIER",
     "PROVIDER_ACCEPTANCE_LAW",
+    "PROVIDER_V2_ACCEPTANCE_LAW",
+    "PROVIDER_INTERFACE_ACCEPTANCE_LAW",
+    "PROVIDER_INTERFACE_LAW",
+    "PROVIDER_INTERFACE_LAW_IDENTIFIER",
     "PROVIDER_LAW",
     "PROVIDER_LAW_IDENTIFIER",
+    "PROVIDER_LAW_V2",
+    "PROVIDER_LAW_V2_IDENTIFIER",
     "PROCEDURE_ACCEPTANCE_LAW",
     "PROCEDURE_LAW_V2",
+    "PROCEDURE_LAW_V2_REVISION_5",
     "PROCEDURE_LAW_V2_IDENTIFIER",
     "PROCEDURE_V2_ACCEPTANCE_LAW",
+    "PROCEDURE_V2_REVISION_5_ACCEPTANCE_LAW",
     "PROCEDURE_LAW",
+    "PROCEDURE_LAW_REVISION_5",
     "PROCEDURE_LAW_IDENTIFIER",
+    "PROCEDURE_REVISION_5_ACCEPTANCE_LAW",
     "QUERY_DEFINITION_ACCEPTANCE_LAW",
     "QUERY_DEFINITION_LAW",
     "QUERY_DEFINITION_LAW_IDENTIFIER",

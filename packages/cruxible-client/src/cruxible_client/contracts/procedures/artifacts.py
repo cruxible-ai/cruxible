@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import (
@@ -34,12 +35,20 @@ from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
 from cruxible_client.contracts.procedures.contract_schema import ContractSchema, PropertySchema
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest
 from cruxible_client.contracts.procedures.models import (
-    ProcedureDefinitionV3,
+    ProcedureDefinitionAny,
+    ProcedureDefinitionV4,
     ProcedurePinSlotRefV1,
+    ProviderNodeV4,
+    RepeatNodeV4,
+    SourceNodeV4,
     iter_pin_bindings,
 )
+from cruxible_client.contracts.provider_interfaces import (
+    AcceptedProviderInterfaceRegistrationV1,
+)
+from cruxible_client.contracts.providers import AcceptedProviderV1, ProviderV2
 from cruxible_client.contracts.semantic import SemanticAddress
 
 _PROCEDURE_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -64,7 +73,7 @@ def _pin_key(pin: ArtifactPin) -> tuple[bytes, bytes, bytes]:
 class ProcedureArtifactV1(_StrictProcedureArtifactModel):
     artifact_format: Literal["playbill-procedure-v1"] = "playbill-procedure-v1"
     identity: ArtifactIdentity
-    definition: ProcedureDefinitionV3
+    definition: ProcedureDefinitionAny
     definition_digest: str
     pins: tuple[ArtifactPin, ...]
     activation_policy: Literal["drain", "abort", "snapshot", "epoch-check"]
@@ -94,9 +103,9 @@ class ProcedureArtifactV1(_StrictProcedureArtifactModel):
             raise ValueError("Procedure identity must be path-addressable")
         if self.definition.name != self.identity.name:
             raise ValueError("Procedure definition name must match stable artifact identity")
-        expected = compute_procedure_definition_digest_v3(self.definition).tagged
+        expected = compute_procedure_definition_digest(self.definition).tagged
         if self.definition_digest != expected:
-            raise ValueError("Procedure definition_digest does not reproduce graph-format v3")
+            raise ValueError("Procedure definition_digest does not reproduce its graph format")
         declared_exact = {
             (pin.role, pin.target.qualified, pin.artifact_digest) for pin in self.pins
         }
@@ -181,7 +190,7 @@ class ProcedureArtifactV2(_StrictProcedureArtifactModel):
 
     artifact_format: Literal["playbill-procedure-v2"] = "playbill-procedure-v2"
     identity: ArtifactIdentity
-    definition: ProcedureDefinitionV3
+    definition: ProcedureDefinitionAny
     definition_digest: str
     pins: tuple[ArtifactPin, ...]
     owned_contracts: tuple[ProcedureOwnedContractV1, ...]
@@ -228,9 +237,9 @@ class ProcedureArtifactV2(_StrictProcedureArtifactModel):
             raise ValueError("Procedure identity must be path-addressable")
         if self.definition.name != self.identity.name:
             raise ValueError("Procedure definition name must match stable artifact identity")
-        expected = compute_procedure_definition_digest_v3(self.definition).tagged
+        expected = compute_procedure_definition_digest(self.definition).tagged
         if self.definition_digest != expected:
-            raise ValueError("Procedure definition_digest does not reproduce graph-format v3")
+            raise ValueError("Procedure definition_digest does not reproduce its graph format")
         declared_exact = {
             (pin.role, pin.target.qualified, pin.artifact_digest) for pin in self.pins
         }
@@ -369,6 +378,12 @@ def evaluate_procedure_law(
     *,
     path: str,
     predecessor: AcceptedProcedureV1 | None,
+    providers: Mapping[str, AcceptedProviderV1] | None = None,
+    provider_interfaces: Mapping[
+        str,
+        AcceptedProviderInterfaceRegistrationV1,
+    ]
+    | None = None,
 ) -> ProcedureLawResultV1:
     """Evaluate stable identity, predecessor, and exact closure."""
 
@@ -423,12 +438,82 @@ def evaluate_procedure_law(
                 "The proposal changes no registered semantic member.",
                 path=path,
             )
+    if isinstance(procedure.definition, ProcedureDefinitionV4):
+        provider_refusal = _evaluate_graph_v4_provider_pins(
+            procedure.definition,
+            providers={} if providers is None else providers,
+            provider_interfaces=({} if provider_interfaces is None else provider_interfaces),
+        )
+        if provider_refusal is not None:
+            code, message = provider_refusal
+            return _refusal(code, message, path=path)
     return ProcedureLawResultV1(
         verdict="accepted",
         artifact_digest=procedure_artifact_digest(procedure).tagged,
         required_tier="governed_write",
         approval_scope=(),
     )
+
+
+def _evaluate_graph_v4_provider_pins(
+    definition: ProcedureDefinitionV4,
+    *,
+    providers: Mapping[str, AcceptedProviderV1],
+    provider_interfaces: Mapping[str, AcceptedProviderInterfaceRegistrationV1],
+) -> tuple[str, str] | None:
+    occurrences: list[tuple[str, object]] = []
+    for node in definition.nodes:
+        if isinstance(node, SourceNodeV4 | ProviderNodeV4):
+            occurrences.append((node.node_id, node))
+        elif isinstance(node, RepeatNodeV4):
+            occurrences.extend(
+                (f"{node.node_id}.{body.node_id}", body)
+                for body in node.body
+                if body.operation == "provider"
+            )
+    for occurrence_id, occurrence in occurrences:
+        interface_pin = getattr(occurrence, "interface")
+        interface_digest = getattr(occurrence, "interface_digest")
+        accepted_interface = provider_interfaces.get(interface_pin.artifact_digest)
+        if accepted_interface is None or (
+            accepted_interface.registration.identity != interface_pin.target
+            or accepted_interface.registration.interface_digest != interface_digest
+        ):
+            return (
+                "playbill.procedure.provider_interface_pin_mismatch",
+                f"Provider occurrence {occurrence_id!r} does not bind its exact interface.",
+            )
+        provider_binding = getattr(occurrence, "provider")
+        if isinstance(provider_binding, ProcedurePinSlotRefV1):
+            continue
+        accepted_provider = providers.get(provider_binding.artifact_digest)
+        if accepted_provider is None or (
+            accepted_provider.provider.identity != provider_binding.target
+            or not isinstance(accepted_provider.provider, ProviderV2)
+        ):
+            return (
+                "playbill.procedure.provider_runtime_manifest_required",
+                f"Provider occurrence {occurrence_id!r} requires an accepted Provider v2.",
+            )
+        implementation_digest = getattr(occurrence, "implementation_digest")
+        matches = tuple(
+            row
+            for row in accepted_provider.provider.implementations
+            if row.implementation_digest == implementation_digest
+            and row.interface_id == accepted_interface.registration.interface_id
+            and row.interface_digest == interface_digest
+        )
+        if not matches:
+            return (
+                "playbill.procedure.provider_implementation_unavailable",
+                f"Provider occurrence {occurrence_id!r} implementation is unavailable.",
+            )
+        if len(matches) != 1:
+            return (
+                "playbill.procedure.provider_implementation_ambiguous",
+                f"Provider occurrence {occurrence_id!r} implementation is ambiguous.",
+            )
+    return None
 
 
 __all__ = [

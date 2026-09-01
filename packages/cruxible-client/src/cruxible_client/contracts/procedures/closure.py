@@ -32,6 +32,49 @@ class LineSlotBindingV1(_StrictClosureModel):
     artifact_pin: ArtifactPin
 
 
+class ProviderExtrasEnvironmentPinMapV1(_StrictClosureModel):
+    """Reviewable extras-set to eligible local environment-key closure."""
+
+    tag: Literal["playbill-provider-extras-environment-pin-map-v1"] = (
+        "playbill-provider-extras-environment-pin-map-v1"
+    )
+    required_extras: tuple[str, ...]
+    eligible_environment_pin_keys: tuple[str, ...]
+
+    @field_validator("required_extras", "eligible_environment_pin_keys")
+    @classmethod
+    def _sets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if value != tuple(sorted(set(value), key=lambda item: item.encode("utf-8"))):
+            raise ValueError("Provider environment closure sets must be sorted and unique")
+        return value
+
+
+class ProviderImplementationClosureV1(_StrictClosureModel):
+    """One slot-filled Line occurrence's exact Provider implementation closure."""
+
+    tag: Literal["playbill-provider-implementation-closure-v1"] = (
+        "playbill-provider-implementation-closure-v1"
+    )
+    node_id: str
+    slot_name: str
+    provider_artifact_digest: str
+    interface_artifact_digest: str
+    interface_digest: str
+    implementation_digest: str
+    environment_pin_map: ProviderExtrasEnvironmentPinMapV1
+
+    @field_validator(
+        "provider_artifact_digest",
+        "interface_artifact_digest",
+        "interface_digest",
+        "implementation_digest",
+    )
+    @classmethod
+    def _digests(cls, value: str) -> str:
+        ArtifactDigest.from_tagged(value)
+        return value
+
+
 class ProcedureSlotInterfaceV1(_StrictClosureModel):
     """Frozen nominal interface preimage shared by Procedure and implementation."""
 
@@ -136,6 +179,8 @@ def close_procedure_pin_slots(
 __all__ = [
     "ClosedProcedurePinsV1",
     "LineSlotBindingV1",
+    "ProviderExtrasEnvironmentPinMapV1",
+    "ProviderImplementationClosureV1",
     "ProcedurePinClosureError",
     "ProcedureSlotInterfaceV1",
     "close_procedure_pin_slots",

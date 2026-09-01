@@ -20,19 +20,29 @@ from cruxible_client.contracts.laws import (
     DOCUMENT_ACCEPTANCE_LAW,
     EXHAUST_PROMOTION_ACCEPTANCE_LAW,
     LINE_ACCEPTANCE_LAW,
+    LINE_V2_ACCEPTANCE_LAW,
     PLAYBILL_ACCEPTANCE_LAWS,
     PRINCIPAL_LIFECYCLE_ACCEPTANCE_LAW,
     PROCEDURE_ACCEPTANCE_LAW,
+    PROCEDURE_REVISION_5_ACCEPTANCE_LAW,
     PROCEDURE_RUNTIME_POLICY_ACCEPTANCE_LAW,
     PROCEDURE_V2_ACCEPTANCE_LAW,
+    PROCEDURE_V2_REVISION_5_ACCEPTANCE_LAW,
     PROVIDER_ACCEPTANCE_LAW,
+    PROVIDER_INTERFACE_ACCEPTANCE_LAW,
+    PROVIDER_V2_ACCEPTANCE_LAW,
     QUERY_DEFINITION_ACCEPTANCE_LAW,
     SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
     STANDING_MANDATE_ACCEPTANCE_LAW,
     SUBJECT_ACCEPTANCE_LAW,
     InstalledAcceptanceLaw,
 )
-from cruxible_core.playbill.compiler import P2_B0_COMPILER, PC_E1_COMPILER, PC_HR_COMPILER
+from cruxible_core.playbill.compiler import (
+    P2_B0_COMPILER,
+    P2_B1_COMPILER,
+    PC_E1_COMPILER,
+    PC_HR_COMPILER,
+)
 
 LAW_COORDINATES: tuple[
     tuple[InstalledAcceptanceLaw, str, str, int, str],
@@ -123,6 +133,20 @@ LAW_COORDINATES: tuple[
         "sha256:421299d256d325476114cd527325909c354aecab66eae748f380fd38d6158b51",
     ),
     (
+        PROVIDER_V2_ACCEPTANCE_LAW,
+        "playbill.provider.v2",
+        "playbill-provider-v2",
+        1,
+        "sha256:70cabd3f8e60587e32339678a041f906a0059f443451c6afb3478556f5ae0640",
+    ),
+    (
+        PROVIDER_INTERFACE_ACCEPTANCE_LAW,
+        "playbill.provider-interface.v1",
+        "playbill-provider-interface-v1",
+        1,
+        "sha256:f42b09db7656931ac3c42d4f1ac526877bc3346bb83da79547e696f9c01f1636",
+    ),
+    (
         SOURCE_ACQUISITION_POLICY_ACCEPTANCE_LAW,
         "playbill.source-acquisition-policy.v1",
         "playbill-source-acquisition-policy-v1",
@@ -140,15 +164,15 @@ LAW_COORDINATES: tuple[
         PROCEDURE_ACCEPTANCE_LAW,
         "playbill.procedure.v1",
         "playbill-procedure-v1",
-        5,
-        "sha256:5b8317597568eefa490c174ed69ab6a8bad567a37f9159b0d552e32881b13489",
+        6,
+        "sha256:a198a563896996446abf261879f002a664722be359f63f1d7fe701119345a433",
     ),
     (
         PROCEDURE_V2_ACCEPTANCE_LAW,
         "playbill.procedure.v2",
         "playbill-procedure-v2",
-        5,
-        "sha256:6aa5295ab49ce917156d718dd46f6e991a422298581e428bd7a252a7079cec83",
+        6,
+        "sha256:bcb271659f2952b6e655b90b38e478a433b4fcd41fd25f4b8a7dc2a0443aefe9",
     ),
     (
         LINE_ACCEPTANCE_LAW,
@@ -156,6 +180,13 @@ LAW_COORDINATES: tuple[
         "playbill-line-v1",
         3,
         "sha256:ec822853eb8d3dbfddc0a54291205f5310cbf8bdf11f4326d300a1ab70ad5249",
+    ),
+    (
+        LINE_V2_ACCEPTANCE_LAW,
+        "playbill.line.v2",
+        "playbill-line-v2",
+        1,
+        "sha256:d89ad9cd8c1f0433e866da524d6e5be56d45c067217a3bcb2d7be294e0c00d50",
     ),
     (
         QUERY_DEFINITION_ACCEPTANCE_LAW,
@@ -173,11 +204,34 @@ LAW_COORDINATES: tuple[
     ),
 )
 
+HISTORICAL_LAW_COORDINATES: tuple[
+    tuple[InstalledAcceptanceLaw, str, str, int, str],
+    ...,
+] = (
+    (
+        PROCEDURE_REVISION_5_ACCEPTANCE_LAW,
+        "playbill.procedure.v1",
+        "playbill-procedure-v1",
+        5,
+        "sha256:5b8317597568eefa490c174ed69ab6a8bad567a37f9159b0d552e32881b13489",
+    ),
+    (
+        PROCEDURE_V2_REVISION_5_ACCEPTANCE_LAW,
+        "playbill.procedure.v2",
+        "playbill-procedure-v2",
+        5,
+        "sha256:6aa5295ab49ce917156d718dd46f6e991a422298581e428bd7a252a7079cec83",
+    ),
+)
+
 
 def test_playbill_acceptance_law_coordinates_are_exact() -> None:
     seen_coordinates: set[tuple[str, str]] = set()
     seen_tags: set[str] = set()
-    for law, identifier, artifact_tag, revision, expected_digest in LAW_COORDINATES:
+    for law, identifier, artifact_tag, revision, expected_digest in (
+        *LAW_COORDINATES,
+        *HISTORICAL_LAW_COORDINATES,
+    ):
         computed = typed_digest(
             AcceptanceLawDigest,
             "playbill-law-v1",
@@ -192,9 +246,10 @@ def test_playbill_acceptance_law_coordinates_are_exact() -> None:
         assert law.coordinate.digest == expected_digest
         assert law.artifact_tag == artifact_tag
         seen_coordinates.add((identifier, expected_digest))
-        seen_tags.add(artifact_tag)
+        if law.current:
+            seen_tags.add(artifact_tag)
 
-    assert len(seen_coordinates) == len(LAW_COORDINATES)
+    assert len(seen_coordinates) == len(LAW_COORDINATES) + len(HISTORICAL_LAW_COORDINATES)
     assert len(seen_tags) == len(LAW_COORDINATES)
     assert set(PLAYBILL_ACCEPTANCE_LAWS._by_coordinate) == seen_coordinates
     assert set(PLAYBILL_ACCEPTANCE_LAWS._current_by_tag) == seen_tags
@@ -235,3 +290,13 @@ def test_playbill_compiler_coordinate_is_exact() -> None:
         },
     )
     assert PC_HR_COMPILER.rule_digest == pc_hr_expected
+    p2_b1_expected = "sha256:" + canonical_digest(
+        "playbill-compiler-v1",
+        {
+            "implementation": "python-reference",
+            "projection_content": "claims-procedures-runtime-v1",
+            "schema_version": 1,
+            "semantic_revision": 13,
+        },
+    )
+    assert P2_B1_COMPILER.rule_digest == p2_b1_expected

@@ -11,6 +11,7 @@ from cruxible_client.contracts.canonical import ArtifactDigest, CasDigest, Sha25
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNodeV3,
     SourceNodeV3,
+    SourceNodeV4,
     StateTapNodeV3,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
@@ -198,7 +199,7 @@ def validate_run_input_vector(
 
 
 def validate_node_input_plane(
-    node: StateTapNodeV3 | SourceNodeV3 | ExhaustTapNodeV3,
+    node: StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
     run_input: ProcedureRunInputV1,
 ) -> None:
     """Refuse any attempt to relabel evidence between the three input planes."""
@@ -211,8 +212,10 @@ def validate_node_input_plane(
         )
 
 
-def node_input_plane(node: StateTapNodeV3 | SourceNodeV3 | ExhaustTapNodeV3) -> str:
-    """Return the one plane a v3 input node may ever read."""
+def node_input_plane(
+    node: StateTapNodeV3 | SourceNodeV3 | SourceNodeV4 | ExhaustTapNodeV3,
+) -> str:
+    """Return the one plane a graph input node may ever read."""
 
     return _PLANE_FOR_NODE[node.kind]
 

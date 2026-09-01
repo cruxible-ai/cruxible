@@ -46,6 +46,7 @@ from cruxible_client.contracts.procedures.contracts import (
 from cruxible_client.contracts.procedures.graph import (
     ProcedureGraphFormatError,
     compute_procedure_definition_digest_v3,
+    compute_procedure_definition_digest_v4,
 )
 from cruxible_client.contracts.procedures.line_specs import (
     AcceptedLineSpecV1,
@@ -62,19 +63,27 @@ from cruxible_client.contracts.procedures.models import (
     PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
+    ProcedureDefinitionV4,
     ProcedureHardCapsV3,
     ProcedureTransformSpecV1,
     ProjectNodeV3,
     ProviderNodeV3,
+    ProviderNodeV4,
     RepeatBodyNodeV3,
+    RepeatBodyNodeV4,
     RepeatNodeV3,
+    RepeatNodeV4,
     SourceNodeV3,
+    SourceNodeV4,
     StateTapNodeV3,
     TransformNodeV3,
 )
 from cruxible_client.contracts.procedures.results import (
     ProcedureAdmissionRefusalV1,
+    ProcedureProviderBindingV2,
     ProcedureRunReceiptV4,
+    ProcedureRunReceiptV5,
+    ProviderBucketClassificationPlanV1,
 )
 from cruxible_client.contracts.query.grammar import QueryBudgetsV1
 from cruxible_core.playbill.actor_context import GovernedActorContext
@@ -98,6 +107,7 @@ from cruxible_core.playbill.procedures.execution import (
     PROCEDURE_RESULT_MAX_BYTES,
     ExhaustRunMaterialV1,
     PreparedProcedureRunV3,
+    PreparedProcedureRunV4,
     ProcedureAdmissionBoundPayloadV2,
     ProcedureAdmissionBoundPayloadV3,
     ProcedureAdmissionMaterialManifestV1,
@@ -106,6 +116,7 @@ from cruxible_core.playbill.procedures.execution import (
     ProcedureProviderBindingV1,
     ProcedureRunAdmissionV2,
     ProcedureRunAdmissionV3,
+    ProcedureRunAdmissionV4,
     ProcedureRunRefusalV1,
     ProcedureSelectionDecisionV1,
     ProviderInvocationResultV1,
@@ -136,6 +147,9 @@ from cruxible_core.playbill.procedures.run_index import ProcedureRunIndex
 from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.service.playbill_procedure_runs import service_prepare_playbill_line_admission
 from tests.test_playbill._support import initialize_local
+from tests.test_playbill.test_graph_v4_provider_closure import (
+    _accepted_procedure as _accepted_provider_v4_procedure,
+)
 
 NOW = datetime(2026, 8, 17, 13, 0, tzinfo=timezone.utc)
 
@@ -1048,6 +1062,57 @@ def _line_admission(
     )
 
 
+def _line_admission_v4(
+    accepted: AcceptedProcedureV1,
+    fixture: _Fixture,
+) -> ProcedureRunAdmissionV4:
+    v3 = _line_admission(accepted, fixture)
+    plan = ProviderBucketClassificationPlanV1(
+        node_id="provider",
+        interface_artifact_digest=_digest("interface-artifact"),
+        interface_digest=_digest("interface"),
+        vocabulary_digest=_digest("vocabulary"),
+        classifier_digest=_digest("classifier"),
+        accepted_bucket_selectors=("size=*",),
+    )
+    binding = ProcedureProviderBindingV2(
+        node_id=plan.node_id,
+        provider_artifact_digest=_digest("provider"),
+        classification_plan=plan,
+        implementation_digest=_digest("implementation"),
+        effect_class="external_read",
+        secret_binding_identity_digests=(_digest("secret-identity"),),
+    )
+    fields = {
+        name: getattr(v3, name) for name in ProcedureRunAdmissionV3.model_fields if name != "tag"
+    }
+    fields.update(
+        {
+            "run_id": "RUN-" + "0" * 64,
+            "resolved_provider_bindings": (binding,),
+            "semantic_replay_key_digest": "sha256:" + "0" * 64,
+            "admission_binding_digest": "sha256:" + "0" * 64,
+        }
+    )
+    provisional = ProcedureRunAdmissionV4.model_construct(**fields)
+    replay_key = procedure_semantic_replay_key_digest(provisional)
+    provisional = provisional.model_copy(update={"semantic_replay_key_digest": replay_key})
+    admission_digest = procedure_admission_digest(provisional)
+    run_id = procedure_line_run_id(
+        occurrence_id=provisional.occurrence_id or "",
+        attempt=provisional.attempt,
+        admission_binding_digest=admission_digest,
+        occurrence_evaluation_time=provisional.occurrence_evaluation_time,
+    )
+    return ProcedureRunAdmissionV4.model_validate(
+        {
+            **provisional.model_dump(mode="python"),
+            "run_id": run_id,
+            "admission_binding_digest": admission_digest,
+        }
+    )
+
+
 def _accepted_line_for_admission(
     admission: ProcedureRunAdmissionV3,
     accepted_procedure: AcceptedProcedureV1,
@@ -1595,6 +1660,81 @@ def test_three_plane_projection_is_stable_and_material_digest_free(tmp_path) -> 
     )
 
 
+def test_executor_recognizes_graph_v4_source_as_a_landed_capture_input(tmp_path) -> None:
+    accepted = _accepted_provider_v4_procedure()
+    definition = accepted.procedure.definition
+    provider = definition.nodes[0]
+    assert isinstance(provider, ProviderNodeV4)
+    capture_contract = _pin("capture-contract", "CaptureContract", "v4-source")
+    source = SourceNodeV4(
+        node_id="source",
+        capture_contract=capture_contract,
+        provider=provider.provider,
+        interface=provider.interface,
+        interface_digest=provider.interface_digest,
+        implementation_digest=provider.implementation_digest,
+        request={},
+        as_="capture",
+    )
+    source_definition = definition.model_copy(
+        update={"nodes": (source,), "returns": "capture", "pin_slots": ()}
+    )
+    pins = tuple(
+        sorted(
+            (*accepted.procedure.pins, capture_contract),
+            key=lambda pin: (
+                pin.role.encode("utf-8"),
+                pin.target.qualified.encode("utf-8"),
+                pin.artifact_digest.encode("ascii"),
+            ),
+        )
+    )
+    procedure = accepted.procedure.model_copy(
+        update={
+            "definition": source_definition,
+            "definition_digest": compute_procedure_definition_digest_v4(source_definition).tagged,
+            "pins": pins,
+        }
+    )
+    source_accepted = AcceptedProcedureV1(
+        path=accepted.path,
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+    fixture = _fixture(tmp_path)
+    landed = LandedCaptureRunInputV1(
+        input_name="capture",
+        capture_digest=_digest("v4-source-capture"),
+        capture_contract_digest=capture_contract.artifact_digest,
+        landing_cursor="partition:0001",
+    )
+    admission = _line_admission(
+        source_accepted,
+        fixture,
+        landed_capture_inputs=(landed,),
+    )
+    executor = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(source_accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    )
+
+    executor._verify_input_planes(admission, source_accepted)  # noqa: SLF001
+
+    with pytest.raises(PlaybillExecutionError, match="names no Procedure input node"):
+        executor._verify_input_planes(  # noqa: SLF001
+            admission.model_copy(
+                update={
+                    "landed_capture_inputs": (landed.model_copy(update={"input_name": "missing"}),)
+                }
+            ),
+            source_accepted,
+        )
+
+
 def test_admission_material_manifest_is_sorted_and_missing_is_typed(tmp_path) -> None:
     member = ProcedureAdmissionMaterialMemberV1(
         input_name="capture",
@@ -1952,6 +2092,115 @@ def test_line_v3_admission_bound_persists_manifest_not_material_values(
     )
 
 
+def test_line_v4_admission_and_v5_receipt_carry_the_exact_provider_plan(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    fixture = _fixture(tmp_path)
+    accepted = _state_procedure()
+    direct = _prepare(accepted, fixture, _StateReader())
+    admission = _line_admission_v4(accepted, fixture)
+    manifest = ProcedureAdmissionMaterialManifestV1(members=())
+    prepared = PreparedProcedureRunV4(
+        admission=admission,
+        accepted_state_materials=direct.accepted_state_materials,
+        admission_material_manifest=manifest,
+        admission_material_manifest_digest=procedure_admission_material_digest(manifest),
+    )
+    fixture.journal.activate_writer(
+        fixture.stream,
+        admission.journal_partition_id,
+        fencing_token="writer",
+        expected_head=fixture.journal.read_head(
+            fixture.stream,
+            admission.journal_partition_id,
+        ),
+    )
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(prepared, accepted)
+    assert result.status == "succeeded"
+
+    records = fixture.journal.all_records(fixture.stream, admission.journal_partition_id)
+    bound_record = next(item for item in records if item.record.event_kind == "admission_bound")
+    bound_payload = parse_journal_payload(
+        fixture.bodies.read(
+            bound_record.record.payload_digest,
+            access=BodyAccessContext(principal_id="test", can_read_body=True),
+        )
+    )
+    assert bound_payload["tag"] == "playbill-procedure-admission-bound-payload-v4"
+    assert ProcedureRunAdmissionV4.model_validate(bound_payload["admission"]) == admission
+    reachable = ProcedureMaterialReservationStore(
+        fixture.bodies.reservation_root
+    ).reachable_body_digests(records, bodies=fixture.bodies)
+    assert bound_record.record.payload_digest in reachable
+
+    monkeypatch.setattr(procedure_run_service, "_records_for_run", lambda *_args: records)
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    state = procedure_run_service._state_from_records(  # noqa: SLF001
+        _Instance(),
+        run_id=admission.run_id,
+    )
+    assert isinstance(state.receipt, ProcedureRunReceiptV5)
+    assert state.receipt.resolved_provider_bindings == admission.resolved_provider_bindings
+
+
+def test_line_v4_replay_key_commits_every_provider_plan_dimension(tmp_path) -> None:
+    fixture = _fixture(tmp_path)
+    admission = _line_admission_v4(_state_procedure(), fixture)
+    baseline = admission.semantic_replay_key_digest
+    binding = admission.resolved_provider_bindings[0]
+    plan = binding.classification_plan
+
+    changes = (
+        {"provider_artifact_digest": _digest("other-provider")},
+        {
+            "classification_plan": plan.model_copy(
+                update={"interface_artifact_digest": _digest("other-interface-artifact")}
+            )
+        },
+        {
+            "classification_plan": plan.model_copy(
+                update={"interface_digest": _digest("other-interface")}
+            )
+        },
+        {
+            "classification_plan": plan.model_copy(
+                update={"vocabulary_digest": _digest("other-vocabulary")}
+            )
+        },
+        {
+            "classification_plan": plan.model_copy(
+                update={"classifier_digest": _digest("other-classifier")}
+            )
+        },
+        {
+            "classification_plan": plan.model_copy(
+                update={"accepted_bucket_selectors": ("size=large",)}
+            )
+        },
+        {"implementation_digest": _digest("other-implementation")},
+        {"effect_class": "none"},
+    )
+    for change in changes:
+        changed = admission.model_copy(
+            update={"resolved_provider_bindings": (binding.model_copy(update=change),)}
+        )
+        assert procedure_semantic_replay_key_digest(changed) != baseline
+    assert "measured_bucket" not in str(admission.model_dump(mode="json"))
+
+
 def test_line_track_fold_reads_real_v2_and_v3_nested_admission_payloads(tmp_path) -> None:
     fixture = _fixture(tmp_path)
     accepted = _state_procedure()
@@ -2294,6 +2543,60 @@ def test_repeat_body_dispatches_through_kernel_with_attempt_lineage(
     assert isinstance(branch, dict)
     assert branch["repeat_attempt"] == 1
     assert branch["body_lineage"]["shaped"]["items"] == [[], []]  # type: ignore[index]
+
+
+def test_graph_v4_transform_only_repeat_dispatches_through_existing_kernel(
+    tmp_path,
+) -> None:
+    accepted_v3 = _repeat_transform_procedure()
+    definition_v3 = accepted_v3.procedure.definition
+    repeat_v3 = definition_v3.nodes[0]
+    assert isinstance(repeat_v3, RepeatNodeV3)
+    body_v3 = repeat_v3.body[0]
+    repeat_v4 = RepeatNodeV4(
+        node_id=repeat_v3.node_id,
+        max_attempts=repeat_v3.max_attempts,
+        body=(
+            RepeatBodyNodeV4(
+                node_id=body_v3.node_id,
+                operation="transform",
+                transform_kind=body_v3.transform_kind,
+                contract_in=body_v3.contract_in,
+                contract_out=body_v3.contract_out,
+                spec=body_v3.spec.model_dump(mode="json"),
+                as_=body_v3.as_,
+            ),
+        ),
+        until=repeat_v3.until,
+        as_=repeat_v3.as_,
+    )
+    definition_v4 = ProcedureDefinitionV4(
+        **definition_v3.model_dump(mode="python", exclude={"graph_format", "nodes"}),
+        nodes=(repeat_v4,),
+    )
+    procedure_v4 = accepted_v3.procedure.model_copy(
+        update={
+            "definition": definition_v4,
+            "definition_digest": compute_procedure_definition_digest_v4(definition_v4).tagged,
+        }
+    )
+    accepted_v4 = AcceptedProcedureV1(
+        path=accepted_v3.path,
+        procedure=procedure_v4,
+        artifact_digest=procedure_artifact_digest(procedure_v4).tagged,
+    )
+    fixture = _fixture(tmp_path)
+
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted_v4.artifact_digest),
+        contract_validator=_Contracts(),
+    ).execute(_prepare(accepted_v4, fixture, _StateReader()), accepted_v4)
+
+    assert result.status == "succeeded"
 
 
 def test_repeat_body_does_not_charge_without_a_list_contract_path(tmp_path) -> None:

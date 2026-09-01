@@ -26,7 +26,10 @@ from cruxible_client.contracts.canonical import (
 )
 from cruxible_client.contracts.errors import PlaybillExecutionError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
-from cruxible_client.contracts.procedures.graph import compute_procedure_node_digests_v3
+from cruxible_client.contracts.procedures.graph import (
+    compute_procedure_node_digests_v3,
+    compute_procedure_node_digests_v4,
+)
 from cruxible_client.contracts.procedures.measurements import (
     ClaimAttestationProcedureMeasurementV1,
     ClaimStatementProcedureMeasurementV1,
@@ -267,7 +270,11 @@ def derive_resolution_activations(
 
     activated_at = ensure_utc(activated_at)
     definition = accepted.procedure.definition
-    node_digests = compute_procedure_node_digests_v3(definition)
+    node_digests = (
+        compute_procedure_node_digests_v3(definition)
+        if definition.graph_format == 3
+        else compute_procedure_node_digests_v4(definition)
+    )
     activations: list[ResolutionContractActivationV1] = []
     for declaration in definition.measurements:
         node_id: str | None = None

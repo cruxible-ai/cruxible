@@ -568,6 +568,7 @@ def _validated_admission_material_members(payload: object) -> tuple[Any, ...]:
     if tag not in {
         "playbill-procedure-admission-bound-payload-v2",
         "playbill-procedure-admission-bound-payload-v3",
+        "playbill-procedure-admission-bound-payload-v4",
     }:
         raise ProcedureMaterialRecoveryRequired(
             "run_recovery_required: admission payload version is unsupported"
@@ -576,12 +577,17 @@ def _validated_admission_material_members(payload: object) -> tuple[Any, ...]:
         from cruxible_core.playbill.procedures.execution import (
             ProcedureAdmissionBoundPayloadV2,
             ProcedureAdmissionBoundPayloadV3,
+            ProcedureAdmissionBoundPayloadV4,
         )
 
         if tag == "playbill-procedure-admission-bound-payload-v2":
             ProcedureAdmissionBoundPayloadV2.model_validate(payload)
             return ()
-        bound = ProcedureAdmissionBoundPayloadV3.model_validate(payload)
+        bound = (
+            ProcedureAdmissionBoundPayloadV4.model_validate(payload)
+            if tag == "playbill-procedure-admission-bound-payload-v4"
+            else ProcedureAdmissionBoundPayloadV3.model_validate(payload)
+        )
     except Exception as exc:
         raise ProcedureMaterialRecoveryRequired(
             "run_recovery_required: admission material manifest is corrupt"

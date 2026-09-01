@@ -18,6 +18,7 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV2,
     ProcedureRunReceiptV3,
     ProcedureRunReceiptV4,
+    ProcedureRunReceiptV5,
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.workspace_advertisement import (
@@ -969,7 +970,13 @@ class PlaybillProcedureRunState(BaseModel):
     attribution: ProcedureRunAttributionV1 | None = None
     semantic_replay_key_digest: str | None = None
     semantic_result_digest: str | None = None
-    receipt: ProcedureRunReceiptV2 | ProcedureRunReceiptV3 | ProcedureRunReceiptV4 | None = None
+    receipt: (
+        ProcedureRunReceiptV2
+        | ProcedureRunReceiptV3
+        | ProcedureRunReceiptV4
+        | ProcedureRunReceiptV5
+        | None
+    ) = None
     receipt_digest: str | None = None
     terminal: ProcedureTerminalV1 | None = None
 

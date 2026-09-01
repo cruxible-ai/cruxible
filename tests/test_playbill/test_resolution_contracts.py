@@ -31,7 +31,11 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
     render_procedure,
 )
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.graph import (
+    compute_procedure_definition_digest_v3,
+    compute_procedure_definition_digest_v4,
+    compute_procedure_node_digests_v4,
+)
 from cruxible_client.contracts.procedures.measurements import (
     AcceptedQueryProcedureMeasurementV1,
     ProcedureMeasurementDeclarationV1,
@@ -43,6 +47,7 @@ from cruxible_client.contracts.procedures.models import (
     PredicateOperandV1,
     ProcedureBudgetV3,
     ProcedureDefinitionV3,
+    ProcedureDefinitionV4,
     ProcedureHardCapsV3,
     ProjectNodeV3,
     StateTapNodeV3,
@@ -242,6 +247,24 @@ def _accepted() -> AcceptedProcedureV1:
     )
 
 
+def _accepted_v4() -> AcceptedProcedureV1:
+    historical = _accepted()
+    payload = historical.procedure.definition.model_dump(mode="python", by_alias=True)
+    payload["graph_format"] = 4
+    definition = ProcedureDefinitionV4.model_validate(payload)
+    procedure = historical.procedure.model_copy(
+        update={
+            "definition": definition,
+            "definition_digest": compute_procedure_definition_digest_v4(definition).tagged,
+        }
+    )
+    return AcceptedProcedureV1(
+        path=historical.path,
+        procedure=procedure,
+        artifact_digest=procedure_artifact_digest(procedure).tagged,
+    )
+
+
 def test_accepted_measurements_derive_exact_semantic_grains_and_windows() -> None:
     accepted = _accepted()
     activations = derive_resolution_activations(
@@ -268,6 +291,22 @@ def test_accepted_measurements_derive_exact_semantic_grains_and_windows() -> Non
         )
         == activations
     )
+
+
+def test_graph_v4_measurements_use_v4_node_and_subtree_digests() -> None:
+    accepted = _accepted_v4()
+    activations = derive_resolution_activations(
+        accepted,
+        accepted_coordinate=_coordinate(),
+        activated_at=NOW,
+    )
+    expected = compute_procedure_node_digests_v4(accepted.procedure.definition)
+
+    arm, node, unit = activations
+    assert arm.from_node_local_digest == expected["gate"].local_digest
+    assert arm.node_local_digest == expected["hot"].local_digest
+    assert node.node_local_digest == expected["hot"].local_digest
+    assert unit.subject.content_digest == accepted.procedure.definition_digest
 
 
 def test_resolution_and_latest_disposition_replay_from_exhaust(tmp_path) -> None:

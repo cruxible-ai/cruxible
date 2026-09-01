@@ -18,7 +18,10 @@ from cruxible_client.contracts.procedures.artifacts import (
     procedure_path,
 )
 from cruxible_client.contracts.procedures.contract_schema import PropertySchema
-from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
+from cruxible_client.contracts.procedures.graph import (
+    compute_procedure_definition_digest_v3,
+    compute_procedure_definition_digest_v4,
+)
 from cruxible_client.contracts.procedures.models import (
     GuardNodeV3,
     GuardPredicateV1,
@@ -26,6 +29,9 @@ from cruxible_client.contracts.procedures.models import (
     PredicateOperandV1,
     ProcedurePinSlotRefV1,
     ProcedurePinSlotV1,
+    ProviderNodeV4,
+    RepeatBodyNodeV4,
+    RepeatNodeV4,
     SourceNodeV3,
     StateTapNodeV3,
     TransformNodeV3,
@@ -52,9 +58,11 @@ from cruxible_core.playbill.projection import AcceptedCoordinate
 from cruxible_core.playbill.proposals import AuthenticatedActor
 from cruxible_core.service.playbill_procedure_runs import (
     DirectProcedureReceiptReducer,
+    ProcedureBindingGraphV4LineClosureRequired,
     ProcedureBindingTargetV1,
     ProcedureBindRequestV1,
     ProcedureReadinessRequestV1,
+    ProcedureRunNotCurrent,
     ProcedureRunNotFound,
     ProcedureRunRecoveryRequired,
     ProcedureRunRequestV2,
@@ -73,6 +81,9 @@ from tests.test_playbill._knowledge_loop_support import (
     work_item_query,
 )
 from tests.test_playbill._support import FIXED_TIMESTAMP, initialize_local
+from tests.test_playbill.test_graph_v4_provider_closure import (
+    _accepted_procedure as _accepted_provider_v4_procedure,
+)
 from tests.test_playbill.test_procedure_owned_contracts import (
     _accepted_query_procedure,
     _activate_procedure,
@@ -251,7 +262,7 @@ def test_direct_receipt_reducer_identity_is_stable() -> None:
     assert QUERY_NAME
 
 
-def test_explicit_historical_coordinate_uses_read_only_replay_lane(tmp_path: Path) -> None:
+def test_explicit_historical_coordinate_obeys_live_activation_policy(tmp_path: Path) -> None:
     instance, owner, procedure = _world(tmp_path)
     historical = instance.accepted_coordinate()
     successor = procedure.model_copy(
@@ -271,25 +282,23 @@ def test_explicit_historical_coordinate_uses_read_only_replay_lane(tmp_path: Pat
         sequence=5,
         timestamp="2026-08-24T17:00:00.000000Z",
     )
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+    assert not journal_root.exists()
 
-    run = service_run_playbill_procedure(
-        instance,
-        name=procedure.identity.name,
-        request=ProcedureRunRequestV2(
-            at=AcceptedCoordinate.from_internal(historical),
-            input={},
-        ),
-        actor_context=_actor(instance),
-    )
-
-    assert run.status == "succeeded"
-    assert run.lane == "replay"
-    assert run.bound_coordinate.git_oid == historical.git_oid
-    assert run.head_at_admission.git_oid == instance.accepted_coordinate().git_oid
-    assert run.evaluation_time.isoformat() == "2026-08-24T15:00:00+00:00"
+    with pytest.raises(ProcedureRunNotCurrent, match="not current"):
+        service_run_playbill_procedure(
+            instance,
+            name=procedure.identity.name,
+            request=ProcedureRunRequestV2(
+                at=AcceptedCoordinate.from_internal(historical),
+                input={},
+            ),
+            actor_context=_actor(instance),
+        )
+    assert not journal_root.exists()
 
 
-def test_explicit_at_equal_to_head_still_selects_replay_lane(tmp_path: Path) -> None:
+def test_explicit_at_equal_to_head_selects_live_lane(tmp_path: Path) -> None:
     instance, _owner, procedure = _world(tmp_path)
     head = instance.accepted_coordinate()
 
@@ -304,7 +313,7 @@ def test_explicit_at_equal_to_head_still_selects_replay_lane(tmp_path: Path) -> 
     )
 
     assert run.status == "succeeded"
-    assert run.lane == "replay"
+    assert run.lane == "current"
     assert run.bound_coordinate.git_oid == head.git_oid
     assert run.head_at_admission.git_oid == head.git_oid
 
@@ -1038,7 +1047,7 @@ def test_served_guard_runs_through_the_existing_executor(tmp_path: Path) -> None
     assert halted.receipt.terminal == halted.terminal
 
 
-def test_unsupported_source_refuses_before_opening_a_journal(
+def test_graph_v3_source_live_and_receiptless_replay_refuse_before_journal(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1105,5 +1114,139 @@ def test_unsupported_source_refuses_before_opening_a_journal(
 
     assert result.status == "admission_refused"
     assert isinstance(result.terminal, ProcedureAdmissionRefusalV1)
-    assert result.terminal.code == "unsupported_node"
+    assert result.terminal.code == "provider_explicit_implementation_required"
+    assert result.terminal.details["legacy_external_occurrences"] == ["source"]
     assert not journal_root.exists()
+
+    replay = service_run_playbill_procedure(
+        instance,
+        name=unsupported.identity.name,
+        request=ProcedureRunRequestV2(
+            at=AcceptedCoordinate.from_internal(instance.accepted_coordinate()),
+            input={},
+        ),
+        actor_context=_actor(instance),
+    )
+    assert replay.status == "admission_refused"
+    assert isinstance(replay.terminal, ProcedureAdmissionRefusalV1)
+    assert replay.lane == "current"
+    assert replay.terminal.code == "provider_explicit_implementation_required"
+    assert not journal_root.exists()
+
+
+def test_graph_v4_repeat_provider_refuses_before_journal(tmp_path: Path, monkeypatch) -> None:
+    instance, _owner, _procedure = _world(tmp_path)
+    accepted = _accepted_provider_v4_procedure()
+    definition = accepted.procedure.definition
+    direct = definition.nodes[0]
+    assert isinstance(direct, ProviderNodeV4)
+    repeat = RepeatNodeV4(
+        node_id="repeat",
+        max_attempts=2,
+        body=(
+            RepeatBodyNodeV4(
+                node_id="provider",
+                operation="provider",
+                provider=direct.provider,
+                interface=direct.interface,
+                interface_digest=direct.interface_digest,
+                implementation_digest=direct.implementation_digest,
+                contract_in=direct.contract_in,
+                contract_out=direct.contract_out,
+                spec=direct.input,
+                as_="provider_result",
+            ),
+        ),
+        until=GuardPredicateV1(
+            left=PredicateOperandV1(kind="exists", alias="provider_result"),
+            operator="eq",
+            right=PredicateOperandV1(kind="literal", value=True),
+        ),
+        as_="result",
+    )
+    repeat_definition = definition.model_copy(
+        update={"nodes": (repeat,), "returns": "result", "pin_slots": ()}
+    )
+    repeat_procedure = accepted.procedure.model_copy(
+        update={
+            "definition": repeat_definition,
+            "definition_digest": compute_procedure_definition_digest_v4(repeat_definition).tagged,
+        }
+    )
+    repeat_accepted = AcceptedProcedureV1(
+        path=accepted.path,
+        procedure=repeat_procedure,
+        artifact_digest=procedure_artifact_digest(repeat_procedure).tagged,
+    )
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: repeat_accepted,
+    )
+    journal_root = instance.root / instance.descriptor.storage.exhaust / "procedure-runs"
+
+    result = service_run_playbill_procedure(
+        instance,
+        name=repeat_procedure.identity.name,
+        request=ProcedureRunRequestV2(input={}),
+        actor_context=_actor(instance),
+    )
+
+    assert result.status == "admission_refused"
+    assert isinstance(result.terminal, ProcedureAdmissionRefusalV1)
+    assert result.terminal.code == "unsupported_node"
+    assert result.terminal.details["unsupported_nodes"] == [
+        {"node_id": "repeat.provider", "kind": "provider"}
+    ]
+    assert not journal_root.exists()
+
+
+def test_graph_v4_bind_routes_only_through_line_closure(tmp_path: Path, monkeypatch) -> None:
+    instance, _owner, _procedure = _world(tmp_path)
+    accepted = _accepted_provider_v4_procedure()
+    monkeypatch.setattr(
+        procedure_run_service,
+        "_accepted_procedure",
+        lambda *_args, **_kwargs: accepted,
+    )
+
+    readiness = service_playbill_procedure_readiness(
+        instance,
+        name=accepted.procedure.identity.name,
+        request=ProcedureReadinessRequestV1(evaluation_time=READ_TIME),
+    )
+    assert readiness.state == "unsupported"
+    assert readiness.next_operation.kind == "terminal"
+    assert readiness.required_slots == ("provider",)
+    assert readiness.unsupported_nodes[-1].node_id == "procedure"
+    assert readiness.unsupported_nodes[-1].kind == "graph_v4_line_closure_required"
+
+    refused = service_run_playbill_procedure(
+        instance,
+        name=accepted.procedure.identity.name,
+        request=ProcedureRunRequestV2(input={}),
+        actor_context=_actor(instance),
+    )
+    assert isinstance(refused.terminal, ProcedureAdmissionRefusalV1)
+    assert refused.terminal.message == (
+        "Graph-v4 Provider slots require accepted Line closure before execution."
+    )
+
+    with pytest.raises(
+        ProcedureBindingGraphV4LineClosureRequired,
+        match="resolved only by accepted Line closure",
+    ):
+        service_bind_playbill_procedure(
+            instance,
+            name=accepted.procedure.identity.name,
+            request=ProcedureBindRequestV1(
+                bindings=(
+                    ProcedureSlotBindingRequestV1(
+                        slot_name="provider",
+                        target=ProcedureBindingTargetV1(kind="Provider", name="demo-provider"),
+                    ),
+                )
+            ),
+            actor=AuthenticatedActor(actor_id="owner"),
+            timestamp="2026-08-24T16:00:00.000000Z",
+        )
