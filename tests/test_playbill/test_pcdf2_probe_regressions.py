@@ -17,6 +17,7 @@ from cruxible_client.contracts.artifacts import ArtifactIdentity
 from cruxible_client.contracts.claim_types import claim_type_path, parse_claim_type
 from cruxible_client.contracts.claims import claim_path, parse_claim
 from cruxible_client.contracts.laws import CLAIM_LAW_V3_IDENTIFIER, _artifact_law_coordinate
+from cruxible_core.playbill import instance as instance_module
 from cruxible_core.playbill.claim_type_inputs import ClaimTypeInputV1
 from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeDependentDispositionV3,
@@ -25,7 +26,6 @@ from cruxible_core.playbill.claim_type_migrations import (
     ClaimTypeMigrationResultV3,
     service_migrate_claim_type,
 )
-from cruxible_core.playbill import instance as instance_module
 from cruxible_core.playbill.compiler import (
     P2_B2_COMPILER,
     PC_DF2_COMPILER,

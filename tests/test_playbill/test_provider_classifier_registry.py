@@ -116,7 +116,6 @@ def test_classifier_install_order_does_not_change_digest_keyed_availability() ->
 
 def test_production_catalog_carries_fixtures_but_no_demo_executable() -> None:
     accepted = accepted_interface()
-    digest = accepted.registration.classifier_digest
     registry = ProviderBucketClassifierRegistry()
 
     assert set(core_provider_bucket_conformance_fixtures()) == {"demo.small"}

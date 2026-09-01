@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
-from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
-from cruxible_client.contracts.canonical import CanonicalValue
+from cruxible_client.contracts.canonical import (
+    ArtifactDigest,
+    CanonicalValue,
+    canonical_bytes,
+    typed_digest,
+)
 from cruxible_client.contracts.provider_interfaces import (
     AcceptedProviderInterfaceRegistrationV1,
     ProviderBucketClassV1,
