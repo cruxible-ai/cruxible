@@ -1374,11 +1374,22 @@ def evaluate_claim_law(
         predecessor is not None
         and predecessor.path == path
         and claim.lifecycle.predecessor_digest == predecessor.artifact_digest
-        and _is_claim_type_attributed_retirement(
-            claim,
-            predecessor=predecessor.claim,
-            claim_type_digest=claim_type.artifact_digest,
-            claim_type_identity=contract.identity,
+        and (
+            _is_claim_type_attributed_retirement(
+                claim,
+                predecessor=predecessor.claim,
+                claim_type_digest=claim_type.artifact_digest,
+                claim_type_identity=contract.identity,
+            )
+            or (
+                predecessor.claim.lifecycle.state == "retired"
+                and _is_claim_type_rederivation(
+                    claim,
+                    predecessor=predecessor.claim,
+                    claim_type_digest=claim_type.artifact_digest,
+                    claim_type_identity=contract.identity,
+                )
+            )
         )
     )
     claim_type_retirement_shape_exempt = (

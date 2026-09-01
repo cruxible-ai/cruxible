@@ -284,6 +284,11 @@ from cruxible_core.playbill.query.engine import (
     query_execution_receipt,
 )
 
+# The rev-8 tombstone shape rule is historical and must not change meaning when
+# the module's current-law binding advances in a later release. Keep the exact
+# coordinate object captured at import time for replay and migration checks.
+_CLAIM_LAW_V3_TOMBSTONE_COORDINATE = CLAIM_LAW_V3
+
 _DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.json$")
 _APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.json$")
 _PROCEDURE_RUNTIME_POLICY_PATH_RE = re.compile(r"^governance/procedure-runtime-policy\.json$")
@@ -2008,7 +2013,9 @@ def _claim_member(context: _MemberContext) -> _MemberVerdict:
         accepted_coordinate=context.accepted_coordinate(),
         accepted_referent_coordinates=context.accepted_referent_coordinates,
         evaluation_time=datetime.fromisoformat(context.timestamp.replace("Z", "+00:00")),
-        allow_claim_type_retirement_shape_exemption=(installed.coordinate == CLAIM_LAW_V3),
+        allow_claim_type_retirement_shape_exemption=(
+            installed.coordinate == _CLAIM_LAW_V3_TOMBSTONE_COORDINATE
+        ),
     )
     if law.verdict == "refused":
         return _MemberVerdict(diagnostics=tuple(law.diagnostics))
