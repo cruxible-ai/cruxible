@@ -183,6 +183,7 @@ def _current_cli_context() -> CliContextState:
         server_url=obj.get("server_url"),
         server_socket=obj.get("server_socket"),
         instance_id=obj.get("instance_id"),
+        instance_transport=obj.get("instance_transport"),
     )
 
 
@@ -201,6 +202,15 @@ def _activate_server_instance(instance_id: str) -> ActiveInstanceChange | None:
             server_url=state.server_url,
             server_socket=state.server_socket,
             instance_id=instance_id,
+            instance_transport=(
+                state.server_url.rstrip("/")
+                if state.server_url
+                else (
+                    f"unix://{Path(state.server_socket).expanduser().resolve()}"
+                    if state.server_socket
+                    else None
+                )
+            ),
         )
     )
     _root_ctx_obj()["instance_id"] = instance_id
@@ -212,12 +222,14 @@ def _persist_cli_context(
     server_url: str | None,
     server_socket: str | None,
     instance_id: str | None,
+    instance_transport: str | None = None,
 ) -> None:
     save_cli_context(
         CliContextState(
             server_url=server_url,
             server_socket=server_socket,
             instance_id=instance_id,
+            instance_transport=instance_transport,
         )
     )
 
@@ -253,6 +265,8 @@ def _require_instance_id() -> str:
     instance_id = _root_ctx_obj().get("instance_id")
     if not instance_id:
         obj = _root_ctx_obj()
+        if mismatch := obj.get("context_instance_transport_mismatch"):
+            raise click.UsageError(str(mismatch))
         source = _target_source_qualifier(
             str(obj.get("target_instance_source") or "local"),
             str(obj.get("target_transport_source") or "local"),

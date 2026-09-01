@@ -21,6 +21,7 @@ def _isolate_target_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         "CRUXIBLE_SERVER_SOCKET",
         "CRUXIBLE_INSTANCE_ID",
         "CRUXIBLE_PLAYBILL_WORKSPACE",
+        "CRUXIBLE_NO_WORKSPACE",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -260,7 +261,7 @@ def test_host_creation_names_explicit_requested_id(
     )
 
 
-def test_explicit_transport_and_remembered_instance_resolve_independently(
+def test_explicit_transport_does_not_inherit_another_daemons_remembered_instance(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -275,15 +276,56 @@ def test_explicit_transport_and_remembered_instance_resolve_independently(
 
     result = CliRunner().invoke(
         cli,
-        ["--server-url", "https://other.example.test", "context", "show", "--json"],
+        [
+            "--server-url",
+            "https://other.example.test",
+            "playbill",
+            "proposal",
+            "activate",
+            "proposal-1",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "context_instance_transport_mismatch" in result.output
+    assert "https://remembered.example.test" in result.output
+    assert "https://other.example.test" in result.output
+    assert "--instance-id <id>" in result.output
+    assert "inst_remembered" not in result.stderr
+
+
+def test_explicit_transport_and_instance_are_used_together(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(tmp_path)
+    save_cli_context(
+        CliContextState(
+            server_url="https://remembered.example.test",
+            instance_id="inst_remembered",
+        )
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://other.example.test",
+            "--instance-id",
+            "inst_explicit",
+            "context",
+            "show",
+            "--json",
+        ],
     )
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["server_url"] == "https://other.example.test"
+    assert payload["instance_id"] == "inst_explicit"
     assert payload["transport_source"] == "explicit"
-    assert payload["instance_id"] == "inst_remembered"
-    assert payload["instance_source"] == "remembered"
+    assert payload["instance_source"] == "explicit"
 
 
 def test_coverage_commands_are_reads_and_stay_out_of_the_mutating_inventory(

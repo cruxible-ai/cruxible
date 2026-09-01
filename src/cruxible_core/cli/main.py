@@ -6,6 +6,7 @@ import functools
 import importlib
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import click
@@ -755,6 +756,12 @@ CLI_COMMANDS: dict[str, LazyCommandSpec] = {
     help="Opaque server-mode instance ID. Defaults to remembered CLI context.",
 )
 @click.option(
+    "--no-workspace",
+    is_flag=True,
+    default=False,
+    help="Disable workspace binding discovery (also CRUXIBLE_NO_WORKSPACE=1).",
+)
+@click.option(
     "--json-compact",
     is_flag=True,
     default=None,
@@ -766,6 +773,7 @@ def cli(
     server_url: str | None,
     server_socket: str | None,
     instance_id: str | None,
+    no_workspace: bool,
     json_compact: bool | None,
 ) -> None:
     """Cruxible — hard state for AI agents: governed, queryable, durable, with receipts."""
@@ -776,6 +784,7 @@ def cli(
             server_socket=server_socket,
             instance_id=instance_id,
             remembered=stored.as_json(),
+            no_workspace=no_workspace,
         )
         settings = resolve_server_settings(
             server_url=resolved.server_url,
@@ -783,6 +792,9 @@ def cli(
         )
     except (ConfigError, PlaybillContextResolutionError) as exc:
         raise click.UsageError(str(exc)) from exc
+
+    for warning in resolved.warnings:
+        click.echo(f"warning: {warning}", err=True)
 
     ctx.ensure_object(dict)
     ctx.obj.update(
@@ -794,6 +806,16 @@ def cli(
             "json_compact": json_compact,
             "target_transport_source": resolved.transport_source,
             "target_instance_source": resolved.instance_source,
+            "instance_transport": (
+                resolved.server_url.rstrip("/")
+                if resolved.instance_id and resolved.server_url
+                else (
+                    f"unix://{Path(resolved.server_socket).expanduser().resolve()}"
+                    if resolved.instance_id and resolved.server_socket
+                    else None
+                )
+            ),
+            "context_instance_transport_mismatch": (resolved.instance_transport_mismatch),
             "playbill_workspace": str(resolved.workspace),
             "workspace_source": resolved.workspace_source,
             "workspace_binding_path": (

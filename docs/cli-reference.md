@@ -16,9 +16,14 @@ Target resolution is component-wise and deterministic: explicit flags, then
 `CRUXIBLE_SERVER_URL` / `CRUXIBLE_SERVER_SOCKET` / `CRUXIBLE_INSTANCE_ID`, then
 the attached workspace discovered from `CRUXIBLE_PLAYBILL_WORKSPACE` or by
 walking up from the current directory to `.playbill/coverage.json`, then the
-remembered global context. A workspace is attached when that file names an
-instance and exactly one of `server_url` or `server_socket`. The global context
-is only a fallback and entering one workspace never retargets another.
+remembered global context. Automatic walk-up stops after the home directory and
+never crosses a filesystem boundary. `--no-workspace` or
+`CRUXIBLE_NO_WORKSPACE=1` disables workspace discovery for recovery from a bad
+ancestor binding. A workspace is attached when that file names an instance and
+exactly one of `server_url` or `server_socket`; its root must agree with the root
+of `.playbill/sources.yaml` when both exist. The global context is only a
+fallback, its remembered instance remains bound to the transport on which it
+was selected, and entering one workspace never retargets another.
 
 ## context
 

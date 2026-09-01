@@ -28,7 +28,10 @@ from cruxible_client.authoring.blocks import (
     assert_independent_projection_evidence,
     repin_projection_block,
 )
-from cruxible_client.authoring.context import resolve_playbill_context
+from cruxible_client.authoring.context import (
+    PlaybillContextResolutionError,
+    resolve_playbill_context,
+)
 from cruxible_client.authoring.insertions import (
     apply_playbill_publication,
     replace_publication_file,
@@ -871,6 +874,8 @@ class Playbill:
         if resolved.server_url is None and resolved.server_socket is None:
             raise ValueError("Playbill connection requires a server target")
         if not resolved.instance_id:
+            if resolved.instance_transport_mismatch:
+                raise PlaybillContextResolutionError(resolved.instance_transport_mismatch)
             raise ValueError("Playbill connection requires an instance")
         raw_token = (
             token.get_secret_value()

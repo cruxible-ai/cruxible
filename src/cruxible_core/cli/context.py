@@ -19,6 +19,16 @@ class CliContextState:
     server_url: str | None = None
     server_socket: str | None = None
     instance_id: str | None = None
+    instance_transport: str | None = None
+
+    def bound_instance_transport(self) -> str | None:
+        if self.instance_transport:
+            return self.instance_transport
+        if self.server_url:
+            return self.server_url.rstrip("/")
+        if self.server_socket:
+            return f"unix://{Path(self.server_socket).expanduser().resolve()}"
+        return None
 
     def as_json(self) -> dict[str, str]:
         payload: dict[str, str] = {}
@@ -28,6 +38,9 @@ class CliContextState:
             payload["server_socket"] = self.server_socket
         if self.instance_id:
             payload["instance_id"] = self.instance_id
+            bound_transport = self.bound_instance_transport()
+            if bound_transport:
+                payload["instance_transport"] = bound_transport
         return payload
 
 
@@ -57,10 +70,12 @@ def load_cli_context(environ: Mapping[str, str] | None = None) -> CliContextStat
     server_url = payload.get("server_url")
     server_socket = payload.get("server_socket")
     instance_id = payload.get("instance_id")
+    instance_transport = payload.get("instance_transport")
     for key, value in (
         ("server_url", server_url),
         ("server_socket", server_socket),
         ("instance_id", instance_id),
+        ("instance_transport", instance_transport),
     ):
         if value is not None and not isinstance(value, str):
             raise ConfigError(f"CLI context field '{key}' must be a string when set")
@@ -68,6 +83,7 @@ def load_cli_context(environ: Mapping[str, str] | None = None) -> CliContextStat
         server_url=server_url,
         server_socket=server_socket,
         instance_id=instance_id,
+        instance_transport=instance_transport,
     )
 
 

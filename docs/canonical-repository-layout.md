@@ -16,10 +16,13 @@ accepted ledger, or trust root belongs in the source repository.
     floor/
 ~~~
 
-`sources.yaml`, `coverage.json`, and `presentation-policy.json` are shareable
-configuration. `sources.local.yaml` is an optional machine-local overlay and
-must be ignored. `.playbill/floor/` is a derived, exactly replaceable cache and
-must also be ignored. A typical ignore fragment is:
+`sources.yaml`, `coverage.json`, and `presentation-policy.json` are shareable,
+workspace-local, ungoverned configuration: they never enter the accepted tree
+or grant authority. The optional `server_socket` field is a local attachment
+transport in both retained coverage-config spellings; adding it does not create
+a governed artifact revision. `sources.local.yaml` is an optional machine-local
+overlay and must be ignored. `.playbill/floor/` is a derived, exactly replaceable
+cache and must also be ignored. A typical ignore fragment is:
 
 ~~~gitignore
 .playbill/sources.local.yaml

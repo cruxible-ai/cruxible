@@ -84,14 +84,22 @@ def context_connect(
     )
     if instance_id is not None:
         resolved_instance_id = instance_id
+        resolved_instance_transport = (
+            settings.server_url.rstrip("/")
+            if settings.server_url
+            else f"unix://{settings.server_socket}"
+        )
     elif transport_changed:
         resolved_instance_id = None
+        resolved_instance_transport = None
     else:
         resolved_instance_id = existing.instance_id
+        resolved_instance_transport = existing.bound_instance_transport()
     _persist_cli_context(
         server_url=settings.server_url,
         server_socket=settings.server_socket,
         instance_id=resolved_instance_id,
+        instance_transport=resolved_instance_transport,
     )
     click.echo("Remembered governed CLI context.")
     if settings.server_url:
@@ -114,6 +122,7 @@ def context_use(instance_id: str) -> None:
         server_url=existing.server_url,
         server_socket=existing.server_socket,
         instance_id=instance_id,
+        instance_transport=existing.bound_instance_transport(),
     )
     click.echo(f"Active instance: {instance_id}")
 

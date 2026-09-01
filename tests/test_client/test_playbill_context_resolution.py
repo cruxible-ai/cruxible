@@ -45,6 +45,7 @@ def _clear_target_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "CRUXIBLE_SERVER_SOCKET",
         "CRUXIBLE_INSTANCE_ID",
         "CRUXIBLE_PLAYBILL_WORKSPACE",
+        "CRUXIBLE_NO_WORKSPACE",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -144,6 +145,209 @@ def test_incomplete_coverage_config_does_not_retarget_global_context(tmp_path: P
 
     assert not resolved.workspace_attached
     assert resolved.transport_source == resolved.instance_source == "remembered"
+
+
+@pytest.mark.parametrize(
+    ("server_url", "environ"),
+    (
+        ("https://daemon-b.example.test", {}),
+        (None, {"CRUXIBLE_SERVER_URL": "https://daemon-b.example.test"}),
+    ),
+)
+def test_foreign_transport_cannot_inherit_a_remembered_instance(
+    tmp_path: Path,
+    server_url: str | None,
+    environ: dict[str, str],
+) -> None:
+    resolved = resolve_playbill_context(
+        server_url=server_url,
+        remembered={
+            "server_url": "https://daemon-a.example.test",
+            "instance_id": "inst_of_daemon_a",
+        },
+        environ=environ,
+        cwd=tmp_path,
+    )
+
+    assert resolved.server_url == "https://daemon-b.example.test"
+    assert resolved.instance_id is None
+    assert resolved.instance_source == "local"
+    assert resolved.instance_transport_mismatch is not None
+    assert "context_instance_transport_mismatch" in resolved.instance_transport_mismatch
+    assert "https://daemon-a.example.test" in resolved.instance_transport_mismatch
+    assert "https://daemon-b.example.test" in resolved.instance_transport_mismatch
+
+
+def test_remembered_instance_uses_its_explicitly_recorded_transport(tmp_path: Path) -> None:
+    resolved = resolve_playbill_context(
+        remembered={
+            "server_url": "https://daemon-a.example.test",
+            "instance_id": "inst_of_daemon_b",
+            "instance_transport": "https://daemon-b.example.test",
+        },
+        environ={},
+        cwd=tmp_path,
+    )
+
+    assert resolved.server_url == "https://daemon-a.example.test"
+    assert resolved.instance_id is None
+    assert resolved.instance_transport_mismatch is not None
+
+
+def test_workspace_walk_stops_at_home(tmp_path: Path) -> None:
+    ancestor = tmp_path / "Users"
+    home = ancestor / "victim"
+    project = home / "code" / "unrelated-project"
+    project.mkdir(parents=True)
+    _attach(
+        ancestor,
+        instance_id="inst_attacker",
+        server_url="https://attacker.example.test",
+    )
+
+    resolved = resolve_playbill_context(
+        remembered={
+            "server_url": "https://mine.example.test",
+            "instance_id": "inst_mine",
+        },
+        environ={},
+        cwd=project,
+        home=home,
+    )
+
+    assert resolved.workspace == project
+    assert resolved.server_url == "https://mine.example.test"
+    assert resolved.instance_id == "inst_mine"
+    assert resolved.workspace_source == "local"
+
+
+def test_invalid_ancestor_binding_is_skipped_with_a_warning(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    project = home / "a" / "b" / "c"
+    project.mkdir(parents=True)
+    (home / ".playbill").mkdir()
+    (home / ".playbill" / "coverage.json").write_text("{not json", encoding="utf-8")
+
+    resolved = resolve_playbill_context(
+        remembered={
+            "server_url": "https://mine.example.test",
+            "instance_id": "inst_mine",
+        },
+        environ={},
+        cwd=project,
+        home=home,
+    )
+
+    assert resolved.instance_id == "inst_mine"
+    assert len(resolved.warnings) == 1
+    assert "skipped invalid ancestor workspace binding" in resolved.warnings[0]
+
+
+def test_invalid_binding_at_cwd_is_still_a_refusal(tmp_path: Path) -> None:
+    (tmp_path / ".playbill").mkdir()
+    (tmp_path / ".playbill" / "coverage.json").write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(PlaybillContextResolutionError, match="not valid JSON"):
+        resolve_playbill_context(environ={}, cwd=tmp_path, home=tmp_path)
+
+
+def test_no_workspace_escape_uses_the_remembered_context(tmp_path: Path) -> None:
+    _attach(
+        tmp_path,
+        instance_id="inst_workspace",
+        server_url="https://workspace.example.test",
+    )
+
+    resolved = resolve_playbill_context(
+        remembered={
+            "server_url": "https://global.example.test",
+            "instance_id": "inst_global",
+        },
+        environ={"CRUXIBLE_NO_WORKSPACE": "1"},
+        cwd=tmp_path,
+    )
+
+    assert resolved.workspace_attached is False
+    assert resolved.server_url == "https://global.example.test"
+    assert resolved.instance_id == "inst_global"
+
+
+def test_cli_warns_when_skipping_an_invalid_ancestor_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_target_env(monkeypatch)
+    home = tmp_path / "home"
+    project = home / "project" / "nested"
+    project.mkdir(parents=True)
+    (home / ".playbill").mkdir()
+    (home / ".playbill" / "coverage.json").write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(project)
+    save_cli_context(
+        CliContextState(
+            server_url="https://global.example.test",
+            instance_id="inst_global",
+        )
+    )
+
+    result = CliRunner().invoke(cli, ["context", "show", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert "warning: skipped invalid ancestor workspace binding" in result.stderr
+    assert json.loads(result.stdout)["instance_id"] == "inst_global"
+
+
+def test_cli_no_workspace_option_bypasses_an_attachment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_target_env(monkeypatch)
+    _attach(
+        tmp_path,
+        instance_id="inst_workspace",
+        server_url="https://workspace.example.test",
+    )
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.chdir(tmp_path)
+    save_cli_context(
+        CliContextState(
+            server_url="https://global.example.test",
+            instance_id="inst_global",
+        )
+    )
+
+    result = CliRunner().invoke(cli, ["--no-workspace", "context", "show", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["instance_id"] == "inst_global"
+    assert payload["workspace_attached"] is False
+
+
+def test_disagreeing_coverage_and_catalog_roots_refuse(tmp_path: Path) -> None:
+    coverage_root = tmp_path / "coverage-root"
+    sources_root = coverage_root / "sources-root"
+    project = sources_root / "project"
+    project.mkdir(parents=True)
+    _attach(
+        coverage_root,
+        instance_id="inst_coverage",
+        server_url="https://coverage.example.test",
+    )
+    (sources_root / ".playbill").mkdir()
+    (sources_root / ".playbill" / "sources.yaml").write_text(
+        "tag: playbill-source-catalog-v1\ncatalog_kind: portable\nentries: []\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PlaybillContextResolutionError) as raised:
+        resolve_playbill_context(environ={}, cwd=project, home=tmp_path)
+
+    message = str(raised.value)
+    assert "workspace_binding_conflict" in message
+    assert str(coverage_root / ".playbill" / "coverage.json") in message
+    assert str(sources_root / ".playbill" / "sources.yaml") in message
+    assert "repair:" in message
 
 
 def test_workspace_binding_symlink_escape_names_the_selected_source(tmp_path: Path) -> None:
