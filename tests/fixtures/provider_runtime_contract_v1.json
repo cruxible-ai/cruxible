@@ -1,0 +1,925 @@
+{
+  "dynamic_endpoint_forms": [
+    "dynamic:target-from-run-input"
+  ],
+  "invalid_vectors": {
+    "context_unknown_field": {
+      "additive": {
+        "future": {
+          "kept": true
+        }
+      },
+      "budgets": {
+        "cost_units": null,
+        "output_bytes": 4096,
+        "wall_clock_seconds": 3.0
+      },
+      "capture_contract": null,
+      "coordinates": {
+        "generation": 7
+      },
+      "declared_endpoints": [
+        "https://example.test"
+      ],
+      "entrypoint": "demo.echo:run",
+      "implementation_digest": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "input": {
+        "value": "hello"
+      },
+      "input_bucket": "shape=text",
+      "interface_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "interface_id": "demo.echo",
+      "not_additive": true,
+      "protocol_version": "1.0",
+      "run_id": "RUN-contract-vector",
+      "secret_channel": {
+        "fd": 3,
+        "kind": "fd",
+        "refs": [
+          {
+            "purpose": "test",
+            "ref": "operator/demo"
+          }
+        ]
+      }
+    },
+    "result_missing_output": {
+      "error": null,
+      "output": null,
+      "protocol_version": "1.0",
+      "refusal": null,
+      "run_id": "RUN-contract-vector",
+      "status": "ok",
+      "trace": {
+        "endpoints_contacted": [],
+        "events": [],
+        "metrics": {}
+      }
+    }
+  },
+  "invocation_outcome_receipt_fields": [
+    "duration_seconds",
+    "dynamic_endpoint_forms",
+    "endpoints_contacted",
+    "implementation_digest",
+    "input_bucket",
+    "materialization_digest",
+    "protocol_version",
+    "status"
+  ],
+  "protocol_version": "1.0",
+  "provider_commit": "389e9f44de56c1adebae731228cf4628c6fbeca8",
+  "provider_digest_goldens": {
+    "implementation": {
+      "sample-echo": "sha256:d86d67b9a9a20aa582868e74fed564c0753c17068d0c95bbceeef9e66e5a9733",
+      "sample-echo-other-distribution": "sha256:07e5af49d42a3a13d2ada9eb4a097fda49a449b9bf38b1e3bc0c20a85f410bd7",
+      "sample-echo-other-entrypoint": "sha256:c8195dc9ca0ed5f0ddca0432c509926486db557819af2e709687d21dd7ef6b79"
+    },
+    "materialization": {
+      "linux-cp311": "sha256:b9fd12a340526c7028fe78ad86abc75ccffd570ade80c4a544027fa70ca26f6a",
+      "macos-arm-cp311": "sha256:a78c7107d36b69bad4cfa5d11172fd7addecc00eb5532e62b1ffa87c4d51c062",
+      "windows-cp312": "sha256:c25078f483310e47c5b845f0f2f14a9ea1d4257827741a9cb19b82da3a3065bd"
+    }
+  },
+  "provider_implementation_cases": {
+    "_comment": [
+      "Fixed implementation-digest cases, held as data so that the test and the",
+      "regeneration script read the same source. Three cases that differ in exactly",
+      "one preimage field each, so a golden that moves says which field moved."
+    ],
+    "cases": {
+      "sample-echo": {
+        "distribution_sha256": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "entrypoint": "sample_provider.impl:Echo",
+        "interface_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "interface_id": "sample.echo"
+      },
+      "sample-echo-other-distribution": {
+        "distribution_sha256": "sha256:3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c",
+        "entrypoint": "sample_provider.impl:Echo",
+        "interface_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "interface_id": "sample.echo"
+      },
+      "sample-echo-other-entrypoint": {
+        "distribution_sha256": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+        "entrypoint": "sample_provider.impl:EchoFast",
+        "interface_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+        "interface_id": "sample.echo"
+      }
+    }
+  },
+  "refusal_codes": [
+    "acceptance_divergence",
+    "air_gapped_cache_miss",
+    "ambiguous_implementation",
+    "artifact_hash_mismatch",
+    "bucket_fixture_missing",
+    "budget_cost",
+    "budget_output_size",
+    "budget_wall_clock",
+    "cache_integrity",
+    "cache_permissions",
+    "cross_origin_credentialed_redirect",
+    "declared_family_mismatch",
+    "degenerate_scale",
+    "environment_divergence",
+    "image_provenance_mismatch",
+    "index_not_pinned",
+    "index_redirect",
+    "insufficient_series_length",
+    "interface_digest_mismatch",
+    "invalid_bucket_vocabulary",
+    "invalid_parameter",
+    "lock_ambiguous_fork",
+    "lock_bytes_mismatch",
+    "lock_mismatch",
+    "lock_missing_hash",
+    "malformed_model_ref",
+    "manifest_divergence",
+    "mismatched_lengths",
+    "network_disabled",
+    "no_compatible_artifact",
+    "non_finite_input",
+    "non_finite_output",
+    "non_finite_result",
+    "provider_declined",
+    "provider_protocol_violation",
+    "redirect_limit",
+    "secret_bundle_too_large",
+    "secret_leak",
+    "unaccepted_provider",
+    "unclaimed_bucket",
+    "unclassified_input",
+    "undeclared_egress",
+    "undeclared_interface",
+    "undeclared_match_parameters",
+    "unknown_column",
+    "unknown_extra",
+    "unknown_interface",
+    "unknown_manifest_field",
+    "unknown_method",
+    "unknown_run_context_field",
+    "unknown_test_name",
+    "unresolvable_source",
+    "unresolved_secret_ref",
+    "unsupported_aggregation",
+    "unsupported_backend",
+    "unsupported_protocol",
+    "unsupported_redirect_scheme"
+  ],
+  "schemas": {
+    "Budgets": {
+      "additionalProperties": false,
+      "description": "Caps the executor enforces out-of-process.\n\n``cost_units`` travels with the run so a provider can report against it, but\nRP-0 enforces only the two caps it can enforce locally: wall clock and output\nsize. Cost enforcement belongs to the metering substrate.",
+      "properties": {
+        "cost_units": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cost Units"
+        },
+        "output_bytes": {
+          "title": "Output Bytes",
+          "type": "integer"
+        },
+        "wall_clock_seconds": {
+          "title": "Wall Clock Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "wall_clock_seconds",
+        "output_bytes"
+      ],
+      "title": "Budgets",
+      "type": "object"
+    },
+    "ProtocolVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "major": {
+          "title": "Major",
+          "type": "integer"
+        },
+        "minor": {
+          "title": "Minor",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "major",
+        "minor"
+      ],
+      "title": "ProtocolVersion",
+      "type": "object"
+    },
+    "ProviderErrorPayload": {
+      "additionalProperties": false,
+      "description": "A provider-reported failure (an attempted answer that did not succeed).",
+      "properties": {
+        "detail": {
+          "additionalProperties": true,
+          "title": "Detail",
+          "type": "object"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "title": "ProviderErrorPayload",
+      "type": "object"
+    },
+    "Refusal": {
+      "$defs": {
+        "RefusalCode": {
+          "description": "The closed set of refusal codes RP-0 defines.",
+          "enum": [
+            "unknown_manifest_field",
+            "manifest_divergence",
+            "acceptance_divergence",
+            "unaccepted_provider",
+            "undeclared_interface",
+            "ambiguous_implementation",
+            "unknown_interface",
+            "interface_digest_mismatch",
+            "bucket_fixture_missing",
+            "invalid_bucket_vocabulary",
+            "unsupported_protocol",
+            "unknown_run_context_field",
+            "provider_protocol_violation",
+            "unsupported_backend",
+            "lock_mismatch",
+            "lock_bytes_mismatch",
+            "lock_missing_hash",
+            "lock_ambiguous_fork",
+            "no_compatible_artifact",
+            "unresolvable_source",
+            "unknown_extra",
+            "index_not_pinned",
+            "index_redirect",
+            "artifact_hash_mismatch",
+            "air_gapped_cache_miss",
+            "network_disabled",
+            "cache_permissions",
+            "cache_integrity",
+            "environment_divergence",
+            "unclaimed_bucket",
+            "unclassified_input",
+            "budget_wall_clock",
+            "budget_output_size",
+            "budget_cost",
+            "undeclared_egress",
+            "secret_leak",
+            "provider_declined",
+            "unresolved_secret_ref",
+            "secret_bundle_too_large",
+            "non_finite_output",
+            "insufficient_series_length",
+            "non_finite_input",
+            "non_finite_result",
+            "degenerate_scale",
+            "mismatched_lengths",
+            "unknown_method",
+            "unknown_test_name",
+            "declared_family_mismatch",
+            "unsupported_aggregation",
+            "unknown_column",
+            "malformed_model_ref",
+            "undeclared_match_parameters",
+            "invalid_parameter",
+            "cross_origin_credentialed_redirect",
+            "unsupported_redirect_scheme",
+            "redirect_limit",
+            "image_provenance_mismatch"
+          ],
+          "title": "RefusalCode",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "description": "A typed refusal, serialisable into receipts and result envelopes.",
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/RefusalCode"
+        },
+        "detail": {
+          "additionalProperties": true,
+          "title": "Detail",
+          "type": "object"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "Refusal",
+      "type": "object"
+    },
+    "ResultEnvelope": {
+      "$defs": {
+        "ProviderErrorPayload": {
+          "additionalProperties": false,
+          "description": "A provider-reported failure (an attempted answer that did not succeed).",
+          "properties": {
+            "detail": {
+              "additionalProperties": true,
+              "title": "Detail",
+              "type": "object"
+            },
+            "kind": {
+              "title": "Kind",
+              "type": "string"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message"
+          ],
+          "title": "ProviderErrorPayload",
+          "type": "object"
+        },
+        "Refusal": {
+          "additionalProperties": false,
+          "description": "A typed refusal, serialisable into receipts and result envelopes.",
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/RefusalCode"
+            },
+            "detail": {
+              "additionalProperties": true,
+              "title": "Detail",
+              "type": "object"
+            },
+            "message": {
+              "title": "Message",
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ],
+          "title": "Refusal",
+          "type": "object"
+        },
+        "RefusalCode": {
+          "description": "The closed set of refusal codes RP-0 defines.",
+          "enum": [
+            "unknown_manifest_field",
+            "manifest_divergence",
+            "acceptance_divergence",
+            "unaccepted_provider",
+            "undeclared_interface",
+            "ambiguous_implementation",
+            "unknown_interface",
+            "interface_digest_mismatch",
+            "bucket_fixture_missing",
+            "invalid_bucket_vocabulary",
+            "unsupported_protocol",
+            "unknown_run_context_field",
+            "provider_protocol_violation",
+            "unsupported_backend",
+            "lock_mismatch",
+            "lock_bytes_mismatch",
+            "lock_missing_hash",
+            "lock_ambiguous_fork",
+            "no_compatible_artifact",
+            "unresolvable_source",
+            "unknown_extra",
+            "index_not_pinned",
+            "index_redirect",
+            "artifact_hash_mismatch",
+            "air_gapped_cache_miss",
+            "network_disabled",
+            "cache_permissions",
+            "cache_integrity",
+            "environment_divergence",
+            "unclaimed_bucket",
+            "unclassified_input",
+            "budget_wall_clock",
+            "budget_output_size",
+            "budget_cost",
+            "undeclared_egress",
+            "secret_leak",
+            "provider_declined",
+            "unresolved_secret_ref",
+            "secret_bundle_too_large",
+            "non_finite_output",
+            "insufficient_series_length",
+            "non_finite_input",
+            "non_finite_result",
+            "degenerate_scale",
+            "mismatched_lengths",
+            "unknown_method",
+            "unknown_test_name",
+            "declared_family_mismatch",
+            "unsupported_aggregation",
+            "unknown_column",
+            "malformed_model_ref",
+            "undeclared_match_parameters",
+            "invalid_parameter",
+            "cross_origin_credentialed_redirect",
+            "unsupported_redirect_scheme",
+            "redirect_limit",
+            "image_provenance_mismatch"
+          ],
+          "title": "RefusalCode",
+          "type": "string"
+        },
+        "Trace": {
+          "additionalProperties": false,
+          "description": "Trace material destined for exhaust.\n\n``endpoints_contacted`` is what was *actually* contacted, recorded by the\ninstrumented client locally and by the proxy log in cloud. It is compared\nagainst the accepted declaration; a contacted endpoint outside the\ndeclaration is a typed conformance violation attributed to the\nimplementation digest.",
+          "properties": {
+            "endpoints_contacted": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Endpoints Contacted",
+              "type": "array"
+            },
+            "events": {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "title": "Events",
+              "type": "array"
+            },
+            "metrics": {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "title": "Metrics",
+              "type": "object"
+            }
+          },
+          "title": "Trace",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Everything a provider process returns.",
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderErrorPayload"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Output"
+        },
+        "protocol_version": {
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Refusal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "refused",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "trace": {
+          "$ref": "#/$defs/Trace"
+        }
+      },
+      "required": [
+        "protocol_version",
+        "run_id",
+        "status"
+      ],
+      "title": "ResultEnvelope",
+      "type": "object"
+    },
+    "RunContext": {
+      "$defs": {
+        "Budgets": {
+          "additionalProperties": false,
+          "description": "Caps the executor enforces out-of-process.\n\n``cost_units`` travels with the run so a provider can report against it, but\nRP-0 enforces only the two caps it can enforce locally: wall clock and output\nsize. Cost enforcement belongs to the metering substrate.",
+          "properties": {
+            "cost_units": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cost Units"
+            },
+            "output_bytes": {
+              "title": "Output Bytes",
+              "type": "integer"
+            },
+            "wall_clock_seconds": {
+              "title": "Wall Clock Seconds",
+              "type": "number"
+            }
+          },
+          "required": [
+            "wall_clock_seconds",
+            "output_bytes"
+          ],
+          "title": "Budgets",
+          "type": "object"
+        },
+        "SecretChannelSpec": {
+          "additionalProperties": false,
+          "description": "Where the provider process reads credential material from.",
+          "properties": {
+            "fd": {
+              "title": "Fd",
+              "type": "integer"
+            },
+            "kind": {
+              "const": "fd",
+              "default": "fd",
+              "title": "Kind",
+              "type": "string"
+            },
+            "refs": {
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/SecretRef"
+              },
+              "title": "Refs",
+              "type": "array"
+            }
+          },
+          "required": [
+            "fd"
+          ],
+          "title": "SecretChannelSpec",
+          "type": "object"
+        },
+        "SecretRef": {
+          "additionalProperties": false,
+          "description": "Names a credential without carrying it.\n\nOnly the ref travels in the serialised run context. The material arrives\nseparately over the inherited descriptor named by :class:`SecretChannelSpec`.",
+          "properties": {
+            "purpose": {
+              "default": "",
+              "title": "Purpose",
+              "type": "string"
+            },
+            "ref": {
+              "title": "Ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "title": "SecretRef",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Everything the executor passes into a provider process.",
+      "properties": {
+        "additive": {
+          "additionalProperties": true,
+          "description": "the additive region: unknown keys here are ignored by a provider",
+          "title": "Additive",
+          "type": "object"
+        },
+        "budgets": {
+          "$ref": "#/$defs/Budgets"
+        },
+        "capture_contract": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capture Contract"
+        },
+        "coordinates": {
+          "additionalProperties": true,
+          "title": "Coordinates",
+          "type": "object"
+        },
+        "declared_endpoints": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Declared Endpoints",
+          "type": "array"
+        },
+        "entrypoint": {
+          "title": "Entrypoint",
+          "type": "string"
+        },
+        "implementation_digest": {
+          "title": "Implementation Digest",
+          "type": "string"
+        },
+        "input": {
+          "additionalProperties": true,
+          "title": "Input",
+          "type": "object"
+        },
+        "input_bucket": {
+          "title": "Input Bucket",
+          "type": "string"
+        },
+        "interface_digest": {
+          "title": "Interface Digest",
+          "type": "string"
+        },
+        "interface_id": {
+          "title": "Interface Id",
+          "type": "string"
+        },
+        "protocol_version": {
+          "title": "Protocol Version",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "secret_channel": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SecretChannelSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "protocol_version",
+        "run_id",
+        "interface_id",
+        "interface_digest",
+        "implementation_digest",
+        "entrypoint",
+        "input_bucket",
+        "budgets"
+      ],
+      "title": "RunContext",
+      "type": "object"
+    },
+    "SecretChannelSpec": {
+      "$defs": {
+        "SecretRef": {
+          "additionalProperties": false,
+          "description": "Names a credential without carrying it.\n\nOnly the ref travels in the serialised run context. The material arrives\nseparately over the inherited descriptor named by :class:`SecretChannelSpec`.",
+          "properties": {
+            "purpose": {
+              "default": "",
+              "title": "Purpose",
+              "type": "string"
+            },
+            "ref": {
+              "title": "Ref",
+              "type": "string"
+            }
+          },
+          "required": [
+            "ref"
+          ],
+          "title": "SecretRef",
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Where the provider process reads credential material from.",
+      "properties": {
+        "fd": {
+          "title": "Fd",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "fd",
+          "default": "fd",
+          "title": "Kind",
+          "type": "string"
+        },
+        "refs": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SecretRef"
+          },
+          "title": "Refs",
+          "type": "array"
+        }
+      },
+      "required": [
+        "fd"
+      ],
+      "title": "SecretChannelSpec",
+      "type": "object"
+    },
+    "SecretRef": {
+      "additionalProperties": false,
+      "description": "Names a credential without carrying it.\n\nOnly the ref travels in the serialised run context. The material arrives\nseparately over the inherited descriptor named by :class:`SecretChannelSpec`.",
+      "properties": {
+        "purpose": {
+          "default": "",
+          "title": "Purpose",
+          "type": "string"
+        },
+        "ref": {
+          "title": "Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref"
+      ],
+      "title": "SecretRef",
+      "type": "object"
+    },
+    "Trace": {
+      "additionalProperties": false,
+      "description": "Trace material destined for exhaust.\n\n``endpoints_contacted`` is what was *actually* contacted, recorded by the\ninstrumented client locally and by the proxy log in cloud. It is compared\nagainst the accepted declaration; a contacted endpoint outside the\ndeclaration is a typed conformance violation attributed to the\nimplementation digest.",
+      "properties": {
+        "endpoints_contacted": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Endpoints Contacted",
+          "type": "array"
+        },
+        "events": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "metrics": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "title": "Metrics",
+          "type": "object"
+        }
+      },
+      "title": "Trace",
+      "type": "object"
+    }
+  },
+  "valid_vectors": {
+    "results": {
+      "error": {
+        "error": {
+          "detail": {},
+          "kind": "FixtureError",
+          "message": "fixture failure"
+        },
+        "output": null,
+        "protocol_version": "1.0",
+        "refusal": null,
+        "run_id": "RUN-contract-vector",
+        "status": "error",
+        "trace": {
+          "endpoints_contacted": [],
+          "events": [],
+          "metrics": {}
+        }
+      },
+      "ok": {
+        "error": null,
+        "output": {
+          "echo": "hello"
+        },
+        "protocol_version": "1.0",
+        "refusal": null,
+        "run_id": "RUN-contract-vector",
+        "status": "ok",
+        "trace": {
+          "endpoints_contacted": [],
+          "events": [],
+          "metrics": {}
+        }
+      },
+      "refused": {
+        "error": null,
+        "output": null,
+        "protocol_version": "1.0",
+        "refusal": {
+          "code": "provider_declined",
+          "detail": {
+            "reason": "fixture"
+          },
+          "message": "declined by fixture"
+        },
+        "run_id": "RUN-contract-vector",
+        "status": "refused",
+        "trace": {
+          "endpoints_contacted": [],
+          "events": [],
+          "metrics": {}
+        }
+      }
+    },
+    "run_context": {
+      "additive": {
+        "future": {
+          "kept": true
+        }
+      },
+      "budgets": {
+        "cost_units": null,
+        "output_bytes": 4096,
+        "wall_clock_seconds": 3.0
+      },
+      "capture_contract": null,
+      "coordinates": {
+        "generation": 7
+      },
+      "declared_endpoints": [
+        "https://example.test"
+      ],
+      "entrypoint": "demo.echo:run",
+      "implementation_digest": "sha256:2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b",
+      "input": {
+        "value": "hello"
+      },
+      "input_bucket": "shape=text",
+      "interface_digest": "sha256:1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a",
+      "interface_id": "demo.echo",
+      "protocol_version": "1.0",
+      "run_id": "RUN-contract-vector",
+      "secret_channel": {
+        "fd": 3,
+        "kind": "fd",
+        "refs": [
+          {
+            "purpose": "test",
+            "ref": "operator/demo"
+          }
+        ]
+      }
+    }
+  }
+}
