@@ -29,8 +29,6 @@ ProcedureAdmissionRefusalCodeV1: TypeAlias = Literal[
     "procedure_runtime_policy_absent",
     "provider_explicit_implementation_required",
     "provider_replay_receipt_required",
-    "classifier_not_installed",
-    "classifier_digest_mismatch",
     "exhaust_binding_carrier_required",
 ]
 ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
@@ -71,6 +69,8 @@ ProcedureNodeRefusalCodeV1: TypeAlias = Literal[
     "provider_acquisition_plan_required",
     "provider_acquisition_plan_mismatch",
     "provider_effect_declaration_mismatch",
+    "classifier_not_installed",
+    "classifier_digest_mismatch",
     "unknown_extra",
     "budget_wall_clock",
     "budget_output_size",
@@ -776,6 +776,8 @@ def procedure_acquisition_plan_digest(plan: ProcedureAcquisitionPlanV2) -> str:
 
 
 class ProcedureSourceCaptureAssociationV1(_StrictResultModel):
+    """Reserved B4 association between one Provider occurrence and one Capture."""
+
     tag: Literal["playbill-procedure-source-capture-association-v1"] = (
         "playbill-procedure-source-capture-association-v1"
     )
@@ -784,6 +786,13 @@ class ProcedureSourceCaptureAssociationV1(_StrictResultModel):
     capture_digest: str
 
     _digests = field_validator("invocation_receipt_digest", "capture_digest")(_digest)
+
+    @field_validator("occurrence_path")
+    @classmethod
+    def _occurrence_path(cls, value: str) -> str:
+        if not value or value.startswith("/") or value.endswith("/") or "//" in value:
+            raise ValueError("occurrence path must be nonempty and slash-canonical")
+        return value
 
 
 class ProcedureRunBudgetDeclaredV2(_StrictResultModel):

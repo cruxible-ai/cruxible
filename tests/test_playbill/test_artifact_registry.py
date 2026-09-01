@@ -277,6 +277,7 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-provider-invocation-started-v1",
         "playbill-provider-local-materialization-reference-v1",
         "playbill-provider-secret-binding-identity-v1",
+        "playbill-provider-secret-receipt-reference-v1",
         "playbill-provider-secret-reference-v1",
         "playbill-provider-secret-resolution-plan-v1",
         "playbill-provider-v1",
@@ -284,7 +285,6 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-query-definition-v1",
         "playbill-resolution-claim-endpoint-v1",
         "playbill-resolution-contract-activation-v2",
-        "playbill-run-material-reservation-v2",
         "playbill-settled-outcome-history-v1",
         "playbill-settled-outcome-relation-v1",
         "playbill-settled-outcome-row-v1",
@@ -296,7 +296,11 @@ def test_p2_b2_reserves_every_current_artifact_tag() -> None:
         "playbill-standing-mandate-v1",
         "playbill-verified-provider-binding-v1",
     )
-    assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == ()
+    assert PLAYBILL_FORMAT_RESERVATIONS.reserved_tags() == (
+        "playbill-pending-admission-material-reservation-v1",
+        "playbill-run-material-reservation-v1",
+        "playbill-run-material-reservation-v2",
+    )
     # Calibration readings are compute-produced, CAS-pinned artifacts. Registering a
     # governed tree path would collapse the ratified policy/readings/mandates split.
     assert "calibration-reading" not in P2_C_ARTIFACT_KINDS.implemented_kinds()

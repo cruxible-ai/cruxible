@@ -85,6 +85,18 @@ def provider_secret_binding_identity_digest(
     ).tagged
 
 
+class ProviderSecretReceiptReferenceV1(_StrictProviderExecutionModel):
+    """Non-identifying custody reference committed by an invocation receipt."""
+
+    tag: Literal["playbill-provider-secret-receipt-reference-v1"] = (
+        "playbill-provider-secret-receipt-reference-v1"
+    )
+    binding_identity_digest: str
+    purpose: str = ""
+
+    _binding_digest = field_validator("binding_identity_digest")(_digest)
+
+
 class ProviderSecretResolutionPlanV1(_StrictProviderExecutionModel):
     tag: Literal["playbill-provider-secret-resolution-plan-v1"] = (
         "playbill-provider-secret-resolution-plan-v1"
@@ -434,7 +446,7 @@ class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
     outcome: ProviderInvocationOutcomeV1
     output: object | None = None
     egress: ProviderEgressObservationV1
-    secret_references: tuple[ProviderSecretReferenceV1, ...] = ()
+    secret_references: tuple[ProviderSecretReceiptReferenceV1, ...] = ()
     budget_translation: ProviderBudgetTranslationV1
     duration_microseconds: int = Field(ge=0)
     trace: object = Field(default_factory=dict)
@@ -455,6 +467,20 @@ class ProviderInvocationReceiptV1(_StrictProviderExecutionModel):
         "capture_contract_digest",
         "input_digest",
     )(_digest)
+
+    @field_validator("secret_references")
+    @classmethod
+    def _secret_references(
+        cls,
+        value: tuple[ProviderSecretReceiptReferenceV1, ...],
+    ) -> tuple[ProviderSecretReceiptReferenceV1, ...]:
+        expected = tuple(
+            sorted(value, key=lambda item: item.binding_identity_digest.encode("ascii"))
+        )
+        identities = tuple(item.binding_identity_digest for item in value)
+        if value != expected or len(identities) != len(set(identities)):
+            raise ValueError("receipt secret identities must be digest-sorted and unique")
+        return value
 
     @model_validator(mode="after")
     def _outcome_correspondence(self) -> ProviderInvocationReceiptV1:
@@ -483,6 +509,7 @@ class ProviderInvocationStartedV1(_StrictProviderExecutionModel):
     implementation_digest: str
     materialization_digest: str
     input_digest: str
+    input_bucket: str
 
     _digests = field_validator("implementation_digest", "materialization_digest", "input_digest")(
         _digest
@@ -527,6 +554,7 @@ __all__ = [
     "ProviderInvocationReceiptV1",
     "ProviderInvocationStartedV1",
     "ProviderSecretBindingIdentityV1",
+    "ProviderSecretReceiptReferenceV1",
     "ProviderSecretReferenceV1",
     "ProviderSecretResolutionPlanV1",
     "VerifiedProviderBindingV1",

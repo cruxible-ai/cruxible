@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
     ProcedureAdmissionMaterialManifestV1,
+    ProcedureRunReceiptV6,
     ProcedureSourceCaptureAssociationV1,
     procedure_acquisition_plan_digest,
     procedure_admission_material_digest,
@@ -318,3 +319,24 @@ def test_reserved_b4_source_capture_association_requires_canonical_occurrence_pa
             invocation_receipt_digest=_digest("receipt"),
             capture_digest=_digest("capture"),
         )
+
+
+def test_reserved_b4_source_capture_associations_are_path_sorted_and_unique() -> None:
+    first = ProcedureSourceCaptureAssociationV1(
+        occurrence_path="a/provider",
+        invocation_receipt_digest=_digest("receipt-a"),
+        capture_digest=_digest("capture-a"),
+    )
+    second = ProcedureSourceCaptureAssociationV1(
+        occurrence_path="b/provider",
+        invocation_receipt_digest=_digest("receipt-b"),
+        capture_digest=_digest("capture-b"),
+    )
+    assert ProcedureRunReceiptV6._source_associations((first, second)) == (  # noqa: SLF001
+        first,
+        second,
+    )
+    with pytest.raises(ValueError, match="path-sorted and unique"):
+        ProcedureRunReceiptV6._source_associations((second, first))  # noqa: SLF001
+    with pytest.raises(ValueError, match="path-sorted and unique"):
+        ProcedureRunReceiptV6._source_associations((first, first))  # noqa: SLF001

@@ -23,6 +23,7 @@ from cruxible_client.contracts.procedures.models import (
 from cruxible_client.contracts.procedures.results import (
     ProcedureAcquisitionPlanV2,
     ProcedureAdmissionMaterialManifestV1,
+    ProcedureNodeRefusalV1,
     ProcedureProviderBindingV2,
     ProcedureRunReceiptV6,
     ProviderBucketClassificationPlanV1,
@@ -488,6 +489,39 @@ def test_graph_v4_provider_journals_completed_receipt_before_progress(
             break
     finally:
         mismatch_index.close()
+
+
+def test_classifier_failure_projects_as_a_typed_node_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    accepted = _accepted_one_provider()
+    prepared, fixture = _prepared_v5(accepted, tmp_path)
+    result = ProcedureExecutor(
+        journal=fixture.journal,
+        bodies=fixture.bodies,
+        run_index=fixture.run_index,
+        fencing_token="writer",
+        activation_authority=_Authority(accepted.artifact_digest),
+        contract_validator=_Contracts(),
+        provider_runtime_invoker=_Invoker(),
+        provider_classifier_registry=ProviderBucketClassifierRegistry(),
+    ).execute(prepared, accepted)
+    assert result.status == "refused"
+    records = fixture.journal.all_records(
+        prepared.admission.journal_stream,
+        prepared.admission.journal_partition_id,
+    )
+    monkeypatch.setattr(procedure_run_service, "_records_for_run", lambda *_args: records)
+
+    class _Instance:
+        def body_store(self):  # type: ignore[no-untyped-def]
+            return fixture.bodies
+
+    state = procedure_run_service._state_from_records(  # noqa: SLF001
+        _Instance(), run_id=prepared.admission.run_id
+    )
+    assert isinstance(state.terminal, ProcedureNodeRefusalV1)
+    assert state.terminal.code == "classifier_not_installed"
 
 
 @pytest.mark.parametrize("repeat", [False, True])

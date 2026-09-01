@@ -16747,8 +16747,6 @@
                   "procedure_runtime_policy_absent",
                   "provider_explicit_implementation_required",
                   "provider_replay_receipt_required",
-                  "classifier_not_installed",
-                  "classifier_digest_mismatch",
                   "exhaust_binding_carrier_required"
                 ],
                 "title": "Code",
@@ -17311,6 +17309,8 @@
                   "provider_acquisition_plan_required",
                   "provider_acquisition_plan_mismatch",
                   "provider_effect_declaration_mismatch",
+                  "classifier_not_installed",
+                  "classifier_digest_mismatch",
                   "unknown_extra",
                   "budget_wall_clock",
                   "budget_output_size",
@@ -19215,6 +19215,7 @@
           },
           "ProcedureSourceCaptureAssociationV1": {
             "additionalProperties": false,
+            "description": "Reserved B4 association between one Provider occurrence and one Capture.",
             "properties": {
               "capture_digest": {
                 "title": "Capture Digest",
