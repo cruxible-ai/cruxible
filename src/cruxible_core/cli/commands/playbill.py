@@ -403,7 +403,9 @@ def _adopt_init_retry_key(
     marker = _init_resume_marker(target)
     if not marker.is_file() or marker.is_symlink():
         raise PlaybillKeyError(
-            f"refusing to reuse existing key material without this init's retry marker: {marker}"
+            "Playbill is already initialized for this custody, or the existing key material "
+            "was provisioned independently; refusing to reuse it without this init's retry "
+            f"marker: {marker}"
         )
     material = adopt_client_principal_key(
         target.directory,

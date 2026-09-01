@@ -339,6 +339,7 @@ def test_cli_init_adopts_only_its_transport_bound_response_loss_orphan(
 
     refused_reuse = CliRunner().invoke(cli, args)
     assert refused_reuse.exit_code == 1
+    assert "already initialized" in refused_reuse.output
     assert "without this init's retry marker" in refused_reuse.output
     assert calls == 2
 
