@@ -4,27 +4,27 @@
     "parent_semantic_root": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
     "scope": [
       "claims/alpha.json",
-      "subjects/alpha.yaml"
+      "subjects/alpha.json"
     ],
     "semantic_diff_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
     "tag": "playbill-candidate-v2",
     "timestamp": "2026-08-19T09:15:00.000000Z"
   },
-  "candidate_digest": "sha256:51a434d458f76043243fac47e038abe4d0fb002e2797cf088dfca5293fee6062",
-  "canonical_preimage": "{\"candidate_manifest_root\":\"merkle-sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"parent_semantic_root\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"scope\":[\"claims/alpha.json\",\"subjects/alpha.yaml\"],\"semantic_diff_digest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"tag\":\"playbill-candidate-v2\",\"timestamp\":\"2026-08-19T09:15:00.000000Z\"}",
+  "candidate_digest": "sha256:2f9b9f778637bf1c018ef6eaf436a7c77580069bd87a260a1d00ddc94902e87b",
+  "canonical_preimage": "{\"candidate_manifest_root\":\"merkle-sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"parent_semantic_root\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"scope\":[\"claims/alpha.json\",\"subjects/alpha.json\"],\"semantic_diff_digest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"tag\":\"playbill-candidate-v2\",\"timestamp\":\"2026-08-19T09:15:00.000000Z\"}",
   "flat_rooted_v1_sibling": {
     "candidate": {
       "candidate_manifest_root": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
       "parent_semantic_root": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       "scope": [
         "claims/alpha.json",
-        "subjects/alpha.yaml"
+        "subjects/alpha.json"
       ],
       "semantic_diff_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
       "tag": "playbill-candidate-v1",
       "timestamp": "2026-08-19T09:15:00.000000Z"
     },
-    "candidate_digest": "sha256:3b110a632eeeaa21c69ae40fa3a5a1331dc6b6ce0688765339bfdb26144f5975"
+    "candidate_digest": "sha256:b38b27460beb49217f7ab01f6cef34a05ee2fe8c1ba9a30da74e78546b7b2471"
   },
   "format": "playbill-candidate-v2-golden-v1"
 }

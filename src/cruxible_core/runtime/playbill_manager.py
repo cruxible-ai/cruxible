@@ -9,14 +9,19 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from cruxible_client.contracts.canonical import canonical_bytes
-from cruxible_client.contracts.errors import PlaybillBootstrapError, PlaybillFormatError
+from cruxible_client.contracts.errors import (
+    PlaybillBootstrapError,
+    PlaybillFormatError,
+    PlaybillReseedRequired,
+)
 from cruxible_client.contracts.types import OperatingProfile, PlaybillTrustRoot, PrincipalRecord
 from cruxible_core.errors import InstanceNotFoundError
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.workspace_advertisement import (
+    advertise_workspace_refs,
+    workspace_git_object_format,
+)
 from cruxible_core.server.registry import GOVERNED_DAEMON_BACKEND, get_registry
-
-_PLAYBILL_DIRECTORY = "playbill-v1"
-_TRUST_ROOT_FILE = "playbill-trust-root-v1.json"
 
 
 def _fsync_directory(path: Path) -> None:
@@ -35,18 +40,39 @@ class PlaybillInstanceManager:
         self._lock = threading.RLock()
 
     def _paths(self, instance_id: str) -> tuple[Path, Path, tuple[Path, ...]]:
-        record = get_registry().get(instance_id)
+        registry = get_registry()
+        record = registry.get(instance_id)
         if record is None or record.backend != GOVERNED_DAEMON_BACKEND:
             raise InstanceNotFoundError(instance_id)
-        legacy_managed = Path(record.location).resolve(strict=False) / ".cruxible"
-        managed_root = legacy_managed / _PLAYBILL_DIRECTORY
-        trust_root = legacy_managed / _TRUST_ROOT_FILE
+        managed_root = Path(record.location).resolve(strict=False)
+        legacy_root = managed_root / ".cruxible"
+        if (legacy_root / "playbill-v1").exists() or (
+            legacy_root / "playbill-trust-root-v1.json"
+        ).exists():
+            raise PlaybillReseedRequired()
+        trust_root = registry.state_root / "trust" / f"{instance_id}.json"
+        if managed_root.exists() != trust_root.exists():
+            raise PlaybillReseedRequired()
         workspaces = (
             (Path(record.workspace_root).resolve(strict=False),)
             if record.workspace_root is not None
             else ()
         )
         return managed_root, trust_root, workspaces
+
+    @staticmethod
+    def _bind_workspace(
+        instance: PlaybillInstance,
+        workspaces: tuple[Path, ...],
+    ) -> None:
+        workspace = workspaces[0] if workspaces else None
+        instance.bind_workspace_advertiser(
+            lambda: advertise_workspace_refs(
+                workspace_root=workspace,
+                ledger_path=instance.root / instance.descriptor.storage.ledger,
+                ledger_object_format=instance.descriptor.git_object_format,
+            )
+        )
 
     def initialize(
         self,
@@ -60,15 +86,25 @@ class PlaybillInstanceManager:
         with self._lock:
             if managed_root.exists() or trust_path.exists():
                 raise PlaybillBootstrapError("Playbill is already initialized for this instance")
+            try:
+                object_format = (
+                    workspace_git_object_format(workspaces[0]) if workspaces else "sha256"
+                )
+            except ValueError as exc:
+                raise PlaybillBootstrapError(
+                    "attached workspace must be one exact local Git worktree"
+                ) from exc
             instance = PlaybillInstance.initialize(
                 managed_root,
                 instance_id=instance_id,
                 client_principals=client_principals,
                 workspace_roots=workspaces,
+                git_object_format=object_format,
                 operating_profile=operating_profile,
                 require_independent_approval=require_independent_approval,
             )
-            trust_path.parent.mkdir(parents=True, exist_ok=True)
+            trust_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(trust_path.parent, 0o700)
             payload = canonical_bytes(instance.trust_root.model_dump(mode="json")) + b"\n"
             descriptor: int | None = None
             try:
@@ -91,6 +127,7 @@ class PlaybillInstanceManager:
                     os.close(descriptor)
             os.chmod(trust_path, 0o600)
             _fsync_directory(trust_path.parent)
+            self._bind_workspace(instance, workspaces)
             self._instances[instance_id] = instance
             return instance
 
@@ -110,6 +147,7 @@ class PlaybillInstanceManager:
             if canonical_bytes(trust.model_dump(mode="json")) + b"\n" != raw:
                 raise PlaybillFormatError("persisted Playbill trust root is not canonical")
             instance = PlaybillInstance.open(managed_root, trust_root=trust)
+            self._bind_workspace(instance, _workspaces)
             self._instances[instance_id] = instance
             return instance
 

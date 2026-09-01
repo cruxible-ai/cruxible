@@ -17,7 +17,7 @@ from cruxible_core.playbill.cas import ContentAddressedBodyStore
 
 
 def test_whole_document_address_is_stable_while_exact_body_span_changes() -> None:
-    path = "documents/playbill-design.yaml"
+    path = "documents/playbill-design.json"
     subject_before = SemanticAddress.whole_artifact(path)
     subject_after = SemanticAddress.whole_artifact(path)
     body_before = b"Heading\nBody\n"
@@ -36,7 +36,7 @@ def test_whole_document_address_is_stable_while_exact_body_span_changes() -> Non
 def test_content_spans_count_utf8_bytes_not_characters_or_utf16_units() -> None:
     body = "A café 🍞\n".encode("utf-8")
     digest = ContentAddressedBodyStore.digest_bytes(body).tagged
-    mapping = whole_body_mapping("documents/unicode.yaml", digest, len(body))
+    mapping = whole_body_mapping("documents/unicode.json", digest, len(body))
     span = mapping.spans[0]
     assert span.start_byte == 0
     assert span.end_byte == len(body)
@@ -63,7 +63,7 @@ def test_unknown_line_number_and_malformed_selectors_refuse() -> None:
     with pytest.raises(ValidationError, match="extra_forbidden"):
         SemanticAddress.model_validate(
             {
-                "artifact_path": "documents/example.yaml",
+                "artifact_path": "documents/example.json",
                 "selector": {"scheme": "artifact-v1", "value": ""},
                 "editor_uri": "file:///tmp/example.md",
             }
@@ -75,7 +75,7 @@ def test_invalid_ranges_and_unsorted_duplicate_source_mappings_refuse() -> None:
     with pytest.raises(ValidationError, match="byte range"):
         ContentSpan(content_digest=digest, start_byte=3, end_byte=2)
 
-    subject = SemanticAddress.whole_artifact("documents/example.yaml")
+    subject = SemanticAddress.whole_artifact("documents/example.json")
     first = ContentSpan(content_digest=digest, start_byte=0, end_byte=1)
     second = ContentSpan(content_digest=digest, start_byte=1, end_byte=2)
     with pytest.raises(ValidationError, match="sorted and unique"):

@@ -67,7 +67,7 @@ def test_http_explain_returns_typed_proof_deferral_and_refuses_mixed_coordinate(
     request = {
         "subject": {
             "tag": "playbill-semantic-address-v1",
-            "artifact_path": "documents/explain.yaml",
+            "artifact_path": "documents/explain.json",
             "selector": {"scheme": "artifact-v1", "value": ""},
         },
         "at": coordinate,

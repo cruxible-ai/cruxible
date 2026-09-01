@@ -9,12 +9,17 @@ from typing import Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from cruxible_client.contracts import PlaybillSemanticFieldDelta
 from cruxible_client.contracts.artifacts import (
     ArtifactIdentity,
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.canonical import Sha256Value, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import (
+    Sha256Value,
+    pretty_canonical_bytes,
+    typed_digest,
+)
 from cruxible_client.contracts.claim_types import (
     ClaimType,
     claim_type_digest,
@@ -35,6 +40,7 @@ from cruxible_client.contracts.claims import (
 from cruxible_client.contracts.errors import PlaybillError, PlaybillFormatError
 from cruxible_client.contracts.procedures.graph import compute_procedure_definition_digest_v3
 from cruxible_client.contracts.procedures.models import ProcedureDefinitionV3
+from cruxible_client.contracts.semantic_delta import semantic_field_delta
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
     ClaimTypeProposalLintV1,
@@ -179,6 +185,7 @@ class ClaimTypeMigrationResultV1(_StrictMigrationModel):
         "playbill-claim-type-migration-result-v1"
     )
     operation_digest: str
+    semantic_delta: tuple[PlaybillSemanticFieldDelta, ...]
     dependents: tuple[ClaimTypeMigrationDispositionV1, ...]
     proposal: PlaybillProposalInspection
     warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
@@ -205,6 +212,7 @@ class ClaimTypeMigrationPreflightV1(_StrictMigrationModel):
     )
     coordinate: PlaybillAcceptedCoordinate
     successor_artifact_digest: str
+    semantic_delta: tuple[PlaybillSemanticFieldDelta, ...]
     dependents: tuple[ClaimTypeMigrationInventoryItemV1, ...]
     warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
     lint: ClaimTypeProposalLintV1 | None = Field(
@@ -223,6 +231,7 @@ class ClaimTypeMigrationResultV2(_StrictMigrationModel):
         "playbill-claim-type-migration-result-v2"
     )
     operation_digest: str
+    semantic_delta: tuple[PlaybillSemanticFieldDelta, ...]
     dependents: tuple[ClaimTypeMigrationDispositionV2, ...]
     proposal: PlaybillProposalInspection
     warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
@@ -244,6 +253,7 @@ class ClaimTypeMigrationResultV3(_StrictMigrationModel):
         "playbill-claim-type-migration-result-v3"
     )
     operation_digest: str
+    semantic_delta: tuple[PlaybillSemanticFieldDelta, ...]
     dependents: tuple[ClaimTypeMigrationDispositionV3, ...]
     proposal: PlaybillProposalInspection
     warnings: tuple[ClaimTypeMigrationWarningV1, ...] = ()
@@ -615,7 +625,7 @@ def _canonical_successor_bytes(
     else:
         payload = supplied
     try:
-        candidate = canonical_bytes(payload) + b"\n"
+        candidate = pretty_canonical_bytes(payload)
         parsed = parse_dependency_artifact(current.path, candidate)
     except (PlaybillError, TypeError, ValueError) as exc:
         raise ClaimTypeMigrationDependentInvalid(
@@ -867,7 +877,10 @@ def _service_migrate_claim_type_v1(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.tree_at(current.git_oid)
-    type_path, _predecessor, successor = _successor_claim_type(tree, request.successor)
+    type_path, predecessor, successor = _successor_claim_type(tree, request.successor)
+    delta = semantic_field_delta(
+        predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
+    )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
 
     inventory = _closure_inventory(tree, root=successor.identity)
@@ -928,9 +941,11 @@ def _service_migrate_claim_type_v1(
     )
     return ClaimTypeMigrationResultV1(
         operation_digest=operation_digest,
+        semantic_delta=delta,
         dependents=normalized,
         proposal=PlaybillProposalInspection(
             proposal=proposal,
+            workspace_advertisement=proposal.workspace_advertisement,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
             ),
@@ -949,7 +964,10 @@ def _service_migrate_claim_type_v2(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.tree_at(current.git_oid)
-    type_path, _predecessor, successor = _successor_claim_type(tree, request.successor)
+    type_path, predecessor, successor = _successor_claim_type(tree, request.successor)
+    delta = semantic_field_delta(
+        predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
+    )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
     inventory = _closure_inventory(tree, root=successor.identity)
     dispositions = request.dependents
@@ -993,6 +1011,7 @@ def _service_migrate_claim_type_v2(
         return ClaimTypeMigrationPreflightV1(
             coordinate=PlaybillAcceptedCoordinate.from_internal(current),
             successor_artifact_digest=claim_type_digest(successor).tagged,
+            semantic_delta=delta,
             dependents=inventory,
             warnings=_invalidation_warnings(request.dependents),
             lint=lint if lint.warnings else None,
@@ -1019,9 +1038,11 @@ def _service_migrate_claim_type_v2(
     )
     return ClaimTypeMigrationResultV2(
         operation_digest=operation_digest,
+        semantic_delta=delta,
         dependents=normalized,
         proposal=PlaybillProposalInspection(
             proposal=proposal,
+            workspace_advertisement=proposal.workspace_advertisement,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
             ),
@@ -1040,7 +1061,10 @@ def _service_migrate_claim_type_v3(
     current = instance.accepted_coordinate()
     coordinate = AcceptedCoordinate.from_internal(current)
     tree = instance.tree_at(current.git_oid)
-    type_path, _predecessor, successor = _successor_claim_type(tree, request.successor)
+    type_path, predecessor, successor = _successor_claim_type(tree, request.successor)
+    delta = semantic_field_delta(
+        predecessor.model_dump(mode="json"), successor.model_dump(mode="json")
+    )
     lint = lint_claim_type_input(instance, request.successor, coordinate=current)
     inventory = _closure_inventory(tree, root=successor.identity)
     dispositions = request.dependents
@@ -1084,6 +1108,7 @@ def _service_migrate_claim_type_v3(
         return ClaimTypeMigrationPreflightV1(
             coordinate=PlaybillAcceptedCoordinate.from_internal(current),
             successor_artifact_digest=claim_type_digest(successor).tagged,
+            semantic_delta=delta,
             dependents=inventory,
             warnings=warnings,
             lint=lint if lint.warnings else None,
@@ -1110,9 +1135,11 @@ def _service_migrate_claim_type_v3(
     )
     return ClaimTypeMigrationResultV3(
         operation_digest=operation_digest,
+        semantic_delta=delta,
         dependents=normalized,
         proposal=PlaybillProposalInspection(
             proposal=proposal,
+            workspace_advertisement=proposal.workspace_advertisement,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
             ),

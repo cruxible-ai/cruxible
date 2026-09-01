@@ -25,6 +25,7 @@ class _StrictHostRequest(BaseModel):
 
 class PlaybillHostCreateRequest(_StrictHostRequest):
     instance_id: str | None = None
+    workspace_root: str | None = None
 
 
 class BootstrapClaimRequest(_StrictHostRequest):

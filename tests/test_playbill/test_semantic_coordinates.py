@@ -117,14 +117,14 @@ def test_canonical_encoding_refuses_ambiguous_runtime_values() -> None:
 
 def test_manifest_root_is_order_independent_and_content_sensitive() -> None:
     left = {
-        "procedures/review.yaml": b"version: 1\n",
-        "principals/owner.yaml": b"owner\n",
+        "procedures/review.json": b"version: 1\n",
+        "principals/owner.json": b"owner\n",
     }
     right = dict(reversed(tuple(left.items())))
     assert manifest_root(left) == manifest_root(right)
 
     changed = dict(left)
-    changed["principals/owner.yaml"] = b"owner changed\n"
+    changed["principals/owner.json"] = b"owner changed\n"
     assert manifest_root(left) != manifest_root(changed)
 
 

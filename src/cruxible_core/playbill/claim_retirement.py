@@ -568,6 +568,7 @@ def service_retire_claim(
         retirements=candidate_retirements,
         proposal=PlaybillProposalInspection(
             proposal=proposal,
+            workspace_advertisement=proposal.workspace_advertisement,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
             ),

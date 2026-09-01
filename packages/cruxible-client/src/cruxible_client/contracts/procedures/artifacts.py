@@ -20,7 +20,16 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
-from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
+    ArtifactDigest,
+    artifact_bytes_for_path,
+    artifact_path_matches,
+    canonical_bytes,
+    pretty_canonical_bytes,
+    typed_digest,
+)
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.governance import PermissionTier
@@ -287,21 +296,26 @@ _PROCEDURE_ADAPTER: TypeAdapter[ProcedureArtifactAny] = TypeAdapter(ProcedureArt
 def procedure_path(name: str) -> str:
     if not _PROCEDURE_NAME_RE.fullmatch(name):
         raise ProcedureFormatError("Procedure identity is not path-addressable")
-    return f"procedures/{name}.yaml"
+    return f"procedures/{name}.json"
 
 
 def render_procedure(procedure: ProcedureArtifactAny) -> bytes:
-    return canonical_bytes(procedure.model_dump(mode="json", by_alias=True)) + b"\n"
+    return pretty_canonical_bytes(procedure.model_dump(mode="json", by_alias=True))
 
 
-def parse_procedure(content: bytes, *, path: str) -> ProcedureArtifactAny:
+def parse_procedure(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> ProcedureArtifactAny:
     try:
         procedure = _PROCEDURE_ADAPTER.validate_python(json.loads(content))
     except (UnicodeDecodeError, ValueError) as exc:
         raise ProcedureFormatError("Procedure failed strict versioned validation") from exc
-    if path != procedure_path(procedure.identity.name):
+    if not artifact_path_matches(procedure_path(procedure.identity.name), path, codec=codec):
         raise ProcedureFormatError("Procedure identity/path disagreement")
-    if render_procedure(procedure) != content:
+    if artifact_bytes_for_path(render_procedure(procedure), path, codec=codec) != content:
         raise ProcedureFormatError("Procedure is not in canonical wire form")
     return procedure
 

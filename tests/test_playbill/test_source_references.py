@@ -81,7 +81,7 @@ def test_source_handle_spans_require_exact_bytes_and_stay_within_commitment() ->
         materialization="cas",
     )
     handle = SourceHandleV1(
-        subject=SemanticAddress.whole_artifact("documents/design.yaml"),
+        subject=SemanticAddress.whole_artifact("documents/design.json"),
         at=accepted_coordinate(),
         source=source,
         commitment=exact,

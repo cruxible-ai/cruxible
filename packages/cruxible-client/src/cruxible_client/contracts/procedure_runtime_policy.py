@@ -7,10 +7,18 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from cruxible_client.contracts.canonical import ArtifactDigest, canonical_bytes, typed_digest
+from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
+    ArtifactDigest,
+    artifact_bytes_for_path,
+    artifact_path_matches,
+    pretty_canonical_bytes,
+    typed_digest,
+)
 from cruxible_client.contracts.errors import PlaybillFormatError
 
-PROCEDURE_RUNTIME_POLICY_PATH = "governance/procedure-runtime-policy.yaml"
+PROCEDURE_RUNTIME_POLICY_PATH = "governance/procedure-runtime-policy.json"
 PROCEDURE_RUNTIME_POLICY_IDENTITY = "ProcedureRuntimePolicy:instance"
 
 
@@ -26,15 +34,16 @@ class ProcedureRuntimePolicyV1(BaseModel):
 
 
 def render_procedure_runtime_policy(policy: ProcedureRuntimePolicyV1) -> bytes:
-    return canonical_bytes(policy.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(policy.model_dump(mode="json"))
 
 
 def parse_procedure_runtime_policy(
     content: bytes,
     *,
     path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
 ) -> ProcedureRuntimePolicyV1:
-    if path != PROCEDURE_RUNTIME_POLICY_PATH:
+    if not artifact_path_matches(PROCEDURE_RUNTIME_POLICY_PATH, path, codec=codec):
         raise ProcedureRuntimePolicyFormatError(
             "Procedure runtime policy must use its singleton path"
         )
@@ -45,7 +54,10 @@ def parse_procedure_runtime_policy(
         raise ProcedureRuntimePolicyFormatError(
             "Procedure runtime policy failed strict validation"
         ) from exc
-    if render_procedure_runtime_policy(policy) != content:
+    if (
+        artifact_bytes_for_path(render_procedure_runtime_policy(policy), path, codec=codec)
+        != content
+    ):
         raise ProcedureRuntimePolicyFormatError("Procedure runtime policy is not canonical")
     return policy
 

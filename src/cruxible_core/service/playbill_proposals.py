@@ -212,6 +212,7 @@ def service_readmit_playbill_proposal(
         operation_digest=operation_digest,
         proposal=PlaybillProposalInspection(
             proposal=result,
+            workspace_advertisement=result.workspace_advertisement,
             accepted_coordinate=coordinate,
         ),
     )

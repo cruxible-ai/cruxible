@@ -654,8 +654,6 @@ def _repair_command(
         if isinstance(claim_id, str):
             parts.append(shlex.quote(claim_id))
         parts.extend(_repair_operands(operation, values))
-    elif operation == "playbill.floor.export":
-        parts.extend(["--output", "FLOOR_DIR"])
     elif operation in _REPAIR_COMMAND_OPERANDS:
         parts.extend(_repair_operands(operation, values))
     return " ".join(parts)

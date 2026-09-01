@@ -14,6 +14,7 @@ service, and no fixture writes accepted state on the test's behalf.
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -155,7 +156,7 @@ def served_cli(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[_Cli]:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
@@ -238,6 +239,7 @@ def test_cli_independent_approval_flag_validates_before_provisioning(
 def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     served_cli: _Cli,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cruxible = served_cli
 
@@ -426,19 +428,23 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
     page = cruxible.json("playbill", "discover", "--query", "wi-42", "--profile", "all")
     assert page["vocabulary_entry_count"] > 0
     assert any(
-        hit["address"]["artifact_path"] == f"subjects/{SUBJECT_KIND}/wi-42.yaml"
+        hit["address"]["artifact_path"] == f"subjects/{SUBJECT_KIND}/wi-42.json"
         for hit in page["page"]["hits"]
     )
 
-    capsule = cruxible.json("playbill", "expand", f"subjects/{SUBJECT_KIND}/wi-42.yaml")
+    capsule = cruxible.json("playbill", "expand", f"subjects/{SUBJECT_KIND}/wi-42.json")
     assert capsule["tag"] == "playbill-context-capsule-v1"
     assert capsule["at"] == coordinate
     assert capsule["canonical_summary"]["identity"] == f"Subject:{SUBJECT_KIND}/wi-42"
 
     # 8. Materialize the floor and prove it carries the accepted facts bound to
     #    the coordinate they were projected from.
-    floor = tmp_path / "floor"
-    exported = cruxible.json("playbill", "floor", "export", "--output", str(floor))
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    subdirectory = tmp_path / "nested"
+    subdirectory.mkdir()
+    monkeypatch.chdir(subdirectory)
+    floor = tmp_path / ".playbill/floor"
+    exported = cruxible.json("playbill", "floor", "export")
     manifest = json.loads((floor / "manifest.json").read_text(encoding="utf-8"))
     assert manifest == exported
     assert manifest["coordinate"] == coordinate
@@ -462,19 +468,20 @@ def test_cli_drives_the_whole_knowledge_loop_on_a_served_instance(
 def test_cli_floor_export_refuses_to_overwrite_a_non_empty_directory(
     served_cli: _Cli,
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cruxible = served_cli
     cruxible.json("--server-url", "http://cruxible", "playbill", "host", "create")
     cruxible.bootstrap(tmp_path)
 
-    floor = tmp_path / "floor"
-    floor.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(tmp_path)], check=True)
+    monkeypatch.chdir(tmp_path)
+    floor = tmp_path / ".playbill/floor"
+    floor.mkdir(parents=True)
     (floor / "occupied.txt").write_text("not the floor\n", encoding="utf-8")
 
-    refused = CliRunner().invoke(
-        cli, ["playbill", "floor", "export", "--output", str(floor), "--json"]
-    )
+    refused = CliRunner().invoke(cli, ["playbill", "floor", "export", "--json"])
 
     assert refused.exit_code != 0
-    assert "Refusing to write the floor into a non-empty directory" in refused.output
+    assert "refusing to write the floor into a non-empty directory" in refused.output
     assert (floor / "occupied.txt").read_text(encoding="utf-8") == "not the floor\n"

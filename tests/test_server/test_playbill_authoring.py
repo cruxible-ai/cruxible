@@ -73,7 +73,7 @@ def test_http_compile_and_submit_keep_the_frozen_request_boundary(
             "tag": "playbill-authoring-claim-statement-v1",
             "subject": {
                 "tag": "playbill-semantic-address-v1",
-                "artifact_path": "subjects/work_item/wi-42.yaml",
+                "artifact_path": "subjects/work_item/wi-42.json",
                 "selector": {"scheme": "artifact-v1", "value": ""},
             },
             "predicate": "work.status",
@@ -384,6 +384,7 @@ def test_http_migration_route_delegates_the_typed_request(
         seen.append((selected, request))
         return contracts.PlaybillClaimTypeMigrationResult(
             operation_digest="sha256:" + "1" * 64,
+            semantic_delta=[],
             dependents=[],
             proposal=contracts.PlaybillProposalInspection(
                 proposal={},
@@ -551,6 +552,7 @@ def test_http_claim_type_routes_preserve_optional_lint_payload(
                 coordinate=COORDINATE,
                 successor_artifact_digest="sha256:" + "9" * 64,
                 dependents=[],
+                semantic_delta=[],
                 lint=lint,
             ),
         )

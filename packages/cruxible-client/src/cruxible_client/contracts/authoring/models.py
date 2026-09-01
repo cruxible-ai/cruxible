@@ -49,6 +49,10 @@ from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import SubjectShell
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
 from cruxible_client.contracts.types import CompilerCoordinate
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    PlaybillWorkspaceAdvertisement,
+)
 
 AUTHORING_INTENT_ID_RE = re.compile(r"^AIT-[0-9a-f]{32}$")
 _CANONICAL_NAME_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,255}$")
@@ -71,7 +75,7 @@ AUTHORING_PROGRAM_STAMP_OPERATION_DOMAIN = "playbill-authoring-program-stamp-ope
 # commit. After first public release, every contract change must succeed the version.
 AUTHORING_SDK_VERSION = "0.5.0"
 AUTHORING_SDK_CONTRACT_SNAPSHOT_DIGEST = (
-    "sha256:c16211d80654a657f1a85847101d20194b3f6230a77bf37fcad6a07663b1cccb"
+    "sha256:e52966d858653aa58ef389daafecfa462e930d1650522f8d10d682e26946e39b"
 )
 INSERTION_EXPECTATION_ID_DOMAIN = "playbill-insertion-expectation-id-v1"
 INSERTION_RESULT_KEY_DOMAIN = "playbill-insertion-result-key-v1"
@@ -1771,6 +1775,7 @@ class AuthoringSubmitResultV1(_StrictAuthoringModel):
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     intent: AuthoringIntentV1
     status: CandidateStatusV1
+    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     # A `revises` submit amends one Claim identity in place rather than adding a
     # second Claim, and nothing in the result said so: the caller saw an ordinary
     # submit and had to re-read the artifact to learn the identity was reused.

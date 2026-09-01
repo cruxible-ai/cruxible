@@ -338,7 +338,7 @@ def test_ledger_reference_without_a_window_never_fabricates_one() -> None:
         claim_identity=claim_identity,
         capture_digest=accepted.capture_digest,
     )
-    address = SemanticAddress.claim_statement("claims/00/CLM-00000000000000000000000000000000.yaml")
+    address = SemanticAddress.claim_statement("claims/00/CLM-00000000000000000000000000000000.json")
     association = CoverageClaimCitationV2(
         claim_address=address,
         capture_digest=accepted.capture_digest,

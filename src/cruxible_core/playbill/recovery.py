@@ -187,7 +187,7 @@ def _refuse_removed_prerelease_content(
     paths = ledger.tree_paths_containing_literal(
         head,
         literal='"predicate":"knowledge.brief"',
-        paths=("claim-types/knowledge/brief.yaml", "claims/"),
+        paths=("claim-types/knowledge/brief.json", "claims/"),
     )
     if not paths:
         return
@@ -206,7 +206,7 @@ def _refuse_removed_prerelease_content(
         ):
             raise SettlementIntegrityError("generation daemon signature does not verify")
         principal_entry = next(
-            (entry for entry in ledger.list_tree(oid) if entry.path == "principals/daemon.yaml"),
+            (entry for entry in ledger.list_tree(oid) if entry.path == "principals/daemon.json"),
             None,
         )
         if principal_entry is None:
@@ -219,7 +219,7 @@ def _refuse_removed_prerelease_content(
             raise SettlementIntegrityError("generation daemon principal is not active")
         previous_oid = oid
 
-    if "claim-types/knowledge/brief.yaml" in paths:
+    if "claim-types/knowledge/brief.json" in paths:
         raise PlaybillInstanceIncompatiblePrereleaseContent(artifact_class="knowledge.brief")
 
     candidates = {

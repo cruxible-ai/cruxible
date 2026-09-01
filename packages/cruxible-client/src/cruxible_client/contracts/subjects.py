@@ -16,9 +16,14 @@ from cruxible_client.contracts.artifacts import (
     ArtifactPin,
 )
 from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    ArtifactCodec,
     ArtifactDigest,
     Sha256Value,
-    canonical_bytes,
+    artifact_bytes_for_path,
+    artifact_path_for_codec,
+    artifact_path_matches,
+    pretty_canonical_bytes,
     typed_digest,
 )
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
@@ -92,24 +97,34 @@ class SubjectShell(_StrictSubjectModel):
 def subject_path(subject_kind: str, subject_id: str) -> str:
     kind = _canonical(subject_kind, pattern=_SUBJECT_KIND_RE, label="subject_kind")
     identifier = _canonical(subject_id, pattern=_SUBJECT_ID_RE, label="subject_id")
-    return f"subjects/{kind}/{identifier}.yaml"
+    return f"subjects/{kind}/{identifier}.json"
 
 
-def validate_subject_path(shell: SubjectShell, path: str) -> str:
+def validate_subject_path(
+    shell: SubjectShell,
+    path: str,
+    *,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> str:
     expected = subject_path(shell.subject_kind, shell.subject_id)
-    if path != expected:
+    if not artifact_path_matches(expected, path, codec=codec):
         raise SubjectFormatError(
             "Subject identity/path disagreement: "
-            f"{shell.qualified_identity!r} requires {expected!r}"
+            f"{shell.qualified_identity!r} requires {artifact_path_for_codec(expected, codec)!r}"
         )
     return path
 
 
 def render_subject(shell: SubjectShell) -> bytes:
-    return canonical_bytes(shell.model_dump(mode="json")) + b"\n"
+    return pretty_canonical_bytes(shell.model_dump(mode="json"))
 
 
-def parse_subject(content: bytes, *, path: str) -> SubjectShell:
+def parse_subject(
+    content: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
+) -> SubjectShell:
     try:
         payload = json.loads(content)
     except (UnicodeDecodeError, ValueError) as exc:
@@ -121,9 +136,9 @@ def parse_subject(content: bytes, *, path: str) -> SubjectShell:
         shell = SubjectShell.model_validate(payload)
     except ValidationError as exc:
         raise SubjectFormatError("Subject shell failed strict v1 validation") from exc
-    if render_subject(shell) != content:
+    validate_subject_path(shell, path, codec=codec)
+    if artifact_bytes_for_path(render_subject(shell), path, codec=codec) != content:
         raise SubjectFormatError("Subject shell is not in canonical wire form")
-    validate_subject_path(shell, path)
     return shell
 
 

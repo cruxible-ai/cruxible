@@ -17,6 +17,7 @@ from cruxible_client.contracts.artifacts import (
     ArtifactLifecycle,
     ArtifactPin,
 )
+from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.claim_types import (
     ClaimAttestationConsequencePolicyV1,
     ClaimAttestationConsequenceRuleV1,
@@ -405,6 +406,14 @@ def test_v2_preflight_and_submit_cover_claim_and_query_dependents(tmp_path: Path
         actor=AuthenticatedActor(actor_id="owner"),
     )
     assert isinstance(result, ClaimTypeMigrationResultV2)
+    assert result.semantic_delta == preflight.semantic_delta
+    assert canonical_bytes(
+        [row.model_dump(mode="json") for row in result.semantic_delta]
+    ) == canonical_bytes([row.model_dump(mode="json") for row in preflight.semantic_delta])
+    assert [row.field_path for row in result.semantic_delta] == sorted(
+        (row.field_path for row in result.semantic_delta), key=lambda item: item.encode("utf-8")
+    )
+    assert result.semantic_delta
     tree_oid = result.proposal.proposal.evaluation.evaluated_tree_oid
     assert tree_oid is not None
     migrated_query = parse_query_definition(

@@ -26,6 +26,7 @@ from cruxible_client.contracts.errors import (
     ProposalEvaluationIntegrityError,
     ProposalIntegrityError,
 )
+from cruxible_client.contracts.workspace_advertisement import PlaybillWorkspaceAdvertisement
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.proposal_evidence import ProposalEvidenceStore
@@ -49,7 +50,7 @@ from cruxible_core.service.playbill_evidence import service_propose_claim_attest
 from tests.test_playbill._support import initialize_local
 
 TIMESTAMP = "2026-08-11T12:30:00.000000Z"
-DOCUMENT_PATH = "documents/playbill-design.yaml"
+DOCUMENT_PATH = "documents/playbill-design.json"
 
 
 def _shell(body_digest: str, *, title: str = "Playbill design") -> DocumentShell:
@@ -283,6 +284,92 @@ def test_daemon_metadata_change_refuses_before_proposal_ref_update(tmp_path: Pat
     assert service.transport.read_proposal_ref(target) is None
 
 
+def test_submit_advertises_only_after_all_proposal_evidence_is_durable(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    evidence = instance.proposal_evidence()
+    calls: list[str] = []
+
+    def advertise() -> PlaybillWorkspaceAdvertisement:
+        assert tuple(evidence.proposals.glob("*.json"))
+        assert tuple(evidence.evaluations.glob("*.json"))
+        assert tuple(evidence.candidates.glob("*.json"))
+        calls.append("advertised")
+        return PlaybillWorkspaceAdvertisement(
+            status="failed",
+            workspace_path=str(tmp_path),
+            failure_code="remote_conflict",
+        )
+
+    instance.bind_workspace_advertiser(advertise)
+    body = instance.store_document_body(b"body")
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+    duplicate = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+
+    assert calls == ["advertised", "advertised"]
+    assert result.workspace_advertisement.status == "failed"
+    assert result.candidate is not None
+    assert duplicate.admission.proposal_id == result.admission.proposal_id
+
+
+def test_submit_survives_an_advertiser_that_raises(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    def advertise() -> PlaybillWorkspaceAdvertisement:
+        raise MemoryError("simulated advertiser failure")
+
+    instance.bind_workspace_advertiser(advertise)
+    body = instance.store_document_body(b"body")
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.candidate is not None
+    assert result.workspace_advertisement.status == "failed"
+    assert result.workspace_advertisement.failure_code == "unexpected_failure"
+    assert instance.proposal_evidence().read_admission(result.admission.proposal_id) is not None
+
+
+def test_proposal_service_guard_contains_a_direct_advertiser_failure(tmp_path: Path) -> None:
+    instance, _owner = initialize_local(tmp_path)
+
+    def advertise() -> PlaybillWorkspaceAdvertisement:
+        raise MemoryError("simulated direct advertiser failure")
+
+    service = ProposalService(
+        instance.proposal_service().transport,
+        accepted=instance.accepted_coordinate(),
+        bodies=instance.body_store(),
+        evidence=instance.proposal_evidence(),
+        current_coordinate=instance.accepted_coordinate,
+        workspace_advertiser=advertise,
+    )
+    body = instance.store_document_body(b"body")
+    result = service.submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=_request(instance),
+        candidate_tree=_proposal_tree(instance, _shell(body.digest)),
+        timestamp=TIMESTAMP,
+    )
+
+    assert result.candidate is not None
+    assert result.workspace_advertisement.status == "failed"
+    assert result.workspace_advertisement.failure_code == "unexpected_failure"
+    assert instance.proposal_evidence().read_admission(result.admission.proposal_id) is not None
+
+
 def test_current_coordinate_provider_cannot_contradict_verified_base(tmp_path: Path) -> None:
     instance, _owner = initialize_local(tmp_path)
     accepted = instance.accepted_coordinate()
@@ -359,7 +446,7 @@ def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Pat
     )
     current_tree = {
         **base_tree,
-        "documents/unrelated.yaml": render_document(unrelated),
+        "documents/unrelated.json": render_document(unrelated),
     }
     moved = AcceptedProjectionCoordinate(
         **{
@@ -402,7 +489,7 @@ def test_rebase_changes_candidate_identity_and_conflicts_are_typed(tmp_path: Pat
         proposed_tree=proposed_tree,
     )
     assert not conflicts
-    assert rebased_tree["documents/unrelated.yaml"] == render_document(unrelated)
+    assert rebased_tree["documents/unrelated.json"] == render_document(unrelated)
 
 
 def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
@@ -437,7 +524,7 @@ def test_candidate_record_refuses_digest_or_closure_substitution() -> None:
     with pytest.raises(ValidationError, match="does not reproduce"):
         CandidateRecord.model_validate({**values, "candidate_digest": "sha256:" + "99" * 32})
     with pytest.raises(ValidationError, match="closure"):
-        CandidateRecord.model_validate({**values, "closure_paths": ("documents/other.yaml",)})
+        CandidateRecord.model_validate({**values, "closure_paths": ("documents/other.json",)})
 
 
 def test_candidate_record_refuses_law_mapping_or_member_substitution() -> None:

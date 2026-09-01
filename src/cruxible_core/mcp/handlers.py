@@ -53,7 +53,11 @@ from cruxible_client.contracts.temporal import parse_datetime
 from cruxible_client.contracts.types import PrincipalRecord
 from cruxible_client.errors import ServerUnreachableError
 from cruxible_core.errors import ConfigError, DataValidationError
-from cruxible_core.mcp.workspace import mcp_workspace_root, resolve_workspace_path
+from cruxible_core.mcp.workspace import (
+    mcp_git_workspace_root,
+    mcp_workspace_root,
+    resolve_workspace_path,
+)
 from cruxible_core.playbill.claim_type_inputs import (
     ClaimTypeInputV1,
 )
@@ -394,7 +398,7 @@ def handle_playbill_submit_approval(
 def handle_playbill_activate(
     instance_id: str, proposal_id: str
 ) -> contracts.PlaybillWorkspaceActivationResult:
-    workspace = mcp_workspace_root()
+    workspace = mcp_git_workspace_root()
     return _dispatch_remote_or_local(
         lambda client: activate_with_workspace_refresh(
             client, instance_id, proposal_id, workspace=workspace
@@ -1712,15 +1716,13 @@ def handle_playbill_export_floor(instance_id: str) -> contracts.PlaybillFloorExp
 
 def handle_playbill_workspace_floor_export(
     instance_id: str,
-    output_path: str,
     *,
     force: bool,
 ) -> contracts.PlaybillWorkspaceFloorWriteResult:
-    workspace = mcp_workspace_root()
+    workspace = mcp_git_workspace_root()
     export = handle_playbill_export_floor(instance_id)
     return materialize_playbill_floor(
         workspace,
-        relative_path=output_path,
         export=export,
         force=force,
     )
@@ -1735,6 +1737,6 @@ def handle_playbill_workspace_floor_status(
         operation_name="cruxible_playbill_workspace_floor_status",
     )
     return inspect_workspace_floor(
-        mcp_workspace_root(),
+        mcp_git_workspace_root(),
         current_coordinate=search.coordinate,
     )

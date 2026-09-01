@@ -101,20 +101,20 @@ def test_document_wire_format_is_strict_discriminated_and_path_bound(tmp_path: P
     body = store.store(b"body")
     shell = _shell(body.digest)
     rendered = render_document(shell)
-    assert parse_document(rendered, path="documents/playbill-design.yaml") == shell
+    assert parse_document(rendered, path="documents/playbill-design.json") == shell
 
     payload = json.loads(rendered)
     payload["body_path"] = "/tmp/body.md"
     with pytest.raises(DocumentFormatError, match="strict v1"):
-        parse_document(json.dumps(payload).encode(), path="documents/playbill-design.yaml")
+        parse_document(json.dumps(payload).encode(), path="documents/playbill-design.json")
 
     payload = json.loads(rendered)
     payload["tag"] = "playbill-document-v2"
     with pytest.raises(DocumentFormatError, match="unsupported"):
-        parse_document(json.dumps(payload).encode(), path="documents/playbill-design.yaml")
+        parse_document(json.dumps(payload).encode(), path="documents/playbill-design.json")
 
     with pytest.raises(DocumentFormatError, match="identity/path"):
-        parse_document(rendered, path="documents/renamed.yaml")
+        parse_document(rendered, path="documents/renamed.json")
 
 
 def test_document_model_refuses_malformed_media_links_pins_and_authority(tmp_path: Path) -> None:
@@ -141,7 +141,7 @@ def test_document_acceptance_requires_exact_body_and_predecessor(tmp_path: Path)
     initial = _shell(body.digest)
     accepted = evaluate_document_law(
         initial,
-        path="documents/playbill-design.yaml",
+        path="documents/playbill-design.json",
         bodies=store,
         predecessor=None,
     )
@@ -153,7 +153,7 @@ def test_document_acceptance_requires_exact_body_and_predecessor(tmp_path: Path)
     missing = initial.model_copy(update={"body_digest": "sha256:" + "ff" * 32})
     refusal = evaluate_document_law(
         missing,
-        path="documents/playbill-design.yaml",
+        path="documents/playbill-design.json",
         bodies=store,
         predecessor=None,
     )
@@ -161,7 +161,7 @@ def test_document_acceptance_requires_exact_body_and_predecessor(tmp_path: Path)
     assert [item.code for item in refusal.diagnostics] == ["playbill.document.body_missing"]
 
     predecessor = AcceptedDocument(
-        path="documents/playbill-design.yaml",
+        path="documents/playbill-design.json",
         shell=initial,
         envelope_digest=document_digest(initial).tagged,
     )
@@ -204,7 +204,7 @@ def test_corrupt_cas_object_refuses_document_binding(tmp_path: Path) -> None:
 
     result = evaluate_document_law(
         shell,
-        path="documents/playbill-design.yaml",
+        path="documents/playbill-design.json",
         bodies=store,
         predecessor=None,
     )

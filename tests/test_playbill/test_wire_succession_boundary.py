@@ -83,13 +83,13 @@ def _members(builder: _Builder, index: int, version: CandidateWireVersion) -> di
         governance_scope=("project:playbill",),
         lifecycle=DocumentLifecycle(revision=1),
     )
-    members = {f"documents/note-{index}.yaml": render_document(shell)}
+    members = {f"documents/note-{index}.json": render_document(shell)}
     if version == V1:
         return members
     shell_subject: SubjectShell = subject()
     return {
         **members,
-        f"subjects/project.work_item/wi-{index}.yaml": render_subject(
+        f"subjects/project.work_item/wi-{index}.json": render_subject(
             shell_subject.model_copy(
                 update={
                     "subject_id": f"wi-{index}",
@@ -99,7 +99,7 @@ def _members(builder: _Builder, index: int, version: CandidateWireVersion) -> di
                 }
             )
         ),
-        f"claim-types/project.work_item/status{index}.yaml": render_claim_type_for(index),
+        f"claim-types/project.work_item/status{index}.json": render_claim_type_for(index),
     }
 
 
@@ -366,7 +366,7 @@ def test_the_document_bytes_are_unaffected_by_which_receipt_accepted_them(
     reopened = _reopen(instance)
     tree = reopened.tree_at(reopened.accepted_coordinate().git_oid)
     for index in range(1, len(_HISTORY) + 1):
-        assert f"documents/note-{index}.yaml" in tree
+        assert f"documents/note-{index}.json" in tree
 
 
 def test_the_first_generation_of_a_new_instance_states_the_boundary_too(

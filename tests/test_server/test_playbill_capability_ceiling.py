@@ -19,7 +19,7 @@ from cruxible_core.server.registry import get_registry, reset_registry
 
 @pytest.fixture
 def host_id(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)
     monkeypatch.delenv("CRUXIBLE_MODE", raising=False)

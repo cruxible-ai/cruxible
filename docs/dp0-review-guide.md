@@ -584,7 +584,7 @@ about what the tools did.
 same turn. Arm 3 receives exactly the tool's own output on all three events and
 says nothing at all. Arm 4 receives that same string plus a pure addendum:
 `exact external:corpus.handbook.md …` on the read, then
-`drifted external:corpus.handbook.md expected … observed … claims claims/83/CLM-….yaml … [commitment_superseded]`
+`drifted external:corpus.handbook.md expected … observed … claims claims/83/CLM-….json … [commitment_superseded]`
 on the edit, naming the affected Claim in the text the agent is already reading,
 with the accepted coordinate identical across the transcript and no compile,
 proposal, or acceptance in it.
@@ -865,6 +865,7 @@ tests/goldens/playbill/journal_corpus/vectors/stream-identity-alpha.json
 tests/goldens/playbill/journal_corpus/vectors/stream-identity-beta.json
 tests/goldens/playbill/merkle-manifest-v1.json
 tests/goldens/playbill/oracles-v1.json
+tests/goldens/playbill/p2-b0-artifact-codec-v1.json
 tests/goldens/playbill/projection-v1.json
 tests/goldens/playbill/query-definition-v1.json
 tests/goldens/playbill/semantic-genesis-v1.json

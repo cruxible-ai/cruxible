@@ -232,7 +232,7 @@ def test_row_and_byte_budgets_cursor_binding_and_head_pin(
         max_rows=2,
         max_bytes=65_536,
         last_generation=first.next_cursor.last_generation,
-        last_member_path="documents/not-present.yaml",
+        last_member_path="documents/not-present.json",
     )
     with pytest.raises(PlaybillSinceCursorCoordinateMismatch):
         service_playbill_since(
@@ -309,7 +309,7 @@ def test_v2_v3_normalization_preserves_every_disposition_and_null_delete(
 ) -> None:
     digest = "sha256:" + "a" * 64
     member = CandidateMemberLawEvidenceV2.model_construct(
-        path=f"documents/{disposition}.yaml",
+        path=f"documents/{disposition}.json",
         artifact_kind="Document",
         disposition=disposition,
         predecessor_artifact_digest=digest,
@@ -338,7 +338,7 @@ def test_v1_normalization_preserves_disposition_and_never_infers_predecessor(
 ) -> None:
     digest = "sha256:" + "a" * 64
     member = CandidateMemberEvidence.model_construct(
-        path=f"documents/{disposition}.yaml",
+        path=f"documents/{disposition}.json",
         artifact_kind="Document",
         disposition=disposition,
         artifact_digest=digest,

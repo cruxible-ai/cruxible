@@ -41,7 +41,7 @@ from tests.test_playbill._candidate_support import submit_subject_candidate
 from tests.test_playbill.test_activation import _sign
 from tests.test_service.test_playbill_documents import TIMESTAMP, _instance
 
-SUBJECT_PATH = "subjects/project.work_item/wi-123.yaml"
+SUBJECT_PATH = "subjects/project.work_item/wi-123.json"
 SUBJECT_IDENTITY = "Subject:project.work_item/wi-123"
 
 
@@ -99,7 +99,7 @@ def test_subject_wire_digest_and_path_are_canonical_and_golden() -> None:
     assert subject_digest(shell).tagged == golden["artifact_digest"]
 
     with pytest.raises(SubjectFormatError, match="identity/path"):
-        parse_subject(wire, path="subjects/project.work_item/wi-999.yaml")
+        parse_subject(wire, path="subjects/project.work_item/wi-999.json")
 
 
 def test_subject_is_identity_only_and_refuses_properties_or_metadata() -> None:
@@ -202,9 +202,9 @@ def test_subject_successor_uses_exact_predecessor_and_projection_revision(tmp_pa
         logical = canonical_logical_export(projection.index_path)
     live = next(table for table in logical["tables"] if table["name"] == "live_identities")
     assert {(row[0], row[2]) for row in live["rows"]} == {
-        ("ApprovalPolicy:instance", "governance/approval-policy.yaml"),
+        ("ApprovalPolicy:instance", "governance/approval-policy.json"),
         (
             "ProcedureRuntimePolicy:instance",
-            "governance/procedure-runtime-policy.yaml",
+            "governance/procedure-runtime-policy.json",
         ),
     }

@@ -70,7 +70,7 @@ def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:
         def server_info(self) -> contracts.ServerInfoResult:
             return contracts.ServerInfoResult(
                 server_required=False,
-                state_dir="/srv/state",
+                state_root="/srv/state",
                 version="0.2.0",
                 instance_count=3,
                 auth_enabled=True,
@@ -83,7 +83,7 @@ def test_status_reports_daemon_metadata(monkeypatch, runner: CliRunner) -> None:
     assert result.exit_code == 0, result.output
     assert "Daemon: reachable (http://server)" in result.output
     assert "Version: 0.2.0" in result.output
-    assert "State dir: /srv/state" in result.output
+    assert "State root: /srv/state" in result.output
     assert "Instances: 3" in result.output
     assert "Auth enabled: yes" in result.output
     assert "Auth required: yes" in result.output
@@ -94,7 +94,7 @@ def test_status_json_includes_transport(monkeypatch, runner: CliRunner) -> None:
         def server_info(self) -> contracts.ServerInfoResult:
             return contracts.ServerInfoResult(
                 server_required=False,
-                state_dir="/srv/state",
+                state_root="/srv/state",
                 version="0.2.0",
                 instance_count=1,
                 auth_enabled=False,
@@ -122,7 +122,7 @@ def ephemeral_daemon_client(
     transport is a FastAPI TestClient over create_app(), so `server status`
     exercises the real `/api/v1/server/info` route end to end.
     """
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_MODE", raising=False)
     monkeypatch.delenv("CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET", raising=False)

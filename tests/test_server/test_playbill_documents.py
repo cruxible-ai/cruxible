@@ -102,7 +102,7 @@ def test_http_document_lifecycle_and_explanation(
         json={
             "subject": {
                 "tag": "playbill-semantic-address-v1",
-                "artifact_path": "documents/design.yaml",
+                "artifact_path": "documents/design.json",
                 "selector": {
                     "scheme": "artifact-v1",
                     "value": "",

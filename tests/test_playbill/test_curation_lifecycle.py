@@ -335,7 +335,7 @@ def test_historical_accept_fixed_on_newly_quarantined_law_replays_as_recorded(
         resolved_generation=1,
         affected_members=(
             CurationAffectedMemberV1(
-                path="claim-types/project.work_item.owner.yaml",
+                path="claim-types/project.work_item.owner.json",
                 disposition="replace",
                 predecessor_artifact_digest="sha256:" + "4" * 64,
                 candidate_artifact_digest="sha256:" + "5" * 64,
@@ -456,7 +456,7 @@ def test_redetection_reuses_item_and_accept_fixed_recurrence_mints_linked_succes
         resolved_generation=1,
         affected_members=(
             CurationAffectedMemberV1(
-                path="claim-types/project.work_item.status.yaml",
+                path="claim-types/project.work_item.status.json",
                 disposition="replace",
                 predecessor_artifact_digest="sha256:" + "4" * 64,
                 candidate_artifact_digest="sha256:" + "5" * 64,
@@ -783,7 +783,7 @@ def _matrix_fixed(item):  # type: ignore[no-untyped-def]
         resolved_generation=1,
         affected_members=(
             CurationAffectedMemberV1(
-                path="claim-types/project.work_item.status.yaml",
+                path="claim-types/project.work_item.status.json",
                 disposition="replace",
                 predecessor_artifact_digest="sha256:" + "4" * 64,
                 candidate_artifact_digest="sha256:" + "5" * 64,

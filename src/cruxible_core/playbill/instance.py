@@ -7,7 +7,7 @@ import os
 import secrets
 import shutil
 import stat
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -40,6 +40,10 @@ from cruxible_client.contracts.types import (
     RecoveryPosture,
     StorageLayout,
     initial_authority_matrix,
+)
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    PlaybillWorkspaceAdvertisement,
 )
 from cruxible_core.playbill.activation import ActivationPublisher
 from cruxible_core.playbill.assembler import ProjectionAssembler, ProjectionCrashHook
@@ -174,6 +178,7 @@ class PlaybillInstance:
         self._recovered = recovered
         self._promotion_verifier = promotion_verifier
         self._claim_attestation_store: ClaimAttestationEvidenceStore | None = None
+        self._workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None
 
     @staticmethod
     def _accepted_query_facts(
@@ -563,7 +568,30 @@ class PlaybillInstance:
             current_coordinate=self.accepted_coordinate,
             promotion_verifier=self._promotion_verifier,
             query_facts_provider=lambda coordinate: self._accepted_query_facts(self, coordinate),
+            workspace_advertiser=self.advertise_workspace,
         )
+
+    def bind_workspace_advertiser(
+        self,
+        advertiser: Callable[[], PlaybillWorkspaceAdvertisement],
+    ) -> None:
+        """Bind the manager-owned advisory Git hook for this process."""
+
+        self._workspace_advertiser = advertiser
+
+    def advertise_workspace(self) -> PlaybillWorkspaceAdvertisement:
+        """Refresh advisory refs, or report that this instance has no attachment."""
+
+        if self._workspace_advertiser is None:
+            return NOT_ATTACHED_ADVERTISEMENT
+        try:
+            return self._workspace_advertiser()
+        except BaseException:
+            return PlaybillWorkspaceAdvertisement(
+                status="failed",
+                workspace_path=None,
+                failure_code="unexpected_failure",
+            )
 
     def proposal_evidence(self) -> ProposalEvidenceStore:
         """Return the immutable non-authoritative proposal/approval evidence store."""

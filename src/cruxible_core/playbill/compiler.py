@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from cruxible_client.contracts.canonical import canonical_digest
+from cruxible_client.contracts.artifacts import ArtifactKindRegistry
+from cruxible_client.contracts.canonical import (
+    CURRENT_ARTIFACT_CODEC,
+    P2_B0_ARTIFACT_CODEC,
+    ArtifactCodec,
+    canonical_digest,
+)
 from cruxible_client.contracts.errors import PlaybillFormatError
 from cruxible_client.contracts.projection_extensions import (
     ProjectionExtensionRegistry,
@@ -18,6 +24,10 @@ from cruxible_client.contracts.projection_extensions import (
     playbill_subject_extension_registry,
 )
 from cruxible_client.contracts.types import CompilerCoordinate
+from cruxible_core.playbill.projection_artifacts import (
+    P2_B0_ARTIFACT_KINDS,
+    PLAYBILL_ARTIFACT_KINDS,
+)
 
 
 def _coordinate(
@@ -54,6 +64,10 @@ P2_B0_COMPILER = _coordinate(
     projection_content="claims-procedures-runtime-v1",
     semantic_revision=11,
 )
+PC_HR_COMPILER = _coordinate(
+    projection_content="claims-procedures-runtime-v1",
+    semantic_revision=12,
+)
 SUPPORTED_COMPILERS = (
     PB_B_COMPILER,
     PB_C_COMPILER,
@@ -65,11 +79,32 @@ SUPPORTED_COMPILERS = (
     PC_D_COMPILER,
     PC_E1_COMPILER,
     P2_B0_COMPILER,
+    PC_HR_COMPILER,
 )
 
 
 def current_compiler_coordinate() -> CompilerCoordinate:
-    return P2_B0_COMPILER
+    return PC_HR_COMPILER
+
+
+def artifact_kinds_for_compiler(compiler: CompilerCoordinate) -> ArtifactKindRegistry:
+    """Return the frozen ledger path grammar selected by one compiler."""
+
+    if compiler == PC_HR_COMPILER:
+        return PLAYBILL_ARTIFACT_KINDS
+    if compiler in SUPPORTED_COMPILERS:
+        return P2_B0_ARTIFACT_KINDS
+    raise PlaybillFormatError("compiler coordinate has no installed artifact codec")
+
+
+def artifact_codec_for_compiler(compiler: CompilerCoordinate) -> ArtifactCodec:
+    """Return the frozen byte codec selected by one compiler coordinate."""
+
+    if compiler == PC_HR_COMPILER:
+        return CURRENT_ARTIFACT_CODEC
+    if compiler in SUPPORTED_COMPILERS:
+        return P2_B0_ARTIFACT_CODEC
+    raise PlaybillFormatError("compiler coordinate has no installed artifact codec")
 
 
 def projection_registry_for_compiler(
@@ -95,6 +130,8 @@ def projection_registry_for_compiler(
         return playbill_runtime_extension_registry()
     if compiler == P2_B0_COMPILER:
         return playbill_replay_extension_registry()
+    if compiler == PC_HR_COMPILER:
+        return playbill_replay_extension_registry()
     raise PlaybillFormatError("compiler coordinate has no installed deterministic registry")
 
 
@@ -109,7 +146,10 @@ __all__ = [
     "PC_D_COMPILER",
     "PC_E1_COMPILER",
     "P2_B0_COMPILER",
+    "PC_HR_COMPILER",
     "SUPPORTED_COMPILERS",
     "current_compiler_coordinate",
+    "artifact_codec_for_compiler",
+    "artifact_kinds_for_compiler",
     "projection_registry_for_compiler",
 ]

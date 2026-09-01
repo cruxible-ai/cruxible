@@ -33,7 +33,7 @@ def test_client_explain_transmits_only_subject_coordinate_and_read_options() -> 
         "inst_test",
         subject={
             "tag": "playbill-semantic-address-v1",
-            "artifact_path": "documents/design.yaml",
+            "artifact_path": "documents/design.json",
             "selector": {"scheme": "artifact-v1", "value": ""},
         },
         at=contracts.PlaybillAcceptedCoordinate.model_validate(COORDINATE),

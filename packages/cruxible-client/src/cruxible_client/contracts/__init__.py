@@ -20,6 +20,10 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureRunReceiptV4,
     ProcedureTerminalV1,
 )
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    PlaybillWorkspaceAdvertisement,
+)
 
 RuntimeCredentialPermissionMode = Literal[
     "read_only",
@@ -117,7 +121,7 @@ class RuntimeCredentialListResult(BaseModel):
 
 class ServerInfoResult(BaseModel):
     server_required: bool
-    state_dir: str
+    state_root: str
     version: str
     instance_count: int
     auth_enabled: bool
@@ -127,7 +131,7 @@ class ServerInfoResult(BaseModel):
 class ServerRestartResult(BaseModel):
     scheduled: bool
     version: str
-    state_dir: str
+    state_root: str
 
 
 class PlaybillAcceptedCoordinate(BaseModel):
@@ -149,6 +153,7 @@ class PlaybillInitResult(BaseModel):
     trust_root: dict[str, Any]
     recovery_posture: str
     approval_policy_mode: ApprovalPolicyMode
+    workspace_advertisement: PlaybillWorkspaceAdvertisement
 
 
 class PlaybillCasObjectResult(BaseModel):
@@ -166,6 +171,7 @@ class PlaybillProposalInspection(BaseModel):
     tag: Literal["playbill-proposal-inspection-v1"] = "playbill-proposal-inspection-v1"
     proposal: dict[str, Any]
     accepted_coordinate: PlaybillAcceptedCoordinate
+    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
@@ -226,6 +232,46 @@ class PlaybillRefusalInspection(BaseModel):
     diagnostics: list[dict[str, Any]]
 
 
+class PlaybillSemanticFieldValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    state: Literal["absent", "present"]
+    value: Any
+
+    @model_validator(mode="after")
+    def _absent_has_no_value(self) -> "PlaybillSemanticFieldValue":
+        if self.state == "absent" and self.value is not None:
+            raise ValueError("an absent semantic field value must carry JSON null")
+        return self
+
+
+class PlaybillSemanticFieldDelta(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tag: Literal["playbill-semantic-field-delta-v1"] = "playbill-semantic-field-delta-v1"
+    field_path: str
+    before: PlaybillSemanticFieldValue
+    after: PlaybillSemanticFieldValue
+
+
+class PlaybillReviewedMember(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str
+    artifact_kind: str
+    disposition: str
+    closure_role: Literal["authored", "generated_successor", "invalidation"]
+    predecessor_artifact_digest: str | None
+    candidate_artifact_digest: str | None
+    base_semantic_artifact: dict[str, Any] | None
+    candidate_semantic_artifact: dict[str, Any] | None
+    semantic_delta: list[PlaybillSemanticFieldDelta]
+    law_identifier: str
+    law_digest: str
+    law_evidence: dict[str, Any]
+    dependency_proof_refs: list[dict[str, Any]]
+
+
 class PlaybillProposalReview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -238,7 +284,7 @@ class PlaybillProposalReview(BaseModel):
     settlement_base: PlaybillAcceptedCoordinate
     base_oid: str
     complete_members: list[dict[str, Any]]
-    members: list[dict[str, Any]]
+    members: list[PlaybillReviewedMember]
     governance: dict[str, Any]
     provenance: dict[str, Any]
     attestation_coverage: dict[str, Any]
@@ -278,6 +324,7 @@ class PlaybillActivationReceipt(BaseModel):
     activated_by: str
     status: Literal["accepted", "lost_cas"]
     accepted_coordinate: PlaybillAcceptedCoordinate | None
+    workspace_advertisement: PlaybillWorkspaceAdvertisement
 
 
 class PlaybillFloorRefreshResult(BaseModel):
@@ -464,6 +511,7 @@ class PlaybillClaimTypeMigrationResult(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    semantic_delta: list[PlaybillSemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
@@ -480,6 +528,7 @@ class PlaybillClaimTypeMigrationPreflight(BaseModel):
     coordinate: PlaybillAcceptedCoordinate
     successor_artifact_digest: str
     dependents: list[dict[str, Any]]
+    semantic_delta: list[PlaybillSemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
@@ -496,6 +545,7 @@ class PlaybillClaimTypeMigrationResultV2(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    semantic_delta: list[PlaybillSemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
@@ -512,6 +562,7 @@ class PlaybillClaimTypeMigrationResultV3(BaseModel):
     operation_digest: str
     dependents: list[dict[str, Any]]
     proposal: PlaybillProposalInspection
+    semantic_delta: list[PlaybillSemanticFieldDelta]
     warnings: list[dict[str, Any]] = []
     lint: PlaybillClaimTypeProposalLint | None = Field(
         default=None,
@@ -740,6 +791,7 @@ class PlaybillAuthoringSubmitResult(BaseModel):
     tag: Literal["playbill-authoring-submit-result-v1"] = "playbill-authoring-submit-result-v1"
     intent: dict[str, Any]
     status: PlaybillCandidateStatus
+    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
     # True when this submit amends an existing Claim identity in place.
     identity_stable: bool = False
     claim_revision: int | None = None
@@ -887,6 +939,7 @@ class PlaybillProcedureBindResult(BaseModel):
     accepted_digest: str
     accepted_readiness: PlaybillProcedureReadiness
     pending: "ProcedurePendingSuccessorV1 | None" = None
+    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
 class PlaybillProcedureRunState(BaseModel):

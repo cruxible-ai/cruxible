@@ -14,6 +14,7 @@ def _result() -> dict[str, Any]:
     return {
         "tag": "playbill-claim-type-migration-result-v1",
         "operation_digest": "sha256:" + "1" * 64,
+        "semantic_delta": [],
         "dependents": [{"claim_id": "CLM-" + "2" * 32, "disposition": "retire"}],
         "proposal": {
             "tag": "playbill-proposal-inspection-v1",

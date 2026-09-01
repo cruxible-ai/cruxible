@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 
 from cruxible_core.errors import ConfigError, DataValidationError
+from cruxible_core.playbill.workspace_advertisement import containing_git_workspace_root
 
 MCP_WORKSPACE_ROOT_ENV = "CRUXIBLE_MCP_WORKSPACE_ROOT"
 
@@ -14,7 +15,7 @@ MCP_WORKSPACE_ROOT_ENV = "CRUXIBLE_MCP_WORKSPACE_ROOT"
 def mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
     """Resolve the adapter workspace; absence deliberately means process cwd."""
 
-    env = environ or os.environ
+    env = os.environ if environ is None else environ
     raw = env.get(MCP_WORKSPACE_ROOT_ENV)
     candidate = Path.cwd() if raw is None else Path(raw).expanduser()
     try:
@@ -24,6 +25,21 @@ def mcp_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
     if not root.is_dir():
         raise ConfigError(f"MCP workspace root is not a directory: {root}")
     return root
+
+
+def mcp_git_workspace_root(environ: Mapping[str, str] | None = None) -> Path:
+    """Resolve the canonical worktree without escaping an explicit MCP root."""
+
+    env = os.environ if environ is None else environ
+    configured_root = mcp_workspace_root(env)
+    git_root = containing_git_workspace_root(configured_root)
+    if git_root is None:
+        raise ConfigError("MCP workspace floor export must run inside one Git worktree")
+    if MCP_WORKSPACE_ROOT_ENV in env and git_root != configured_root:
+        raise ConfigError(
+            "CRUXIBLE_MCP_WORKSPACE_ROOT must name the Git worktree root for floor operations"
+        )
+    return git_root
 
 
 def resolve_workspace_path(
@@ -51,4 +67,9 @@ def resolve_workspace_path(
     return resolved
 
 
-__all__ = ["MCP_WORKSPACE_ROOT_ENV", "mcp_workspace_root", "resolve_workspace_path"]
+__all__ = [
+    "MCP_WORKSPACE_ROOT_ENV",
+    "mcp_git_workspace_root",
+    "mcp_workspace_root",
+    "resolve_workspace_path",
+]

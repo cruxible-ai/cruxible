@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -404,14 +405,14 @@ def seed(bundle_dir: Path = BUNDLE_DIR, *, name: str, key_dir: Path) -> dict[str
 def export_arm_surface(destination: Path) -> Path:
     """Write floor-v2 artifacts and the coverage boundary as one tree."""
 
-    run_cli_json(
-        "playbill",
-        "floor",
-        "export",
-        "--output",
-        str(destination),
-    )
-    return destination
+    destination.mkdir(parents=True, exist_ok=True)
+    previous = Path.cwd()
+    try:
+        os.chdir(destination)
+        run_cli_json("playbill", "floor", "export")
+    finally:
+        os.chdir(previous)
+    return destination / ".playbill/floor"
 
 
 def corpus_files(bundle_dir: Path = BUNDLE_DIR) -> dict[str, bytes]:
@@ -456,7 +457,6 @@ def coverage_config(bundle_dir: Path = BUNDLE_DIR) -> dict[str, Any]:
         ],
         "floor_output": {
             "tag": "playbill-floor-output-v1",
-            "path": "playbill-floor",
             "format": "playbill-floor-export-v2",
         },
     }
@@ -507,7 +507,7 @@ def build_arm(
     if arm in {3, 4}:
         if surface is None:
             raise ValueError("arms 3 and 4 need the exported Playbill file surface")
-        _copy_tree(surface, workspace / "playbill-floor")
+        _copy_tree(surface, workspace / ".playbill/floor")
         config_path = workspace / CONFIG_RELATIVE_PATH
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(

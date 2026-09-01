@@ -27,7 +27,7 @@ def attestation_http(
     world = tmp_path / "world"
     world.mkdir()
     instance, claim_id, owner = _accepted_claim_world(world)
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     monkeypatch.delenv("CRUXIBLE_SERVER_TOKEN", raising=False)
     reset_permissions()

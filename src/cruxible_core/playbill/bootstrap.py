@@ -18,6 +18,7 @@ from cruxible_client.contracts.approval_policy import (
     render_approval_policy,
 )
 from cruxible_client.contracts.canonical import (
+    P2_B0_ARTIFACT_CODEC,
     BootstrapRoot,
     ChangeSetDigest,
     GenerationRoot,
@@ -130,7 +131,7 @@ def genesis_tree(
     tree = {
         APPROVAL_POLICY_PATH: render_approval_policy(approval_policy),
         **{
-            f"principals/{record.principal_id}.yaml": render_principal(record) for record in ordered
+            f"principals/{record.principal_id}.json": render_principal(record) for record in ordered
         },
     }
     if procedure_runtime_policy is not None:
@@ -147,7 +148,8 @@ def seeded_procedure_runtime_policy() -> ProcedureRuntimePolicyV1:
         files("cruxible_core.playbill.seed_artifacts")
         .joinpath("procedure-runtime-policy.yaml")
         .read_bytes(),
-        path=PROCEDURE_RUNTIME_POLICY_PATH,
+        path="governance/procedure-runtime-policy.yaml",
+        codec=P2_B0_ARTIFACT_CODEC,
     )
 
 

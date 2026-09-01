@@ -25,6 +25,10 @@ from cruxible_client.contracts.canonical import (
 from cruxible_client.contracts.diagnostics import CompilerDiagnostic
 from cruxible_client.contracts.policies import ClaimAdmissionEvaluationAccountV1
 from cruxible_client.contracts.types import GitObjectFormat
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    PlaybillWorkspaceAdvertisement,
+)
 
 _ACTOR_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _PROPOSAL_REF_RE = re.compile(r"^refs/proposals/[a-z][a-z0-9_.-]{0,127}/[a-z][a-z0-9_.-]{0,127}$")
@@ -287,6 +291,7 @@ class ProposalResult(_StrictProposalModel):
     admission: ProposalAdmissionRecord
     evaluation: ProposalEvaluationRecord
     candidate: CandidateRecordAnyVersion | None = None
+    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
     @model_validator(mode="after")
     def _result_shape(self) -> "ProposalResult":

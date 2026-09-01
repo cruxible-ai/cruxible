@@ -96,7 +96,7 @@ def test_a_deleted_member_absent_from_the_parent_is_refused(tmp_path: Path) -> N
     def forged(base_oid: str, target_oid: str) -> tuple[GitTreeChange, ...]:
         return (
             GitTreeChange(
-                path="claims/ff/CLM-" + "f" * 32 + ".yaml", status="D", mode="000000", oid=None
+                path="claims/ff/CLM-" + "f" * 32 + ".json", status="D", mode="000000", oid=None
             ),
         )
 

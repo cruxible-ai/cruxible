@@ -196,6 +196,7 @@ def test_readmit_and_migration_delegate_to_existing_client_routes(
             return contracts.PlaybillClaimTypeMigrationResult(
                 tag="playbill-claim-type-migration-result-v1",
                 operation_digest="sha256:" + "6" * 64,
+                semantic_delta=[],
                 dependents=[],
                 proposal=contracts.PlaybillProposalInspection(
                     proposal={}, accepted_coordinate=_coordinate()

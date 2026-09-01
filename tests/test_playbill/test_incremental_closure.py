@@ -52,7 +52,7 @@ def _subject(
 
 
 def _path(name: str) -> str:
-    return f"subjects/project.work_item/{name}.yaml"
+    return f"subjects/project.work_item/{name}.json"
 
 
 def _pin_to(shell: SubjectShell, *, role: str = "example-subject") -> ArtifactPin:

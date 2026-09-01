@@ -37,14 +37,14 @@ def _review() -> dict[str, Any]:
             "parent_semantic_root": COORDINATE["semantic_root"],
             "candidate_manifest_root": "sha256:" + "5" * 64,
             "semantic_diff_digest": "sha256:" + "6" * 64,
-            "scope": ["documents/design.yaml"],
+            "scope": ["documents/design.json"],
             "timestamp": "2026-08-13T12:00:00.000000Z",
         },
         "candidate_digest": "sha256:" + "7" * 64,
         "required_tier": "graph_write",
         "approval_requirements": [],
         "activation_policy": "snapshot",
-        "closure_paths": ["documents/design.yaml"],
+        "closure_paths": ["documents/design.json"],
         "members": [],
         "law_digests": {"document-v1": "sha256:" + "8" * 64},
         "compiler_digest": COORDINATE["compiler_digest"],
@@ -108,7 +108,7 @@ def test_client_signer_callback_submits_only_public_attestation() -> None:
                         "kind": "ordinary",
                         "status": "active",
                     },
-                    "signer_key_history_ref": "principals/owner.yaml@"
+                    "signer_key_history_ref": "principals/owner.json@"
                     + COORDINATE["semantic_root"],
                     "statement": {
                         "tag": "playbill-attest-v1",
@@ -129,7 +129,7 @@ def test_client_signer_callback_submits_only_public_attestation() -> None:
                 "submitted_by": "relay",
                 "signing_semantic_root": COORDINATE["semantic_root"],
                 "attestation_digest": "sha256:" + "b" * 64,
-                "key_history_ref": "principals/owner.yaml@" + COORDINATE["semantic_root"],
+                "key_history_ref": "principals/owner.json@" + COORDINATE["semantic_root"],
             },
         )
 

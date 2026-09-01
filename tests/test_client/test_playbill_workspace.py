@@ -73,7 +73,6 @@ def _workspace(tmp_path: Path) -> Path:
                 "tag": "playbill-coverage-workspace-config-v2",
                 "floor_output": {
                     "tag": "playbill-floor-output-v1",
-                    "path": "playbill-floor",
                     "format": "playbill-floor-export-v2",
                 },
             }
@@ -85,13 +84,12 @@ def _workspace(tmp_path: Path) -> Path:
 
 def test_materialization_exactly_replaces_and_reports_current(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
-    destination = workspace / "playbill-floor"
+    destination = workspace / ".playbill/floor"
     destination.mkdir()
     (destination / "stale.json").write_text("old", encoding="utf-8")
 
     result = materialize_playbill_floor(
         workspace,
-        relative_path="playbill-floor",
         export=_export(),
     )
     status = inspect_workspace_floor(workspace, current_coordinate=_coordinate())
@@ -110,51 +108,26 @@ def test_materialization_refuses_symlink_escape(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     outside = tmp_path / "outside"
     outside.mkdir()
-    (workspace / "playbill-floor").symlink_to(outside, target_is_directory=True)
+    (workspace / ".playbill/floor").symlink_to(outside, target_is_directory=True)
 
     with pytest.raises(PlaybillWorkspaceError, match="escapes"):
         materialize_playbill_floor(
             workspace,
-            relative_path="playbill-floor",
             export=_export(),
         )
 
 
-def test_materialization_refuses_dot_output_path(tmp_path: Path) -> None:
+def test_config_refuses_the_obsolete_arbitrary_output_path(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
+    config_path = workspace / ".playbill/coverage.json"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["floor_output"]["path"] = "other-floor"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
 
-    with pytest.raises(PlaybillWorkspaceError, match="normalized workspace-relative"):
-        materialize_playbill_floor(
-            workspace,
-            relative_path=".",
-            export=_export(),
-        )
+    status = inspect_workspace_floor(workspace, current_coordinate=_coordinate())
 
-
-@pytest.mark.parametrize(
-    "relative_path",
-    [
-        "",
-        "../outside",
-        "/tmp/outside",
-        "playbill-floor/../outside",
-        "./playbill-floor",
-        ".playbill",
-        ".playbill/floor",
-    ],
-)
-def test_materialization_refuses_output_path_escape_forms(
-    tmp_path: Path,
-    relative_path: str,
-) -> None:
-    workspace = _workspace(tmp_path)
-
-    with pytest.raises(PlaybillWorkspaceError, match="normalized workspace-relative"):
-        materialize_playbill_floor(
-            workspace,
-            relative_path=relative_path,
-            export=_export(),
-        )
+    assert status.status == "invalid"
+    assert "path is obsolete" in (status.message or "")
 
 
 @pytest.mark.parametrize(
@@ -184,7 +157,6 @@ def test_materialization_refuses_export_file_escape_forms(
     with pytest.raises(PlaybillWorkspaceError, match="escapes its root"):
         materialize_playbill_floor(
             workspace,
-            relative_path="playbill-floor",
             export=malicious_export,
         )
 
@@ -201,6 +173,7 @@ def test_activate_reports_accepted_and_refresh_failure(tmp_path: Path) -> None:
                 activated_by="owner",
                 status="accepted",
                 accepted_coordinate=_coordinate(),
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
             )
 
         def export_playbill_floor(

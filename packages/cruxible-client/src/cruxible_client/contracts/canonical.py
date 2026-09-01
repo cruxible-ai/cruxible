@@ -3,20 +3,33 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from typing import ClassVar, TypeVar, cast
 
 from cruxible_client.contracts.errors import CanonicalEncodingError
-from cruxible_client.contracts.primitives import canonical_json
+from cruxible_client.contracts.primitives import canonical_json, pretty_json
 
 CanonicalScalar = None | bool | int | str
 CanonicalValue = CanonicalScalar | list["CanonicalValue"] | dict[str, "CanonicalValue"]
 Manifest = dict[str, str]
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+class ArtifactCodec(str, Enum):
+    """Compiler-selected governed-artifact byte and path spelling."""
+
+    CURRENT_PRETTY_JSON = "playbill-artifact-codec-pretty-json-v1"
+    P2_B0_COMPACT_JSON = "playbill-artifact-codec-compact-json-v1"
+
+
+CURRENT_ARTIFACT_CODEC = ArtifactCodec.CURRENT_PRETTY_JSON
+P2_B0_ARTIFACT_CODEC = ArtifactCodec.P2_B0_COMPACT_JSON
 
 
 def _normalize_string(value: str) -> str:
@@ -79,6 +92,67 @@ def canonical_bytes(value: object) -> bytes:
     """Encode one normalized value as whitespace-free UTF-8 JSON."""
 
     return canonical_json(normalize_canonical(value)).encode("utf-8")
+
+
+def pretty_canonical_bytes(value: object) -> bytes:
+    """Encode one normalized value as sorted indent-2 JSON with one final LF."""
+
+    return pretty_json(normalize_canonical(value)).encode("utf-8") + b"\n"
+
+
+def artifact_path_for_codec(current_path: str, codec: ArtifactCodec) -> str:
+    """Return the one path spelling selected by ``codec``."""
+
+    if not current_path.endswith(".json"):
+        raise CanonicalEncodingError("current artifact path must end in .json")
+    if codec is CURRENT_ARTIFACT_CODEC:
+        return current_path
+    if codec is P2_B0_ARTIFACT_CODEC:
+        return current_path.removesuffix(".json") + ".yaml"
+    raise CanonicalEncodingError(f"unsupported artifact codec: {codec!r}")
+
+
+def artifact_bytes_for_codec(
+    rendered_current: bytes,
+    *,
+    path: str,
+    codec: ArtifactCodec,
+) -> bytes:
+    """Encode bytes from the compiler-selected codec; suffix only checks consistency."""
+
+    allowed_suffixes = (".json",) if codec is CURRENT_ARTIFACT_CODEC else (".yaml", ".json")
+    if not path.endswith(allowed_suffixes):
+        raise CanonicalEncodingError(
+            f"artifact path is inconsistent with {codec.value}: expected one of "
+            f"{allowed_suffixes!r}"
+        )
+    if codec is CURRENT_ARTIFACT_CODEC:
+        return rendered_current
+    if codec is P2_B0_ARTIFACT_CODEC:
+        return canonical_bytes(json.loads(rendered_current)) + b"\n"
+    raise CanonicalEncodingError(f"unsupported artifact codec: {codec!r}")
+
+
+def artifact_bytes_for_path(
+    rendered_current: bytes,
+    path: str,
+    *,
+    codec: ArtifactCodec,
+) -> bytes:
+    """Encode one artifact using an explicit compiler-selected codec."""
+
+    return artifact_bytes_for_codec(rendered_current, path=path, codec=codec)
+
+
+def artifact_path_matches(
+    current_path: str,
+    actual_path: str,
+    *,
+    codec: ArtifactCodec,
+) -> bool:
+    """Check that an identity-derived current path agrees with the selected codec."""
+
+    return actual_path == artifact_path_for_codec(current_path, codec)
 
 
 def canonical_digest(domain: str, payload: Mapping[str, object]) -> str:
@@ -412,7 +486,14 @@ def semantic_diff(
 
 
 __all__ = [
+    "ArtifactCodec",
     "ArtifactDigest",
+    "CURRENT_ARTIFACT_CODEC",
+    "P2_B0_ARTIFACT_CODEC",
+    "artifact_bytes_for_codec",
+    "artifact_bytes_for_path",
+    "artifact_path_for_codec",
+    "artifact_path_matches",
     "AcceptanceLawDigest",
     "ApprovalDigest",
     "BootstrapRoot",
@@ -440,6 +521,7 @@ __all__ = [
     "normalize_canonical",
     "normalize_ledger_path",
     "normalize_manifest_paths",
+    "pretty_canonical_bytes",
     "semantic_diff",
     "semantic_diff_from_members",
     "semantic_projection",

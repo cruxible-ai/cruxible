@@ -44,14 +44,17 @@ Playbill signing principals.
 ## server
 
 ~~~text
-cruxible server start
+cruxible server start [--state-root DIR] [--socket PATH | --host HOST --port PORT]
 cruxible server status
 cruxible server info
 cruxible server restart
 ~~~
 
 server start is the long-running daemon process and does not connect to an
-existing server.
+existing server. State defaults to `~/.cruxible`; `--state-root` overrides
+`CRUXIBLE_STATE_ROOT`. The obsolete `CRUXIBLE_SERVER_STATE_DIR` name is
+refused. See [Canonical repository and daemon layout](canonical-repository-layout.md)
+for the exact directory contract.
 
 ## playbill host
 
@@ -59,7 +62,10 @@ existing server.
 cruxible playbill host create [--instance-id ID]
 ~~~
 
-Allocates an empty daemon-owned host and remembers it.
+Allocates an empty daemon-owned host and remembers it. When the selected daemon
+is reached through `--server-socket` or `CRUXIBLE_SERVER_SOCKET`, the command
+also attaches the current Git worktree. A TCP client never sends a local path
+for the daemon to interpret.
 
 ## playbill init
 
@@ -81,6 +87,12 @@ and repository hygiene, not a security boundary. Organization review normally
 rides branch protection/CODEOWNERS on the state repository; real custody
 separation belongs at the parked Cloud broker/leasing seam. The optional
 recovery key remains lifecycle-only.
+
+Successful initialization remembers the initialized instance before rendering
+either JSON or human output. For an attached local worktree, the daemon creates
+or validates the advisory `playbill` Git remote and fetches accepted `main` and
+proposal refs into `refs/remotes/playbill/*`. Those refs are review aids only;
+merging one never admits or activates governed state.
 
 ## playbill body
 
@@ -397,14 +409,26 @@ narrow what the capsule carries.
 ## playbill floor
 
 ~~~text
-cruxible playbill floor export --output DIR [--force]
+cruxible playbill floor export [--force]
 ~~~
 
-Writes the deterministic greppable floor of accepted state. The daemon returns
-bytes keyed by floor path and never writes a client path; export refuses a
-non-empty output directory unless --force is given. The export carries its own
-coverage boundary in `coverage-manifest.json`, enumerated in the root manifest
-like every other floor file.
+Writes the deterministic greppable floor of accepted state to the fixed derived
+cache `.playbill/floor/` under the current workspace. The daemon returns bytes
+keyed by floor path and never writes a client path; export refuses a non-empty
+floor unless `--force` is given. The export carries its own coverage boundary
+in `coverage-manifest.json`, enumerated in the root manifest like every other
+floor file. `floor_output.path` is obsolete and refused; a v2 coverage config
+enables refresh with only the fixed profile:
+
+~~~json
+{
+  "tag": "playbill-coverage-workspace-config-v2",
+  "floor_output": {
+    "tag": "playbill-floor-output-v1",
+    "format": "playbill-floor-export-v2"
+  }
+}
+~~~
 
 Floor export v2 pretty-prints every JSON card with stable key ordering for grep
 quality. `manifest.json` inventories and digests those exact rendered bytes, so

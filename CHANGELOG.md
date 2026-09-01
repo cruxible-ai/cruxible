@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Human-readable governed state and a single state root (PC-HR).** Current
+  compiler artifacts use pretty canonical JSON at `.json` paths while frozen
+  historical compilers retain their compact `.yaml` verifier. The daemon state
+  root is now `~/.cruxible` (or `CRUXIBLE_STATE_ROOT`), the workspace floor is
+  fixed at the containing worktree's `.playbill/floor`, and workspace Git refs
+  are advisory. Pre-PC-HR nested state is refused with a typed re-seed error so
+  neither instances nor the auth-required latch can be silently orphaned.
+  `playbill floor export --output`, `floor_output.path`, `--state-dir`, and
+  `CRUXIBLE_SERVER_STATE_DIR` are removed; claim-type migration output is human
+  readable by default with `--json` for structured output.
+
 - **Procedure compute-interior journals take a pre-release clean cut (PC-P2A).**
   Direct runs now bind replay-stable accepted-state material and semantic run
   identity in the v2 admission payload. Run journals written before this batch

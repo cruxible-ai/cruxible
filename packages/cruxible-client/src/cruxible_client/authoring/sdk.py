@@ -181,7 +181,7 @@ def _subject_parts(value: str) -> tuple[str, str]:
 
 def _subject_address(value: str) -> SemanticAddress:
     kind, identifier = _subject_parts(value)
-    return SemanticAddress.whole_artifact(f"subjects/{kind}/{identifier}.yaml")
+    return SemanticAddress.whole_artifact(f"subjects/{kind}/{identifier}.json")
 
 
 def _address(value: str | TypedRef, expected: RefKind) -> str:
@@ -1215,7 +1215,7 @@ class Playbill:
             raise ValueError("publish_to is legal only for self_source claims")
         subject_name = _address(subject, RefKind.SUBJECT)
         if isinstance(subject, str):
-            subject_name = subject_name.removesuffix(".yaml")
+            subject_name = subject_name.removesuffix(".json")
         predicate_name = _address(predicate, RefKind.CLAIM_TYPE)
         source: Any
         if supported_by is not None:

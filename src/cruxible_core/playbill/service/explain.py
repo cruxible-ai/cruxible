@@ -15,6 +15,7 @@ from cruxible_client.contracts.errors import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import parse_subject
 from cruxible_core.playbill.cas import BodyAccessContext
+from cruxible_core.playbill.compiler import artifact_kinds_for_compiler
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection_artifacts import registered_path_kind
 from cruxible_core.playbill.service.documents import (
@@ -218,7 +219,10 @@ def service_explain_playbill_subject(
     content = tree.get(subject.artifact_path)
     if content is None:
         raise DocumentNotFoundError(subject.artifact_path)
-    kind = registered_path_kind(subject.artifact_path)
+    kind = registered_path_kind(
+        subject.artifact_path,
+        artifact_kinds=artifact_kinds_for_compiler(coordinate.compiler),
+    )
     if kind == "document":
         document_shell = parse_document(content, path=subject.artifact_path)
         projected_document = service_get_playbill_document(

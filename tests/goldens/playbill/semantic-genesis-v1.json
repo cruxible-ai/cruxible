@@ -2,14 +2,14 @@
   "expected": {
     "bootstrap_root": "sha256:6e976c089fe7038f6f657e17bb4fe89de4dd4a56557da5ddb0afa80e5b7c1830",
     "canonical_tree": {
-      "governance/approval-policy.yaml": "{\"mode\":\"self_approval_allowed\",\"tag\":\"playbill-approval-policy-v1\"}\n",
-      "principals/daemon.yaml": "{\"algorithm\":\"ed25519-v1\",\"kind\":\"daemon\",\"principal_id\":\"daemon\",\"public_key\":\"0101010101010101010101010101010101010101010101010101010101010101\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n",
-      "principals/owner.yaml": "{\"algorithm\":\"ed25519-v1\",\"kind\":\"ordinary\",\"principal_id\":\"owner\",\"public_key\":\"0202020202020202020202020202020202020202020202020202020202020202\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n",
-      "principals/reviewer.yaml": "{\"algorithm\":\"ed25519-v1\",\"kind\":\"ordinary\",\"principal_id\":\"reviewer\",\"public_key\":\"0303030303030303030303030303030303030303030303030303030303030303\",\"status\":\"active\",\"tag\":\"playbill-principal-v1\"}\n"
+      "governance/approval-policy.json": "{\n  \"mode\": \"self_approval_allowed\",\n  \"tag\": \"playbill-approval-policy-v1\"\n}\n",
+      "principals/daemon.json": "{\n  \"algorithm\": \"ed25519-v1\",\n  \"kind\": \"daemon\",\n  \"principal_id\": \"daemon\",\n  \"public_key\": \"0101010101010101010101010101010101010101010101010101010101010101\",\n  \"status\": \"active\",\n  \"tag\": \"playbill-principal-v1\"\n}\n",
+      "principals/owner.json": "{\n  \"algorithm\": \"ed25519-v1\",\n  \"kind\": \"ordinary\",\n  \"principal_id\": \"owner\",\n  \"public_key\": \"0202020202020202020202020202020202020202020202020202020202020202\",\n  \"status\": \"active\",\n  \"tag\": \"playbill-principal-v1\"\n}\n",
+      "principals/reviewer.json": "{\n  \"algorithm\": \"ed25519-v1\",\n  \"kind\": \"ordinary\",\n  \"principal_id\": \"reviewer\",\n  \"public_key\": \"0303030303030303030303030303030303030303030303030303030303030303\",\n  \"status\": \"active\",\n  \"tag\": \"playbill-principal-v1\"\n}\n"
     },
     "changeset_digest": "sha256:b350212b4995e277b9b89cd536a9a7d5967340d15f793ccd8bdde63f73516ea2",
-    "manifest_root": "sha256:2e6f9c34019712bdd603cfa8efff008298d627a919f868fde1d6e22425784d09",
-    "semantic_root": "sha256:a293d784c56afe1b0adc2c2ac3cb20ba151cec9b544cf10e0fd3218763085856"
+    "manifest_root": "sha256:1ef370bd84e202cc3f240e7604c6d0f3751012b7bf2c1e659b302bcd1c9fb97d",
+    "semantic_root": "sha256:5a130f88e3de362e58ca9f4c0f5055198cfe7e5b1c82b0438588c5fd8fa0b330"
   },
   "format": "playbill-semantic-genesis-golden-v1",
   "input": {

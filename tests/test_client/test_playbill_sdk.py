@@ -981,7 +981,7 @@ def test_plain_strings_never_forge_coordinate_assertions_or_change_yaml_shorthan
 
     assert fresh.payload.statement.subject == revision.payload.statement.subject
     assert fresh.payload.statement.subject.artifact_path == (
-        "subjects/secops.policy/patch-sla.yaml"
+        "subjects/secops.policy/patch-sla.json"
     )
     assert fresh.reference_expectations == ()
     assert revision.reference_expectations == ()
@@ -998,7 +998,7 @@ def test_capture_ref_builds_v3_authoring_and_owns_the_contract_expectation(
     )
     capture = CaptureRef(
         capture_digest="sha256:" + "7" * 64,
-        contract_address="capture-contracts/repo.work-items.yaml",
+        contract_address="capture-contracts/repo.work-items.json",
         coordinate=pb.coordinate,
         citation_role="evidence",
     )
@@ -1045,7 +1045,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
                     {
                         "schema_id": "playbill.claim.statement",
                         "value": {
-                            "subject": {"artifact_path": "subjects/secops.policy/a.yaml"},
+                            "subject": {"artifact_path": "subjects/secops.policy/a.json"},
                             "predicate": "secops.policy.patch_sla",
                             "qualifier": None,
                             "role": "normative",
@@ -1086,7 +1086,7 @@ def test_claim_view_mints_capture_refs_from_typed_admission_accounts(tmp_path: P
     (capture,) = pb.claim_view("Claim:CLM-typed").captures
 
     assert capture.capture_digest == "sha256:" + "7" * 64
-    assert capture.contract_address == "capture-contracts/repo.work-items.yaml"
+    assert capture.contract_address == "capture-contracts/repo.work-items.json"
     assert capture.citation_role == "evidence"
 
 
@@ -1101,7 +1101,7 @@ def test_capture_ref_from_a_copy_cannot_be_promoted_to_independent_evidence(
     )
     capture = CaptureRef(
         capture_digest="sha256:" + "7" * 64,
-        contract_address="capture-contracts/repo.work-items.yaml",
+        contract_address="capture-contracts/repo.work-items.json",
         coordinate=pb.coordinate,
         citation_role="copy",
     )

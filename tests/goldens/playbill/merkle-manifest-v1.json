@@ -1,44 +1,44 @@
 {
-  "format": "playbill-merkle-manifest-golden-v1",
-  "input": {
-    "members": {
-      "documents/nested/deep/leaf.yaml": "2222222222222222222222222222222222222222222222222222222222222222",
-      "documents/playbill-design.yaml": "1111111111111111111111111111111111111111111111111111111111111111",
-      "principals/daemon.yaml": "3333333333333333333333333333333333333333333333333333333333333333",
-      "subjects/alpha.yaml": "4444444444444444444444444444444444444444444444444444444444444444"
-    },
-    "parent_members": {
-      "documents/nested/deep/leaf.yaml": "2222222222222222222222222222222222222222222222222222222222222222",
-      "documents/playbill-design.yaml": "0000000000000000000000000000000000000000000000000000000000000000",
-      "documents/retired.yaml": "9999999999999999999999999999999999999999999999999999999999999999",
-      "principals/daemon.yaml": "3333333333333333333333333333333333333333333333333333333333333333"
-    },
-    "change_set": {
-      "updated": {
-        "documents/playbill-design.yaml": "1111111111111111111111111111111111111111111111111111111111111111",
-        "subjects/alpha.yaml": "4444444444444444444444444444444444444444444444444444444444444444"
-      },
-      "removed": [
-        "documents/retired.yaml"
-      ]
-    }
-  },
   "expected": {
     "empty_root": "merkle-sha256:56ecf4bfdd961afa4c51687b04fbef43c77afaa013ec613b74056649f8b3f52d",
-    "root": "merkle-sha256:2262443ca11a56cf14282057f1ff350e333c663e2c0007620761aea3e0cd31ad",
-    "root_preimage": "{\"node\":\"55347380539e5feb5baf8d7aa8520bc1d76ef1ffe13ee722686a1f90b7c63a40\",\"tag\":\"playbill-merkle-root-v1\"}",
-    "leaf_preimage": "{\"member_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"path\":\"documents/playbill-design.yaml\",\"tag\":\"playbill-merkle-leaf-v1\"}",
+    "leaf_preimage": "{\"member_digest\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"path\":\"documents/playbill-design.json\",\"tag\":\"playbill-merkle-leaf-v1\"}",
     "nodes": {
-      "": "sha256:55347380539e5feb5baf8d7aa8520bc1d76ef1ffe13ee722686a1f90b7c63a40",
-      "documents": "sha256:fd3fe6ecf7802ba1371dd7b5389902ce9c39145f5d90a463bd8f45336c57e3e9",
-      "documents/nested": "sha256:d77a5a4190bd0b02add9476d26a32f357555a0ca4651c2d96304fc00922a3727",
-      "documents/nested/deep": "sha256:60eb40e99c9ee12ef24989c17558f9080012902b5bbced80c97cc31e5848302f",
-      "documents/nested/deep/leaf.yaml": "sha256:8c3e460c011ba1a9939c77d33258b0a19edb324a51449390356a5a42cf7b0f2f",
-      "documents/playbill-design.yaml": "sha256:01587f63cac0878e0f2b9f165adb6e578602fcea2c8f8b4e790668837a2cdfae",
-      "principals": "sha256:479bd2778a1a280ee52406910dca5da50eb2b1bdcc139e3f009cf77f05b23899",
-      "principals/daemon.yaml": "sha256:ca3b217a9b48588170b23d3be1400f1e204dfacdd84fc720aa69cb2a80c4ac5c",
-      "subjects": "sha256:4f3ad777f620db5fe0ed26f6686f713e486174f6f3b920ed860fc93b8dc54fe5",
-      "subjects/alpha.yaml": "sha256:fcb393f0d7b42e2c3d23c861a52699798a6bec27211a1f4067e77fc94dab1e11"
+      "": "sha256:9a89f6c8011d19aa93a5c26f29b7c1cead14b69c0b868a7d8036022cf50e82ec",
+      "documents": "sha256:0e8369daa4804a4fe7c04bde1325e4a4a4ba7dbe6679bc00c91b7649d583b522",
+      "documents/nested": "sha256:080a59c716ea87e785b844ab748c3ad2324e477b3caa495eaf8630140b7fd154",
+      "documents/nested/deep": "sha256:c68eb936fe5e023ea898c8d2b03d9315532cf6d7a74c7533493eb70156758ff3",
+      "documents/nested/deep/leaf.json": "sha256:666dd6ce7f84d2429e4f1bf4c390a3d1cf5eee5e75aa565903bc669bd3cd5abd",
+      "documents/playbill-design.json": "sha256:3967e84e0d232342125b6646f7bffbbbbee0f858808377b7a20e22cae506b86e",
+      "principals": "sha256:d390068e248c37a3cc0ae39c153da7ddfbce4b118b3f01e1b4dfbdbc93edbf81",
+      "principals/daemon.json": "sha256:d1cbc155c8c296d09540db4046d5108c2719178f7efa98a4a5cf4a4c1675603d",
+      "subjects": "sha256:0c2d6979764781736f9c2af2dd4f6c3e0f5c546e4ad233517844eb4da8fa2494",
+      "subjects/alpha.json": "sha256:6d6bb3019718830ec98895da2cc8a40605d299884cfad81019fe90e4bfbe70af"
+    },
+    "root": "merkle-sha256:84b2bb4e9a2ba58ea1c8f01c39ccc8ab98deccf838b46f1ef81f487ca9719e77",
+    "root_preimage": "{\"node\":\"9a89f6c8011d19aa93a5c26f29b7c1cead14b69c0b868a7d8036022cf50e82ec\",\"tag\":\"playbill-merkle-root-v1\"}"
+  },
+  "format": "playbill-merkle-manifest-golden-v1",
+  "input": {
+    "change_set": {
+      "removed": [
+        "documents/retired.json"
+      ],
+      "updated": {
+        "documents/playbill-design.json": "1111111111111111111111111111111111111111111111111111111111111111",
+        "subjects/alpha.json": "4444444444444444444444444444444444444444444444444444444444444444"
+      }
+    },
+    "members": {
+      "documents/nested/deep/leaf.json": "2222222222222222222222222222222222222222222222222222222222222222",
+      "documents/playbill-design.json": "1111111111111111111111111111111111111111111111111111111111111111",
+      "principals/daemon.json": "3333333333333333333333333333333333333333333333333333333333333333",
+      "subjects/alpha.json": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "parent_members": {
+      "documents/nested/deep/leaf.json": "2222222222222222222222222222222222222222222222222222222222222222",
+      "documents/playbill-design.json": "0000000000000000000000000000000000000000000000000000000000000000",
+      "documents/retired.json": "9999999999999999999999999999999999999999999999999999999999999999",
+      "principals/daemon.json": "3333333333333333333333333333333333333333333333333333333333333333"
     }
   }
 }

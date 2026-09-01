@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from cruxible_client.contracts.artifacts import ArtifactKindRegistry
 from cruxible_client.contracts.canonical import normalize_ledger_path, normalize_manifest_paths
 from cruxible_client.contracts.errors import ProjectionFormatError
 from cruxible_core.playbill.projection_artifacts import registered_path_kind
@@ -47,6 +48,7 @@ def read_registered_tree(
     oid: str,
     *,
     limits: TreeReadLimits,
+    artifact_kinds: ArtifactKindRegistry,
 ) -> tuple[GitTreeBlob, ...]:
     """Read regular registered blobs only, with all metadata gates first."""
 
@@ -73,7 +75,7 @@ def read_registered_tree(
         try:
             if normalize_ledger_path(path) != path:
                 raise ProjectionFormatError(f"ledger path is not canonical: {path}")
-            registered_path_kind(path)
+            registered_path_kind(path, artifact_kinds=artifact_kinds)
         except Exception as exc:
             if isinstance(exc, ProjectionFormatError):
                 raise

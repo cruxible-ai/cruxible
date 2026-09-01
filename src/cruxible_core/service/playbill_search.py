@@ -185,7 +185,7 @@ def _procedure_rows(
         return ()
     rows: list[PlaybillSearchRowV1] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("procedures/") or not path.endswith(".yaml"):
+        if not path.startswith("procedures/") or not path.endswith(".json"):
             continue
         procedure = parse_procedure(tree[path], path=path)
         rows.append(

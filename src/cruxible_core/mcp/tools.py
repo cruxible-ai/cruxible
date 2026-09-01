@@ -933,13 +933,11 @@ def register_tools(
     @_tool
     def cruxible_playbill_workspace_floor_export(
         instance_id: str,
-        output_path: str = "playbill-floor",
         force: bool = False,
     ) -> contracts.PlaybillWorkspaceFloorWriteResult:
         """Verify and write the floor under the configured MCP workspace."""
         return handlers.handle_playbill_workspace_floor_export(
             instance_id,
-            output_path,
             force=force,
         )
 

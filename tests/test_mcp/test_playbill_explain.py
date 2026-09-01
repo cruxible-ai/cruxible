@@ -50,7 +50,7 @@ def test_playbill_explain_handler_forwards_exact_validated_values(monkeypatch) -
     monkeypatch.setattr(handlers, "_get_client", lambda: StubClient())
     subject = {
         "tag": "playbill-semantic-address-v1",
-        "artifact_path": "documents/design.yaml",
+        "artifact_path": "documents/design.json",
         "selector": {"scheme": "artifact-v1", "value": ""},
     }
     result = handlers.handle_playbill_explain(

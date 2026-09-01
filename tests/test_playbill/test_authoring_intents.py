@@ -25,7 +25,7 @@ TIMESTAMP = "2026-08-21T12:00:00.000000Z"
 def _payload(*, value: str = "ready") -> ClaimAuthoringPayloadV1:
     return ClaimAuthoringPayloadV1(
         statement=AuthoringClaimStatementV1(
-            subject=SemanticAddress.whole_artifact("subjects/work_item/wi-42.yaml"),
+            subject=SemanticAddress.whole_artifact("subjects/work_item/wi-42.json"),
             predicate="work.status",
             object=LiteralClaimObject(value=value),
             role="observation",

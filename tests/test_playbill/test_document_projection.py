@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
-from cruxible_client.contracts.canonical import canonical_bytes, manifest_root, semantic_diff
+from cruxible_client.contracts.canonical import (
+    artifact_bytes_for_path,
+    canonical_bytes,
+    manifest_root,
+    semantic_diff,
+)
 from cruxible_client.contracts.documents import (
     DocumentAuthority,
     DocumentLifecycle,
@@ -19,7 +24,11 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import ProjectionCoordinateError, ProjectionFormatError
 from cruxible_core.playbill.assembler import ProjectionAssembler
 from cruxible_core.playbill.cas import BodyAccessContext, ContentAddressedBodyStore
-from cruxible_core.playbill.compiler import PB_B_COMPILER, PB_C_COMPILER
+from cruxible_core.playbill.compiler import (
+    PB_B_COMPILER,
+    PB_C_COMPILER,
+    artifact_codec_for_compiler,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import ProvisionalProjectionCoordinate
 from cruxible_core.playbill.projection_documents import (
@@ -68,6 +77,16 @@ def _shell(body_digest: str) -> DocumentShell:
     )
 
 
+def _render(shell: DocumentShell) -> bytes:
+    """Render bytes selected by the historical PB-C compiler coordinate."""
+
+    return artifact_bytes_for_path(
+        render_document(shell),
+        DOCUMENT_PATH,
+        codec=artifact_codec_for_compiler(PB_C_COMPILER),
+    )
+
+
 def _candidate_coordinate(
     repository: MemoryLedger,
     tree: dict[str, bytes],
@@ -98,7 +117,7 @@ def test_document_compiler_emits_reproducible_facts_and_protected_exact_span(
     bodies = _store(tmp_path)
     body = "# Café\n\nExact bytes.\n".encode()
     metadata = bodies.store(body)
-    tree = {DOCUMENT_PATH: render_document(_shell(metadata.digest))}
+    tree = {DOCUMENT_PATH: _render(_shell(metadata.digest))}
     repository = MemoryLedger(tmp_path / "repository", tree)
     publication = tmp_path / "published"
     publication.mkdir()
@@ -179,7 +198,7 @@ def test_canonical_query_ignores_candidate_projection_and_provisional_read_names
     result = assembler.assemble(
         assembler.request(output_staging_directory=publication / ".stage-canonical")
     )
-    tree = {DOCUMENT_PATH: render_document(_shell(body.digest))}
+    tree = {DOCUMENT_PATH: _render(_shell(body.digest))}
     provisional_coordinate = _candidate_coordinate(canonical_repository, tree)
     provisional = compile_provisional_document_projection(
         tree,
@@ -216,7 +235,7 @@ def test_whole_document_subject_survives_line_movement_while_byte_span_changes(
     views: list[DocumentProjectionView] = []
     for index, content in enumerate(("# Café\n", "\n\n# Café\n")):
         metadata = bodies.store(content.encode())
-        tree = {DOCUMENT_PATH: render_document(_shell(metadata.digest))}
+        tree = {DOCUMENT_PATH: _render(_shell(metadata.digest))}
         coordinate = _candidate_coordinate(repository, tree)
         projection = compile_provisional_document_projection(
             tree,
@@ -247,7 +266,7 @@ def test_compiler_coordinate_checkpoint_preserves_pb_b_registry(tmp_path: Path) 
     assert PB_B_COMPILER != PB_C_COMPILER
     bodies = _store(tmp_path)
     body = bodies.store(b"body")
-    tree = {DOCUMENT_PATH: render_document(_shell(body.digest))}
+    tree = {DOCUMENT_PATH: _render(_shell(body.digest))}
     repository = MemoryLedger(tmp_path / "repository", tree)
     publication = tmp_path / "published"
     publication.mkdir()

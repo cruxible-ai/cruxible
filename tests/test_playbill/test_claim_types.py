@@ -77,14 +77,14 @@ def test_claim_type_parse_render_digest_and_path_match_frozen_golden() -> None:
     claim_type = ClaimType.model_validate(fixture["claim_type"])
 
     assert claim_type == literal_claim_type()
-    assert claim_type_path(claim_type.predicate) == "claim-types/project.work_item/status.yaml"
+    assert claim_type_path(claim_type.predicate) == "claim-types/project.work_item/status.json"
     rendered = render_claim_type(claim_type)
     assert rendered.decode() == fixture["canonical_wire"]
     assert claim_type_digest(claim_type).tagged == fixture["artifact_digest"]
     assert (
         parse_claim_type(
             rendered,
-            path="claim-types/project.work_item/status.yaml",
+            path="claim-types/project.work_item/status.json",
         )
         == claim_type
     )
@@ -124,7 +124,7 @@ def test_claim_type_refuses_identity_path_cardinality_and_policy_tag_drift() -> 
             }
         )
     with pytest.raises(ClaimTypeFormatError, match="identity/path"):
-        parse_claim_type(render_claim_type(claim_type), path="claim-types/project/other.yaml")
+        parse_claim_type(render_claim_type(claim_type), path="claim-types/project/other.json")
     payload = claim_type.model_dump(mode="json")
     payload["evidence_admission_policy"]["tag"] = "unknown"
     with pytest.raises(ValidationError):
@@ -220,19 +220,19 @@ def test_claim_type_v1_and_v3_pin_the_exact_c1_wire_and_digest() -> None:
     )
 
     assert hashlib.sha256(render_claim_type(original)).hexdigest() == (
-        "05e4836a8bd4e0725d73f5e3d45d8db230a005bc8a64d262ebbbbc58f6b7c968"
+        "5dfd48c9aed4cb8dc95971b52067c4b40056e8549423ac1c3dba04320eedb2e6"
     )
     assert claim_type_digest(original).tagged == (
         "sha256:da68b96ac81805e16b6cefbc94d76060812d36b6eb3a7e8f9b5041006b0434bc"
     )
     assert hashlib.sha256(render_claim_type(successor)).hexdigest() == (
-        "b456fdb55d847f377a0e29eddcab96927534883974741bd31b5343e182d57a38"
+        "a4e4d16a57b60bfc1bab350b74f7b1454efeaaad2f6ffde4d54272a51394fffa"
     )
     assert claim_type_digest(successor).tagged == (
         "sha256:0e74460ec5e594c5831f3954ec3ec35b7325b7fd1afc6a808640d1efceffb60f"
     )
-    assert b'"subject_scope":null' in render_claim_type(successor)
-    assert b'"slot_policy":null' in render_claim_type(successor)
+    assert b'"subject_scope": null' in render_claim_type(successor)
+    assert b'"slot_policy": null' in render_claim_type(successor)
     assert b'"subject_scope"' not in render_claim_type(original)
     assert b'"slot_policy"' not in render_claim_type(original)
     assert b'"attestation_consequence_policy"' not in render_claim_type(original)

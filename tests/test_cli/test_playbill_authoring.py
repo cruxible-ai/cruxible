@@ -287,6 +287,13 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
             return contracts.PlaybillClaimTypeMigrationPreflight(
                 coordinate=COORDINATE,
                 successor_artifact_digest="sha256:" + "8" * 64,
+                semantic_delta=[
+                    contracts.PlaybillSemanticFieldDelta(
+                        field_path="/literal_schema/enum",
+                        before=contracts.PlaybillSemanticFieldValue(state="present", value=["old"]),
+                        after=contracts.PlaybillSemanticFieldValue(state="present", value=["new"]),
+                    )
+                ],
                 dependents=[],
                 lint=contracts.PlaybillClaimTypeProposalLint(warnings=[warning]),
             )
@@ -309,6 +316,24 @@ def test_cli_claim_type_migration_delivers_nonblocking_source_lint(
 
     assert result.exit_code == 0, result.output
     assert json.loads(result.stdout)["lint"]["warnings"] == [warning]
+
+    human = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://authoring.example.test",
+            "--instance-id",
+            "inst_authoring",
+            "playbill",
+            "claim-type",
+            "migrate",
+            str(payload),
+        ],
+    )
+    assert human.exit_code == 0, human.output
+    assert "Blast radius: 0 dependent(s)" in human.stdout
+    assert '/literal_schema/enum: ["old"] -> ["new"]' in human.stdout
+    assert "evidence_admission_policy.rules" in human.stdout
 
 
 def test_cli_claim_retire_passes_the_model_validated_request(
@@ -718,14 +743,14 @@ def test_cli_create_flow_a_stub_reports_bind_refusal_from_served_route(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CRUXIBLE_SERVER_STATE_DIR", str(tmp_path / "server-state"))
+    monkeypatch.setenv("CRUXIBLE_STATE_ROOT", str(tmp_path / "server-state"))
     monkeypatch.delenv("CRUXIBLE_SERVER_AUTH", raising=False)
     reset_permissions()
     reset_registry()
     get_playbill_manager().clear()
     registered = get_registry().create_governed_instance_with_id("inst_authoring_refusal")
     instance_id = registered.record.instance_id
-    managed = Path(registered.record.location) / ".cruxible" / "playbill-v1"
+    managed = Path(registered.record.location)
     owner = generate_client_principal_key(
         tmp_path / "owner-custody",
         principal_id="operator",

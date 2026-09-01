@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 from urllib.parse import urlsplit
 
+from cruxible_client.contracts.errors import PlaybillReseedRequired
 from cruxible_core.errors import ConfigError
 
 _VOLATILE_STATE_ROOTS = (
@@ -18,6 +19,12 @@ _VOLATILE_STATE_ROOTS = (
     Path("/private/var/tmp"),
     Path("/private/var/folders"),
 )
+
+
+class ServerStateConfigurationError(ConfigError):
+    """A server state-root setting is present but cannot be used safely."""
+
+    error_code = "cruxible.server.state_configuration_invalid"
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -74,22 +81,40 @@ def resolve_server_settings(
     )
 
 
-def get_server_state_dir(environ: Mapping[str, str] | None = None) -> Path:
-    """Return the server-owned state directory."""
-    env = environ or os.environ
-    raw = env.get("CRUXIBLE_SERVER_STATE_DIR")
-    if raw:
-        return Path(raw).expanduser().resolve()
-    return (Path.home() / ".cruxible" / "server").resolve()
+def get_server_state_root(environ: Mapping[str, str] | None = None) -> Path:
+    """Return the canonical server-owned state root."""
+    env = os.environ if environ is None else environ
+    if "CRUXIBLE_SERVER_STATE_DIR" in env:
+        raise ServerStateConfigurationError(
+            "CRUXIBLE_SERVER_STATE_DIR is obsolete; use CRUXIBLE_STATE_ROOT and re-seed "
+            "pre-PC-HR instances"
+        )
+    raw = env.get("CRUXIBLE_STATE_ROOT")
+    if raw is not None:
+        if not raw.strip():
+            raise ServerStateConfigurationError("CRUXIBLE_STATE_ROOT may not be empty")
+        state_root = Path(raw).expanduser().resolve()
+    else:
+        state_root = (Path.home() / ".cruxible").resolve()
+    legacy = state_root / "server"
+    legacy_files = (
+        legacy / "registry.db",
+        legacy / "runtime_credentials.db",
+        state_root / "registry.db",
+        state_root / "runtime_credentials.db",
+    )
+    if any(path.exists() for path in legacy_files):
+        raise PlaybillReseedRequired()
+    return state_root
 
 
 def get_server_log_path(environ: Mapping[str, str] | None = None) -> Path:
     """Return the durable server request log path."""
-    env = environ or os.environ
+    env = os.environ if environ is None else environ
     raw = env.get("CRUXIBLE_SERVER_LOG_PATH")
     if raw:
         return Path(raw).expanduser().resolve()
-    return (get_server_state_dir(env) / "logs" / "server.log").resolve()
+    return (get_server_state_root(env) / "daemon" / "logs" / "server.log").resolve()
 
 
 def is_volatile_state_path(path: str | Path) -> bool:
@@ -108,12 +133,12 @@ def volatile_state_path_warnings(
     instance_locations: Iterable[tuple[str, str]] = (),
 ) -> list[str]:
     """Return startup warnings for durable state paths under volatile dirs."""
-    state_dir = get_server_state_dir(environ)
+    state_dir = get_server_state_root(environ)
     warnings: list[str] = []
     if is_volatile_state_path(state_dir):
         warnings.append(
-            "CRUXIBLE_SERVER_STATE_DIR resolves under a volatile temp path "
-            f"({state_dir}). Use a durable directory such as ~/.cruxible/server "
+            "CRUXIBLE_STATE_ROOT resolves under a volatile temp path "
+            f"({state_dir}). Use a durable directory such as ~/.cruxible "
             "or /var/lib/cruxible for long-lived daemon state."
         )
 

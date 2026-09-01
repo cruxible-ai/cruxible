@@ -267,7 +267,7 @@ def _claim_type(index: int) -> ClaimType:
 
 def _claim_type_path(claim_type: ClaimType) -> str:
     namespace, _, leaf = claim_type.predicate.rpartition(".")
-    return f"claim-types/{namespace}/{leaf}.yaml"
+    return f"claim-types/{namespace}/{leaf}.json"
 
 
 def _query_definition(index: int, claim_type: ClaimType) -> QueryDefinitionV1:

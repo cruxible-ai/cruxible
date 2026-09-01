@@ -32,6 +32,10 @@ from cruxible_client.contracts.errors import (
 )
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.types import PrincipalRecord
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    PlaybillWorkspaceAdvertisement,
+)
 from cruxible_core.playbill.cas import BodyAccessContext, CasObjectMetadata
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
@@ -103,6 +107,7 @@ class PlaybillProposalInspection(_StrictServiceModel):
     tag: Literal["playbill-proposal-inspection-v1"] = "playbill-proposal-inspection-v1"
     proposal: ProposalResult
     accepted_coordinate: PlaybillAcceptedCoordinate
+    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
 class PlaybillApprovalReceipt(_StrictServiceModel):
@@ -122,6 +127,7 @@ class PlaybillActivationReceipt(_StrictServiceModel):
     activated_by: str
     status: Literal["accepted", "lost_cas"]
     accepted_coordinate: PlaybillAcceptedCoordinate | None
+    workspace_advertisement: PlaybillWorkspaceAdvertisement
 
 
 class PlaybillRefusalInspection(_StrictServiceModel):
@@ -196,6 +202,7 @@ def service_propose_playbill_document(
     )
     return PlaybillProposalInspection(
         proposal=result,
+        workspace_advertisement=result.workspace_advertisement,
         accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
             instance.accepted_coordinate()
         ),
@@ -215,7 +222,7 @@ def service_propose_playbill_principal_change(
 
     proposed_base = _resolve_coordinate(instance, base)
     candidate_tree = instance.tree_at(proposed_base.git_oid)
-    candidate_tree[f"principals/{principal.principal_id}.yaml"] = render_principal(principal)
+    candidate_tree[f"principals/{principal.principal_id}.json"] = render_principal(principal)
     ref_name = canonical_playbill_proposal_name(proposal_name, family="principal")
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor_id),
@@ -228,6 +235,7 @@ def service_propose_playbill_principal_change(
     )
     return PlaybillProposalInspection(
         proposal=result,
+        workspace_advertisement=result.workspace_advertisement,
         accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
             instance.accepted_coordinate()
         ),
@@ -253,6 +261,7 @@ def service_inspect_playbill_proposal(
             evaluation=evaluation,
             candidate=candidate,
         ),
+        workspace_advertisement=NOT_ATTACHED_ADVERTISEMENT,
         accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
             instance.accepted_coordinate()
         ),
@@ -392,6 +401,7 @@ def service_activate_playbill_proposal(
         raise SettlementIntegrityError("activation returned an unsupported terminal status")
     status = cast(Literal["accepted", "lost_cas"], activation.status)
     instance.refresh()
+    advertisement = instance.advertise_workspace()
     return PlaybillActivationReceipt(
         proposal_id=proposal_id,
         activated_by=activated_by,
@@ -401,6 +411,7 @@ def service_activate_playbill_proposal(
             if activation.status == "accepted"
             else None
         ),
+        workspace_advertisement=advertisement,
     )
 
 

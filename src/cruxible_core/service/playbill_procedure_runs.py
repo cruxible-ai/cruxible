@@ -67,6 +67,10 @@ from cruxible_client.contracts.procedures.results import (
     ProcedureTerminalV1,
 )
 from cruxible_client.contracts.temporal import ensure_utc, format_datetime
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    PlaybillWorkspaceAdvertisement,
+)
 from cruxible_core.playbill.actor_context import GovernedActorContext
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.closure import build_dependency_index
@@ -236,6 +240,7 @@ class ProcedureBindResultV2(_StrictProcedureSurfaceModel):
     accepted_digest: str
     accepted_readiness: ProcedureReadinessResultV1
     pending: ProcedurePendingSuccessorV1 | None = None
+    workspace_advertisement: PlaybillWorkspaceAdvertisement = NOT_ATTACHED_ADVERTISEMENT
 
 
 class ProcedureRunRequestV1(_StrictProcedureSurfaceModel):
@@ -572,6 +577,7 @@ def service_bind_playbill_procedure(
             proposal_id=proposal.admission.proposal_id,
             pending_successor_digest=pending_digest,
         ),
+        workspace_advertisement=proposal.workspace_advertisement,
     )
 
 

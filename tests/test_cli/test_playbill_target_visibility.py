@@ -125,6 +125,7 @@ def test_remembered_playbill_write_marks_remembered_target(
                 activated_by="owner",
                 status="lost_cas",
                 accepted_coordinate=None,
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
             )
 
     monkeypatch.setattr(

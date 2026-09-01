@@ -42,6 +42,13 @@ instead. Only the retired names are refused — an unrelated unknown field is
 still tolerated, because banning extras outright is a wider contract change
 than this schedule promised.
 
+**Pre-release PC-HR removals.** The configurable floor destination
+(`playbill floor export --output`, MCP `output_path`, and `floor_output.path`)
+was replaced by the fixed worktree-relative `.playbill/floor`. Server state now
+uses `--state-root` / `CRUXIBLE_STATE_ROOT`; `--state-dir` and
+`CRUXIBLE_SERVER_STATE_DIR` are refused rather than aliased. Claim-type migration
+renders its review in human form by default; pass `--json` for the wire result.
+
 **Retired with no replacement in 0.4.0: `feedback group_override write path`.**
 This row once named `force_review` as the replacement. It is not one, and the
 schedule now says so. What is GONE is every way to SET

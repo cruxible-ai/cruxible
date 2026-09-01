@@ -20,7 +20,7 @@ from tests.test_playbill.test_evidence_freshness import _fresh_world
 
 
 @pytest.mark.parametrize(
-    "artifact_path", ["claim-types/knowledge/brief.yaml", "claims/ab/old.yaml"]
+    "artifact_path", ["claim-types/knowledge/brief.json", "claims/ab/old.json"]
 )
 @pytest.mark.parametrize("warm_checkpoint", [False, True])
 @pytest.mark.parametrize("lifecycle", ["live", "retired"])
@@ -70,7 +70,7 @@ def test_invalid_generation_signature_precedes_prerelease_incompatibility(
     instance, _owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate().git_oid
     tree = instance.tree_at(base)
-    tree["claim-types/knowledge/brief.yaml"] = (
+    tree["claim-types/knowledge/brief.json"] = (
         b'{"artifact_format":"playbill-claim-type-v2","predicate":"knowledge.brief"}\n'
     )
     successor = instance._ledger.create_signed_generation(
@@ -97,7 +97,7 @@ def test_removed_brief_after_daemon_key_rotation_is_incompatible_not_corrupt(
     base = instance.accepted_coordinate().git_oid
     rotated = generate_daemon_key(tmp_path / "rotated-daemon-custody")
     tree = instance.tree_at(base)
-    tree["principals/daemon.yaml"] = render_principal(rotated.principal)
+    tree["principals/daemon.json"] = render_principal(rotated.principal)
 
     rotation = ledger.create_signed_generation(
         tree,
@@ -110,7 +110,7 @@ def test_removed_brief_after_daemon_key_rotation_is_incompatible_not_corrupt(
     ledger._signing_key_path = rotated.private_key_path
     ledger._allowed_signers_path = rotated.private_key_path.parent / ALLOWED_SIGNERS_FILE
     ledger.configure_signing()
-    tree["claim-types/knowledge/brief.yaml"] = (
+    tree["claim-types/knowledge/brief.json"] = (
         b'{"artifact_format":"playbill-claim-type-v2","predicate":"knowledge.brief"}\n'
     )
     incompatible = ledger.create_signed_generation(

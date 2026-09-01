@@ -15,6 +15,12 @@ read or write local files. The stdio MCP process is the client-side adapter; the
 workspace defaults to its working directory.
 All tool paths are normalized relative paths confined under that root; the
 daemon receives bytes and typed observations, never a client filesystem path.
+Floor operations always target the containing Git worktree's canonical
+`.playbill/floor`. With no explicit workspace root, the adapter discovers that
+worktree from its working directory. An explicit `CRUXIBLE_MCP_WORKSPACE_ROOT`
+must equal the worktree root for floor export, status, and activation refresh;
+a nested explicit root is refused rather than allowing a write above its
+configured filesystem boundary.
 
 ## Runtime
 

@@ -21,6 +21,7 @@ from cruxible_core.playbill.compiler import (
     PC_C_COMPILER,
     PC_D_COMPILER,
     PC_E1_COMPILER,
+    PC_HR_COMPILER,
     current_compiler_coordinate,
     projection_registry_for_compiler,
 )
@@ -37,7 +38,7 @@ def test_pc_d_projects_procedure_graph_line_and_exact_source_mappings() -> None:
     projection = parse_projection_tree(
         {
             accepted.path: procedure_content,
-            "lines/triage-hourly.yaml": line_content,
+            "lines/triage-hourly.json": line_content,
         },
         registry=projection_registry_for_compiler(PC_D_COMPILER),
     )
@@ -79,7 +80,7 @@ def test_procedure_semantic_identity_is_stable_across_exact_coordinates() -> Non
     after = SemanticAddress.procedure_node(accepted.path, "read")
 
     assert before == after
-    assert current_compiler_coordinate() == P2_B0_COMPILER
+    assert current_compiler_coordinate() == PC_HR_COMPILER
     assert (
         projection_registry_for_compiler(PC_C_COMPILER).supports(
             "playbill.procedure.definition",

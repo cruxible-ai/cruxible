@@ -462,6 +462,7 @@ def service_propose_claim_attestation(
     return ClaimAttestationProposalV1(
         proposal=PlaybillProposalInspection(
             proposal=proposed,
+            workspace_advertisement=proposed.workspace_advertisement,
             accepted_coordinate=PlaybillAcceptedCoordinate.from_internal(
                 instance.accepted_coordinate()
             ),

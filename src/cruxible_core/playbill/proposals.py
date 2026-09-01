@@ -127,6 +127,7 @@ from cruxible_client.contracts.documents import (
 from cruxible_client.contracts.errors import (
     DocumentFormatError,
     PlaybillError,
+    PlaybillReseedRequired,
     PrincipalIntegrityError,
     ProposalAdmissionError,
     ProposalEvaluationIntegrityError,
@@ -226,6 +227,10 @@ from cruxible_client.contracts.subjects import (
     subject_digest,
     subject_reuse_signature,
 )
+from cruxible_client.contracts.workspace_advertisement import (
+    NOT_ATTACHED_ADVERTISEMENT,
+    PlaybillWorkspaceAdvertisement,
+)
 from cruxible_core.playbill.closure import (
     ArtifactDependencyStateV1,
     ClosureEvaluationV2,
@@ -240,7 +245,10 @@ from cruxible_core.playbill.closure import (
     judge_dependency_closure,
     update_dependency_index,
 )
-from cruxible_core.playbill.compiler import projection_registry_for_compiler
+from cruxible_core.playbill.compiler import (
+    current_compiler_coordinate,
+    projection_registry_for_compiler,
+)
 from cruxible_core.playbill.exhaust.promotions import (
     AcceptedExhaustPromotionV1,
     ExhaustPromotionError,
@@ -258,29 +266,29 @@ from cruxible_core.playbill.query.engine import (
     query_execution_receipt,
 )
 
-_DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.yaml$")
-_APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.yaml$")
-_PROCEDURE_RUNTIME_POLICY_PATH_RE = re.compile(r"^governance/procedure-runtime-policy\.yaml$")
-_PRINCIPAL_PATH_RE = re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.yaml$")
+_DOCUMENT_PATH_RE = re.compile(r"^documents/[a-z][a-z0-9_.-]{0,255}\.json$")
+_APPROVAL_POLICY_PATH_RE = re.compile(r"^governance/approval-policy\.json$")
+_PROCEDURE_RUNTIME_POLICY_PATH_RE = re.compile(r"^governance/procedure-runtime-policy\.json$")
+_PRINCIPAL_PATH_RE = re.compile(r"^principals/[a-z][a-z0-9_.-]{0,127}\.json$")
 _SUBJECT_PATH_RE = re.compile(
     r"^subjects/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
-    r"[a-z][a-z0-9_.-]{0,255}\.yaml$"
+    r"[a-z][a-z0-9_.-]{0,255}\.json$"
 )
 _CLAIM_TYPE_PATH_RE = re.compile(
     r"^claim-types/[a-z][a-z0-9_]{0,63}(?:\.[a-z][a-z0-9_]{0,63})*/"
-    r"[a-z][a-z0-9_]{0,63}\.yaml$"
+    r"[a-z][a-z0-9_]{0,63}\.json$"
 )
-_CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.yaml$")
-_PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}\.yaml$")
+_CAPTURE_CONTRACT_PATH_RE = re.compile(r"^capture-contracts/[a-z][a-z0-9_.-]{0,255}\.json$")
+_PROVIDER_PATH_RE = re.compile(r"^providers/[a-z][a-z0-9_.-]{0,255}\.json$")
 _SOURCE_ACQUISITION_POLICY_PATH_RE = re.compile(
-    r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.yaml$"
+    r"^source-acquisition-policies/[a-z][a-z0-9_.-]{0,255}\.json$"
 )
-_STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.yaml$")
-_CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.yaml$")
-_PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.yaml$")
-_LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.yaml$")
-_QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.yaml$")
-_EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.yaml$")
+_STANDING_MANDATE_PATH_RE = re.compile(r"^standing-mandates/[a-z][a-z0-9_.-]{0,255}\.json$")
+_CLAIM_PATH_RE = re.compile(r"^claims/[0-9a-f]{2}/CLM-[0-9a-f]{32}\.json$")
+_PROCEDURE_PATH_RE = re.compile(r"^procedures/[a-z][a-z0-9_.-]{0,255}\.json$")
+_LINE_PATH_RE = re.compile(r"^lines/[a-z][a-z0-9_.-]{0,255}\.json$")
+_QUERY_DEFINITION_PATH_RE = re.compile(r"^query-definitions/[a-z][a-z0-9_.-]{0,255}\.json$")
+_EXHAUST_PROMOTION_PATH_RE = re.compile(r"^exhaust-promotions/[a-z][a-z0-9_.-]{0,255}\.json$")
 
 _DEPENDENCY_CLOSED_PATTERNS: Final = (
     _CLAIM_TYPE_PATH_RE,
@@ -854,7 +862,7 @@ def _accepted_queries_by_digest(
 ) -> dict[str, AcceptedQueryDefinitionV1]:
     accepted: dict[str, AcceptedQueryDefinitionV1] = {}
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("query-definitions/") or not path.endswith(".yaml"):
+        if not path.startswith("query-definitions/") or not path.endswith(".json"):
             continue
         query = parse_query_definition(tree[path], path=path)
         if query.lifecycle.state != "live":
@@ -3191,6 +3199,7 @@ class ProposalService:
         current_coordinate: Callable[[], AcceptedProjectionCoordinate] | None = None,
         promotion_verifier: ExhaustPromotionVerifierProtocol | None = None,
         query_facts_provider: ClaimQueryFactsProvider | None = None,
+        workspace_advertiser: Callable[[], PlaybillWorkspaceAdvertisement] | None = None,
     ) -> None:
         self.transport = transport
         self.accepted = accepted
@@ -3200,6 +3209,7 @@ class ProposalService:
         self._current_coordinate = current_coordinate or (lambda: accepted)
         self.promotion_verifier = promotion_verifier
         self.query_facts_provider = query_facts_provider
+        self.workspace_advertiser = workspace_advertiser
 
     def submit(
         self,
@@ -3213,6 +3223,8 @@ class ProposalService:
         if "propose" not in actor.capabilities:
             raise ProposalAdmissionError("authenticated actor lacks the propose capability")
         current = self._current_coordinate()
+        if current.compiler != current_compiler_coordinate():
+            raise PlaybillReseedRequired()
         namespace = request.target_ref.split("/")[2]
         if namespace != actor.actor_id:
             raise ProposalAdmissionError(
@@ -3327,10 +3339,22 @@ class ProposalService:
             self.evidence.write_candidate(outcome.candidate)
         if self.transport.read_main() != current.git_oid:
             raise ProposalIntegrityError("proposal evaluation changed or raced accepted main")
+        if self.workspace_advertiser is None:
+            advertisement = NOT_ATTACHED_ADVERTISEMENT
+        else:
+            try:
+                advertisement = self.workspace_advertiser()
+            except BaseException:
+                advertisement = PlaybillWorkspaceAdvertisement(
+                    status="failed",
+                    workspace_path=None,
+                    failure_code="unexpected_failure",
+                )
         return ProposalResult(
             admission=admission,
             evaluation=evaluation,
             candidate=outcome.candidate,
+            workspace_advertisement=advertisement,
         )
 
 

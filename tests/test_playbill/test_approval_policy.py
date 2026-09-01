@@ -15,7 +15,7 @@ from cruxible_client.contracts.approval_policy import (
     render_approval_policy,
 )
 from cruxible_client.contracts.documents import render_document
-from cruxible_client.contracts.errors import ApprovalIntegrityError
+from cruxible_client.contracts.errors import ApprovalIntegrityError, PlaybillReseedRequired
 from cruxible_client.contracts.governance import INDEPENDENT_APPROVAL_REQUIREMENTS
 from cruxible_client.contracts.principal_rendering import render_principal
 from cruxible_client.contracts.procedure_runtime_policy import (
@@ -151,7 +151,7 @@ def test_runtime_policy_changes_by_singleton_proposal_and_lists_in_force(
     assert row.policy["provider_output_bytes_cap"] == 2_097_152
 
 
-def test_legacy_compiler_refuses_runtime_policy_at_candidate_time(
+def test_legacy_compiler_requires_reseed_before_candidate_time(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -178,21 +178,18 @@ def test_legacy_compiler_refuses_runtime_policy_at_candidate_time(
     assert instance.descriptor.compiler == PC_E1_COMPILER
     assert PROCEDURE_RUNTIME_POLICY_PATH not in tree
 
-    proposal = _submit_tree(
-        instance,
-        {
-            **tree,
-            PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
-                ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576)
-            ),
-        },
-        name="seed-runtime-policy-on-legacy-instance",
-    )
+    with pytest.raises(PlaybillReseedRequired):
+        _submit_tree(
+            instance,
+            {
+                **tree,
+                PROCEDURE_RUNTIME_POLICY_PATH: render_procedure_runtime_policy(
+                    ProcedureRuntimePolicyV1(provider_output_bytes_cap=1_048_576)
+                ),
+            },
+            name="seed-runtime-policy-on-legacy-instance",
+        )
 
-    assert proposal.candidate is None
-    assert [item.code for item in proposal.evaluation.diagnostics] == [
-        "playbill.procedure_runtime_policy.compiler_unsupported"
-    ]
     assert instance.accepted_coordinate() == base
 
 
@@ -320,8 +317,8 @@ def test_independent_mode_refuses_revocation_below_two_ordinaries(tmp_path: Path
         instance,
         {
             **instance.tree_at(instance.accepted_coordinate().git_oid),
-            "principals/replacement.yaml": render_principal(replacement.principal),
-            "principals/reviewer.yaml": render_principal(
+            "principals/replacement.json": render_principal(replacement.principal),
+            "principals/reviewer.json": render_principal(
                 reviewer.model_copy(update={"status": "revoked"})
             ),
         },

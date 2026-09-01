@@ -82,7 +82,7 @@ def _attestation(
     statement = ClaimAttestationStatement(
         instance_id="inst-verdict",
         referent_coordinate=_coordinate(),
-        subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.yaml"),
+        subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.json"),
         subject_content_digest=artifact_digest("subject", "wi-42"),
         claim_statement_digest=STATEMENT_DIGEST,
         stance=stance,  # type: ignore[arg-type]

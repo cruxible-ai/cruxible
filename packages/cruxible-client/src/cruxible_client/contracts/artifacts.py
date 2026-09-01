@@ -201,6 +201,11 @@ class ArtifactKindRegistry:
             (*self._entries.values(), ArtifactPathKind(kind, re.compile(path_pattern), False))
         )
 
+    def entries(self) -> tuple[ArtifactPathKind, ...]:
+        """Return the frozen registrations in canonical kind order."""
+
+        return tuple(sorted(self._entries.values(), key=lambda entry: entry.kind.encode("utf-8")))
+
     def activate(self, *, kind: str) -> "ArtifactKindRegistry":
         """Return a successor registry with an existing reservation implemented."""
 

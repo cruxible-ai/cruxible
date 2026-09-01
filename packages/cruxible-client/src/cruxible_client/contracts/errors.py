@@ -108,6 +108,24 @@ class PlaybillInstanceIncompatiblePrereleaseContent(PlaybillFormatError):
         )
 
 
+class PlaybillReseedRequired(PlaybillFormatError):
+    """A prerelease instance is readable but no longer accepts mutations."""
+
+    error_code = "playbill.instance.reseed_required"
+
+    def __init__(self) -> None:
+        super().__init__(
+            f"{self.error_code}: this instance uses the frozen pre-PC-HR artifact codec; "
+            "archive it and initialize a fresh instance"
+        )
+
+
+class SemanticDeltaLimitError(PlaybillFormatError):
+    """A semantic delta exceeds its deterministic served-response budget."""
+
+    error_code = "playbill.semantic_delta.limit_exceeded"
+
+
 class PlaybillDeprecatedWriteError(PlaybillFormatError):
     """A removed bespoke writer names a transport-neutral replacement."""
 
@@ -232,6 +250,7 @@ __all__ = [
     "PlaybillInstanceIncompatiblePrereleaseContent",
     "PlaybillJournalError",
     "PlaybillKeyError",
+    "PlaybillReseedRequired",
     "PlaybillSinceRequestInvalid",
     "PrincipalIntegrityError",
     "ProposalActivationRequestInvalid",
@@ -243,6 +262,7 @@ __all__ = [
     "ProjectionIntegrityError",
     "ProjectionPublicationError",
     "ReplayCheckpointError",
+    "SemanticDeltaLimitError",
     "SettlementIntegrityError",
     "SubjectFormatError",
     "SubjectNotFoundError",

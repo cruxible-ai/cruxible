@@ -10,7 +10,7 @@ from cruxible_client.contracts.artifacts import (
 from cruxible_client.contracts.candidates import SemanticCandidate, candidate_digest
 from cruxible_client.contracts.canonical import manifest_root, semantic_diff
 from cruxible_client.contracts.subjects import SubjectShell, render_subject
-from cruxible_core.playbill.compiler import PC_A1_COMPILER
+from cruxible_core.playbill.compiler import current_compiler_coordinate
 from cruxible_core.playbill.projection import ProvisionalProjectionCoordinate
 from cruxible_core.playbill.projection_subjects import (
     compile_provisional_subject_projection,
@@ -24,9 +24,11 @@ def test_provisional_subject_projection_is_coordinate_labeled(tmp_path: Path) ->
         subject_kind="project.work_item",
         subject_id="wi-1",
     )
-    tree = {"subjects/project.work_item/wi-1.yaml": render_subject(shell)}
+    tree = {"subjects/project.work_item/wi-1.json": render_subject(shell)}
     repository = MemoryLedger(tmp_path / "repository", {})
-    canonical = accepted_coordinate(repository).model_copy(update={"compiler": PC_A1_COMPILER})
+    canonical = accepted_coordinate(repository).model_copy(
+        update={"compiler": current_compiler_coordinate()}
+    )
     difference, scope = semantic_diff({}, tree)
     candidate = SemanticCandidate(
         parent_semantic_root=canonical.semantic_root,

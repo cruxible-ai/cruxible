@@ -2,7 +2,7 @@
 
 The hosted runtime image packages `cruxible` (daemon included) for private runtime
 containers. It starts the daemon (`cruxible server start`) as a non-root
-`cruxible` user and stores mutable server state under `/var/lib/cruxible/server`.
+`cruxible` user and uses `/var/lib/cruxible` as its explicit state root.
 
 Build with any Docker-compatible backend. OrbStack works for local development:
 
@@ -10,25 +10,25 @@ Build with any Docker-compatible backend. OrbStack works for local development:
 docker build -f deploy/runtime/Dockerfile -t cruxible-core-runtime:test .
 ```
 
-Run with a mounted state directory and a runtime-supplied bootstrap secret:
+Run with a mounted state root and a runtime-supplied bootstrap secret:
 
 ```bash
 STATE_DIR="$(mktemp -d)"
 chmod 0777 "${STATE_DIR}"
 docker run --rm \
   -e CRUXIBLE_RUNTIME_BOOTSTRAP_SECRET=bootstrap-secret \
-  -v "${STATE_DIR}":/var/lib/cruxible/server \
+  -v "${STATE_DIR}":/var/lib/cruxible \
   -p 127.0.0.1:8100:8100 \
   cruxible-core-runtime:test
 ```
 
-The image intentionally fails fast if `/var/lib/cruxible/server` is not an
+The image intentionally fails fast if `/var/lib/cruxible` is not an
 external Docker mount, or if the non-root `cruxible` user cannot write to it.
 This prevents hosted runtime state from being stored only in the container's
 ephemeral filesystem layer.
 
 The external Cloud control plane (the separate `cruxible-cloud-api` package, not
-`cruxible`) is what prepares each per-instance host state directory before
+`cruxible`) is what prepares each runtime state root before
 starting the runtime container. By default it applies mode `0777`, matching the
 local smoke-test pattern above so the non-root container user can write through
 the bind mount on a normal Linux host. Tighter host-ownership modes are

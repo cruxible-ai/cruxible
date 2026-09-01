@@ -190,7 +190,7 @@ def test_expanded_procedure_enters_only_the_ordinary_proposal_receive_path(
     )
     service = instance.proposal_service()
     current_tree = service.transport.read_tree(instance.inspect().head_oid)
-    path = "procedures/release-guard.yaml"
+    path = "procedures/release-guard.json"
     evaluation = evaluate_proposal_tree(
         base_tree=current_tree,
         current_tree=current_tree,

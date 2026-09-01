@@ -287,7 +287,7 @@ def test_server_start_generates_bootstrap_secret_and_writes_secret_file(
     assert captured == {
         "host": None,
         "port": None,
-        "state_dir": None,
+        "state_root": None,
         "socket_path": None,
         "capability_ceiling": None,
     }

@@ -14,6 +14,8 @@ SQLite and rendered files are rebuildable projections.
 - [Concepts](concepts.md): CAS, proposals, generations, Claims, Procedures, and
   attestations.
 - [Architecture](architecture.md): authority boundaries and the hot/cold split.
+- [Canonical repository and daemon layout](canonical-repository-layout.md):
+  fixed workspace files, derived floor, state root, and advisory Git refs.
 - [Family 1](playbill-family-1.md): the implemented Document lifecycle.
 - [For AI agents](for-ai-agents.md): efficient discovery and operating rules.
 

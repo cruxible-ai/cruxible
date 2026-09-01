@@ -125,7 +125,11 @@ from cruxible_core.playbill.citation_relations import (
     RELATION_CONTRACT_SCHEMA,
     capture_contract_relation_subject,
 )
-from cruxible_core.playbill.compiler import projection_registry_for_compiler
+from cruxible_core.playbill.compiler import (
+    artifact_codec_for_compiler,
+    artifact_kinds_for_compiler,
+    projection_registry_for_compiler,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedCoordinate, AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_artifacts import parse_projection_tree
@@ -1118,6 +1122,8 @@ def _lower_procedure(
     parsed = parse_projection_tree(
         base_tree if accepted_reference_tree is None else accepted_reference_tree,
         registry=projection_registry_for_compiler(base.compiler),
+        artifact_kinds=artifact_kinds_for_compiler(base.compiler),
+        artifact_codec=artifact_codec_for_compiler(base.compiler),
     )
     accepted: dict[str, tuple[str, str]] = {}
     duplicates: set[str] = set()
@@ -1132,6 +1138,8 @@ def _lower_procedure(
         candidate_parsed = parse_projection_tree(
             base_tree,
             registry=projection_registry_for_compiler(base.compiler),
+            artifact_kinds=artifact_kinds_for_compiler(base.compiler),
+            artifact_codec=artifact_codec_for_compiler(base.compiler),
         )
         for envelope in candidate_parsed.envelopes:
             if envelope.identity in candidate_identities:

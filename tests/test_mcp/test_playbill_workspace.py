@@ -5,13 +5,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from cruxible_client import contracts
 from cruxible_client.contracts.canonical import Sha256Value, typed_digest
-from cruxible_core.errors import DataValidationError
+from cruxible_core.errors import ConfigError, DataValidationError
 from cruxible_core.mcp import handlers
 from cruxible_core.mcp.workspace import resolve_workspace_path
 
@@ -70,6 +71,7 @@ class _StubClient:
             activated_by="owner",
             status="accepted",
             accepted_coordinate=_coordinate(),
+            workspace_advertisement={"status": "not_attached", "workspace_path": None},
         )
 
     def export_playbill_floor(
@@ -95,6 +97,11 @@ class _StubClient:
 
 def _workspace(tmp_path: Path) -> Path:
     root = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(root)],
+        check=True,
+        capture_output=True,
+    )
     (root / ".playbill").mkdir(parents=True)
     (root / ".playbill/coverage.json").write_text(
         json.dumps(
@@ -102,7 +109,6 @@ def _workspace(tmp_path: Path) -> Path:
                 "tag": "playbill-coverage-workspace-config-v2",
                 "floor_output": {
                     "tag": "playbill-floor-output-v1",
-                    "path": "playbill-floor",
                     "format": "playbill-floor-export-v2",
                 },
             }
@@ -124,7 +130,26 @@ def test_activate_refreshes_the_operator_configured_workspace(
 
     assert result.status == "accepted"
     assert result.floor_refresh.status == "refreshed"
-    assert (workspace / "playbill-floor/cards/fresh.json").is_file()
+    assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
+
+
+def test_activate_from_nested_cwd_refreshes_the_containing_git_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    nested = workspace / "a/b/sub"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+    monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+
+    result = handlers.handle_playbill_activate("inst_test", "proposal-1")
+
+    assert result.status == "accepted"
+    assert result.floor_refresh.status == "refreshed"
+    assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
+    assert not (nested / ".playbill/floor").exists()
 
 
 def test_workspace_status_compares_the_installed_floor(
@@ -134,12 +159,47 @@ def test_workspace_status_compares_the_installed_floor(
     workspace = _workspace(tmp_path)
     monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(workspace))
     monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
-    handlers.handle_playbill_workspace_floor_export("inst_test", "playbill-floor", force=False)
+    handlers.handle_playbill_workspace_floor_export("inst_test", force=False)
 
     status = handlers.handle_playbill_workspace_floor_status("inst_test")
 
     assert status.status == "current"
     assert status.installed_coordinate == _coordinate()
+
+
+def test_floor_export_from_nested_cwd_uses_the_containing_git_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    nested = workspace / "a/b/sub"
+    nested.mkdir(parents=True)
+    monkeypatch.chdir(nested)
+    monkeypatch.delenv("CRUXIBLE_MCP_WORKSPACE_ROOT", raising=False)
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+
+    written = handlers.handle_playbill_workspace_floor_export("inst_test", force=False)
+
+    assert written.destination == str(workspace / ".playbill/floor")
+    assert (workspace / ".playbill/floor/cards/fresh.json").is_file()
+    assert not (nested / ".playbill/floor").exists()
+
+
+def test_explicit_nested_mcp_root_refuses_to_write_outside_its_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    workspace = _workspace(tmp_path)
+    scoped_root = workspace / "scoped/subdir"
+    scoped_root.mkdir(parents=True)
+    monkeypatch.setenv("CRUXIBLE_MCP_WORKSPACE_ROOT", str(scoped_root))
+    monkeypatch.setattr(handlers, "_get_client", lambda: _StubClient())
+
+    with pytest.raises(ConfigError, match="must name the Git worktree root"):
+        handlers.handle_playbill_workspace_floor_export("inst_test", force=False)
+
+    assert not (workspace / ".playbill/floor").exists()
+    assert not (scoped_root / ".playbill/floor").exists()
 
 
 @pytest.mark.parametrize(

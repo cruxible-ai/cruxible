@@ -81,7 +81,7 @@ class _RepinClient:
     ) -> SimpleNamespace:
         self.on_claim()
         statement = ClaimStatement(
-            subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.yaml"),
+            subject=SemanticAddress.whole_artifact("subjects/project.work_item/wi-42.json"),
             claim_type=ArtifactIdentity(kind="ClaimType", name="project.work_item.status"),
             claim_type_digest="sha256:" + "8" * 64,
             predicate="project.work_item.status",

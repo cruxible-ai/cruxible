@@ -113,7 +113,7 @@ def test_input_create_binds_friendly_subject_to_the_stored_intent_base(
 
     assert view.intent.base_coordinate.git_oid == instance.accepted_coordinate().git_oid
     assert view.intent.payload.statement.subject.artifact_path == (
-        "subjects/project.work_item/wi-42.yaml"
+        "subjects/project.work_item/wi-42.json"
     )
     assert view.intent.payload.tag == "playbill-claim-authoring-payload-v1"
     assert "digest" not in _claim_input().model_dump_json()

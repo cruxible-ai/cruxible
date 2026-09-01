@@ -11,6 +11,7 @@ import base64
 import json
 from collections.abc import Callable, Mapping
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
 
 from pydantic import TypeAdapter, ValidationError
@@ -125,6 +126,7 @@ from cruxible_core.playbill.service.subjects import (
     service_list_playbill_subjects,
     service_playbill_subject_history,
 )
+from cruxible_core.playbill.workspace_advertisement import workspace_git_object_format
 from cruxible_core.runtime.permissions import check_permission, get_current_mode
 from cruxible_core.runtime.playbill_manager import get_playbill_manager
 from cruxible_core.server.actor_identity import local_operator_actor_context
@@ -133,6 +135,7 @@ from cruxible_core.server.auth import (
     set_current_operation_id,
 )
 from cruxible_core.server.config import is_server_auth_enabled
+from cruxible_core.server.registry import get_registry
 from cruxible_core.service.playbill_audit import (
     PlaybillAuditRequestV1,
     service_playbill_audit,
@@ -313,6 +316,8 @@ def playbill_init(
     principals: tuple[PrincipalRecord, ...],
     operating_profile: OperatingProfile = "local",
     require_independent_approval: bool = False,
+    workspace_root: str | None = None,
+    workspace_attachment_authorized: bool = False,
 ) -> contracts.PlaybillInitResult:
     check_permission("cruxible_playbill_init", instance_id=instance_id)
     actor_id = _actor_id()
@@ -327,12 +332,37 @@ def playbill_init(
         raise AuthenticationError(
             "Playbill bootstrap requires an ordinary principal matching authenticated identity"
         )
-    instance = get_playbill_manager().initialize(
-        instance_id,
-        client_principals=principals,
-        operating_profile=operating_profile,
-        require_independent_approval=require_independent_approval,
-    )
+    registry = get_registry()
+    attached_for_init = False
+    if workspace_root is not None:
+        if not workspace_attachment_authorized:
+            raise ConfigError(
+                "Workspace attachment requires a caller connected directly through the local "
+                "Unix socket"
+            )
+        try:
+            workspace_git_object_format(Path(workspace_root))
+        except ValueError as exc:
+            raise ConfigError("Workspace attachment requires one local Git worktree") from exc
+        record = registry.get(instance_id)
+        if record is None:
+            raise ConfigError(f"Instance '{instance_id}' is not a governed daemon host")
+        attached_for_init = record.workspace_root is None
+        registry.attach_governed_workspace(instance_id, workspace_root)
+    try:
+        instance = get_playbill_manager().initialize(
+            instance_id,
+            client_principals=principals,
+            operating_profile=operating_profile,
+            require_independent_approval=require_independent_approval,
+        )
+    except BaseException:
+        if attached_for_init and workspace_root is not None:
+            registry.detach_governed_workspace(
+                instance_id,
+                expected_workspace_root=workspace_root,
+            )
+        raise
     return contracts.PlaybillInitResult(
         instance_id=instance_id,
         coordinate=contracts.PlaybillAcceptedCoordinate.model_validate(
@@ -341,6 +371,7 @@ def playbill_init(
         trust_root=instance.trust_root.model_dump(mode="json"),
         recovery_posture=instance.descriptor.recovery_posture,
         approval_policy_mode=instance.inspect().approval_policy_mode,
+        workspace_advertisement=instance.advertise_workspace(),
     )
 
 

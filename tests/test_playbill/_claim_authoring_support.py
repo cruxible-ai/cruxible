@@ -335,7 +335,7 @@ def _authoring() -> DirectClaimAuthoringV1:
     return DirectClaimAuthoringV1(
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(
-                f"subjects/{shell.subject_kind}/{shell.subject_id}.yaml"
+                f"subjects/{shell.subject_kind}/{shell.subject_id}.json"
             ),
             claim_type=claim_type.identity,
             claim_type_digest=claim_type_digest(claim_type).tagged,
@@ -369,7 +369,7 @@ def _summary_authoring(*, claim_id: str | None = SUMMARY_CLAIM_ID) -> DirectClai
     return DirectClaimAuthoringV1(
         statement=ClaimStatement(
             subject=SemanticAddress.whole_artifact(
-                f"subjects/{shell.subject_kind}/{shell.subject_id}.yaml"
+                f"subjects/{shell.subject_kind}/{shell.subject_id}.json"
             ),
             claim_type=claim_type.identity,
             claim_type_digest=claim_type_digest(claim_type).tagged,

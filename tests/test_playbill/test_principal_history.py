@@ -42,15 +42,15 @@ def test_registry_replays_canonical_principals_at_exact_root() -> None:
     owner = _static_principal("owner", ("owner",))
     snapshot = principal_registry_from_tree(
         {
-            "principals/daemon.yaml": render_principal(daemon),
-            "principals/owner.yaml": render_principal(owner),
-            "documents/ignored.yaml": b"{}\n",
+            "principals/daemon.json": render_principal(daemon),
+            "principals/owner.json": render_principal(owner),
+            "documents/ignored.json": b"{}\n",
         },
         semantic_root=ROOT,
     )
 
     assert snapshot.require_active("owner") == owner
-    assert snapshot.key_history_reference("owner") == f"principals/owner.yaml@{ROOT}"
+    assert snapshot.key_history_reference("owner") == f"principals/owner.json@{ROOT}"
 
 
 def test_registry_refuses_path_substitution_and_noncanonical_bytes() -> None:
@@ -59,16 +59,16 @@ def test_registry_refuses_path_substitution_and_noncanonical_bytes() -> None:
     with pytest.raises(PrincipalIntegrityError, match="path and identity"):
         principal_registry_from_tree(
             {
-                "principals/daemon.yaml": render_principal(daemon),
-                "principals/other.yaml": render_principal(owner),
+                "principals/daemon.json": render_principal(daemon),
+                "principals/other.json": render_principal(owner),
             },
             semantic_root=ROOT,
         )
     with pytest.raises(PrincipalIntegrityError, match="not canonical"):
         principal_registry_from_tree(
             {
-                "principals/daemon.yaml": render_principal(daemon),
-                "principals/owner.yaml": render_principal(owner).replace(b":", b": ", 1),
+                "principals/daemon.json": render_principal(daemon),
+                "principals/owner.json": render_principal(owner).replace(b":", b": ", 1),
             },
             semantic_root=ROOT,
         )
@@ -99,7 +99,7 @@ def test_principal_proposal_refuses_a_public_key_duplicated_from_the_registry(
     )
     tree = {
         **instance._ledger.read_tree(base.git_oid),
-        "principals/mallory.yaml": render_principal(mallory),
+        "principals/mallory.json": render_principal(mallory),
     }
 
     result = instance.proposal_service().submit(
@@ -185,7 +185,7 @@ def _settle_transition(
     timestamp: str,
 ) -> PlaybillInstance:
     base = instance.accepted_coordinate()
-    path = f"principals/{proposed.principal_id}.yaml"
+    path = f"principals/{proposed.principal_id}.json"
     tree = {**instance._ledger.read_tree(base.git_oid), path: render_principal(proposed)}
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id=actor.principal.principal_id),
@@ -334,7 +334,7 @@ def test_owner_registration_and_revocation_make_old_reviewer_key_inactive(
         ),
         candidate_tree={
             **instance.tree_at(base.git_oid),
-            "principals/new-reviewer.yaml": render_principal(newcomer.principal),
+            "principals/new-reviewer.json": render_principal(newcomer.principal),
         },
         timestamp="2026-08-12T15:59:00.000000Z",
     )
@@ -387,7 +387,7 @@ def test_recovery_label_has_no_retention_or_unconfigured_authority(tmp_path: Pat
     revoked = recovery.principal.model_copy(update={"status": "revoked"})
     tree = {
         **instance._ledger.read_tree(base.git_oid),
-        "principals/recovery.yaml": render_principal(revoked),
+        "principals/recovery.json": render_principal(revoked),
     }
     result = instance.proposal_service().submit(
         actor=AuthenticatedActor(actor_id="owner"),
@@ -430,7 +430,7 @@ def test_recovery_label_has_no_retention_or_unconfigured_authority(tmp_path: Pat
     local_base = local.accepted_coordinate()
     local_tree = {
         **local._ledger.read_tree(local_base.git_oid),
-        "principals/local-owner.yaml": render_principal(replacement.principal),
+        "principals/local-owner.json": render_principal(replacement.principal),
     }
     with pytest.raises(ProposalAdmissionError, match="creator_principal_invalid"):
         local.proposal_service().submit(
@@ -492,7 +492,7 @@ def test_revoked_key_needs_fresh_material_and_principal_kind_stays_immutable(
         actor: GeneratedKeyMaterial = owner,
     ):
         base = instance.accepted_coordinate()
-        path = f"principals/{proposed.principal_id}.yaml"
+        path = f"principals/{proposed.principal_id}.json"
         return instance.proposal_service().submit(
             actor=AuthenticatedActor(actor_id=actor.principal.principal_id),
             request=ProposalAdmissionRequest(

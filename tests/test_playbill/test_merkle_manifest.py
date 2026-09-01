@@ -40,10 +40,10 @@ GOLDEN = Path(__file__).parents[1] / "goldens" / "playbill" / "merkle-manifest-v
 PROPERTY_SEED = 20260818
 
 MEMBERS: Mapping[str, str] = {
-    "documents/playbill-design.yaml": "11" * 32,
-    "documents/nested/deep/leaf.yaml": "22" * 32,
-    "principals/daemon.yaml": "33" * 32,
-    "subjects/alpha.yaml": "44" * 32,
+    "documents/playbill-design.json": "11" * 32,
+    "documents/nested/deep/leaf.json": "22" * 32,
+    "principals/daemon.json": "33" * 32,
+    "subjects/alpha.json": "44" * 32,
 }
 
 
@@ -146,7 +146,7 @@ def test_tampering_with_any_interior_node_is_caught_by_node_verification() -> No
 
 def test_node_verification_refuses_unreachable_and_misfiled_nodes() -> None:
     manifest = build_merkle_manifest(MEMBERS)
-    orphaned = {**manifest.nodes, "orphan/node.yaml": manifest.node("subjects/alpha.yaml")}
+    orphaned = {**manifest.nodes, "orphan/node.yaml": manifest.node("subjects/alpha.json")}
     with pytest.raises(MerkleIntegrityError):
         verify_merkle_nodes(orphaned, claimed_root=manifest.root.tagged)
     truncated = {
@@ -158,9 +158,9 @@ def test_node_verification_refuses_unreachable_and_misfiled_nodes() -> None:
 
 def test_incremental_update_reuses_every_untouched_node_object() -> None:
     manifest = build_merkle_manifest(MEMBERS)
-    updated = update_merkle_manifest(manifest, updated={"subjects/alpha.yaml": "99" * 32})
+    updated = update_merkle_manifest(manifest, updated={"subjects/alpha.json": "99" * 32})
 
-    changed_paths = {ROOT_PREFIX, "subjects", "subjects/alpha.yaml"}
+    changed_paths = {ROOT_PREFIX, "subjects", "subjects/alpha.json"}
     recomputed = {
         prefix
         for prefix, node in updated.nodes.items()
@@ -169,20 +169,20 @@ def test_incremental_update_reuses_every_untouched_node_object() -> None:
     assert recomputed == changed_paths
     for prefix in set(manifest.nodes) - changed_paths:
         assert updated.nodes[prefix] is manifest.nodes[prefix]
-    assert updated.root == build_merkle_manifest({**MEMBERS, "subjects/alpha.yaml": "99" * 32}).root
+    assert updated.root == build_merkle_manifest({**MEMBERS, "subjects/alpha.json": "99" * 32}).root
 
 
 def test_removal_prunes_emptied_directories_and_leaves_siblings_untouched() -> None:
     manifest = build_merkle_manifest(MEMBERS)
-    pruned = update_merkle_manifest(manifest, removed=["documents/nested/deep/leaf.yaml"])
+    pruned = update_merkle_manifest(manifest, removed=["documents/nested/deep/leaf.json"])
     assert "documents/nested" not in pruned.nodes
     assert "documents/nested/deep" not in pruned.nodes
     assert (
-        pruned.nodes["documents/playbill-design.yaml"]
-        is (manifest.nodes["documents/playbill-design.yaml"])
+        pruned.nodes["documents/playbill-design.json"]
+        is (manifest.nodes["documents/playbill-design.json"])
     )
     assert pruned.nodes["principals"] is manifest.nodes["principals"]
-    expected = {k: v for k, v in MEMBERS.items() if k != "documents/nested/deep/leaf.yaml"}
+    expected = {k: v for k, v in MEMBERS.items() if k != "documents/nested/deep/leaf.json"}
     assert pruned.root == build_merkle_manifest(expected).root
     assert pruned.nodes == build_merkle_manifest(expected).nodes
 
@@ -203,7 +203,7 @@ def test_empty_change_set_is_a_no_op() -> None:
 
 def _random_path(rng: random.Random) -> str:
     directories = ("documents", "subjects", "principals", "documents/nested", "claims/a/b")
-    return f"{rng.choice(directories)}/m{rng.randrange(12):02d}.yaml"
+    return f"{rng.choice(directories)}/m{rng.randrange(12):02d}.json"
 
 
 def _random_member(rng: random.Random) -> str:
@@ -265,25 +265,25 @@ def test_structural_conflicts_and_malformed_members_are_refused() -> None:
     with pytest.raises(CanonicalEncodingError):
         build_merkle_manifest({"/absolute.yaml": "11" * 32})
     with pytest.raises(CanonicalEncodingError):
-        build_merkle_manifest({"documents/a.yaml": "11" * 32, "documents/A.yaml": "22" * 32})
+        build_merkle_manifest({"documents/a.json": "11" * 32, "documents/A.json": "22" * 32})
 
     manifest = build_merkle_manifest(MEMBERS)
     with pytest.raises(CanonicalEncodingError):
         update_merkle_manifest(manifest, updated={"documents": "11" * 32})
     with pytest.raises(CanonicalEncodingError):
-        update_merkle_manifest(manifest, updated={"documents/playbill-design.yaml/x": "11" * 32})
+        update_merkle_manifest(manifest, updated={"documents/playbill-design.json/x": "11" * 32})
     with pytest.raises(CanonicalEncodingError):
         update_merkle_manifest(manifest, removed=["documents"])
     with pytest.raises(CanonicalEncodingError):
-        update_merkle_manifest(manifest, removed=["documents/absent.yaml"])
+        update_merkle_manifest(manifest, removed=["documents/absent.json"])
     with pytest.raises(CanonicalEncodingError):
         update_merkle_manifest(
-            manifest, updated={"subjects/beta.yaml": "11" * 32}, removed=["subjects/beta.yaml"]
+            manifest, updated={"subjects/beta.json": "11" * 32}, removed=["subjects/beta.json"]
         )
     with pytest.raises(CanonicalEncodingError):
-        update_merkle_manifest(manifest, updated={"documents/Nested/x.yaml": "11" * 32})
+        update_merkle_manifest(manifest, updated={"documents/Nested/x.json": "11" * 32})
     with pytest.raises(CanonicalEncodingError):
-        update_merkle_manifest(manifest, updated={"documents/Playbill-Design.yaml": "11" * 32})
+        update_merkle_manifest(manifest, updated={"documents/Playbill-Design.json": "11" * 32})
 
 
 def test_merkle_manifest_has_a_frozen_end_to_end_golden() -> None:
@@ -302,8 +302,8 @@ def test_merkle_manifest_has_a_frozen_end_to_end_golden() -> None:
         canonical_bytes(
             {
                 "tag": MERKLE_LEAF_DOMAIN,
-                "member_digest": members["documents/playbill-design.yaml"],
-                "path": "documents/playbill-design.yaml",
+                "member_digest": members["documents/playbill-design.json"],
+                "path": "documents/playbill-design.json",
             }
         ).decode()
         == expected["leaf_preimage"]

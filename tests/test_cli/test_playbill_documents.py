@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from click.testing import CliRunner
 
@@ -50,6 +51,106 @@ def test_cli_allocates_and_remembers_a_playbill_host(monkeypatch, tmp_path) -> N
     assert '"instance_id": "inst_cli_host"' in context_path.read_text()
 
 
+def test_cli_init_remembers_the_initialized_instance(monkeypatch, tmp_path) -> None:
+    class StubClient:
+        def init_playbill(
+            self,
+            instance_id: str,
+            *,
+            principals: list[dict[str, object]],
+            operating_profile: str,
+            require_independent_approval: bool,
+        ) -> contracts.PlaybillInitResult:
+            assert instance_id == "inst_cli_init"
+            assert principals[0]["principal_id"] == "operator"
+            assert operating_profile == "local"
+            assert require_independent_approval is False
+            return contracts.PlaybillInitResult(
+                instance_id=instance_id,
+                coordinate=COORDINATE,
+                trust_root={},
+                recovery_posture="normal",
+                approval_policy_mode="self_approval_allowed",
+                workspace_advertisement={"status": "not_attached", "workspace_path": None},
+            )
+
+    context_path = tmp_path / "context.json"
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(context_path))
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-url",
+            "https://playbill.invalid",
+            "--instance-id",
+            "inst_cli_init",
+            "playbill",
+            "init",
+            "--key-dir",
+            str(tmp_path / "custody"),
+            "--principal-id",
+            "operator",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(context_path.read_text())["instance_id"] == "inst_cli_init"
+
+
+def test_unix_socket_host_attach_uses_the_containing_git_worktree(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    nested = workspace / "nested"
+    nested.mkdir()
+    monkeypatch.chdir(nested)
+    calls: list[str | None] = []
+
+    class StubClient:
+        def create_playbill_host(
+            self,
+            *,
+            instance_id: str | None = None,
+            workspace_root: str | None = None,
+        ) -> contracts.PlaybillHostResult:
+            calls.append(workspace_root)
+            return contracts.PlaybillHostResult(instance_id=instance_id or "inst", status="created")
+
+    monkeypatch.setenv("CRUXIBLE_CLI_CONTEXT_PATH", str(tmp_path / "context.json"))
+    monkeypatch.setattr(
+        "cruxible_core.cli.commands._common._get_client",
+        lambda: StubClient(),
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "--server-socket",
+            str(tmp_path / "cruxible.sock"),
+            "playbill",
+            "host",
+            "create",
+            "--instance-id",
+            "inst_socket",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [str(workspace.resolve())]
+
+
 def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> None:
     class StubClient:
         def list_playbill_documents(self, instance_id: str) -> contracts.PlaybillDocumentList:
@@ -61,7 +162,7 @@ def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> Non
                         coordinate=COORDINATE,
                         envelope={
                             "identity": "document:design",
-                            "path": "documents/design.yaml",
+                            "path": "documents/design.json",
                         },
                         facts=[],
                     )
@@ -85,7 +186,7 @@ def test_cli_lists_documents_with_their_canonical_coordinate(monkeypatch) -> Non
         ],
     )
     assert result.exit_code == 0, result.output
-    assert "document:design  documents/design.yaml" in result.stdout
+    assert "document:design  documents/design.json" in result.stdout
     assert f"Coordinate: {COORDINATE.git_oid}" in result.stdout
 
 

@@ -30,12 +30,13 @@ from cruxible_client.contracts.declared_blocks import (
     PlaybillPresentationPolicyV1,
 )
 from cruxible_client.contracts.errors import PlaybillError
+from cruxible_client.contracts.workspace_layout import PLAYBILL_FLOOR_PATH
 
 _CONFIG_PATH = PurePosixPath(".playbill/coverage.json")
 _FLOOR_DOMAIN = "playbill-floor-export-v2"
 
 
-class PlaybillWorkspaceError(ValueError):
+class PlaybillWorkspaceError(PlaybillError, ValueError):
     """A client workspace or exported floor failed deterministic validation."""
 
 
@@ -221,18 +222,8 @@ def _workspace_root(workspace: str | Path) -> Path:
 
 
 def _relative_destination(workspace: Path, relative_path: str) -> Path:
-    path = PurePosixPath(relative_path)
-    if (
-        not relative_path
-        or path.is_absolute()
-        or path.as_posix() != relative_path
-        or ".." in path.parts
-        or not path.parts
-        or path.parts[0] == ".playbill"
-    ):
-        raise PlaybillWorkspaceError(
-            "floor output path must be a normalized workspace-relative directory"
-        )
+    if relative_path != PLAYBILL_FLOOR_PATH:
+        raise PlaybillWorkspaceError(f"floor output path is fixed at {PLAYBILL_FLOOR_PATH}")
     destination = workspace / relative_path
     try:
         resolved = destination.resolve()
@@ -265,11 +256,12 @@ def configured_floor_path(workspace: str | Path) -> str | None:
         raise PlaybillWorkspaceError("coverage floor_output is not an object")
     if output.get("tag") != "playbill-floor-output-v1" or output.get("format") != _FLOOR_DOMAIN:
         raise PlaybillWorkspaceError("coverage floor_output has an unsupported profile")
-    value = output.get("path")
-    if not isinstance(value, str):
-        raise PlaybillWorkspaceError("coverage floor_output path is not text")
-    _relative_destination(root, value)
-    return value
+    if "path" in output:
+        raise PlaybillWorkspaceError(
+            f"coverage floor_output.path is obsolete; the path is fixed at {PLAYBILL_FLOOR_PATH}"
+        )
+    _relative_destination(root, PLAYBILL_FLOOR_PATH)
+    return PLAYBILL_FLOOR_PATH
 
 
 def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path) -> None:
@@ -313,13 +305,13 @@ def _replace_exact(destination: Path, files: Mapping[str, bytes], *, root: Path)
 def materialize_playbill_floor(
     workspace: str | Path,
     *,
-    relative_path: str,
     export: contracts.PlaybillFloorExport,
     force: bool = True,
 ) -> contracts.PlaybillWorkspaceFloorWriteResult:
     """Verify and exactly replace one workspace-relative floor directory."""
 
     root = _workspace_root(workspace)
+    relative_path = PLAYBILL_FLOOR_PATH
     destination = _relative_destination(root, relative_path)
     if destination.exists() and any(destination.iterdir()) and not force:
         raise PlaybillWorkspaceError(
@@ -945,7 +937,6 @@ def activate_with_workspace_refresh(
             export = client.export_playbill_floor(instance_id)
             written = materialize_playbill_floor(
                 workspace,
-                relative_path=relative_path,
                 export=export,
             )
             refresh = contracts.PlaybillFloorRefreshResult(

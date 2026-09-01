@@ -32,6 +32,10 @@ from cruxible_client.contracts.query.definitions import (
     parse_query_definition,
     query_definition_digest,
 )
+from cruxible_core.playbill.compiler import (
+    artifact_codec_for_compiler,
+    artifact_kinds_for_compiler,
+)
 from cruxible_core.playbill.instance import PlaybillInstance
 from cruxible_core.playbill.projection import AcceptedProjectionCoordinate
 from cruxible_core.playbill.projection_artifacts import registered_path_kind
@@ -106,12 +110,14 @@ def list_playbill_policies_in_force(
 
     coordinate = _coordinate(instance, at)
     tree = instance.tree_at(coordinate.git_oid)
+    artifact_kinds = artifact_kinds_for_compiler(coordinate.compiler)
+    artifact_codec = artifact_codec_for_compiler(coordinate.compiler)
     rows: list[contracts.PlaybillPolicyInForce] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        kind = registered_path_kind(path)
+        kind = registered_path_kind(path, artifact_kinds=artifact_kinds)
         content = tree[path]
         if kind == "approval-policy":
-            approval_policy = parse_approval_policy(content, path=path)
+            approval_policy = parse_approval_policy(content, path=path, codec=artifact_codec)
             rows.append(
                 _row(
                     placement="standalone",
@@ -125,7 +131,9 @@ def list_playbill_policies_in_force(
                 )
             )
         elif kind == "procedure-runtime-policy":
-            runtime_policy = parse_procedure_runtime_policy(content, path=path)
+            runtime_policy = parse_procedure_runtime_policy(
+                content, path=path, codec=artifact_codec
+            )
             rows.append(
                 _row(
                     placement="standalone",
@@ -139,7 +147,7 @@ def list_playbill_policies_in_force(
                 )
             )
         elif kind == "source-acquisition-policy":
-            acquisition_policy = parse_acquisition_policy(content, path=path)
+            acquisition_policy = parse_acquisition_policy(content, path=path, codec=artifact_codec)
             if acquisition_policy.lifecycle.state != "live":
                 continue
             rows.append(
@@ -155,7 +163,7 @@ def list_playbill_policies_in_force(
                 )
             )
         elif kind == "claim-type":
-            claim_type = parse_claim_type(content, path=path)
+            claim_type = parse_claim_type(content, path=path, codec=artifact_codec)
             if claim_type.lifecycle.state != "live":
                 continue
             digest = claim_type_digest(claim_type).tagged
@@ -204,7 +212,7 @@ def list_playbill_policies_in_force(
                 if value is not None
             )
         elif kind == "capture-contract":
-            contract = parse_capture_contract(content, path=path)
+            contract = parse_capture_contract(content, path=path, codec=artifact_codec)
             if contract.lifecycle.state != "live":
                 continue
             rows.append(
@@ -219,7 +227,7 @@ def list_playbill_policies_in_force(
                 )
             )
         elif kind == "query-definition":
-            query = parse_query_definition(content, path=path)
+            query = parse_query_definition(content, path=path, codec=artifact_codec)
             if query.lifecycle.state != "live":
                 continue
             rows.append(
@@ -234,7 +242,7 @@ def list_playbill_policies_in_force(
                 )
             )
         elif kind == "document":
-            document = parse_document(content, path=path)
+            document = parse_document(content, path=path, codec=artifact_codec)
             rows.append(
                 _embedded(
                     policy_kind="document_activation_policy",
@@ -247,7 +255,7 @@ def list_playbill_policies_in_force(
                 )
             )
         elif kind == "procedure":
-            procedure = parse_procedure(content, path=path)
+            procedure = parse_procedure(content, path=path, codec=artifact_codec)
             if procedure.lifecycle.state != "live":
                 continue
             rows.append(
@@ -262,7 +270,7 @@ def list_playbill_policies_in_force(
                 )
             )
         elif kind == "line":
-            line = parse_line_spec(content, path=path)
+            line = parse_line_spec(content, path=path, codec=artifact_codec)
             if line.lifecycle.state != "live":
                 continue
             rows.append(

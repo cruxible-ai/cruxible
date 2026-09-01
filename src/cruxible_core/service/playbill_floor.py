@@ -55,7 +55,11 @@ from cruxible_client.contracts.projection_extensions import (
 from cruxible_client.contracts.semantic import SemanticAddress
 from cruxible_client.contracts.subjects import parse_subject, subject_digest
 from cruxible_core.playbill.cas import BodyAccessContext
-from cruxible_core.playbill.compiler import projection_registry_for_compiler
+from cruxible_core.playbill.compiler import (
+    artifact_codec_for_compiler,
+    artifact_kinds_for_compiler,
+    projection_registry_for_compiler,
+)
 from cruxible_core.playbill.coverage.contracts import CoverageManifestProfileV2
 from cruxible_core.playbill.coverage.indexes import evidence_citation_index_digest
 from cruxible_core.playbill.instance import PlaybillInstance
@@ -287,7 +291,7 @@ def _claim_type_cards(
             usage_rows=usage_rows,
             relations=_relations_for(relations, address),
         )
-        path = claim_type_path(claim_type.predicate).removesuffix(".yaml") + ".card.json"
+        path = claim_type_path(claim_type.predicate).removesuffix(".json") + ".card.json"
         files[path] = _render(card.model_dump(mode="json"))
     return files
 
@@ -400,6 +404,8 @@ def _procedure_track_records(
     projection = parse_projection_tree(
         tree,
         registry=projection_registry_for_compiler(instance.descriptor.compiler),
+        artifact_kinds=artifact_kinds_for_compiler(instance.descriptor.compiler),
+        artifact_codec=artifact_codec_for_compiler(instance.descriptor.compiler),
         bodies=instance.body_store(),
         coordinate=_FloorProjectionCoordinate(
             instance_id=coordinate.instance_id,
@@ -432,7 +438,7 @@ def _procedure_cards(
     paths = tuple(
         path
         for path in sorted(tree, key=lambda item: item.encode("utf-8"))
-        if path.startswith("procedures/") and path.endswith(".yaml")
+        if path.startswith("procedures/") and path.endswith(".json")
     )
     if not paths:
         return {}
@@ -474,7 +480,7 @@ def _procedure_cards(
                 for fact in track_records.get(procedure.identity.qualified, ())
             ),
         )
-        floor_path = path.removesuffix(".yaml") + ".card.json"
+        floor_path = path.removesuffix(".json") + ".card.json"
         files[floor_path] = _render(card.model_dump(mode="json"))
     return files
 

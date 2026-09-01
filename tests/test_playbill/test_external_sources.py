@@ -51,7 +51,7 @@ def test_general_contract_and_exact_external_capture_do_not_copy_a_table(tmp_pat
     contract = capture_contract()
     accepted = evaluate_capture_contract_law(
         contract,
-        path="capture-contracts/test.orders-v1.yaml",
+        path="capture-contracts/test.orders-v1.json",
         predecessor=None,
     )
     assert accepted.verdict == "accepted"
@@ -295,7 +295,7 @@ def test_external_capture_supports_claim_only_through_exact_contract_mapping(
     candidate_tree = {
         **instance.tree_at(base.git_oid),
         subject_path(shell.subject_kind, shell.subject_id): render_subject(shell),
-        "claim-types/project.work_item/status.yaml": render_claim_type(claim_type),
+        "claim-types/project.work_item/status.json": render_claim_type(claim_type),
         capture_contract_path(contract.identity.name): render_capture_contract(contract),
         provider_path(provider_artifact.identity.name): render_provider(provider_artifact),
         claim_path(claim.identity.name): render_claim(claim),

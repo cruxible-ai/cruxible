@@ -245,7 +245,7 @@ def test_measurement_query_is_an_exact_envelope_dependency_not_a_line_slot() -> 
 def test_measurements_are_projected_from_the_typed_field_not_annotations() -> None:
     definition = _definition((_declaration(),))
     procedure = _artifact(definition, include_all_pins=True)
-    path = "procedures/measured-procedure.yaml"
+    path = "procedures/measured-procedure.json"
     projection = parse_projection_tree(
         {path: render_procedure(procedure)},
         registry=projection_registry_for_compiler(PC_D_COMPILER),
@@ -339,7 +339,7 @@ def test_measurement_windows_expectations_and_review_thresholds_are_canonical() 
 
 def test_claim_measurements_bind_exact_statement_addresses_and_digests() -> None:
     statement = SemanticAddress.claim_statement(
-        "claims/ab/CLM-ab000000000000000000000000000000.yaml"
+        "claims/ab/CLM-ab000000000000000000000000000000.json"
     )
     digest = _digest("claim-statement")
     attestation = ClaimAttestationProcedureMeasurementV1(
@@ -359,7 +359,7 @@ def test_claim_measurements_bind_exact_statement_addresses_and_digests() -> None
             _declaration(name="claim-outcome", measurement=claim),
         )
     ).measurements
-    wrong_subject = SemanticAddress.procedure_unit("procedures/measured-procedure.yaml")
+    wrong_subject = SemanticAddress.procedure_unit("procedures/measured-procedure.json")
     with pytest.raises(ValidationError, match="Claim statement address"):
         ClaimStatementProcedureMeasurementV1(
             claim_statement=wrong_subject,

@@ -507,12 +507,12 @@ class CoverageClaimCitationV2(_StrictCoverageModel):
             raise ValueError("coverage citation reference names a different Capture")
         if self.claim_address.selector.scheme != "claim-statement-v1":
             raise ValueError("coverage citation must address one exact Claim statement")
-        claim_name = self.claim_address.artifact_path.rsplit("/", 1)[-1].removesuffix(".yaml")
+        claim_name = self.claim_address.artifact_path.rsplit("/", 1)[-1].removesuffix(".json")
         if not re.fullmatch(r"CLM-[0-9a-f]{32}", claim_name):
             raise ValueError("coverage citation address has no Claim identity")
         if isinstance(self.reference, LegacyCitationReferenceV1):
             expected_path = self.claim_address.artifact_path
-            if not expected_path.endswith(f"/{self.reference.claim_identity.name}.yaml"):
+            if not expected_path.endswith(f"/{self.reference.claim_identity.name}.json"):
                 raise ValueError("legacy coverage citation addresses a different Claim")
         else:
             expected = claim_citation_id(

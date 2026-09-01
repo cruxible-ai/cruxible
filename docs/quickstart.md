@@ -16,7 +16,7 @@ In shell one:
 
 ~~~bash
 uv run cruxible server start \
-  --state-dir /tmp/cruxible-playbill-dev \
+  --state-root /tmp/cruxible-playbill-dev \
   --bootstrap-secret-file /tmp/cruxible-playbill-bootstrap
 ~~~
 

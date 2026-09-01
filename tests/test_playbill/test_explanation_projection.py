@@ -95,7 +95,7 @@ def test_accepted_document_emits_composable_exact_proof_facts_without_body_leaka
     for item in attestations:
         assert item["attestation_digest"]["$digest"].startswith("sha256:")
         assert item["key_history_ref"]["principal_path"]["$path"] == (
-            f"principals/{item['signer_id']}.yaml"
+            f"principals/{item['signer_id']}.json"
         )
         assert item["key_history_ref"]["semantic_root"]["$digest"] == (
             bundle.record.candidate.parent_semantic_root
@@ -164,14 +164,14 @@ def test_coverage_and_basis_contracts_refuse_laundering_or_mismatched_proofs() -
     with pytest.raises(ValueError, match="only its containing change set"):
         CoverageBinding(
             coverage="exact_subject",
-            subject_path="documents/design.yaml",
+            subject_path="documents/design.json",
             signed_payload_digest=proof.candidate_digest,
             proof_ref=proof,
         )
     with pytest.raises(ValueError, match="differs"):
         CoverageBinding(
             coverage="containing_change_set",
-            subject_path="documents/design.yaml",
+            subject_path="documents/design.json",
             signed_payload_digest="sha256:" + "33" * 32,
             proof_ref=proof,
         )
