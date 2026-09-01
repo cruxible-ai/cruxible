@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import gc
 import hashlib
+import inspect
 import json
 import os
 import signal
 import socket
 import stat
 import subprocess
+import tempfile
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -65,6 +68,13 @@ from tests.test_playbill._p2b1_support import accepted_interface, provider_v2
 
 def _digest(label: str) -> str:
     return "sha256:" + hashlib.sha256(label.encode()).hexdigest()
+
+
+def _lease_store(root: Path) -> ProviderProcessLeaseStore:
+    """Give direct-driver tests a disposable AF_UNIX-safe control namespace."""
+
+    control_root = Path(tempfile.mkdtemp(prefix=".provider-control-", dir=Path.cwd()))
+    return ProviderProcessLeaseStore(root, control_root=control_root)
 
 
 def _budget(*, capture_bytes: int = 2_000_000) -> ProcedureBudgetV3:
@@ -344,7 +354,7 @@ def test_local_driver_runs_in_isolated_directory_with_fd_secret_and_attribution_
         budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=16_384),
     )
 
-    leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
+    leases = _lease_store(tmp_path / "process-leases")
     outcome = LocalProviderExecutionDriver().invoke(
         binding,
         context,
@@ -408,14 +418,14 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> 
             secret_plan=_secret_plan(),
             secret_resolvers=registry,
             invocation_id=_digest("leak-invocation"),
-            process_leases=ProviderProcessLeaseStore(tmp_path / "leak-leases"),
+            process_leases=_lease_store(tmp_path / "leak-leases"),
         )
     assert caught.value.code == "secret_leak"
 
 
 def test_secret_channel_read_descriptor_has_exactly_one_parent_owner(tmp_path: Path) -> None:
-    leases = ProviderProcessLeaseStore(tmp_path / "secret-owner-leases")
-    with _open_secret_channel({"ref": "secret"}) as secret_fd:
+    leases = _lease_store(tmp_path / "secret-owner-leases")
+    with _open_secret_channel({"ref": "secret"}, join_timeout_seconds=2) as secret_fd:
         assert secret_fd is not None
         outcome = _run_child(
             _fake_interpreter(tmp_path / "secret-owner-python"),
@@ -450,7 +460,7 @@ def test_successful_invocation_never_signals_an_already_reaped_pid(
         budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=65_536),
         secret_fd=None,
         invocation_id=_digest("successful-child"),
-        process_leases=ProviderProcessLeaseStore(tmp_path / "success-leases"),
+        process_leases=_lease_store(tmp_path / "success-leases"),
     )
     assert json.loads(outcome.stdout)["status"] == "ok"
     assert [item for item in signals if item[1] == signal.SIGKILL] == []
@@ -458,7 +468,7 @@ def test_successful_invocation_never_signals_an_already_reaped_pid(
 
 def test_process_recovery_kills_an_echo_verified_invocation_group(tmp_path: Path) -> None:
     interpreter = _fake_interpreter(tmp_path / "fake-python")
-    leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
+    leases = _lease_store(tmp_path / "process-leases")
     invocation_id = _digest("orphaned-invocation")
     record_path, control_path = leases.paths(invocation_id)
     wrapper = tmp_path / "provider_child_fence.py"
@@ -491,7 +501,7 @@ def test_process_recovery_kills_an_echo_verified_invocation_group(tmp_path: Path
 def test_process_recovery_waits_through_a_transient_permission_probe(
     tmp_path: Path, monkeypatch
 ) -> None:
-    leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
+    leases = _lease_store(tmp_path / "process-leases")
     invocation_id = _digest("permission-probe")
     record_path, control_path = leases.paths(invocation_id)
     record_path.write_bytes(
@@ -535,7 +545,7 @@ def test_process_recovery_waits_through_a_transient_permission_probe(
 def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
     tmp_path: Path, monkeypatch
 ) -> None:
-    leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
+    leases = _lease_store(tmp_path / "process-leases")
     invocation_id = _digest("unverified-child")
     killed: list[tuple[int, int]] = []
 
@@ -621,7 +631,7 @@ with open({str(marker)!r}, "a") as handle:
         encoding="utf-8",
     )
     interpreter.chmod(0o755)
-    leases = ProviderProcessLeaseStore(tmp_path / "escape-leases")
+    leases = _lease_store(tmp_path / "escape-leases")
     invocation_id = _digest("escape")
 
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
@@ -687,7 +697,7 @@ sys.stdout.flush()
         encoding="utf-8",
     )
     interpreter.chmod(0o755)
-    leases = ProviderProcessLeaseStore(tmp_path / "setsid-leases")
+    leases = _lease_store(tmp_path / "setsid-leases")
     try:
         outcome = _run_child(
             interpreter,
@@ -719,8 +729,53 @@ sys.stdout.flush()
                     os.kill(int(line.split()[0]), signal.SIGKILL)
 
 
+def test_fence_survivor_never_masks_the_original_typed_refusal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    interpreter = _fake_interpreter(tmp_path / "original-refusal-python")
+    leases = _lease_store(tmp_path / "original-refusal-leases")
+    real_terminate = local_runtime_module._terminate_process_group
+
+    def terminate(*args: object, **kwargs: object) -> None:
+        real_terminate(*args, **kwargs)  # type: ignore[arg-type]
+        raise ProviderLocalRuntimeRefused(
+            "provider_process_group_survived_recovery",
+            "synthetic survivor after cleanup",
+        )
+
+    monkeypatch.setattr(local_runtime_module, "_terminate_process_group", terminate)
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        _run_child(
+            interpreter,
+            entrypoint="demo.runtime:Provider",
+            context=b'{"run_id":"RUN-original","input":{"value":"ok"}}',
+            budgets=ProviderRuntimeBudgetsV1(wall_clock_seconds=2, output_bytes=1),
+            secret_fd=None,
+            invocation_id=_digest("original-refusal"),
+            process_leases=leases,
+        )
+    assert caught.value.code == "budget_output_size"
+    assert caught.value.details["process_fence_failure"] == {
+        "code": "provider_process_group_survived_recovery",
+        "message": ("provider_process_group_survived_recovery: synthetic survivor after cleanup"),
+    }
+    record_path, _control_path = leases.paths(_digest("original-refusal"))
+    assert record_path.exists()
+
+
+def test_every_provider_process_timeout_reads_the_operational_config_source() -> None:
+    lease_source = inspect.getsource(ProviderProcessLeaseStore)
+    channel_source = inspect.getsource(_open_secret_channel)
+    collect_source = inspect.getsource(local_runtime_module._collect_child_output)
+    assert "settimeout(self.acquisition_timeout_seconds)" in lease_source
+    assert "writer.join(timeout=join_timeout_seconds)" in channel_source
+    assert "writer.join(timeout=writer_join_timeout_seconds)" in collect_source
+    assert "time.monotonic() + 5" not in lease_source
+
+
 def test_recovery_removes_dead_records_without_starving_later_records(tmp_path: Path) -> None:
-    leases = ProviderProcessLeaseStore(tmp_path / "recovery-leases")
+    leases = _lease_store(tmp_path / "recovery-leases")
     invocation_ids = tuple(_digest(f"dead-{index}") for index in range(4))
     for invocation_id in invocation_ids:
         record_path, control_path = leases.paths(invocation_id)
@@ -745,7 +800,7 @@ def test_recovery_removes_dead_records_without_starving_later_records(tmp_path: 
 def test_recovery_never_signals_a_reused_pid_without_exact_os_identity(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    leases = ProviderProcessLeaseStore(tmp_path / "reused-pid-leases")
+    leases = _lease_store(tmp_path / "reused-pid-leases")
     invocation_id = _digest("reused-pid")
     record_path, _control_path = leases.paths(invocation_id)
     record_path.write_bytes(
@@ -775,7 +830,7 @@ def test_recovery_never_signals_a_reused_pid_without_exact_os_identity(
 def test_recovery_isolates_a_survivor_and_continues_to_later_records(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    leases = ProviderProcessLeaseStore(tmp_path / "isolated-recovery-leases")
+    leases = _lease_store(tmp_path / "isolated-recovery-leases")
     invocation_ids = (_digest("blocked"), _digest("later"))
     for ordinal, invocation_id in enumerate(invocation_ids, start=1):
         record_path, _control_path = leases.paths(invocation_id)
@@ -814,7 +869,7 @@ def test_recovery_isolates_a_survivor_and_continues_to_later_records(
 def test_malformed_recovery_record_is_removed_without_inventing_an_invocation_id(
     tmp_path: Path,
 ) -> None:
-    leases = ProviderProcessLeaseStore(tmp_path / "malformed-recovery-leases")
+    leases = _lease_store(tmp_path / "malformed-recovery-leases")
     record_path = leases.root / "not-an-invocation.json"
     record_path.write_text("{}", encoding="utf-8")
 
@@ -828,8 +883,7 @@ def test_malformed_recovery_record_is_removed_without_inventing_an_invocation_id
 
 
 def test_control_namespace_is_private_and_stale_socket_is_retryable(tmp_path: Path) -> None:
-    leases = ProviderProcessLeaseStore(tmp_path / "private-leases")
-    assert leases.control_root.resolve().is_relative_to(leases.root.resolve())
+    leases = _lease_store(tmp_path / "private-leases")
     invocation_id = _digest("stale-socket")
     _record_path, control_path = leases.paths(invocation_id)
     stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -847,6 +901,28 @@ def test_control_namespace_is_private_and_stale_socket_is_retryable(tmp_path: Pa
         process_leases=leases,
     )
     assert json.loads(outcome.stdout)["output"] == {"echo": "ok"}
+
+
+def test_control_namespaces_are_state_local_and_finalize_without_orphans(
+    tmp_path: Path,
+) -> None:
+    roots = tuple(tmp_path / f"leases-{index}" for index in range(5))
+    stores = [ProviderProcessLeaseStore(root) for root in roots]
+    controls = tuple(store.control_root for store in stores)
+    assert all(path.is_relative_to(tmp_path) for path in controls)
+    assert all(path.is_dir() for path in controls)
+    del stores
+    gc.collect()
+    assert all(not path.exists() for path in controls)
+
+
+def test_overlong_control_socket_path_refuses_with_the_operator_repair(tmp_path: Path) -> None:
+    root = tmp_path / ("long-state-root-" + "x" * 110)
+    leases = ProviderProcessLeaseStore(root)
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        leases.paths(_digest("long-control-path"))
+    assert caught.value.code == "provider_process_lease_invalid"
+    assert "shorter CRUXIBLE_STATE_ROOT" in str(caught.value)
 
 
 @pytest.mark.parametrize("planted_kind", ["file", "symlink"])
@@ -944,7 +1020,7 @@ def test_invoker_rebinds_before_spawn_and_surfaces_every_bind_refusal(
         accepted_providers_by_digest={binding.provider_artifact_digest: object()},  # type: ignore[dict-item]
         accepted_interfaces_by_digest={binding.interface_artifact_digest: object()},  # type: ignore[dict-item]
         secret_resolvers=ProviderSecretResolverRegistry(()),
-        process_leases=ProviderProcessLeaseStore(tmp_path / "bind-leases"),
+        process_leases=_lease_store(tmp_path / "bind-leases"),
         driver=_RefusingDriver(),
     )
     occurrence = SimpleNamespace(
@@ -1002,7 +1078,7 @@ time.sleep(5)
         encoding="utf-8",
     )
     interpreter.chmod(0o755)
-    leases = ProviderProcessLeaseStore(tmp_path / "cap-leases")
+    leases = _lease_store(tmp_path / "cap-leases")
     with pytest.raises(ProviderLocalRuntimeRefused) as caught:
         _run_child(
             interpreter,
@@ -1063,6 +1139,6 @@ def test_unknown_dynamic_endpoint_form_is_typed_before_spawn(tmp_path: Path) -> 
             secret_plan=ProviderSecretResolutionPlanV1(),
             secret_resolvers=ProviderSecretResolverRegistry(()),
             invocation_id=_digest("dynamic"),
-            process_leases=ProviderProcessLeaseStore(tmp_path / "dynamic-leases"),
+            process_leases=_lease_store(tmp_path / "dynamic-leases"),
         )
     assert caught.value.code == "undeclared_egress"

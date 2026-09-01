@@ -13,12 +13,16 @@ import stat
 import subprocess
 import tempfile
 import time
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.errors import PlaybillExecutionError
+
+DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS = 5.0
+DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS = 5.0
 
 
 class ProviderLocalRuntimeRefused(PlaybillExecutionError):
@@ -268,8 +272,9 @@ class ProviderProcessLeaseStore:
         self,
         root: Path,
         *,
-        acquisition_timeout_seconds: float = 5.0,
-        recovery_timeout_seconds: float = 5.0,
+        control_root: Path | None = None,
+        acquisition_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
+        recovery_timeout_seconds: float = DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
     ) -> None:
         self.root = root
         self.acquisition_timeout_seconds = acquisition_timeout_seconds
@@ -278,17 +283,23 @@ class ProviderProcessLeaseStore:
         # Control sockets are operational state and must share the daemon's
         # protected state-root boundary.  The short component also preserves
         # headroom under the platform AF_UNIX path limit.
-        self.control_root = root / "c"
+        self.control_root = root / "c" if control_root is None else control_root
         self._ensure_private_directory(self.control_root)
-        # Darwin's AF_UNIX limit can be shorter than a legitimate state-root
-        # path.  A daemon-created, unguessable 0700 alias keeps the socket inode
-        # in ``control_root`` while presenting the kernel a short pathname.
-        alias_parent = Path(tempfile.mkdtemp(prefix="cruxible-pf-", dir="/tmp"))
-        os.chmod(alias_parent, 0o700)
-        alias = alias_parent / "c"
-        alias.symlink_to(self.control_root.resolve(), target_is_directory=True)
-        self._control_alias_parent = alias_parent
-        self._control_alias = alias
+        self._control_finalizer = weakref.finalize(
+            self,
+            self._remove_empty_control_root,
+            self.control_root,
+        )
+
+    @staticmethod
+    def _remove_empty_control_root(path: Path) -> None:
+        with contextlib.suppress(FileNotFoundError, OSError):
+            path.rmdir()
+
+    def close(self) -> None:
+        """Release this store's empty operational control namespace."""
+
+        self._control_finalizer()
 
     @staticmethod
     def _ensure_private_directory(path: Path) -> None:
@@ -322,7 +333,15 @@ class ProviderProcessLeaseStore:
         stem = hashlib.sha256(
             (str(self.root.resolve()) + "\x00" + invocation_id).encode("utf-8")
         ).hexdigest()[:32]
-        return self.root / f"{stem}.json", self._control_alias / f"{stem[:16]}.sock"
+        control_path = self.control_root / f"{stem[:16]}.sock"
+        # Darwin permits 103 pathname bytes (excluding the trailing NUL). Use
+        # that conservative ceiling on every platform so deployments replay.
+        if len(os.fsencode(control_path)) > 103:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_lease_invalid",
+                "Provider control socket path is too long; use a shorter CRUXIBLE_STATE_ROOT",
+            )
+        return self.root / f"{stem}.json", control_path
 
     def prepare_control_path(self, invocation_id: str) -> Path:
         """Remove only a stale socket before a deterministic invocation retry."""
@@ -447,11 +466,10 @@ class ProviderProcessLeaseStore:
             "provider_process_lease_missing", "child did not publish a process lease"
         )
 
-    @staticmethod
-    def require_echo(lease: ProviderProcessLeaseV1) -> None:
+    def require_echo(self, lease: ProviderProcessLeaseV1) -> None:
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(1.0)
+                client.settimeout(self.acquisition_timeout_seconds)
                 client.connect(str(lease.control_path))
                 client.sendall(lease.invocation_id.encode("utf-8"))
                 client.shutdown(socket.SHUT_WR)
@@ -478,7 +496,7 @@ class ProviderProcessLeaseStore:
         could_not_clean: list[ProviderProcessRecoveryFailureV1] = []
         for record_path in sorted(self.root.glob("*.json"), key=lambda item: item.name.encode()):
             invocation_id: str | None = None
-            control_path = self._control_alias / f"{record_path.stem[:16]}.sock"
+            control_path = self.control_root / f"{record_path.stem[:16]}.sock"
             try:
                 raw = record_path.read_bytes()
                 document = json.loads(raw)
@@ -611,6 +629,8 @@ class ProviderProcessLeaseStore:
 
 
 __all__ = [
+    "DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS",
+    "DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS",
     "ProviderDescendantProcessV1",
     "ProviderLocalRuntimeRefused",
     "ProviderProcessLeaseRemovalV1",

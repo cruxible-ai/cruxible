@@ -28,6 +28,8 @@ from cruxible_core.playbill.provider_local_runtime import (
     ProviderSecretResolverRegistry,
 )
 from cruxible_core.playbill.provider_process_leases import (
+    DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
+    DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
     ProviderLocalRuntimeRefused,
     ProviderProcessLeaseStore,
     ProviderProcessRecoveryFailureV1,
@@ -73,8 +75,14 @@ class ProviderRuntimeOperationalConfigV1(_StrictOperationalModel):
     tag: Literal["cruxible-provider-runtime-operational-config-v1"] = (
         "cruxible-provider-runtime-operational-config-v1"
     )
-    lease_acquisition_timeout_seconds: float = Field(default=5.0, gt=0)
-    lease_recovery_timeout_seconds: float = Field(default=5.0, gt=0)
+    lease_acquisition_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_LEASE_ACQUISITION_TIMEOUT_SECONDS,
+        gt=0,
+    )
+    lease_recovery_timeout_seconds: float = Field(
+        default=DEFAULT_PROVIDER_LEASE_RECOVERY_TIMEOUT_SECONDS,
+        gt=0,
+    )
     deployments: tuple[ProviderDeploymentConfigV1, ...] = ()
 
     @field_validator("deployments")
@@ -104,6 +112,7 @@ class ProviderRuntimeOperator:
         try:
             self.process_leases: ProviderProcessLeaseStore | None = ProviderProcessLeaseStore(
                 self.state_root / "daemon" / "provider-process-leases",
+                control_root=self.state_root / "c",
                 acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
                 recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
             )

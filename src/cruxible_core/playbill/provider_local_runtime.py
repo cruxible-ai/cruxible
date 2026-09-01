@@ -524,7 +524,10 @@ class LocalProviderExecutionDriver:
                 "verified Provider binding contains an unknown dynamic endpoint form",
             )
         secrets = secret_resolvers.resolve(secret_plan)
-        with _open_secret_channel(secrets) as secret_fd:
+        with _open_secret_channel(
+            secrets,
+            join_timeout_seconds=process_leases.recovery_timeout_seconds,
+        ) as secret_fd:
             channel = (
                 ProviderRuntimeSecretChannelSpecV1(
                     fd=secret_fd,
@@ -677,7 +680,11 @@ class _DescendantTracker:
 
 
 @contextmanager
-def _open_secret_channel(secrets: Mapping[str, str]) -> Iterator[int | None]:
+def _open_secret_channel(
+    secrets: Mapping[str, str],
+    *,
+    join_timeout_seconds: float,
+) -> Iterator[int | None]:
     if not secrets:
         yield None
         return
@@ -705,7 +712,7 @@ def _open_secret_channel(secrets: Mapping[str, str]) -> Iterator[int | None]:
     finally:
         with contextlib.suppress(OSError):
             os.close(read_fd)
-        writer.join(timeout=5)
+        writer.join(timeout=join_timeout_seconds)
 
 
 def _assert_no_secret(payload: bytes, secrets: Mapping[str, str], *, where: str) -> None:
@@ -747,13 +754,6 @@ def _run_child(
         os.chmod(scratch, 0o700)
         environment["HOME"] = scratch
         environment["TMPDIR"] = scratch
-        command = [
-            str(interpreter),
-            "-m",
-            "cruxible_provider_runtime.child",
-            "--entrypoint",
-            entrypoint,
-        ]
         control_path = process_leases.prepare_control_path(invocation_id)
         wrapper = Path(scratch) / "provider_child_fence.py"
         wrapper.write_text(_CHILD_FENCE_WRAPPER, encoding="utf-8")
@@ -806,6 +806,7 @@ def _run_child(
                 context=context,
                 budgets=budgets,
                 started=started,
+                writer_join_timeout_seconds=process_leases.recovery_timeout_seconds,
             )
             succeeded = True
             return outcome
@@ -838,6 +839,7 @@ def _collect_child_output(
     context: bytes,
     budgets: ProviderRuntimeBudgetsV1,
     started: float,
+    writer_join_timeout_seconds: float,
 ) -> _ProcessOutcome:
     def write_stdin() -> None:
         try:
@@ -883,7 +885,7 @@ def _collect_child_output(
                     "budget_wall_clock", "provider exceeded wall-clock budget"
                 )
             time.sleep(0.005)
-        writer.join(timeout=1)
+        writer.join(timeout=writer_join_timeout_seconds)
         return _ProcessOutcome(
             stdout=bytes(buffers[process.stdout.fileno()]),
             stderr=bytes(buffers[process.stderr.fileno()]),

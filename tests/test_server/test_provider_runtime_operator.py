@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -37,8 +39,11 @@ def _sha256_file(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(tmp_path: Path) -> None:
-    state_root = tmp_path / "daemon-state"
+def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(
+    request: pytest.FixtureRequest,
+) -> None:
+    state_root = Path(tempfile.mkdtemp(prefix=".provider-state-", dir=Path.cwd()))
+    request.addfinalizer(lambda: shutil.rmtree(state_root, ignore_errors=True))
     materialization = state_root / "materializations" / "demo"
     materialization.mkdir(parents=True)
     distribution = materialization / "provider.whl"
@@ -136,6 +141,8 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(tmp_path: Path
     )
     operator = ProviderRuntimeOperator(state_root)
     assert operator.deployments == {deployment_digest: deployment}
+    assert operator.process_leases is not None
+    assert operator.process_leases.control_root == state_root / "c"
     recovery = operator.recover_all()
     assert recovery.recovered == ()
     assert recovery.removed == ()
@@ -174,7 +181,6 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(tmp_path: Path
     )
     assert outcome.envelope.output == {"echo": "served"}
     assert outcome.verified_binding == admitted_binding
-    assert operator.process_leases is not None
     assert tuple(operator.process_leases.root.glob("*.json")) == ()
 
 
