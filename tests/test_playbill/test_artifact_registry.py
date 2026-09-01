@@ -51,6 +51,18 @@ def test_pc_f_activates_the_query_definition_path_kind() -> None:
     assert PLAYBILL_ARTIFACT_KINDS.reserved_kinds() == ()
 
 
+def test_p2_b1_activates_provider_interface_only_at_the_successor_compiler() -> None:
+    assert registered_path_kind("provider-interfaces/demo.interface.json") == ("provider-interface")
+    with pytest.raises(ProjectionFormatError):
+        PLAYBILL_ARTIFACT_KINDS.resolve_path("provider-interfaces/demo.interface.json")
+    assert (
+        artifact_kinds_for_compiler(current_compiler_coordinate()).resolve_path(
+            "provider-interfaces/demo.interface.json"
+        )
+        == "provider-interface"
+    )
+
+
 def test_pc_hr_codec_succeeds_without_changing_the_p2_b0_verifier() -> None:
     legacy = artifact_kinds_for_compiler(P2_B0_COMPILER)
     current = artifact_kinds_for_compiler(current_compiler_coordinate())
@@ -183,7 +195,7 @@ def test_historical_claim_type_path_error_names_the_historical_spelling() -> Non
         )
 
 
-def test_pc_e1_activates_procedure_line_run_input_and_promotion_tags() -> None:
+def test_p2_b1_reserves_every_provider_graph_successor_tag() -> None:
     assert PLAYBILL_FORMAT_RESERVATIONS.implemented_tags() == (
         "playbill-accepted-state-run-input-v1",
         "playbill-approval-policy-v1",
@@ -196,12 +208,26 @@ def test_pc_e1_activates_procedure_line_run_input_and_promotion_tags() -> None:
         "playbill-landed-capture-run-input-v1",
         "playbill-line-slot-binding-v1",
         "playbill-line-v1",
+        "playbill-line-v2",
         "playbill-procedure-pin-slot-ref-v1",
         "playbill-procedure-pin-slot-v1",
+        "playbill-procedure-provider-binding-v2",
+        "playbill-procedure-run-receipt-v5",
         "playbill-procedure-runtime-policy-v1",
         "playbill-procedure-v1",
         "playbill-procedure-v2",
+        "playbill-provider-bucket-classification-plan-v1",
+        "playbill-provider-bucket-classifier-installation-v1",
+        "playbill-provider-bucket-conformance-fixture-proof-v1",
+        "playbill-provider-bucket-conformance-fixture-v1",
+        "playbill-provider-container-materialization-reference-v1",
+        "playbill-provider-extras-environment-pin-map-v1",
+        "playbill-provider-implementation-closure-v1",
+        "playbill-provider-implementation-v1",
+        "playbill-provider-interface-v1",
+        "playbill-provider-local-materialization-reference-v1",
         "playbill-provider-v1",
+        "playbill-provider-v2",
         "playbill-query-definition-v1",
         "playbill-source-acquisition-policy-v1",
         "playbill-standing-mandate-v1",

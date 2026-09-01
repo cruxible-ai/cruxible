@@ -117,6 +117,7 @@ def accepted_interface() -> AcceptedProviderInterfaceRegistrationV1:
 
 def provider_v2() -> ProviderV2:
     registration = interface_registration()
+    interface = accepted_interface()
     implementation = ProviderImplementationManifestV1(
         interface_id=registration.interface_id,
         interface_digest=registration.interface_digest,
@@ -168,6 +169,14 @@ def provider_v2() -> ProviderV2:
             ),
         ),
         capture_contract_digests=(),
+        pins=(
+            pin(
+                "provider-interface",
+                "ProviderInterface",
+                registration.interface_id,
+                value=interface.artifact_digest,
+            ),
+        ),
         runtime_artifact=payload,
         implementations=provider_expected_implementation_records(payload),
     )

@@ -752,13 +752,25 @@ def evaluate_provider_law(
         )
     if isinstance(provider, ProviderV2):
         registrations = {} if interface_registrations is None else interface_registrations
+        interface_pins = {
+            pin.target.qualified: pin for pin in provider.pins if pin.role == "provider-interface"
+        }
         for implementation in provider.runtime_artifact.manifest.implementations:
-            accepted = registrations.get(implementation.interface_id)
+            identity = f"ProviderInterface:{implementation.interface_id}"
+            accepted = registrations.get(identity) or registrations.get(implementation.interface_id)
             registration = getattr(accepted, "registration", accepted)
             if registration is None:
                 return _law_refusal(
                     "playbill.provider.unknown_interface",
                     f"Provider interface {implementation.interface_id!r} is not accepted.",
+                    path=path,
+                )
+            accepted_digest = getattr(accepted, "artifact_digest", None)
+            interface_pin = interface_pins.get(identity)
+            if interface_pin is None or interface_pin.artifact_digest != accepted_digest:
+                return _law_refusal(
+                    "playbill.provider.interface_pin_missing",
+                    "Provider interface declarations require exact governed registration pins.",
                     path=path,
                 )
             if getattr(registration, "interface_digest", None) != implementation.interface_digest:

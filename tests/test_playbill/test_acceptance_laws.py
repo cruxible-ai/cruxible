@@ -150,6 +150,7 @@ def test_role_demotion_inventory_covers_every_candidate_member_family() -> None:
         "line",
         "query-definition",
         "provider",
+        "provider-interface",
         "source-acquisition-policy",
         "standing-mandate",
         "capture-contract",

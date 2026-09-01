@@ -23,7 +23,11 @@ from cruxible_client.contracts.discovery import (
 from cruxible_client.contracts.errors import PlaybillFormatError, ProposalIntegrityError
 from cruxible_client.contracts.procedures.artifacts import AcceptedProcedureV1
 from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
-from cruxible_client.contracts.providers import parse_provider, provider_digest
+from cruxible_client.contracts.provider_interfaces import (
+    ProviderEffectClassV1,
+    parse_provider_interface,
+    provider_interface_digest,
+)
 from cruxible_client.contracts.query.definitions import (
     AcceptedQueryDefinitionV1,
     parse_query_definition,
@@ -61,12 +65,21 @@ class ProviderInterfaceEntryV1(_StrictDiscoveryServiceModel):
     tag: Literal["playbill-provider-interface-entry-v1"] = "playbill-provider-interface-entry-v1"
     identity: str
     artifact_digest: str
-    artifact_kind: Literal["Provider"] = "Provider"
-    pin_role: Literal["provider"] = "provider"
+    artifact_kind: Literal["ProviderInterface"] = "ProviderInterface"
+    pin_role: Literal["provider-interface"] = "provider-interface"
     interface_digest: str
-    interface_basis: Literal["explicit_interface_pin", "artifact_digest_fallback"]
+    vocabulary_digest: str
+    classifier_digest: str
+    effect_class: ProviderEffectClassV1
+    classifier_status: Literal["installed", "not_installed"]
+    interface_basis: Literal["accepted_registration"] = "accepted_registration"
 
-    @field_validator("artifact_digest", "interface_digest")
+    @field_validator(
+        "artifact_digest",
+        "interface_digest",
+        "vocabulary_digest",
+        "classifier_digest",
+    )
     @classmethod
     def _digest(cls, value: str) -> str:
         ArtifactDigest.from_tagged(value)
@@ -91,26 +104,28 @@ class PlaybillInterfaceInventoryV1(_StrictDiscoveryServiceModel):
 
 def _provider_interfaces(
     tree: Mapping[str, bytes],
+    *,
+    installed_classifier_digests: frozenset[str],
 ) -> tuple[ProviderInterfaceEntryV1, ...]:
     entries: list[ProviderInterfaceEntryV1] = []
     for path in sorted(tree, key=lambda item: item.encode("utf-8")):
-        if not path.startswith("providers/"):
+        if not path.startswith("provider-interfaces/"):
             continue
-        provider = parse_provider(tree[path], path=path)
-        if provider.lifecycle.state != "live":
+        registration = parse_provider_interface(tree[path], path=path)
+        if registration.lifecycle.state != "live":
             continue
-        artifact_digest = provider_digest(provider).tagged
-        interface_pins = tuple(pin for pin in provider.pins if pin.role == "interface")
-        explicit = interface_pins[0] if len(interface_pins) == 1 else None
         entries.append(
             ProviderInterfaceEntryV1(
-                identity=provider.identity.qualified,
-                artifact_digest=artifact_digest,
-                interface_digest=(
-                    explicit.artifact_digest if explicit is not None else artifact_digest
-                ),
-                interface_basis=(
-                    "explicit_interface_pin" if explicit is not None else "artifact_digest_fallback"
+                identity=registration.identity.qualified,
+                artifact_digest=provider_interface_digest(registration).tagged,
+                interface_digest=registration.interface_digest,
+                vocabulary_digest=registration.vocabulary_digest,
+                classifier_digest=registration.classifier_digest,
+                effect_class=registration.effect_class,
+                classifier_status=(
+                    "installed"
+                    if registration.classifier_digest in installed_classifier_digests
+                    else "not_installed"
                 ),
             )
         )
@@ -200,6 +215,7 @@ def service_discover_playbill_semantic(
     procedures: Iterable[AcceptedProcedureV1] = (),
     line_specs: Iterable[AcceptedLineSpecV1] = (),
     external_readers: Mapping[str, ExternalSourceReaderProtocol] | None = None,
+    installed_classifier_digests: frozenset[str] = frozenset(),
 ) -> PlaybillDiscoveryResultV1 | PlaybillInterfaceInventoryV1:
     """Answer one exact/lexical discovery request without writing anything.
 
@@ -211,7 +227,10 @@ def service_discover_playbill_semantic(
         raise ProposalIntegrityError("discovery accepts only verified accepted coordinates")
     coordinate = _resolve_coordinate(instance, at)
     if profile == "interfaces" and query is None and entrypoint is None:
-        interfaces = _provider_interfaces(instance.tree_at(coordinate.git_oid))
+        interfaces = _provider_interfaces(
+            instance.tree_at(coordinate.git_oid),
+            installed_classifier_digests=installed_classifier_digests,
+        )
         return PlaybillInterfaceInventoryV1(
             coordinate=PlaybillAcceptedCoordinate.from_internal(coordinate),
             provider_status="installed" if interfaces else "not_installed",

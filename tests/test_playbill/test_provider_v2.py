@@ -151,3 +151,12 @@ def test_provider_v1_to_v2_succession_and_effect_parity() -> None:
         },
     )
     assert refused.diagnostics[0].code == "playbill.provider.effect_declaration_mismatch"
+
+    unpinned = successor.model_copy(update={"pins": ()})
+    refused = evaluate_provider_law(
+        unpinned,
+        path=predecessor.path,
+        predecessor=predecessor,
+        interface_registrations={registration.registration.identity.qualified: registration},
+    )
+    assert refused.diagnostics[0].code == "playbill.provider.interface_pin_missing"

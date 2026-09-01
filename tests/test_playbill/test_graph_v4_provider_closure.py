@@ -10,6 +10,7 @@ from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedures.artifacts import (
     AcceptedProcedureV1,
     ProcedureArtifactV1,
+    evaluate_procedure_law,
     parse_procedure,
     procedure_artifact_digest,
     procedure_path,
@@ -226,10 +227,10 @@ def test_graph_v4_digest_and_outer_procedure_round_trip() -> None:
     assert definition.nodes[0].model_dump(mode="json").get("environment") is None
     assert definition.nodes[0].implementation_digest is not None
     assert accepted.procedure.definition_digest == (
-        "sha256:9023527201f7b8920a5e100abad8178422d6b03e472b4d6cb2f71f6be621e728"
+        "sha256:9c3610739f920df547c48c272b9992a81f41026f486fe3ec14996569bac99571"
     )
     assert compute_procedure_node_digests_v4(definition)["direct"].subtree_digest == (
-        "sha256:bf08a11ca56c5f9b3af251e88db8c72146859c61ff39c68fdb4db9e6974eb1c7"
+        "sha256:47eb4684da298a9972a3ed1bc3001cae6a5c457becdd9ff221290cc2ceb31887"
     )
     content = render_procedure(accepted.procedure)
     assert parse_procedure(content, path=accepted.path) == accepted.procedure
@@ -255,6 +256,30 @@ def test_graph_v4_direct_and_slot_implementation_conditions_are_closed() -> None
     ).model_dump(mode="json")
     with pytest.raises(ValidationError, match="extra_forbidden"):
         ProcedureDefinitionV4.model_validate(payload)
+
+
+def test_procedure_law_resolves_direct_pins_by_digest_and_never_by_order() -> None:
+    procedure = _accepted_procedure().procedure
+    provider = accepted_provider()
+    interface = accepted_interface()
+
+    accepted = evaluate_procedure_law(
+        procedure,
+        path=procedure_path(procedure.identity.name),
+        predecessor=None,
+        providers={provider.artifact_digest: provider},
+        provider_interfaces={interface.artifact_digest: interface},
+    )
+    assert accepted.verdict == "accepted"
+
+    refused = evaluate_procedure_law(
+        procedure,
+        path=procedure_path(procedure.identity.name),
+        predecessor=None,
+        providers={},
+        provider_interfaces={interface.artifact_digest: interface},
+    )
+    assert refused.diagnostics[0].code == ("playbill.procedure.provider_runtime_manifest_required")
 
 
 def test_repeat_body_provider_has_the_same_explicit_pin_block() -> None:

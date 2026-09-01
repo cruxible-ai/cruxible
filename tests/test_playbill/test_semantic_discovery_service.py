@@ -15,7 +15,7 @@ from cruxible_client.contracts.captures import (
 from cruxible_client.contracts.claim_types import claim_type_path
 from cruxible_client.contracts.discovery import DiscoveryBudgetV1
 from cruxible_client.contracts.errors import PlaybillFormatError
-from cruxible_client.contracts.providers import provider_digest, provider_path, render_provider
+from cruxible_client.contracts.providers import provider_path, render_provider
 from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from cruxible_core.playbill.query.semantic_discovery import DiscoveryError
 from cruxible_core.playbill.service.documents import (
@@ -158,7 +158,9 @@ def test_other_empty_discovery_profiles_remain_refused(tmp_path: Path) -> None:
         )
 
 
-def test_interfaces_inventory_uses_the_linespec_interface_pin_projection(tmp_path: Path) -> None:
+def test_provider_pin_fallback_never_becomes_interface_discovery_authority(
+    tmp_path: Path,
+) -> None:
     instance, owner = initialize_local(tmp_path)
     base = instance.accepted_coordinate()
     contract = capture_contract()
@@ -208,11 +210,8 @@ def test_interfaces_inventory_uses_the_linespec_interface_pin_projection(tmp_pat
     )
 
     assert isinstance(result, PlaybillInterfaceInventoryV1)
-    assert result.provider_status == "installed"
-    assert result.interfaces[0].identity == provider_artifact.identity.qualified
-    assert result.interfaces[0].artifact_digest == provider_digest(provider_artifact).tagged
-    assert result.interfaces[0].interface_digest == contract_digest
-    assert result.interfaces[0].interface_basis == "explicit_interface_pin"
+    assert result.provider_status == "not_installed"
+    assert result.interfaces == ()
 
 
 def test_blank_query_is_refused_rather_than_listing_everything(tmp_path: Path) -> None:

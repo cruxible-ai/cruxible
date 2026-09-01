@@ -168,6 +168,15 @@ PLAYBILL_ARTIFACT_KINDS = ArtifactKindRegistry(
         for entry in P2_B0_ARTIFACT_KINDS.entries()
     )
 )
+P2_B1_ARTIFACT_KINDS = ArtifactKindRegistry(
+    (
+        *PLAYBILL_ARTIFACT_KINDS.entries(),
+        ArtifactPathKind(
+            "provider-interface",
+            re.compile(r"^provider-interfaces/[a-z][a-z0-9_.-]{0,255}\.json$"),
+        ),
+    )
+)
 
 PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
     tuple(
@@ -192,6 +201,20 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
                 "playbill-procedure-v1",
                 "playbill-procedure-v2",
                 "playbill-provider-v1",
+                "playbill-provider-v2",
+                "playbill-provider-interface-v1",
+                "playbill-line-v2",
+                "playbill-provider-implementation-v1",
+                "playbill-provider-local-materialization-reference-v1",
+                "playbill-provider-container-materialization-reference-v1",
+                "playbill-provider-bucket-conformance-fixture-v1",
+                "playbill-provider-bucket-conformance-fixture-proof-v1",
+                "playbill-provider-bucket-classifier-installation-v1",
+                "playbill-provider-bucket-classification-plan-v1",
+                "playbill-procedure-provider-binding-v2",
+                "playbill-procedure-run-receipt-v5",
+                "playbill-provider-extras-environment-pin-map-v1",
+                "playbill-provider-implementation-closure-v1",
                 "playbill-query-definition-v1",
                 "playbill-source-acquisition-policy-v1",
                 "playbill-standing-mandate-v1",
@@ -215,6 +238,20 @@ PLAYBILL_FORMAT_RESERVATIONS = ArtifactFormatRegistry(
             "playbill-procedure-v1",
             "playbill-procedure-v2",
             "playbill-provider-v1",
+            "playbill-provider-v2",
+            "playbill-provider-interface-v1",
+            "playbill-line-v2",
+            "playbill-provider-implementation-v1",
+            "playbill-provider-local-materialization-reference-v1",
+            "playbill-provider-container-materialization-reference-v1",
+            "playbill-provider-bucket-conformance-fixture-v1",
+            "playbill-provider-bucket-conformance-fixture-proof-v1",
+            "playbill-provider-bucket-classifier-installation-v1",
+            "playbill-provider-bucket-classification-plan-v1",
+            "playbill-procedure-provider-binding-v2",
+            "playbill-procedure-run-receipt-v5",
+            "playbill-provider-extras-environment-pin-map-v1",
+            "playbill-provider-implementation-closure-v1",
             "playbill-query-definition-v1",
             "playbill-source-acquisition-policy-v1",
             "playbill-standing-mandate-v1",
@@ -237,6 +274,7 @@ RegisteredPathKind = Literal[
     "principal",
     "procedure",
     "provider",
+    "provider-interface",
     "query-definition",
     "source-acquisition-policy",
     "standing-mandate",
@@ -376,7 +414,7 @@ class ParsedProjectionTree:
 def registered_path_kind(
     path: str,
     *,
-    artifact_kinds: ArtifactKindRegistry = PLAYBILL_ARTIFACT_KINDS,
+    artifact_kinds: ArtifactKindRegistry = P2_B1_ARTIFACT_KINDS,
 ) -> RegisteredPathKind:
     return cast(RegisteredPathKind, artifact_kinds.resolve_path(path))
 
@@ -538,7 +576,7 @@ def parse_projection_tree(
     blobs: dict[str, bytes],
     *,
     registry: ProjectionExtensionRegistry,
-    artifact_kinds: ArtifactKindRegistry = PLAYBILL_ARTIFACT_KINDS,
+    artifact_kinds: ArtifactKindRegistry = P2_B1_ARTIFACT_KINDS,
     artifact_codec: ArtifactCodec = CURRENT_ARTIFACT_CODEC,
     bodies: BodyProjectionProtocol | None = None,
     coordinate: ProjectionCoordinateContext | None = None,
@@ -988,7 +1026,12 @@ def parse_projection_tree(
                     )
                 continue
             if kind == "provider":
-                from cruxible_client.contracts.providers import parse_provider, provider_digest
+                from cruxible_client.contracts.providers import (
+                    ProviderV2,
+                    parse_provider,
+                    provider_digest,
+                    provider_runtime_artifact_digest,
+                )
 
                 provider = parse_provider(content, path=path, codec=artifact_codec)
                 identity = provider.identity.qualified
@@ -1061,6 +1104,127 @@ def parse_projection_tree(
                                 "upstream_provenance": [
                                     item.model_dump(mode="json")
                                     for item in provider.upstream_provenance
+                                ],
+                            },
+                        ),
+                    )
+                )
+                if isinstance(provider, ProviderV2):
+                    semantic_facts.extend(
+                        (
+                            ProjectionFact(
+                                schema_id="playbill.provider.runtime",
+                                schema_version=1,
+                                subject_identity=identity,
+                                fact_key="runtime_artifact",
+                                value={
+                                    "external_artifact_digest": {
+                                        "$digest": provider_runtime_artifact_digest(
+                                            provider.runtime_artifact
+                                        )
+                                    },
+                                    "runtime_artifact": provider.runtime_artifact.model_dump(
+                                        mode="json"
+                                    ),
+                                },
+                            ),
+                            ProjectionFact(
+                                schema_id="playbill.provider.implementations",
+                                schema_version=1,
+                                subject_identity=identity,
+                                fact_key="normalized",
+                                value={
+                                    "implementations": [
+                                        item.model_dump(mode="json")
+                                        for item in provider.implementations
+                                    ]
+                                },
+                            ),
+                        )
+                    )
+                continue
+            if kind == "provider-interface":
+                from cruxible_client.contracts.provider_interfaces import (
+                    parse_provider_interface,
+                    provider_interface_digest,
+                )
+
+                registration = parse_provider_interface(
+                    content,
+                    path=path,
+                    codec=artifact_codec,
+                )
+                identity = registration.identity.qualified
+                if identity in identities:
+                    raise ProjectionFormatError(f"duplicate semantic identity {identity!r}")
+                identities[identity] = path
+                input_digest = file_digest(content).tagged
+                artifact_digest = provider_interface_digest(registration).tagged
+                envelopes.append(
+                    ArtifactEnvelopeRow(
+                        identity=identity,
+                        kind="provider-interface",
+                        format_tag=registration.artifact_format,
+                        path=path,
+                        artifact_digest=artifact_digest,
+                        predecessor_digest=registration.lifecycle.predecessor_digest,
+                        revision=projected_revision(
+                            accepted_change_sets,
+                            path=path,
+                            input_digest=input_digest,
+                            artifact_digest=artifact_digest,
+                        ),
+                    )
+                )
+                if registration.lifecycle.state == "retired":
+                    retired_identities.append(identity)
+                pins.extend(
+                    PinRow(
+                        source_identity=identity,
+                        target_identity=pin.target.qualified,
+                        target_digest=pin.artifact_digest,
+                    )
+                    for pin in registration.pins
+                )
+                semantic_facts.extend(
+                    (
+                        ProjectionFact(
+                            schema_id="playbill.provider_interface.registration",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="registration",
+                            value={
+                                "artifact_digest": {"$digest": artifact_digest},
+                                "effect_class": registration.effect_class,
+                                "interface_digest": {"$digest": registration.interface_digest},
+                                "lifecycle": registration.lifecycle.model_dump(mode="json"),
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.provider_interface.vocabulary",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="vocabulary",
+                            value={
+                                "vocabulary": registration.vocabulary.model_dump(mode="json"),
+                                "vocabulary_digest": {"$digest": registration.vocabulary_digest},
+                            },
+                        ),
+                        ProjectionFact(
+                            schema_id="playbill.provider_interface.classifier",
+                            schema_version=1,
+                            subject_identity=identity,
+                            fact_key="classifier",
+                            value={
+                                "classifier_digest": {"$digest": registration.classifier_digest},
+                                "classifier_identity": registration.classifier_identity,
+                                "classifier_version": registration.classifier_version,
+                                "conformance_fixture_set_digest": {
+                                    "$digest": registration.conformance_fixture_set_digest
+                                },
+                                "conformance_proofs": [
+                                    proof.model_dump(mode="json")
+                                    for proof in registration.conformance_proofs
                                 ],
                             },
                         ),
@@ -1170,7 +1334,12 @@ def parse_projection_tree(
                 )
                 from cruxible_client.contracts.procedures.graph import (
                     analyze_procedure_v3,
+                    analyze_procedure_v4,
                     compute_procedure_node_digests_v3,
+                    compute_procedure_node_digests_v4,
+                )
+                from cruxible_client.contracts.procedures.models import (
+                    ProcedureDefinitionV4,
                 )
 
                 procedure = parse_procedure(content, path=path, codec=artifact_codec)
@@ -1206,8 +1375,14 @@ def parse_projection_tree(
                     )
                     for pin in procedure.pins
                 )
-                graph = analyze_procedure_v3(procedure.definition)
-                node_digests = compute_procedure_node_digests_v3(procedure.definition)
+                if isinstance(procedure.definition, ProcedureDefinitionV4):
+                    graph = analyze_procedure_v4(procedure.definition)
+                    node_digests = compute_procedure_node_digests_v4(procedure.definition)
+                    graph_fact_key = "graph_v4"
+                else:
+                    graph = analyze_procedure_v3(procedure.definition)
+                    node_digests = compute_procedure_node_digests_v3(procedure.definition)
+                    graph_fact_key = "graph_v3"
                 mappings: list[tuple[str, SourceMapping]] = [
                     (
                         "unit",
@@ -1276,7 +1451,7 @@ def parse_projection_tree(
                             schema_id="playbill.procedure.graph",
                             schema_version=1,
                             subject_identity=identity,
-                            fact_key="graph_v3",
+                            fact_key=graph_fact_key,
                             value={
                                 "edges": graph.edges,
                                 "nodes": [
@@ -2048,6 +2223,7 @@ __all__ = [
     "FixturePresentation",
     "ParsedProjectionTree",
     "PLAYBILL_ARTIFACT_KINDS",
+    "P2_B1_ARTIFACT_KINDS",
     "P2_B0_ARTIFACT_KINDS",
     "PLAYBILL_FORMAT_RESERVATIONS",
     "PinRow",

@@ -603,6 +603,35 @@ def playbill_replay_extension_registry() -> ProjectionExtensionRegistry:
     return playbill_runtime_extension_registry().with_artifact_kinds("procedure-runtime-policy")
 
 
+def playbill_provider_runtime_extension_registry() -> ProjectionExtensionRegistry:
+    """Return P2-B1 Provider runtime/interface schemas and governed kind."""
+
+    prior = playbill_replay_extension_registry()
+    provider_runtime = tuple(
+        ProjectionFactDeclaration(
+            schema_id=schema_id,
+            schema_version=1,
+            classification="semantic",
+            constraints=("unique(subject_identity,fact_key)",),
+        )
+        for schema_id in (
+            "playbill.provider.runtime",
+            "playbill.provider.implementations",
+            "playbill.provider_interface.registration",
+            "playbill.provider_interface.vocabulary",
+            "playbill.provider_interface.classifier",
+        )
+    )
+    return ProjectionExtensionRegistry(
+        (
+            *prior.declarations("semantic"),
+            *provider_runtime,
+            *prior.declarations("presentation"),
+        ),
+        artifact_kinds=("procedure-runtime-policy", "provider-interface"),
+    )
+
+
 __all__ = [
     "ProjectionExtensionRegistry",
     "ProjectionFact",
@@ -613,6 +642,7 @@ __all__ = [
     "playbill_claim_extension_registry",
     "playbill_evidence_extension_registry",
     "playbill_procedure_extension_registry",
+    "playbill_provider_runtime_extension_registry",
     "playbill_replay_extension_registry",
     "playbill_runtime_extension_registry",
     "playbill_claim_type_extension_registry",

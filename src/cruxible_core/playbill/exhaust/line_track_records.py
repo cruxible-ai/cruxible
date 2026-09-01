@@ -1,13 +1,13 @@
 """Line-grained track records folded from one accepted ExhaustPromotion.
 
-A Line's track record is keyed by the Line's own identity and occurrence epoch,
-so it spans deployment revisions and provider rebinds: a rebind is a deployment
-act that preserves the accepted LineSpec digest and epoch, and the deployment
-digest never enters a key.  Credit never merges across implementations: the
-implementation digest, the slot-interface digest, and the declared input bucket
-are three separate dimensions, and every fact carries the exact dimension key it
-was folded under.  Only an accepted promotion contributes, and only through the
-promotion law that already verified the exact record range.
+A Line's v1 track record is keyed by the Line's identity, occurrence epoch, exact
+LineSpec digest, and accepted Procedure artifact. A Provider/interface rebind is
+an accepted Line-v2 successor, never an invisible deployment act. The v1
+``implementation_digest`` remains the Procedure artifact digest forever; it is
+not repurposed as Provider implementation identity. Provider invocation credit
+uses its separate interface × implementation × measured-bucket dimensions.
+Only an accepted promotion contributes, and only through the promotion law that
+already verified the exact record range.
 
 This module is deliberately not re-exported from ``playbill.exhaust``: it reads
 the Procedure/LineSpec artifact families, which already depend on the journal
@@ -34,6 +34,7 @@ from cruxible_client.contracts.procedures.line_specs import AcceptedLineSpecV1
 from cruxible_client.contracts.procedures.models import (
     ExhaustTapNodeV3,
     SourceNodeV3,
+    SourceNodeV4,
     StateTapNodeV3,
 )
 from cruxible_client.contracts.projection_extensions import ProjectionFact
@@ -168,7 +169,7 @@ def line_declared_inputs(
     for node in accepted_procedure.procedure.definition.nodes:
         if isinstance(node, StateTapNodeV3):
             declared.append(LineDeclaredInputV1(plane="accepted_state", input_name=node.as_))
-        elif isinstance(node, SourceNodeV3):
+        elif isinstance(node, SourceNodeV3 | SourceNodeV4):
             declared.append(LineDeclaredInputV1(plane="landed_capture", input_name=node.as_))
         elif isinstance(node, ExhaustTapNodeV3):
             declared.append(LineDeclaredInputV1(plane="exhaust", input_name=node.as_))
@@ -316,8 +317,8 @@ class LineTrackRecordV1(_StrictTrackRecordModel):
     """One Line's accepted operational record over one promoted exhaust range.
 
     ``deployment_snapshot_digests`` records every deployment revision the range
-    spans.  It is reported, never keyed on, which is exactly how the record
-    survives a provider rebind without splitting the Line's history.
+    spans. It is reported, never keyed on. A governed Provider rebind instead
+    creates a Line successor and therefore a new exact LineSpec digest.
     """
 
     tag: Literal["playbill-line-track-record-v1"] = "playbill-line-track-record-v1"
@@ -460,9 +461,9 @@ def build_line_track_record(
     """Fold one verified exhaust range into one Line's track record.
 
     Every record in the range must name this exact LineSpec digest and this
-    exact implementation digest.  That is what stops a range that quietly spans
-    two implementations, or two Lines, from merging their credit; a deployment
-    revision or provider rebind changes neither and is recorded instead.
+    exact Procedure artifact digest. That is what stops a range that quietly
+    spans two Procedures, or two Lines, from merging their credit. Provider
+    invocation identity is folded separately from per-invocation receipts.
     """
 
     dimensions = line_track_record_dimensions(accepted_line, accepted_procedure)
