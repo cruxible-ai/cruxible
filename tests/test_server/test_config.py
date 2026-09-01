@@ -180,6 +180,19 @@ def test_pre_pc_hr_state_tree_preserves_the_auth_latch_by_refusing_reseed(
         get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
 
 
+@pytest.mark.parametrize("filename", ["registry.db", "runtime_credentials.db"])
+def test_flat_pre_pc_hr_state_tree_requires_reseed(
+    tmp_path: Path,
+    filename: str,
+) -> None:
+    state_root = tmp_path / "former-server-state-dir"
+    state_root.mkdir()
+    (state_root / filename).touch()
+
+    with pytest.raises(PlaybillReseedRequired):
+        get_server_state_root({"CRUXIBLE_STATE_ROOT": str(state_root)})
+
+
 def test_server_log_path_defaults_under_state_root(tmp_path: Path) -> None:
     state_root = tmp_path / "server-state"
 

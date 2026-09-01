@@ -23,6 +23,10 @@ _GIT_OVERRIDES = (
     "-c",
     "core.hooksPath=/dev/null",
     "-c",
+    "protocol.allow=never",
+    "-c",
+    "protocol.file.allow=always",
+    "-c",
     "protocol.ext.allow=never",
     "-c",
     "remote.playbill.uploadpack=git-upload-pack",
@@ -58,6 +62,22 @@ def _git(workspace: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]
 
 def _text(value: bytes) -> str:
     return value.decode("utf-8", errors="replace").strip()
+
+
+def _local_url_matches(workspace: Path, raw_url: str, expected_url: str) -> bool:
+    candidate = Path(raw_url).expanduser()
+    if not candidate.is_absolute():
+        candidate = workspace / candidate
+    try:
+        return str(candidate.resolve()) == expected_url
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _effective_remote_urls(workspace: Path) -> subprocess.CompletedProcess[bytes]:
+    """Ask Git for post-``insteadOf`` fetch URLs without opening a transport."""
+
+    return _git(workspace, ["remote", "get-url", "--all", _REMOTE_NAME])
 
 
 def workspace_git_object_format(workspace_root: Path) -> GitObjectFormat:
@@ -131,16 +151,7 @@ def _advertise_workspace_refs(
         urls = tuple(line for line in _text(current_urls.stdout).splitlines() if line)
         if not urls:
             return failed("remote_conflict")
-        resolved_urls: list[str] = []
-        for raw_url in urls:
-            candidate = Path(raw_url).expanduser()
-            if not candidate.is_absolute():
-                candidate = workspace / candidate
-            try:
-                resolved_urls.append(str(candidate.resolve()))
-            except (OSError, RuntimeError, ValueError):
-                resolved_urls.append(raw_url)
-        if any(item != expected_url for item in resolved_urls):
+        if any(not _local_url_matches(workspace, item, expected_url) for item in urls):
             return failed("remote_conflict")
     elif current_urls.returncode == 127:
         return failed("git_unavailable")
@@ -158,14 +169,19 @@ def _advertise_workspace_refs(
         if retry_urls.returncode != 0:
             return failed("remote_conflict")
         for raw_url in _text(retry_urls.stdout).splitlines():
-            candidate = Path(raw_url).expanduser()
-            if not candidate.is_absolute():
-                candidate = workspace / candidate
-            try:
-                if str(candidate.resolve()) != expected_url:
-                    return failed("remote_conflict")
-            except (OSError, RuntimeError, ValueError):
+            if not _local_url_matches(workspace, raw_url, expected_url):
                 return failed("remote_conflict")
+
+    effective_urls = _effective_remote_urls(workspace)
+    if effective_urls.returncode == 127:
+        return failed("git_unavailable")
+    if effective_urls.returncode != 0:
+        return failed("remote_conflict")
+    resolved_fetch_urls = tuple(line for line in _text(effective_urls.stdout).splitlines() if line)
+    if not resolved_fetch_urls or any(
+        not _local_url_matches(workspace, item, expected_url) for item in resolved_fetch_urls
+    ):
+        return failed("remote_conflict")
 
     configured = _git(
         workspace,

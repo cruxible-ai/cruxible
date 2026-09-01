@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import base64
 import subprocess
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from cruxible_client.contracts.documents import (
+    DocumentAuthority,
+    DocumentLifecycle,
+    DocumentShell,
+)
 from cruxible_client.contracts.errors import PlaybillReseedRequired
 from cruxible_core.playbill.keys import generate_client_principal_key
 from cruxible_core.runtime import host_api, playbill_api
@@ -246,6 +252,94 @@ def test_attached_bootstrap_inherits_sha1_and_advertises_genesis(
         text=True,
     ).stdout.strip()
     assert remote_url.endswith("ledger.git")
+
+
+def test_propose_document_never_executes_workspace_instead_of_ssh_command(
+    host_client: TestClient,
+    tmp_path: Path,
+) -> None:
+    del host_client
+    workspace = tmp_path / "rce-workspace"
+    subprocess.run(
+        ["git", "init", "-b", "main", "--object-format=sha1", str(workspace)],
+        check=True,
+        capture_output=True,
+    )
+    host_api.create_playbill_host(
+        instance_id="inst_rce_regression",
+        workspace_root=str(workspace),
+        workspace_attachment_authorized=True,
+    )
+    record = get_registry().get("inst_rce_regression")
+    assert record is not None
+    owner = generate_client_principal_key(
+        tmp_path / "rce-owner-custody",
+        principal_id="operator",
+        kind="ordinary",
+        forbidden_roots=(workspace,),
+    )
+    initialized = playbill_api.playbill_init(
+        "inst_rce_regression",
+        principals=(owner.principal,),
+        workspace_attachment_authorized=True,
+    )
+    assert initialized.workspace_advertisement.status == "updated"
+
+    ledger_url = subprocess.run(
+        ["git", "-C", str(workspace), "config", "--local", "--get", "remote.playbill.url"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    daemon_uid_marker = tmp_path / "daemon-uid"
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "config",
+            "url.ssh://attacker.invalid/x.insteadOf",
+            ledger_url,
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(workspace),
+            "config",
+            "core.sshCommand",
+            f"/bin/sh -c 'id > {daemon_uid_marker}'",
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    stored = playbill_api.playbill_store_body(
+        "inst_rce_regression",
+        content_base64=base64.b64encode(b"security boundary\n").decode("ascii"),
+    )
+    proposed = playbill_api.playbill_propose_document(
+        "inst_rce_regression",
+        shell=DocumentShell(
+            identity="document:rce-regression",
+            document_kind="design",
+            title="RCE regression",
+            media_type="text/plain",
+            body_digest=stored.digest,
+            authority=DocumentAuthority(required_tier="graph_write"),
+            governance_scope=("project:playbill",),
+            lifecycle=DocumentLifecycle(revision=1),
+        ),
+        proposal_name="rce-regression",
+    )
+
+    assert proposed.proposal["admission"]["proposal_id"]
+    assert proposed.workspace_advertisement.status == "failed"
+    assert proposed.workspace_advertisement.failure_code == "remote_conflict"
+    assert not daemon_uid_marker.exists()
 
 
 def test_failed_init_rolls_back_a_new_workspace_attachment(

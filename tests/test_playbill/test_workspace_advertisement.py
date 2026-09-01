@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from cruxible_core.playbill import workspace_advertisement as advertisement_module
 from cruxible_core.playbill.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
@@ -129,6 +131,136 @@ def test_advertisement_ignores_executable_workspace_git_config(tmp_path: Path) -
     assert result.status == "updated"
     assert not fsmonitor_marker.exists()
     assert not uploadpack_marker.exists()
+
+
+def test_advertisement_refuses_instead_of_ssh_command_without_execution(
+    tmp_path: Path,
+) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    daemon_uid_marker = tmp_path / "daemon-uid"
+    _git(
+        workspace,
+        "config",
+        "url.ssh://attacker.invalid/x.insteadOf",
+        str(ledger.resolve()),
+    )
+    _git(
+        workspace,
+        "config",
+        "core.sshCommand",
+        f"/bin/sh -c 'id > {daemon_uid_marker}'",
+    )
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "failed"
+    assert result.failure_code == "remote_conflict"
+    assert not daemon_uid_marker.exists()
+
+
+def test_protocol_gate_blocks_execution_if_effective_url_check_is_bypassed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    daemon_uid_marker = tmp_path / "daemon-uid"
+    _git(
+        workspace,
+        "config",
+        "url.ssh://attacker.invalid/x.insteadOf",
+        str(ledger.resolve()),
+    )
+    _git(
+        workspace,
+        "config",
+        "core.sshCommand",
+        f"/bin/sh -c 'id > {daemon_uid_marker}'",
+    )
+    monkeypatch.setattr(
+        advertisement_module,
+        "_effective_remote_urls",
+        lambda _workspace: subprocess.CompletedProcess(
+            (),
+            0,
+            f"{ledger.resolve()}\n".encode(),
+            b"",
+        ),
+    )
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "failed"
+    assert result.failure_code == "fetch_failed"
+    assert not daemon_uid_marker.exists()
+
+
+def test_git_environment_drops_ambient_execution_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _ledger = _repositories(tmp_path, "sha1")
+    ambient_global = tmp_path / "hostile-global-config"
+    ambient = {
+        "GIT_CONFIG_GLOBAL": str(ambient_global),
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.sshCommand",
+        "GIT_CONFIG_VALUE_0": "/bin/false",
+        "GIT_DIR": str(tmp_path / "other.git"),
+        "GIT_WORK_TREE": str(tmp_path / "other-worktree"),
+        "GIT_SSH_COMMAND": "/bin/false",
+        "GIT_EXTERNAL_DIFF": "/bin/false",
+    }
+    for name, value in ambient.items():
+        monkeypatch.setenv(name, value)
+    observed: list[dict[str, str]] = []
+    real_run = subprocess.run
+
+    def observe(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        observed.append(dict(kwargs["env"]))
+        return real_run(*args, **kwargs)  # type: ignore[arg-type,return-value]
+
+    monkeypatch.setattr(advertisement_module.subprocess, "run", observe)
+
+    assert workspace_git_object_format(workspace) == "sha1"
+    assert observed
+    for environment in observed:
+        assert environment["GIT_CONFIG_GLOBAL"] == os.devnull
+        assert environment["GIT_CONFIG_NOSYSTEM"] == "1"
+        assert not (
+            {
+                "GIT_CONFIG_COUNT",
+                "GIT_CONFIG_KEY_0",
+                "GIT_CONFIG_VALUE_0",
+                "GIT_DIR",
+                "GIT_WORK_TREE",
+                "GIT_SSH_COMMAND",
+                "GIT_EXTERNAL_DIFF",
+            }
+            & environment.keys()
+        )
+
+
+def test_non_utf8_git_config_output_is_a_typed_remote_conflict(tmp_path: Path) -> None:
+    workspace, ledger = _repositories(tmp_path, "sha1")
+    with (workspace / ".git/config").open("ab") as config:
+        config.write(b'\n[remote "playbill"]\n\turl = invalid-\xff\n')
+
+    result = advertise_workspace_refs(
+        workspace_root=workspace,
+        ledger_path=ledger,
+        ledger_object_format="sha1",
+    )
+
+    assert result.status == "failed"
+    assert result.failure_code == "remote_conflict"
 
 
 def test_advertisement_reports_git_unavailable(
