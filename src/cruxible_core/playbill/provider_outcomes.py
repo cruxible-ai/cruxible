@@ -73,6 +73,7 @@ _MAPPING: dict[str, tuple[str, str]] = {
     "image_provenance_mismatch": ("internal", "materialization_integrity"),
 }
 _LOCAL_MAPPING: dict[str, tuple[str, str]] = {
+    "provider_unavailable": ("node_refusal", "executor"),
     "secret_epoch_unavailable": ("operational", "custody"),
     "secret_resolver_not_installed": ("operational", "custody"),
     "secret_reference_invalid": ("node_refusal", "binding_input"),

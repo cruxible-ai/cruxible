@@ -18,6 +18,7 @@ from cruxible_client.contracts.temporal import utc_now
 from cruxible_client.contracts.types import OperatingProfile, PlaybillTrustRoot, PrincipalRecord
 from cruxible_core.errors import InstanceNotFoundError
 from cruxible_core.playbill.instance import PlaybillInstance
+from cruxible_core.playbill.provider_process_leases import ProviderProcessRecoveryResultV1
 from cruxible_core.playbill.workspace_advertisement import (
     advertise_workspace_refs,
     workspace_git_object_format,
@@ -208,25 +209,31 @@ class PlaybillInstanceManager:
                 self._provider_runtime_operators[state_root] = known
             return known
 
-    def recover_provider_runtime(self) -> tuple[str, ...]:
+    def recover_provider_runtime(self) -> ProviderProcessRecoveryResultV1:
         """Recover process fences before the daemon accepts requests."""
 
-        recovered = self.provider_runtime_operator().recover_all()
-        if not recovered:
-            return ()
+        operator = self.provider_runtime_operator()
+        result = operator.recover_all()
+        invocation_ids = result.completion_invocation_ids
+        if not invocation_ids:
+            return result
         from cruxible_core.service.playbill_procedure_runs import (
+            ProcedureRunRecoveryRequired,
             service_recover_provider_invocations,
         )
 
         for record in get_registry().list_instances():
             if record.backend != GOVERNED_DAEMON_BACKEND:
                 continue
-            service_recover_provider_invocations(
-                self.get(record.instance_id),
-                invocation_ids=recovered,
-                recorded_at=utc_now(),
-            )
-        return recovered
+            try:
+                service_recover_provider_invocations(
+                    self.get(record.instance_id),
+                    invocation_ids=invocation_ids,
+                    recorded_at=utc_now(),
+                )
+            except ProcedureRunRecoveryRequired as exc:
+                operator.mark_unavailable(exc.code, str(exc))
+        return result
 
 
 _manager = PlaybillInstanceManager()

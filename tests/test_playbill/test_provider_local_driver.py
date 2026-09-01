@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import signal
 import socket
 import stat
@@ -16,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import cruxible_core.playbill.provider_process_leases as process_lease_module
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedure_runtime_policy import ProcedureRuntimePolicyV1
@@ -408,7 +410,7 @@ def test_local_driver_detects_raw_secret_leak_before_parsing(tmp_path: Path) -> 
     assert caught.value.code == "secret_leak"
 
 
-def test_process_recovery_kills_only_an_echo_verified_invocation_group(tmp_path: Path) -> None:
+def test_process_recovery_kills_an_echo_verified_invocation_group(tmp_path: Path) -> None:
     interpreter = _fake_interpreter(tmp_path / "fake-python")
     leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
     invocation_id = _digest("orphaned-invocation")
@@ -432,7 +434,10 @@ def test_process_recovery_kills_only_an_echo_verified_invocation_group(tmp_path:
     lease = leases.require(invocation_id)
     assert lease.pid == process.pid
 
-    assert leases.recover_all() == (invocation_id,)
+    result = leases.recover_all()
+    assert result.recovered == (invocation_id,)
+    assert result.removed == ()
+    assert result.could_not_clean == ()
     process.wait(timeout=1)
     assert tuple(leases.root.glob("*.json")) == ()
 
@@ -443,15 +448,27 @@ def test_process_recovery_waits_through_a_transient_permission_probe(
     leases = ProviderProcessLeaseStore(tmp_path / "process-leases")
     invocation_id = _digest("permission-probe")
     record_path, control_path = leases.paths(invocation_id)
-    record_path.write_bytes(canonical_bytes({"invocation_id": invocation_id}))
+    record_path.write_bytes(
+        canonical_bytes(
+            {
+                "invocation_id": invocation_id,
+                "pid": 101,
+                "process_group_id": 202,
+                "boot_id": "boot",
+                "process_start_time": "start",
+            }
+        )
+    )
     lease = ProviderProcessLeaseV1(
         invocation_id=invocation_id,
         pid=101,
         process_group_id=202,
+        boot_id="boot",
+        process_start_time="start",
         control_path=control_path,
         record_path=record_path,
     )
-    monkeypatch.setattr(leases, "require", lambda value, timeout_seconds: lease)
+    monkeypatch.setattr(leases, "require_echo", lambda value: None)
     monkeypatch.setattr("os.waitpid", lambda pid, flags: (0, 0))
     probes = iter((PermissionError(), ProcessLookupError()))
 
@@ -463,7 +480,8 @@ def test_process_recovery_waits_through_a_transient_permission_probe(
 
     monkeypatch.setattr("os.killpg", killpg)
 
-    assert leases.recover_all() == (invocation_id,)
+    result = leases.recover_all()
+    assert result.recovered == (invocation_id,)
     assert not record_path.exists()
 
 
@@ -483,6 +501,8 @@ def test_spawned_child_is_killed_when_its_owned_lease_cannot_be_verified(
             return -signal.SIGKILL
 
     monkeypatch.setattr("subprocess.Popen", lambda *args, **kwargs: _Process())
+    monkeypatch.setattr(process_lease_module, "_current_boot_id", lambda: "boot")
+    monkeypatch.setattr(process_lease_module, "_process_start_time", lambda _pid: "start")
     monkeypatch.setattr(
         leases,
         "require",
@@ -584,8 +604,98 @@ def test_recovery_removes_dead_records_without_starving_later_records(tmp_path: 
         )
         assert not control_path.exists()
 
-    assert set(leases.recover_all()) == set(invocation_ids)
+    result = leases.recover_all()
+    assert {item.invocation_id for item in result.removed} == set(invocation_ids)
+    assert {item.reason for item in result.removed} == {"dead_orphan"}
+    assert result.recovered == ()
     assert tuple(leases.root.glob("*.json")) == ()
+
+
+def test_recovery_never_signals_a_reused_pid_without_exact_os_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    leases = ProviderProcessLeaseStore(tmp_path / "reused-pid-leases")
+    invocation_id = _digest("reused-pid")
+    record_path, _control_path = leases.paths(invocation_id)
+    record_path.write_bytes(
+        canonical_bytes(
+            {
+                "invocation_id": invocation_id,
+                "pid": 707,
+                "process_group_id": 707,
+                "boot_id": "prior-boot",
+                "process_start_time": "prior-start",
+            }
+        )
+    )
+    signals: list[tuple[int, int]] = []
+    monkeypatch.setattr(process_lease_module, "_current_boot_id", lambda: "current-boot")
+    monkeypatch.setattr(os, "killpg", lambda pgid, sent: signals.append((pgid, sent)))
+
+    result = leases.recover_all()
+
+    assert signals == []
+    assert result.recovered == ()
+    assert tuple(item.invocation_id for item in result.removed) == (invocation_id,)
+    assert tuple(item.reason for item in result.removed) == ("dead_orphan",)
+    assert not record_path.exists()
+
+
+def test_recovery_isolates_a_survivor_and_continues_to_later_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    leases = ProviderProcessLeaseStore(tmp_path / "isolated-recovery-leases")
+    invocation_ids = (_digest("blocked"), _digest("later"))
+    for ordinal, invocation_id in enumerate(invocation_ids, start=1):
+        record_path, _control_path = leases.paths(invocation_id)
+        record_path.write_bytes(
+            canonical_bytes(
+                {
+                    "invocation_id": invocation_id,
+                    "pid": 800 + ordinal,
+                    "process_group_id": 800 + ordinal,
+                    "boot_id": "boot",
+                    "process_start_time": f"start-{ordinal}",
+                }
+            )
+        )
+    monkeypatch.setattr(leases, "require_echo", lambda _lease: None)
+
+    def recover(lease: ProviderProcessLeaseV1) -> None:
+        if lease.invocation_id == invocation_ids[0]:
+            raise ProviderLocalRuntimeRefused(
+                "provider_process_group_survived_recovery",
+                "blocked by probe",
+            )
+
+    monkeypatch.setattr(leases, "_kill_and_verify", recover)
+
+    result = leases.recover_all()
+
+    assert result.recovered == (invocation_ids[1],)
+    assert tuple(item.invocation_id for item in result.could_not_clean) == (
+        invocation_ids[0],
+    )
+    first_record, _ = leases.paths(invocation_ids[0])
+    second_record, _ = leases.paths(invocation_ids[1])
+    assert first_record.exists()
+    assert not second_record.exists()
+
+
+def test_malformed_recovery_record_is_removed_without_inventing_an_invocation_id(
+    tmp_path: Path,
+) -> None:
+    leases = ProviderProcessLeaseStore(tmp_path / "malformed-recovery-leases")
+    record_path = leases.root / "not-an-invocation.json"
+    record_path.write_text("{}", encoding="utf-8")
+
+    result = leases.recover_all()
+
+    assert result.recovered == ()
+    assert len(result.removed) == 1
+    assert result.removed[0].invocation_id is None
+    assert result.removed[0].reason == "malformed"
+    assert not record_path.exists()
 
 
 def test_control_namespace_is_private_and_stale_socket_is_retryable(tmp_path: Path) -> None:

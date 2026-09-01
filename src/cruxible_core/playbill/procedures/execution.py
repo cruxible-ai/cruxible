@@ -3351,7 +3351,11 @@ class ProcedureExecutor:
         try:
             bound = self.provider_runtime_invoker.bind_provider(occurrence=occurrence)
         except ProviderLocalRuntimeRefused as exc:
-            outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
+            outcome = map_provider_refusal(
+                exc.code,
+                message=str(exc),
+                detail=exc.details,
+            )
             if outcome.outcome_class == "node_refusal":
                 raise _RunRefusal(
                     cast(ProcedureNodeRefusalCodeV1, outcome.code),
@@ -3431,7 +3435,11 @@ class ProcedureExecutor:
             )
             outcome = map_provider_envelope(driver_result.envelope)
         except ProviderLocalRuntimeRefused as exc:
-            outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
+            outcome = map_provider_refusal(
+                exc.code,
+                message=str(exc),
+                detail=exc.details,
+            )
         except ProviderRuntimeWireError as exc:
             outcome = map_provider_refusal(exc.code, message=str(exc), detail={})
         if driver_result is None:

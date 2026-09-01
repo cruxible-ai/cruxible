@@ -6,6 +6,8 @@ import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlanV1
 from cruxible_client.contracts.provider_interfaces import render_provider_interface
@@ -17,6 +19,7 @@ from cruxible_client.contracts.providers import (
     render_provider,
 )
 from cruxible_core.playbill.provider_local_runtime import LocalProviderDeploymentV1
+from cruxible_core.playbill.provider_process_leases import ProviderLocalRuntimeRefused
 from cruxible_core.playbill.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
@@ -133,7 +136,10 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(tmp_path: Path
     )
     operator = ProviderRuntimeOperator(state_root)
     assert operator.deployments == {deployment_digest: deployment}
-    assert operator.recover_all() == ()
+    recovery = operator.recover_all()
+    assert recovery.recovered == ()
+    assert recovery.removed == ()
+    assert recovery.could_not_clean == ()
     invoker = operator.invoker_for(_Instance(), accepted_oid="a" * 40)  # type: ignore[arg-type]
     admitted_binding = operator.driver.bind(
         accepted_provider,
@@ -168,4 +174,22 @@ def test_daemon_operator_rebinds_and_runs_a_real_local_subprocess(tmp_path: Path
     )
     assert outcome.envelope.output == {"echo": "served"}
     assert outcome.verified_binding == admitted_binding
+    assert operator.process_leases is not None
     assert tuple(operator.process_leases.root.glob("*.json")) == ()
+
+
+def test_malformed_runtime_config_degrades_only_the_provider_lane(tmp_path: Path) -> None:
+    state_root = tmp_path / "malformed-runtime-state"
+    config_path = state_root / "daemon" / "provider-runtime.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("not-json", encoding="utf-8")
+
+    operator = ProviderRuntimeOperator(state_root)
+
+    assert operator.unavailable_reason is not None
+    assert "provider_process_lease_invalid" in operator.unavailable_reason
+    invoker = operator.invoker_for(SimpleNamespace(), accepted_oid="a" * 40)  # type: ignore[arg-type]
+    with pytest.raises(ProviderLocalRuntimeRefused) as caught:
+        invoker.bind_provider(occurrence=object())  # type: ignore[arg-type]
+    assert caught.value.code == "provider_unavailable"
+    assert caught.value.details == {"reason": operator.unavailable_reason}

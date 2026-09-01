@@ -30,6 +30,8 @@ from cruxible_core.playbill.provider_local_runtime import (
 from cruxible_core.playbill.provider_process_leases import (
     ProviderLocalRuntimeRefused,
     ProviderProcessLeaseStore,
+    ProviderProcessRecoveryFailureV1,
+    ProviderProcessRecoveryResultV1,
 )
 
 PROVIDER_RUNTIME_CONFIG_PATH = Path("daemon/provider-runtime.json")
@@ -93,12 +95,21 @@ class ProviderRuntimeOperator:
     def __init__(self, state_root: Path) -> None:
         self.state_root = state_root.resolve()
         self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.config = self._load_config()
-        self.process_leases = ProviderProcessLeaseStore(
-            self.state_root / "daemon" / "provider-process-leases",
-            acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
-            recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
-        )
+        self.unavailable_reason: str | None = None
+        try:
+            self.config = self._load_config()
+        except ProviderLocalRuntimeRefused as exc:
+            self.config = ProviderRuntimeOperationalConfigV1()
+            self.mark_unavailable(exc.code, str(exc))
+        try:
+            self.process_leases: ProviderProcessLeaseStore | None = ProviderProcessLeaseStore(
+                self.state_root / "daemon" / "provider-process-leases",
+                acquisition_timeout_seconds=self.config.lease_acquisition_timeout_seconds,
+                recovery_timeout_seconds=self.config.lease_recovery_timeout_seconds,
+            )
+        except ProviderLocalRuntimeRefused as exc:
+            self.process_leases = None
+            self.mark_unavailable(exc.code, str(exc))
         self.secret_store = FileProviderSecretStore(self.state_root / "daemon" / "provider-secrets")
         self.secret_resolvers = ProviderSecretResolverRegistry(
             (EnvironmentProviderSecretResolver(), self.secret_store)
@@ -108,17 +119,44 @@ class ProviderRuntimeOperator:
             item.deployment_digest: self._deployment(item) for item in self.config.deployments
         }
 
-    def recover_all(self) -> tuple[str, ...]:
+    def mark_unavailable(self, code: str, message: str) -> None:
+        """Degrade only the Provider lane and preserve an operator-visible reason."""
+
+        reason = f"{code}: {message}"
+        if self.unavailable_reason is None:
+            self.unavailable_reason = reason
+        elif reason not in self.unavailable_reason:
+            self.unavailable_reason = f"{self.unavailable_reason}; {reason}"
+
+    def recover_all(self) -> ProviderProcessRecoveryResultV1:
         """Recover every persisted process fence before serving requests."""
 
-        return self.process_leases.recover_all()
+        if self.process_leases is None:
+            failure = ProviderProcessRecoveryFailureV1(
+                record_name="provider-process-leases",
+                invocation_id=None,
+                code="provider_unavailable",
+                message=self.unavailable_reason or "Provider process leases are unavailable",
+            )
+            return ProviderProcessRecoveryResultV1(
+                recovered=(),
+                removed=(),
+                could_not_clean=(failure,),
+            )
+        result = self.process_leases.recover_all()
+        for item in result.could_not_clean:
+            self.mark_unavailable(item.code, item.message)
+        return result
 
     def invoker_for(
         self,
         instance: PlaybillInstance,
         *,
         accepted_oid: str,
-    ) -> ProviderLocalRuntimeInvoker:
+    ) -> ProviderLocalRuntimeInvoker | _UnavailableProviderRuntimeInvoker:
+        if self.unavailable_reason is not None:
+            return _UnavailableProviderRuntimeInvoker(self.unavailable_reason)
+        assert self.process_leases is not None
         tree = instance.tree_at(accepted_oid)
         providers: dict[str, AcceptedProviderV1] = {}
         interfaces: dict[str, AcceptedProviderInterfaceRegistrationV1] = {}
@@ -185,6 +223,27 @@ class ProviderRuntimeOperator:
             environment_pin_key=item.environment_pin_key,
             interpreter_path=resolve(item.interpreter_path),
             provider_runtime_version=item.provider_runtime_version,
+        )
+
+
+class _UnavailableProviderRuntimeInvoker:
+    """Refusing invoker used when startup fences degrade the Provider lane."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+
+    def bind_provider(self, *, occurrence: object) -> object:
+        raise ProviderLocalRuntimeRefused(
+            "provider_unavailable",
+            "Provider runtime is unavailable until operator recovery",
+            details={"reason": self.reason},
+        )
+
+    def invoke_provider(self, **_kwargs: object) -> object:
+        raise ProviderLocalRuntimeRefused(
+            "provider_unavailable",
+            "Provider runtime is unavailable until operator recovery",
+            details={"reason": self.reason},
         )
 
 
