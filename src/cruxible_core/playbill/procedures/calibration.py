@@ -29,6 +29,22 @@ class _StrictCalibrationModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+CalibrationWitnessRefusalCode = Literal[
+    "calibration.cohort_witness_missing",
+    "calibration.cohort_witness_relation_mismatch",
+    "calibration.cohort_witness_procedure_mismatch",
+    "calibration.cohort_witness_implementation_mismatch",
+]
+
+
+class ProcedureCalibrationWitnessError(PlaybillExecutionError):
+    """Typed refusal for absent or non-reproducing G2 membership evidence."""
+
+    def __init__(self, code: CalibrationWitnessRefusalCode, message: str) -> None:
+        self.code = code
+        super().__init__(f"{code}: {message}")
+
+
 def _digest(value: str, *, label: str) -> str:
     try:
         Sha256Value.from_tagged(value)
@@ -106,6 +122,66 @@ def build_procedure_calibration_cohort(
     )
 
 
+class ProcedureCalibrationRelationCohortWitnessV1(_StrictCalibrationModel):
+    """Receipt-derived implementation membership for one selected relation."""
+
+    tag: Literal["playbill-procedure-calibration-relation-cohort-witness-v1"] = (
+        "playbill-procedure-calibration-relation-cohort-witness-v1"
+    )
+    relation_digest: str
+    procedure_artifact_digest: str
+    provider_implementation_digests: tuple[str, ...]
+    run_receipt_digests: tuple[str, ...]
+
+    @field_validator("relation_digest", "procedure_artifact_digest")
+    @classmethod
+    def _single_digest(cls, value: str, info: object) -> str:
+        return _digest(value, label=str(getattr(info, "field_name", "witness digest")))
+
+    @field_validator("provider_implementation_digests", "run_receipt_digests")
+    @classmethod
+    def _digest_vector(cls, value: tuple[str, ...], info: object) -> tuple[str, ...]:
+        field_name = str(getattr(info, "field_name", "witness digest vector"))
+        for digest in value:
+            _digest(digest, label=field_name)
+        if value != tuple(sorted(set(value))):
+            raise ValueError(f"{field_name} must be byte-sorted and unique")
+        if field_name == "run_receipt_digests" and not value:
+            raise ValueError("run_receipt_digests must name receipt provenance")
+        return value
+
+
+class ProcedureCalibrationCohortMembershipWitnessV1(_StrictCalibrationModel):
+    """Complete per-relation G2 membership witness for one reading production."""
+
+    tag: Literal["playbill-procedure-calibration-cohort-membership-witness-v1"] = (
+        "playbill-procedure-calibration-cohort-membership-witness-v1"
+    )
+    relations: tuple[ProcedureCalibrationRelationCohortWitnessV1, ...] = ()
+
+    @field_validator("relations")
+    @classmethod
+    def _relations(
+        cls,
+        value: tuple[ProcedureCalibrationRelationCohortWitnessV1, ...],
+    ) -> tuple[ProcedureCalibrationRelationCohortWitnessV1, ...]:
+        keys = tuple(canonical_bytes(item.model_dump(mode="json")) for item in value)
+        relation_digests = tuple(item.relation_digest for item in value)
+        if keys != tuple(sorted(set(keys))) or len(set(relation_digests)) != len(value):
+            raise ValueError("cohort witness relations must be canonically sorted and unique")
+        return value
+
+
+def procedure_calibration_cohort_membership_witness_digest(
+    witness: ProcedureCalibrationCohortMembershipWitnessV1,
+) -> str:
+    return typed_digest(
+        ArtifactDigest,
+        "playbill-procedure-calibration-cohort-membership-witness-v1",
+        {"witness": witness.model_dump(mode="json")},
+    ).tagged
+
+
 class ProcedureCalibrationScoreV1(_StrictCalibrationModel):
     tag: Literal["playbill-procedure-calibration-score-v1"] = (
         "playbill-procedure-calibration-score-v1"
@@ -133,6 +209,7 @@ class ProcedureCalibrationReadingV1(_StrictCalibrationModel):
     query_request_digest: str
     query_result_digest: str
     query_receipt_digest: str
+    cohort_membership_witness_digest: str
     selected_relation_digests: tuple[str, ...]
     score: ProcedureCalibrationScoreV1
 
@@ -140,6 +217,7 @@ class ProcedureCalibrationReadingV1(_StrictCalibrationModel):
         "query_request_digest",
         "query_result_digest",
         "query_receipt_digest",
+        "cohort_membership_witness_digest",
     )
     @classmethod
     def _digests(cls, value: str, info: object) -> str:
@@ -212,6 +290,7 @@ def produce_procedure_calibration_reading(
     result: SettledOutcomesQueryResultV1,
     receipt: SettledOutcomesQueryReceiptV1,
     cohort: ProcedureCalibrationCohortV1,
+    cohort_membership_witness: ProcedureCalibrationCohortMembershipWitnessV1 | None = None,
 ) -> ProcedureCalibrationReadingV1 | None:
     """Produce an exact reading, or honest cold start when no settled rows exist."""
 
@@ -229,10 +308,39 @@ def produce_procedure_calibration_reading(
         result,
         procedure_artifact_digest=cohort.procedure_artifact_digest,
     )
+    if cohort_membership_witness is None:
+        raise ProcedureCalibrationWitnessError(
+            "calibration.cohort_witness_missing",
+            "calibration reading production requires receipt-derived membership for every row",
+        )
+    relation_digests = tuple(sorted(row.relation_digest for row in rows))
+    witnessed_relation_digests = tuple(
+        sorted(item.relation_digest for item in cohort_membership_witness.relations)
+    )
+    if witnessed_relation_digests != relation_digests:
+        raise ProcedureCalibrationWitnessError(
+            "calibration.cohort_witness_relation_mismatch",
+            "cohort witness must cover exactly the selected settled relations",
+        )
+    if any(
+        item.procedure_artifact_digest != cohort.procedure_artifact_digest
+        for item in cohort_membership_witness.relations
+    ):
+        raise ProcedureCalibrationWitnessError(
+            "calibration.cohort_witness_procedure_mismatch",
+            "cohort witness names another Procedure artifact",
+        )
+    if any(
+        item.provider_implementation_digests != cohort.provider_implementation_digests
+        for item in cohort_membership_witness.relations
+    ):
+        raise ProcedureCalibrationWitnessError(
+            "calibration.cohort_witness_implementation_mismatch",
+            "cohort witness names another Provider implementation vector",
+        )
     if not rows:
         return None
 
-    relation_digests = tuple(sorted(row.relation_digest for row in rows))
     true_count = sum(row.relation.resolution.settlement_outcome for row in rows)
     score = ProcedureCalibrationScoreV1(
         settled_count=len(rows),
@@ -245,6 +353,9 @@ def produce_procedure_calibration_reading(
         "query_request_digest": result.request_digest,
         "query_result_digest": result.result_digest,
         "query_receipt_digest": settled_outcomes_query_receipt_digest(receipt),
+        "cohort_membership_witness_digest": (
+            procedure_calibration_cohort_membership_witness_digest(cohort_membership_witness)
+        ),
         "selected_relation_digests": relation_digests,
         "score": score,
     }
@@ -341,13 +452,18 @@ def load_procedure_calibration_reading(
 
 
 __all__ = [
+    "CalibrationWitnessRefusalCode",
     "ProcedureCalibrationCohortV1",
+    "ProcedureCalibrationCohortMembershipWitnessV1",
     "ProcedureCalibrationReadingArtifactV1",
     "ProcedureCalibrationReadingV1",
+    "ProcedureCalibrationRelationCohortWitnessV1",
     "ProcedureCalibrationScoreV1",
+    "ProcedureCalibrationWitnessError",
     "build_procedure_calibration_cohort",
     "load_procedure_calibration_reading",
     "procedure_calibration_cohort_key",
+    "procedure_calibration_cohort_membership_witness_digest",
     "procedure_calibration_reading_digest",
     "procedure_calibration_reading_id",
     "procedure_calibration_reading_pin",

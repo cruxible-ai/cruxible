@@ -321,7 +321,7 @@ def _build_result(
 def query_settled_outcomes(
     request: SettledOutcomesQueryRequestV1,
     *,
-    activations: tuple[ResolutionContractActivationV2, ...],
+    activations: tuple[ResolutionContractActivationV1 | ResolutionContractActivationV2, ...],
     records_by_partition: Mapping[str, tuple[StoredProcedureJournalRecordV1, ...]],
     bodies: ContentAddressedBodyStore,
 ) -> tuple[SettledOutcomesQueryResultV1, SettledOutcomesQueryReceiptV1]:
@@ -338,6 +338,12 @@ def query_settled_outcomes(
     if access.can_read_resolution_bodies:
         visible_proofs = frozenset(access.visible_proof_digests)
         for activation in activations:
+            if not isinstance(activation, ResolutionContractActivationV2):
+                if request.outcome_classes:
+                    raise PlaybillExecutionError(
+                        "settled-outcomes outcome_class filter requires v2 activations"
+                    )
+                continue
             if request.contract_ids and activation.contract_id not in request.contract_ids:
                 continue
             if request.outcome_classes and activation.outcome_class not in request.outcome_classes:

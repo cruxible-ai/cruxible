@@ -6,12 +6,17 @@ from datetime import timedelta
 
 import pytest
 
-from cruxible_client.contracts.errors import PlaybillExecutionError
+from cruxible_client.contracts.canonical import canonical_bytes
+from cruxible_client.contracts.errors import PlaybillCasError, PlaybillExecutionError
 from cruxible_core.playbill.cas import BodyAccessContext
 from cruxible_core.playbill.procedures.calibration import (
+    ProcedureCalibrationCohortMembershipWitnessV1,
     ProcedureCalibrationReadingV1,
+    ProcedureCalibrationRelationCohortWitnessV1,
+    ProcedureCalibrationWitnessError,
     build_procedure_calibration_cohort,
     load_procedure_calibration_reading,
+    procedure_calibration_cohort_membership_witness_digest,
     procedure_calibration_reading_digest,
     produce_procedure_calibration_reading,
     store_procedure_calibration_reading,
@@ -91,6 +96,26 @@ def _cohort(procedure_digest: str, *implementations: str):
     )
 
 
+def _witness(result, cohort):
+    relations = tuple(
+        sorted(
+            (
+                ProcedureCalibrationRelationCohortWitnessV1(
+                    relation_digest=row.relation_digest,
+                    procedure_artifact_digest=cohort.procedure_artifact_digest,
+                    provider_implementation_digests=(cohort.provider_implementation_digests),
+                    run_receipt_digests=(_digest(f"run-receipt-{row.relation_digest}"),),
+                )
+                for row in result.rows
+                if row.relation.activation.procedure_artifact_digest
+                == cohort.procedure_artifact_digest
+            ),
+            key=lambda item: canonical_bytes(item.model_dump(mode="json")),
+        )
+    )
+    return ProcedureCalibrationCohortMembershipWitnessV1(relations=relations)
+
+
 def test_reading_scores_both_settled_outcomes_and_ignores_verdict_fields(tmp_path) -> None:
     activations, _bodies, result, receipt = _query(tmp_path)
     cohort = _cohort(
@@ -98,10 +123,12 @@ def test_reading_scores_both_settled_outcomes_and_ignores_verdict_fields(tmp_pat
         _digest("provider-implementation-a"),
     )
 
+    witness = _witness(result, cohort)
     reading = produce_procedure_calibration_reading(
         result=result,
         receipt=receipt,
         cohort=cohort,
+        cohort_membership_witness=witness,
     )
 
     assert reading is not None
@@ -110,6 +137,9 @@ def test_reading_scores_both_settled_outcomes_and_ignores_verdict_fields(tmp_pat
     assert reading.score.settled_false_count == 1
     assert reading.selected_relation_digests == tuple(
         sorted(row.relation_digest for row in result.rows)
+    )
+    assert reading.cohort_membership_witness_digest == (
+        procedure_calibration_cohort_membership_witness_digest(witness)
     )
     reading_fields = reading.model_dump(mode="json")
     assert "verdict" not in reading_fields
@@ -126,6 +156,7 @@ def test_empty_settled_selection_is_honest_cold_start(tmp_path) -> None:
             result=result,
             receipt=receipt,
             cohort=cohort,
+            cohort_membership_witness=_witness(result, cohort),
         )
         is None
     )
@@ -141,6 +172,7 @@ def test_reading_is_exactly_pinned_to_immutable_cas_bytes(tmp_path) -> None:
         result=result,
         receipt=receipt,
         cohort=cohort,
+        cohort_membership_witness=_witness(result, cohort),
     )
     assert reading is not None
 
@@ -173,18 +205,20 @@ def test_g2_cohort_changes_for_provider_successor_and_never_implicitly_carries(t
         result=result,
         receipt=receipt,
         cohort=first,
+        cohort_membership_witness=_witness(result, first),
     )
-    successor_reading = produce_procedure_calibration_reading(
-        result=result,
-        receipt=receipt,
-        cohort=successor,
-    )
-    assert first_reading is not None and successor_reading is not None
+    assert first_reading is not None
 
     assert first.cohort_key != successor.cohort_key
-    assert procedure_calibration_reading_digest(
-        first_reading
-    ) != procedure_calibration_reading_digest(successor_reading)
+    with pytest.raises(ProcedureCalibrationWitnessError) as refused:
+        produce_procedure_calibration_reading(
+            result=result,
+            receipt=receipt,
+            cohort=successor,
+            cohort_membership_witness=_witness(result, first),
+        )
+    assert refused.value.code == "calibration.cohort_witness_implementation_mismatch"
+
     artifact = store_procedure_calibration_reading(bodies, first_reading)
     with pytest.raises(PlaybillExecutionError, match="another implementation cohort"):
         load_procedure_calibration_reading(
@@ -205,6 +239,86 @@ def test_reading_refuses_a_substituted_query_receipt(tmp_path) -> None:
             result=result,
             receipt=substituted,
             cohort=cohort,
+            cohort_membership_witness=_witness(result, cohort),
+        )
+
+
+def test_reading_refuses_missing_or_incomplete_cohort_witness(tmp_path) -> None:
+    activations, _bodies, result, receipt = _query(tmp_path)
+    cohort = _cohort(
+        activations[0].procedure_artifact_digest,
+        _digest("provider-implementation-a"),
+    )
+
+    with pytest.raises(ProcedureCalibrationWitnessError) as missing:
+        produce_procedure_calibration_reading(
+            result=result,
+            receipt=receipt,
+            cohort=cohort,
+        )
+    assert missing.value.code == "calibration.cohort_witness_missing"
+
+    complete = _witness(result, cohort)
+    incomplete = complete.model_copy(update={"relations": complete.relations[:1]})
+    with pytest.raises(ProcedureCalibrationWitnessError) as mismatch:
+        produce_procedure_calibration_reading(
+            result=result,
+            receipt=receipt,
+            cohort=cohort,
+            cohort_membership_witness=incomplete,
+        )
+    assert mismatch.value.code == "calibration.cohort_witness_relation_mismatch"
+
+
+def test_reading_load_refuses_access_missing_body_invalid_body_and_pin_tamper(tmp_path) -> None:
+    activations, bodies, result, receipt = _query(tmp_path)
+    cohort = _cohort(activations[0].procedure_artifact_digest)
+    reading = produce_procedure_calibration_reading(
+        result=result,
+        receipt=receipt,
+        cohort=cohort,
+        cohort_membership_witness=_witness(result, cohort),
+    )
+    assert reading is not None
+    artifact = store_procedure_calibration_reading(bodies, reading)
+
+    with pytest.raises(PlaybillCasError, match="access is denied"):
+        load_procedure_calibration_reading(
+            bodies,
+            artifact,
+            access=BodyAccessContext(principal_id="denied", can_read_body=False),
+            expected_cohort_key=cohort.cohort_key,
+        )
+
+    with pytest.raises(PlaybillCasError, match="object is missing"):
+        load_procedure_calibration_reading(
+            bodies,
+            artifact.model_copy(update={"body_digest": _digest("missing-reading-body")}),
+            access=BodyAccessContext(principal_id="reader", can_read_body=True),
+            expected_cohort_key=cohort.cohort_key,
+        )
+
+    invalid_body = bodies.store(b"{}")
+    with pytest.raises(PlaybillExecutionError, match="artifact is invalid"):
+        load_procedure_calibration_reading(
+            bodies,
+            artifact.model_copy(update={"body_digest": invalid_body.digest}),
+            access=BodyAccessContext(principal_id="reader", can_read_body=True),
+            expected_cohort_key=cohort.cohort_key,
+        )
+
+    with pytest.raises(PlaybillExecutionError, match="does not reproduce its pin"):
+        load_procedure_calibration_reading(
+            bodies,
+            artifact.model_copy(
+                update={
+                    "pin": artifact.pin.model_copy(
+                        update={"artifact_digest": _digest("substituted-reading")}
+                    )
+                }
+            ),
+            access=BodyAccessContext(principal_id="reader", can_read_body=True),
+            expected_cohort_key=cohort.cohort_key,
         )
 
 
