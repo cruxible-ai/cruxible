@@ -1611,9 +1611,19 @@ def _line_member(context: _MemberContext) -> _MemberVerdict:
     interface_digests: dict[str, str] = {}
     for state in context.candidate_states.values():
         interface_digests[state.artifact_digest] = state.artifact_digest
-        interface_pin = next((pin for pin in state.pins if pin.role == "interface"), None)
-        if interface_pin is not None:
-            interface_digests[state.artifact_digest] = interface_pin.artifact_digest
+    for provider in context.resolved.providers.values():
+        interface_pin = next(
+            (pin for pin in provider.provider.pins if pin.role == "provider-interface"),
+            None,
+        )
+        if interface_pin is None:
+            continue
+        registration = context.resolved.provider_interfaces.get(interface_pin.target.qualified)
+        if (
+            registration is not None
+            and registration.artifact_digest == interface_pin.artifact_digest
+        ):
+            interface_digests[provider.artifact_digest] = registration.registration.interface_digest
     law = evaluate_line_spec_law(
         line,
         path=context.path,

@@ -343,8 +343,12 @@ class ProviderLocalEnvBackendPinV1(_StrictProviderModel):
         if not value:
             raise ValueError("Provider local environment pin must cover an environment")
         for pin_key, digest in value.items():
-            if not pin_key:
-                raise ValueError("Provider environment pin key must be nonempty")
+            parts = pin_key.split("+")
+            extras = tuple(parts[1:])
+            if not all(re.fullmatch(r"[a-z0-9][a-z0-9._-]*", part) for part in parts):
+                raise ValueError("Provider environment pin key has invalid grammar")
+            if extras != tuple(sorted(set(extras), key=lambda item: item.encode("utf-8"))):
+                raise ValueError("Provider environment pin key extras must be sorted and unique")
             _sha256(digest, label=f"materialization digest for {pin_key!r}")
         return value
 

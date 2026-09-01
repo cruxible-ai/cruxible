@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+import cruxible_core.playbill.proposals as proposal_module
 from cruxible_client.contracts.artifacts import ArtifactIdentity, ArtifactPin
 from cruxible_client.contracts.captures import CanonicalDurationV1
 from cruxible_client.contracts.procedures.artifacts import (
@@ -47,12 +48,17 @@ from cruxible_client.contracts.procedures.models import (
     RepeatBodyNodeV4,
     RepeatNodeV4,
 )
+from cruxible_client.contracts.provider_interfaces import render_provider_interface
+from cruxible_client.contracts.providers import render_provider
+from cruxible_core.playbill.proposals import AuthenticatedActor, ProposalAdmissionRequest
 from tests.test_playbill._p2b1_support import (
     accepted_interface,
     accepted_provider,
     digest,
+    interface_fixture,
     pin,
 )
+from tests.test_playbill._support import initialize_local
 
 
 def _definition() -> tuple[ProcedureDefinitionV4, ArtifactPin, ArtifactPin]:
@@ -407,3 +413,44 @@ def test_line_v2_wrong_implementation_refuses_without_order_selection() -> None:
         provider_interfaces={interface.artifact_digest: interface},
     )
     assert result.diagnostics[0].code == ("playbill.line.provider_implementation_unavailable")
+
+
+def test_real_proposal_path_closes_interface_provider_procedure_and_line(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    instance, _owner = initialize_local(tmp_path)
+    interface = accepted_interface()
+    provider = accepted_provider()
+    procedure = _accepted_procedure()
+    line = _line()
+    fixture = interface_fixture()
+    monkeypatch.setattr(
+        proposal_module,
+        "core_provider_bucket_conformance_fixtures",
+        lambda: {fixture.fixture_id: fixture},
+    )
+    tree = instance.tree_at(instance.accepted_coordinate().git_oid)
+    tree[interface.path] = render_provider_interface(interface.registration)
+    tree[provider.path] = render_provider(provider.provider)
+    tree[procedure.path] = render_procedure(procedure.procedure)
+    tree[line_spec_path(line.identity.name)] = render_line_spec(line)
+
+    result = instance.proposal_service().submit(
+        actor=AuthenticatedActor(actor_id="owner"),
+        request=ProposalAdmissionRequest(
+            target_ref="refs/proposals/owner/provider-line-e2e",
+            proposed_base_oid=instance.accepted_coordinate().git_oid,
+        ),
+        candidate_tree=tree,
+        timestamp="2026-08-24T16:00:00.000000Z",
+    )
+
+    assert result.evaluation.verdict == "candidate", result.evaluation.diagnostics
+    assert result.candidate is not None
+    assert {member.artifact_kind for member in result.candidate.members} == {
+        "line",
+        "procedure",
+        "provider",
+        "provider-interface",
+    }

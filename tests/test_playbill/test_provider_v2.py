@@ -92,6 +92,24 @@ def test_provider_runtime_mirror_rejects_unknown_endpoint_forms() -> None:
         ProviderImplementationManifestV1.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    "pin_key",
+    (
+        "linux-cp311+other+engine",
+        "linux-cp311+engine+engine",
+        "Linux-cp311+engine",
+        "linux-cp311+",
+    ),
+)
+def test_provider_local_environment_pin_key_grammar_is_governed(pin_key: str) -> None:
+    payload = provider_v2().model_dump(mode="json")
+    local_env = payload["runtime_artifact"]["local_env"]
+    local_env["materialization_digests"] = {pin_key: "sha256:" + "c" * 64}
+
+    with pytest.raises(ValidationError, match="environment pin key"):
+        ProviderV2.model_validate(payload)
+
+
 def test_provider_v1_bytes_remain_version_discriminated() -> None:
     provider = provider_v2()
     payload = provider.model_dump(mode="json")
