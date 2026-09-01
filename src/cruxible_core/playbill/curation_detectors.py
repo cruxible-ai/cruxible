@@ -484,8 +484,7 @@ def _literal_subject_references(
                 "literal_value": value,
                 "matching_subject_kinds": subject_kinds,
                 "message": (
-                    "literal looks like a subject reference; "
-                    "consider a subject-valued object"
+                    "literal looks like a subject reference; consider a subject-valued object"
                 ),
             },
             coverage=frozen_coverage,

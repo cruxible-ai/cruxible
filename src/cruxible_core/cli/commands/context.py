@@ -50,9 +50,7 @@ def context_show(output_json: bool) -> None:
         click.echo(f"Server: local ({transport_source})")
     click.echo(f"Instance ID: {payload['instance_id'] or '<none>'} ({instance_source})")
     attachment = "attached" if payload["workspace_attached"] else "not attached"
-    click.echo(
-        f"Workspace: {payload['workspace']} ({payload['workspace_source']}, {attachment})"
-    )
+    click.echo(f"Workspace: {payload['workspace']} ({payload['workspace_source']}, {attachment})")
 
 
 @connect_group.command("connect")

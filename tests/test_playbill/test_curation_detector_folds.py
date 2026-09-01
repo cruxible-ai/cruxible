@@ -323,8 +323,7 @@ def test_literal_subject_reference_calibration_knob_disables_the_fold(
         value="demo-package",
     )
     monkeypatch.setattr(
-        "cruxible_core.playbill.curation_detectors."
-        "LITERAL_SUBJECT_REFERENCE_DETECTOR_ENABLED",
+        "cruxible_core.playbill.curation_detectors.LITERAL_SUBJECT_REFERENCE_DETECTOR_ENABLED",
         False,
     )
 
