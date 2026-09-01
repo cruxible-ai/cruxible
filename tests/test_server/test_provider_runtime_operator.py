@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import cruxible_core.runtime.playbill_manager as playbill_manager_module
+import cruxible_core.service.playbill_procedure_runs as procedure_run_service
 from cruxible_client.contracts.canonical import canonical_bytes
 from cruxible_client.contracts.provider_execution import ProviderSecretResolutionPlanV1
 from cruxible_client.contracts.provider_interfaces import render_provider_interface
@@ -21,12 +23,17 @@ from cruxible_client.contracts.providers import (
     render_provider,
 )
 from cruxible_core.playbill.provider_local_runtime import LocalProviderDeploymentV1
-from cruxible_core.playbill.provider_process_leases import ProviderLocalRuntimeRefused
+from cruxible_core.playbill.provider_process_leases import (
+    ProviderLocalRuntimeRefused,
+    ProviderProcessRecoveryResultV1,
+)
 from cruxible_core.playbill.provider_runtime_contract import (
     ProviderRuntimeBudgetsV1,
     ProviderRuntimeRunContextV1,
 )
+from cruxible_core.runtime.playbill_manager import PlaybillInstanceManager
 from cruxible_core.runtime.provider_runtime import ProviderRuntimeOperator
+from cruxible_core.service.playbill_procedure_runs import ProcedureRunRecoveryRequired
 from tests.test_playbill._p2b1_support import accepted_interface, provider_v2
 from tests.test_playbill.test_provider_local_driver import _fake_interpreter
 
@@ -199,3 +206,51 @@ def test_malformed_runtime_config_degrades_only_the_provider_lane(tmp_path: Path
         invoker.bind_provider(occurrence=object())  # type: ignore[arg-type]
     assert caught.value.code == "provider_unavailable"
     assert caught.value.details == {"reason": operator.unavailable_reason}
+
+
+def test_unmatched_recovered_start_degrades_provider_and_continues_instances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invocation_id = _digest("orphan-without-admitted-occurrence")
+    result = ProviderProcessRecoveryResultV1(
+        recovered=(invocation_id,),
+        removed=(),
+        could_not_clean=(),
+    )
+    unavailable: list[tuple[str, str]] = []
+    operator = SimpleNamespace(
+        recover_all=lambda: result,
+        mark_unavailable=lambda code, message: unavailable.append((code, message)),
+    )
+    records = (
+        SimpleNamespace(instance_id="inst_one", backend="governed_daemon"),
+        SimpleNamespace(instance_id="inst_two", backend="governed_daemon"),
+    )
+    manager = PlaybillInstanceManager()
+    monkeypatch.setattr(manager, "provider_runtime_operator", lambda: operator)
+    monkeypatch.setattr(manager, "get", lambda instance_id: instance_id)
+    monkeypatch.setattr(
+        playbill_manager_module,
+        "get_registry",
+        lambda: SimpleNamespace(list_instances=lambda: records),
+    )
+    visited: list[str] = []
+
+    def recover(instance: str, **_kwargs: object) -> tuple[str, ...]:
+        visited.append(instance)
+        if instance == "inst_one":
+            raise ProcedureRunRecoveryRequired(
+                "procedure_run_recovery_required: no exact admitted occurrence"
+            )
+        return ()
+
+    monkeypatch.setattr(procedure_run_service, "service_recover_provider_invocations", recover)
+
+    assert manager.recover_provider_runtime() == result
+    assert visited == ["inst_one", "inst_two"]
+    assert unavailable == [
+        (
+            "playbill.procedure.run.recovery_required",
+            "procedure_run_recovery_required: no exact admitted occurrence",
+        )
+    ]
